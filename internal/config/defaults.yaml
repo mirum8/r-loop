@@ -1,0 +1,68 @@
+pipeline:
+  - plan
+  - implement
+
+steps:
+  plan:
+    prompt: plan
+    check: plan-file
+    provider: claude
+    model: opus
+    effort: high
+    timeout: 1h
+    fallback: codex
+    reviewers:
+      - codex
+    rounds: 2
+    reviewTimeout: 20m
+  implement:
+    prompt: implement
+    check: diff
+    provider: codex
+    model: gpt-5.6-sol
+    effort: medium
+    timeout: 4h
+    fallback: claude
+    reviewers:
+      - claude
+    rounds: 3
+    reviewTimeout: 45m
+  milestone:
+    prompt: milestone
+    check: report
+    provider: claude
+    model: opus
+    effort: medium
+    timeout: 1h
+
+land:
+  fixRounds: 1
+  gateTimeout: 30m
+
+watchdog:
+  provider: claude
+  model: sonnet
+  effort: ""
+  maxRestarts: 2
+  allow:
+  remedyWindow: 10m
+  answerWindow: 5m
+  checkTimeout: 10m
+  stallGrace: 2m
+  overtimeFactor: 2
+  diffFactor: 3
+
+unattended:
+  allow:
+    - deps
+    - ports
+    - locks
+    - restart
+    - retry
+    - provider
+  questionTimeout: 30m
+
+notify:
+  onHalt: ""
+  onWarn: ""
+  onDone: ""
