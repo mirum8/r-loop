@@ -122,7 +122,7 @@ section:target > h2 { color: var(--clay); }
 <div class="wrap">
 
 <header>
-  <p class="ribbon">Specification · r-loop · drafted 2026-09-17 · revised 2026-09-18</p>
+  <p class="ribbon">Specification · r-loop · drafted 2026-09-17 · revised 2026-09-18 (round 19)</p>
   <h1>r-loop — a provider-agnostic task loop driver</h1>
   <p class="subtitle">A terminal supervisor that walks a phased implementation plan to completion,
   opening one fresh agent session per step and deciding everything between them in code. The agent
@@ -164,7 +164,7 @@ section:target > h2 { color: var(--clay); }
       </ul></li>
     <li class="p"><a href="#p6">Part 6 · Decisions</a>
       <ul>
-        <li class="s"><a href="#adr-index">ADR-1 … ADR-52</a></li>
+        <li class="s"><a href="#adr-index">ADR-1 … ADR-55</a></li>
       </ul></li>
     <li class="p"><a href="#p7">Part 7 · Technical details</a>
       <ul>
@@ -189,12 +189,12 @@ section:target > h2 { color: var(--clay); }
   <dt>Style</dt><dd>Supervisor over out-of-process workers, with a hexagonal core — one self-contained binary in a herdr pane, serving two MCP surfaces</dd>
   <dt>Components</dt><dd>13 — <code>RunLoop</code>, <code>PlanReader</code>, <code>StepKinds</code>, <code>SessionManager</code>, <code>ProviderRegistry</code>, <code>PromptRenderer</code>, <code>LandGate</code>, <code>StateStore</code>, <code>ConfigReader</code>, <code>AskServer</code>, <code>Watch</code>, <code>Remedies</code>, <code>Ui</code></dd>
   <dt>Stack</dt><dd>Go 1.25 · Bubble Tea 1.3 · MCP go-sdk 1.8 · yaml.v3 · herdr 0.9.0 · git 2.50 — nothing from the skill-pack at run time</dd>
-  <dt>v1</dt><dd>18 of 19 stories; concurrent phases, drift-watching and a non-<code>todo.md</code> source deferred</dd>
+  <dt>v1</dt><dd>19 of 21 stories; concurrent phases, drift-watching, a non-<code>todo.md</code> source and provider-side fan-out deferred</dd>
 </dl>
 
 <section id="p1">
 <h2 class="part" id="p1-h"><span class="pnum">Part 1</span> Business requirements</h2>
-<p class="lede">Three things are wrong today: a loop a model executes from prose, a pipeline welded to one vendor, and nobody watching a four-hour step that has gone the wrong way. What has to become true is that the driver decides, any agent can do the work, and a wrong turn or a blocked session reaches someone — or is dealt with — before it costs the rest of the night. The nineteen capabilities below divide between three actors, and the watchdog's three are written last because everything they may do is bounded by what it may never do.</p>
+<p class="lede">Three things are wrong today: a loop a model executes from prose, a pipeline welded to one vendor, and nobody watching a four-hour step that has gone the wrong way. What has to become true is that the driver decides, any agent can do the work, every reviewer you configure reads every phase, and a wrong turn, a wrong plan or a blocked session reaches someone — or is dealt with — before it costs the rest of the night. The twenty-one capabilities below divide between three actors, and the watchdog's four are written last because everything they may do is bounded by what it may never do.</p>
 
 <h2 id="problem">Problem, goals &amp; non-goals</h2>
 
@@ -245,6 +245,13 @@ noticing needs the whole run in view and every context in the design is delibera
   <tr><td>A merge is never made on an unproven phase</td>
       <td>the phase's own <code>Done when:</code> command exits 0 in the primary tree before
           <code>git merge</code> runs, or the run halts</td></tr>
+  <tr><td>Every phase is read by every reviewer you configure</td>
+      <td>1 workspace per entry in <code>steps.review.reviewers</code>, all open at once; every
+          finding they write gets a verdict, and only those judged real at P1 or P2 are fixed</td></tr>
+  <tr><td>A phase whose own fields are wrong is flagged before it runs</td>
+      <td>the watchdog compares each phase's <code>Files:</code> and <code>Risk:</code> with what it
+          derives from the tree, and a disagreement is a warning in the TUI and the report before the
+          planning session opens</td></tr>
 </table>
 
 <table>
@@ -283,9 +290,10 @@ noticing needs the whole run in view and every context in the design is delibera
       <td>writing code and tests in its own tree, and committing there; asking a question when it is
           blocked; never merging, never ticking the plan, never deciding the next step</td></tr>
   <tr><td>Watchdog</td>
-      <td>to see the whole run and stop it going somewhere wrong</td>
+      <td>to see the whole run, check each phase before it starts, and stop the run going somewhere
+          wrong</td>
       <td>three tiers, and the top one is empty: it may <strong>veto</strong> unilaterally (halt,
-          warn); it may <strong>remedy</strong> with consent (fix the environment, restart a step,
+          warn — including a warning that a phase's own fields disagree with what it derives); it may <strong>remedy</strong> with consent (fix the environment, restart a step,
           retry differently); it may <strong>never approve</strong> — not a step, not a landing, not
           a tick, not even with your consent</td></tr>
 </table>
@@ -333,9 +341,9 @@ planning session is started with <code>--kind claude</code> and the implement se
 <h3>Try a different provider for one run</h3>
 <p>As the <strong>maintainer</strong>, I want to override a step's provider on the command line, so
 that trying one does not mean editing the project config and putting it back.</p>
-<p><em>Given</em> a config naming <code>claude</code> for review, <em>when</em> I run
-<code>r-loop docs/x/todo.md --provider review=codex</code>, <em>then</em> review sessions start as
-codex and the banner names the override and the file value it replaced.</p>
+<p><em>Given</em> a config naming <code>claude</code> for implement, <em>when</em> I run
+<code>r-loop docs/x/todo.md --provider implement=codex</code>, <em>then</em> implement sessions
+start as codex and the banner names the override and the file value it replaced.</p>
 
 <h3>Be told when a run halts</h3>
 <p>As the <strong>maintainer</strong>, I want a command of my own choosing run when the loop halts
@@ -385,7 +393,7 @@ which file it used.</p>
 <p>As the <strong>maintainer</strong>, I want to run a step on an agent the driver does not ship
 support for, so that adopting a new one is a config edit.</p>
 <p><em>Given</em> a <code>providers.pdev</code> block naming a herdr <code>kind</code>, the model
-and effort flags, the completion signal and a <code>fanout</code> capability, <em>when</em> a step
+and effort flags, the completion signal and, if it has one, its native review command, <em>when</em> a step
 names <code>provider: pdev</code>, <em>then</em> the session starts on that agent and no driver
 code mentions it.</p>
 
@@ -398,6 +406,16 @@ shipped for.</p>
 <code>diff</code>, <em>when</em> a phase runs, <em>then</em> a <code>docs</code> session opens after
 the review, is judged by the same two-signal rule as every other step, and the banner lists the
 phase's pipeline as <code>plan → implement → review → docs → land</code>.</p>
+
+<h3>Review each phase with every configured reviewer</h3>
+<p>As the <strong>maintainer</strong>, I want each phase's diff read by every reviewer I configure,
+at the same time, and only the findings that are real and severe fixed, so that the review is as
+wide as the reviewers I have and the fix is no wider than the problems that exist.</p>
+<p><em>Given</em> <code>steps.review.reviewers</code> naming <code>claude</code> and
+<code>codex</code>, <em>when</em> a phase reaches review, <em>then</em> one workspace opens per
+reviewer at once on the phase branch, each runs that provider's own reviewer and writes a findings
+file, the step waits for both, and a fix session then gives every finding a verdict, fixes only
+those it marks real at P1 or P2, and the report lists each finding with its verdict.</p>
 
 <h4>Provider agent</h4>
 
@@ -449,25 +467,33 @@ the plan already answers does not reach a person at all.</p>
 answer is logged and shown in the TUI; <em>and</em> when I cannot cite an answer, it escalates to
 the maintainer unanswered.</p>
 
+<h3>Check a phase before it runs</h3>
+<p>As the <strong>watchdog</strong>, I want to read each phase before its first step, so that a
+phase whose own fields are wrong is flagged before four hours are spent on it.</p>
+<p><em>Given</em> a phase whose <code>Files:</code> names two packages, <em>when</em> I read the
+phase and the tree and derive that a third package must change, <em>then</em> a warning naming the
+disagreement appears in the TUI and the run report before the planning session opens, and the phase
+still runs.</p>
+
 <h2 id="v1">The v1 line</h2>
 
-<p>v1 ships eighteen of the nineteen: everything that makes a run survivable, everything that keeps
-a person out of it unnecessarily, and all three watchdog capabilities — because a watchdog that can
-see but not act is the version that produces warnings nobody can do anything with. What waits is
-everything that widens the loop rather than closing it.</p>
+<p>v1 ships nineteen of the twenty-one: everything that makes a run survivable, everything that
+keeps a person out of it unnecessarily, and all four watchdog capabilities — because a watchdog that
+can see but not act is the version that produces warnings nobody can do anything with. What waits
+is everything that widens the loop rather than closing it.</p>
 
 <table>
   <tr><th>Ships in v1</th><th>Deferred</th></tr>
   <tr><td><em>Run every remaining phase of a plan</em> · <em>Resume a run that stopped</em> · <em>See where a run is</em> · <em>Stop a run without losing work</em></td>
       <td><em>Add a provider the driver has never seen</em> — the block is read and validated in v1, but only the two shipped kinds are exercised</td></tr>
-  <tr><td><em>Choose the agent for each step</em> · <em>Try a different provider for one run</em> · <em>Override the prompts for this project</em> · <em>Add a step to every phase</em></td>
+  <tr><td><em>Choose the agent for each step</em> · <em>Try a different provider for one run</em> · <em>Override the prompts for this project</em> · <em>Add a step to every phase</em> · <em>Review each phase with every configured reviewer</em></td>
       <td>Concurrent phases: a phase is the scheduling unit from day one, so waves are a scheduler change rather than a rewrite (<a href="#adr-11">ADR-11</a>)</td></tr>
   <tr><td><em>Be told when a run halts</em> · <em>Answer an agent's question without leaving the loop</em> · <em>Close a blocking plan decision at startup</em> · <em>Pre-authorise the blockers worth fixing automatically</em></td>
       <td>Any source other than <code>todo.md</code> (<a href="#adr-21">ADR-21</a>)</td></tr>
-  <tr><td><em>Report a step's outcome so the driver can act</em> · <em>Ask the person a question</em> · <em>Fan out reviewers using my own mechanism</em></td>
+  <tr><td><em>Report a step's outcome so the driver can act</em> · <em>Ask the person a question</em></td>
       <td>Drift-watching — the watchdog noticing that one phase contradicts another. Same machinery, but it produces nothing on most phases, and "watched and found nothing" cannot be told from "watched badly" until there are rows</td></tr>
-  <tr><td><em>Halt a step that has gone the wrong way</em> · <em>Fix what is blocking a step</em> · <em>Answer from the whole run's context</em></td>
-      <td></td></tr>
+  <tr><td><em>Halt a step that has gone the wrong way</em> · <em>Fix what is blocking a step</em> · <em>Answer from the whole run's context</em> · <em>Check a phase before it runs</em></td>
+      <td><em>Fan out reviewers using my own mechanism</em> — the driver opens one workspace per reviewer itself (<a href="#adr-54">ADR-54</a>); revisit when a provider's own parallel review is measurably wider than that</td></tr>
 </table>
 
 <p>The line falls there because everything deferred assumes the loop already works. Waves need a
@@ -479,12 +505,14 @@ nobody has run to the end.</p>
 <p>Adding a step ships in v1 even though it widens the pipeline, because it costs almost nothing once
 the three shipped steps are themselves entries in a list rather than three hard-wired calls — and
 that list is what keeps the loop from being edited every time a project wants one more pass
-(<a href="#adr-45">ADR-45</a>).</p>
+(<a href="#adr-45">ADR-45</a>). The phase check ships for the opposite reason: it closes the loop
+rather than widening it, and it costs one read per phase in a pane that is already open
+(<a href="#adr-53">ADR-53</a>).</p>
 </section>
 
 <section id="p2">
 <h2 class="part" id="p2-h"><span class="pnum">Part 2</span> Domain</h2>
-<p class="lede">The driver owns a run, its steps, the sessions they run in, and now the traffic that flows back — questions, signals, remedies. Everything about the work itself is produced elsewhere and only read: a step is asked to produce an artifact, and the repository is asked whether it did. Making a question an explicit state is what lets the rest of it be strict — silence now means a session that has gone quiet without asking for anything, which is a narrow and genuinely suspicious thing.</p>
+<p class="lede">The driver owns a run, its steps, the sessions they run in, and the traffic that flows back — questions, signals, remedies. Everything about the work itself is produced elsewhere and only read: a step is asked to produce an artifact, and the repository is asked whether it did. The review is the one step with several sessions at once, all reading and none writing, and a phase is checked by the watchdog before its first step. Making a question an explicit state is what lets the rest be strict — silence now means a session that has gone quiet without asking for anything, which is a narrow and genuinely suspicious thing.</p>
 
 <h2 id="model">Domain model</h2>
 
@@ -503,7 +531,7 @@ to be written and never writes it either.</p>
   <tr><td><code>StepKind</code></td><td>A named step in the phase pipeline: its prompt, its config row and the evidence check that judges it</td><td>ours</td><td>its name in the <code>pipeline</code> list of <code>.r-loop/config.yaml</code></td></tr>
   <tr><td><code>Session</code></td><td>A herdr workspace with one agent live in its root pane</td><td>ours</td><td>herdr workspace id and agent name</td></tr>
   <tr><td><code>Provider</code></td><td>A named agent the driver can start, and how to start it</td><td>ours</td><td>its name in <code>providers.*</code>, and the herdr <code>kind</code> it maps to</td></tr>
-  <tr><td><code>StepPrompt</code></td><td>A rendered prompt — a template plus this step's variables and its fan-out expansion</td><td>ours</td><td>template path plus the step it was rendered for</td></tr>
+  <tr><td><code>StepPrompt</code></td><td>A rendered prompt — a template plus this step's variables</td><td>ours</td><td>template path plus the step it was rendered for</td></tr>
   <tr><td><code>RunState</code></td><td>The on-disk record of what the run has done, in <code>.r-loop/</code></td><td>ours</td><td>run id</td></tr>
   <tr><td><code>Landing</code></td><td>The record of one phase merged: the gate result, the merge commit, the ticks</td><td>ours</td><td>merge commit sha</td></tr>
   <tr><td><code>LoopConfig</code></td><td>The resolved settings for this run — per step, plus the provider blocks</td><td>ours</td><td>the file it was read from, and the run id it was resolved for</td></tr>
@@ -512,7 +540,7 @@ to be written and never writes it either.</p>
   <tr><td><code>Remedy</code></td><td>A proposed repair: its class, the exact command, how it was authorised, what it returned</td><td>ours</td><td>the signal that prompted it</td></tr>
   <tr><td><code>Phase</code></td><td>A <code>### Phase N</code> block with its <code>Files:</code>, <code>Risk:</code> and <code>Done when:</code></td><td><strong>copy</strong> — owned by the todo, written by <code>/r:spec-design</code>; r-loop parses the format itself (<a href="#adr-43">ADR-43</a>)</td><td>phase number within its todo</td></tr>
   <tr><td><code>PhasePlan</code></td><td>The phase plan at <code>.task-plans/&lt;slug&gt;.md</code></td><td><strong>copy</strong> — written by the planning step, read by the implement step</td><td>its path, which travels with the branch</td></tr>
-  <tr><td><code>Verdict</code></td><td>What the review step reported about the diff</td><td><strong>copy</strong> — written by the review session</td><td>the step that produced it</td></tr>
+  <tr><td><code>Verdict</code></td><td>What the reviewers reported about the diff, and the verdict the fix session gave each finding</td><td><strong>copy</strong> — written by the reviewer sessions and the fix session</td><td>the step that produced it</td></tr>
 </table>
 
 <figure class="svg-figure">
@@ -678,11 +706,13 @@ skip recorded in the run report, never a silent pass. <em>Source: 33 recorded
 <code>/r:task-review</code> runs returned <code>build: "n/a"</code>, 31 of them over trees carrying
 42k added lines. Configurable: no.</em></p>
 
-<p><strong>One live session per run.</strong> When the driver is asked to spawn a step, if a
-session for this run is already live, it refuses and exits non-zero, per run; on violation nothing
-is spawned and the existing session is named. <em>Source: the serial design — two sessions in one
-run would write the same worktree. Configurable: no in v1; the cap becomes
-<code>steps.fanout.maxUnits</code> when waves land.</em></p>
+<p><strong>One live step per run.</strong> When the driver is asked to spawn a step, if a session
+for another step of this run is already live, it refuses and exits non-zero, per run; on violation
+nothing is spawned and the existing session is named. The review step's reviewer workspaces are the
+one place two sessions are live at once: they open together on the same branch, and none of them
+writes (<a href="#adr-54">ADR-54</a>). <em>Source: the serial design — two writers in one run would
+write the same worktree. Configurable: no in v1; the cap becomes <code>steps.fanout.maxUnits</code>
+when waves land.</em></p>
 
 <p><strong>Code and ticks land as one commit.</strong> When a phase lands, if the merge commit does
 not carry both the phase's code and its ticked checkboxes, the driver refuses the landing, per
@@ -709,17 +739,24 @@ a step in that state is ever killed by a timer — the run halts rather than dis
 <em>Source: a step killed for asking teaches every future step to guess instead. Configurable:
 no.</em></p>
 
-<p><strong>A degraded fan-out is named.</strong> When a prompt containing
-<code>{{agent:…}}</code> is rendered for a provider whose block declares
-<code>fanout: none</code>, the expansion becomes a sequential list and the degradation is written
-to the run report and the step's log line, per step; on violation — that is, if the report cannot
-be written — the step is not spawned. <em>Source: a review that silently collapses to one reader
-reads exactly like a review that ran. Configurable: no.</em></p>
+<p><strong>Every configured reviewer reads every phase.</strong> When a review step starts, if any
+reviewer named in <code>steps.review.reviewers</code> cannot be started — its workspace fails to
+open, or its provider declares no native reviewer — the driver records the step <code>failed</code>,
+per step; on violation the run halts naming the reviewer, and no fix session opens. <em>Source: a
+review that silently ran with fewer readers reads exactly like one that ran with all of them.
+Configurable: the list, yes; the rule, no.</em></p>
+
+<p><strong>Every finding gets a verdict.</strong> When the fix session writes its sentinel, if the
+verdict record does not carry a verdict — real, not real, out of scope — and a severity for every
+finding the reviewers wrote, the driver records the step <code>failed</code>, per step; on violation
+the run halts naming the first finding without one. <em>Source: the pack measures roughly a third
+of <code>code-quality</code> findings as dismissed at triage, and a dismissal has to be visible to
+be checked. Configurable: no.</em></p>
 
 <h2 id="flows">Key flows</h2>
 
-<p>Five flows, three of which end badly. The first is drawn because it contains the branch the
-other four are variations of.</p>
+<p>Eight flows, four of which end badly. The first is drawn because it contains the branch the
+others are variations of.</p>
 
 <figure class="svg-figure">
 <svg viewBox="0 0 880 540" role="img" aria-label="One phase, with the question path and the watchdog halt">
@@ -834,11 +871,23 @@ the last recorded step and re-runs it; a phase whose planning step completed is 
 The one case it refuses is a worktree holding changes no step recorded — that tree is neither safe
 to build on nor safe to discard, and the run stops for a person.</p>
 
-<h4>A provider cannot fan out</h4>
-<p>A review step is configured to a provider whose block declares <code>fanout: none</code>. The
-rendered prompt lists the reviewers sequentially instead, the step runs, and the run report carries
-the degradation against that phase. The phase still lands if its gate passes — the review happened,
-narrower than intended, and the report is what says so.</p>
+<h4>The watchdog checks a phase</h4>
+<p>Before a phase's first step, the driver hands the watchdog the phase block and the tree. The
+watchdog derives which files must change and how deep the cut is, compares that with the phase's
+<code>Files:</code> and <code>Risk:</code>, and when they disagree emits a warn signal naming the
+difference. The warning shows in the TUI and lands in the report; the planning session opens
+regardless. It cannot halt on this, and it cannot rewrite the fields
+(<a href="#adr-53">ADR-53</a>). With <code>--no-watchdog</code> the check is a named skip.</p>
+
+<h4>A phase is reviewed</h4>
+<p>One workspace opens per reviewer in <code>steps.review.reviewers</code>, all at once, on the
+phase branch — <code>claude</code> runs <code>/code-review</code>, <code>codex</code> runs
+<code>/review</code> — each report-only, each writing the findings file the driver named. The
+driver waits for every sentinel and every file. A fix session then opens on the implement row
+(<a href="#adr-25">ADR-25</a>), reads every findings file, gives each finding a verdict and a
+severity, fixes only those it marks real at P1 or P2, records the verdicts, and writes its
+sentinel. The step is <code>ok</code> when the verdict record is complete and every fixed finding
+is in the diff (<a href="#adr-54">ADR-54</a>).</p>
 </section>
 
 <section id="p3">
@@ -944,15 +993,16 @@ characteristic constrains the direction a model may push, not whether one is pre
       would hold, the land gate deliberately builds a second time, and the watchdog is alive for the
       whole run rather than for one step.</li>
   <li><strong>Review depth matching the pack's Workflows.</strong> One step does not reproduce a
-      fan-out of fifteen measured tracks. Running each provider's own native reviewer
-      (<a href="#adr-23">ADR-23</a>) buys part of it back; it does not buy all of it, and pretending
+      fan-out of fifteen measured tracks. Running every configured provider's own native reviewer at
+      once (<a href="#adr-23">ADR-23</a>, <a href="#adr-54">ADR-54</a>) buys part of it back; it does
+      not buy all of it, and pretending
       otherwise would be the one claim this document must not make (<a href="#adr-4">ADR-4</a>).</li>
 </ul>
 </section>
 
 <section id="p4">
 <h2 class="part" id="p4-h"><span class="pnum">Part 4</span> Logical components</h2>
-<p class="lede">Thirteen components, each owning at most one thing, and only one of them decides anything. Two exist so the driver stands on its own and grows without edits: one reads the plan format itself, one turns the phase pipeline into a list. Four exist to keep a single boundary enforceable in code rather than asked for in a prompt: where a signal that would move the run forward is rejected, and where the remedy allow-list lives. Nothing here owns the phase, the plan or the verdict, because a component that wrote one would be competing with the tool or the agent that already does.</p>
+<p class="lede">Thirteen components, each owning at most one thing, and only one of them decides anything. Two exist so the driver stands on its own and grows without edits: one reads the plan format itself, one turns the phase pipeline into a list. Four exist to keep a single boundary enforceable in code rather than asked for in a prompt: where a signal that would move the run forward is rejected, where the remedy allow-list lives, and where each phase is handed to the watchdog before it runs. The session manager is the one component that opens several workspaces at once — the reviewers — and joins them. Nothing here owns the phase, the plan or the verdict, because a component that wrote one would be competing with the tool or the agent that already does.</p>
 
 <h2 id="cut">The component cut</h2>
 
@@ -979,23 +1029,24 @@ characteristic constrains the direction a model may push, not whether one is pre
       <td><code>RunLoop</code> · <code>PromptRenderer</code></td>
       <td>Extensibility; <em>Add a step to every phase</em></td></tr>
   <tr><td><code>SessionManager</code></td>
-      <td>Opens a workspace, starts the agent, delivers the prompt, watches the agent's state</td>
+      <td>Opens a workspace, starts the agent, delivers the prompt, watches the agent's state; for
+          the review step opens one workspace per reviewer at once and waits for all of them</td>
       <td><code>Session</code></td>
       <td><code>RunLoop</code></td>
-      <td>Observability; <em>See where a run is</em></td></tr>
+      <td>Observability; <em>See where a run is</em>; <em>Review each phase with every configured
+          reviewer</em></td></tr>
   <tr><td><code>ProviderRegistry</code></td>
-      <td>Resolves a step's provider to a herdr kind, its flags, its completion signal and its
-          fan-out capability</td>
+      <td>Resolves a step's provider to a herdr kind, its flags, its completion signal and, where
+          it has one, its native review command</td>
       <td><code>Provider</code></td>
       <td><code>SessionManager</code> · <code>PromptRenderer</code></td>
       <td>Extensibility; <em>Add a provider the driver has never seen</em></td></tr>
   <tr><td><code>PromptRenderer</code></td>
-      <td>Renders a step template with this step's variables, expanding the fan-out for the
-          resolved provider</td>
+      <td>Renders a step template with this step's variables — the phase block, the paths, the
+          sentinel — for the resolved provider</td>
       <td><code>StepPrompt</code></td>
       <td><code>RunLoop</code></td>
-      <td><em>Fan out reviewers using my own mechanism</em>; <em>Override the prompts for this
-          project</em></td></tr>
+      <td><em>Override the prompts for this project</em>; <em>Add a step to every phase</em></td></tr>
   <tr><td><code>LandGate</code></td>
       <td>Runs the phase's <code>Done when:</code>, merges, ticks, commits, and checks the
           milestone boundary</td>
@@ -1015,11 +1066,13 @@ characteristic constrains the direction a model may push, not whether one is pre
       <td><em>Ask the person a question</em>; <em>Answer an agent's question without leaving the
           loop</em></td></tr>
   <tr><td><code>Watch</code></td>
-      <td>Runs the registered deterministic anomaly checks, receives the watchdog's signals, rejects anything
-          that would move the run forward, and routes warnings and halts</td>
+      <td>Runs the registered deterministic anomaly checks, hands the watchdog each phase to check
+          before its first step, receives the watchdog's signals, rejects anything that would move
+          the run forward, and routes warnings and halts</td>
       <td><code>Signal</code></td>
       <td><code>RunLoop</code> · <code>Ui</code></td>
-      <td>Determinism of approval; <em>Halt a step that has gone the wrong way</em></td></tr>
+      <td>Determinism of approval; <em>Halt a step that has gone the wrong way</em>; <em>Check a
+          phase before it runs</em></td></tr>
   <tr><td><code>Remedies</code></td>
       <td>Checks a proposed remedy against the allow-list or asks, records the exact command, and
           restarts or retries the step afterwards</td>
@@ -1082,10 +1135,10 @@ same component.</p>
   <g>
     <rect x="30" y="168" width="176" height="74" rx="5" class="s-fill" stroke="#D1CFC5"/>
     <text x="44" y="192" class="lbl-hd">PromptRenderer</text><text x="44" y="212" class="lbl-sm">owns StepPrompt</text>
-    <text x="44" y="230" class="lbl-sm">expands {{agent:…}}</text>
+    <text x="44" y="230" class="lbl-sm">phase · paths · sentinel</text>
     <rect x="240" y="168" width="176" height="74" rx="5" class="s-fill" stroke="#D1CFC5"/>
     <text x="254" y="192" class="lbl-hd">SessionManager</text><text x="254" y="212" class="lbl-sm">owns Session</text>
-    <text x="254" y="230" class="lbl-sm">spawn · watch · stop</text>
+    <text x="254" y="230" class="lbl-sm">spawn · join · stop</text>
     <rect x="450" y="168" width="176" height="74" rx="5" class="s-fill" stroke="#D1CFC5"/>
     <text x="464" y="192" class="lbl-hd">LandGate</text><text x="464" y="212" class="lbl-sm">owns Landing</text>
     <text x="464" y="230" class="lbl-sm">Done when · merge · tick</text>
@@ -1295,6 +1348,10 @@ a different release cadence or a different blast radius; it is one sequence over
   <tr><td>step → step</td><td>asynchronous, through disk only — the phase plan, the branch, the
           sentinel</td>
       <td>separate processes with no shared memory, by construction</td></tr>
+  <tr><td><code>SessionManager</code> → the reviewer workspaces</td><td>asynchronous — spawn all
+          at once, poll each, join on the last sentinel</td>
+      <td>the only concurrency in v1, and safe because every reviewer is read-only over one branch
+          (<a href="#adr-54">ADR-54</a>)</td></tr>
   <tr><td>a session → <code>AskServer</code></td><td>MCP, synchronous from the caller's view</td>
       <td>the call blocks until answered, which is what makes <code>waiting-input</code> a real
           state rather than a guess about silence</td></tr>
@@ -1374,7 +1431,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Fifty-two decisions, each with the alternative that was live at the time; two are superseded and kept in place, and five are amended by the move to a repository of its own. Five carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running each provider's own reviewer, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; and the three-tier rule that lets a watchdog veto and remedy but never approve. The last ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those.</p>
+<p class="lede">Fifty-five decisions, each with the alternative that was live at the time; five are superseded and kept in place, and seven are amended by later ones. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the three-tier rule that lets a watchdog veto and remedy but never approve; and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. The last three were made in a review of decisions earlier rounds had taken by default.</p>
 
 <div id="adr-index">
 
@@ -1460,7 +1517,7 @@ every step can run on any agent.</p>
 
 <div class="adr">
 <h3 id="adr-5">ADR-5 — Fan-out is templated in the prompt and expanded per provider</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> <strong>superseded by <a href="#adr-54">ADR-54</a></strong> — the driver opens one workspace per reviewer itself; no prompt carries a placeholder and no provider declares a fan-out capability</p>
 <p><span class="f">Context</span> <a href="#adr-4">ADR-4</a> removes the pack's fan-out, and a
 review by one reader is materially narrower. Providers do have their own parallel mechanisms, but
 no two share an API.</p>
@@ -1479,7 +1536,7 @@ every provider must now declare a fan-out capability — which creates the failu
 
 <div class="adr">
 <h3 id="adr-6">ADR-6 — A provider is a config block, not driver code</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-54">ADR-54</a> — the block declares a native review command where it has one, and no fan-out capability</p>
 <p><span class="f">Context</span> <em>Portability across agents</em> sets the target at one config
 block and zero driver lines. herdr already supports 23 agent kinds, so the driver cannot ship a
 branch per agent and stay honest about the claim.</p>
@@ -1513,7 +1570,7 @@ same template — that is a shipped prompt that is wrong.</p>
 
 <div class="adr">
 <h3 id="adr-8">ADR-8 — <code>fanout: none</code> is a named degradation, never a silent one</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> <strong>superseded by <a href="#adr-54">ADR-54</a></strong> — there is no fan-out capability left to degrade; the rule it protected survives as the invariant that every configured reviewer reads every phase</p>
 <p><span class="f">Context</span> A review that collapses to one reader produces a report that looks
 exactly like a review that fanned out. The pack has the same failure recorded elsewhere: a blocked
 track written into findings reads as 100% precision.</p>
@@ -1582,7 +1639,7 @@ twice serially.</p>
 
 <div class="adr">
 <h3 id="adr-12">ADR-12 — No verifier agent: the plan already states what a verifier would derive</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-43">ADR-43</a> — when waves come, <code>PlanReader</code> computes the concurrency verdict from the same fields in Go; the pack's scripts are not called</p>
+<p><span class="f">Status</span> <strong>superseded by <a href="#adr-53">ADR-53</a></strong> — the watchdog checks each phase before it runs and may warn; what stands is that the concurrency verdict, when waves come, is computed from the plan's fields in Go (<a href="#adr-43">ADR-43</a>), never by a model</p>
 <p><span class="f">Context</span> <code>/r:issues-fix</code> spends a parallel fan-out — one
 read-only agent per backlog item — deriving where a fix lands and how deep it cuts, and uses those
 to group items and partition them into waves. A <code>todo.md</code> phase already carries
@@ -1771,7 +1828,7 @@ a transport worth shipping.</p>
 
 <div class="adr">
 <h3 id="adr-23">ADR-23 — The review step runs each provider's native reviewer</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-54">ADR-54</a> — every configured reviewer runs, not only the step's provider — and by <a href="#adr-55">ADR-55</a> — every reviewer runs inside a session, so the two shapes named below collapse to one</p>
 <p><span class="f">Context</span> <a href="#adr-4">ADR-4</a> gave up the pack's measured review
 tracks. Both shipped providers have a real reviewer of their own: <code>codex review
 --uncommitted|--base</code> runs non-interactively, and Claude Code's <code>/code-review</code>
@@ -1791,7 +1848,7 @@ rule either way.</p>
 
 <div class="adr">
 <h3 id="adr-24">ADR-24 — The review step is always two halves: find, then fix</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-54">ADR-54</a> — the fix half judges first: every finding gets a verdict and a severity, and only the ones marked real at P1 or P2 are fixed</p>
 <p><span class="f">Context</span> The native reviewers are not symmetric — <code>codex review</code>
 only reports, while <code>/code-review --fix</code> can also apply.</p>
 <p><span class="f">Decision</span> Find and fix are separate halves on every provider: the native
@@ -2060,8 +2117,8 @@ standing against that.</p>
 <p><span class="f">Context</span> <a href="#adr-28">ADR-28</a> excludes an agent that cannot host an
 MCP server. Its steps can still run — they just cannot ask.</p>
 <p><span class="f">Decision</span> A provider declares <code>ask: none</code>; its steps run with no
-ask channel and the run report names it, exactly as <a href="#adr-8">ADR-8</a> does for
-fan-out.</p>
+ask channel and the run report names it, as <a href="#adr-8">ADR-8</a> did for fan-out while
+that capability existed.</p>
 <p><span class="f">Alternatives</span> Refuse such a provider — rejected, it would make a capable
 agent unusable over a channel most steps never use.</p>
 <p><span class="f">Consequences</span> A step on such a provider guesses where it would have asked,
@@ -2159,7 +2216,8 @@ add a step without changing and rebuilding the driver, which makes the seam a ma
 <p><span class="f">Consequences</span> A project can add a pass without a build, and the two-signal
 rule still holds, because a kind with no evidence check cannot be declared. The config schema grows
 a pipeline list and a check enum, and the loop gains one indirection. The review step's two halves
-(<a href="#adr-24">ADR-24</a>) stay one entry with two sessions, not two entries.</p>
+(<a href="#adr-24">ADR-24</a>) stay one entry — the reviewer workspaces and the fix session — not
+two entries.</p>
 <p><span class="f">Revisit when</span> a project needs a check that none of the shipped ones
 covers, twice.</p>
 </div>
@@ -2285,12 +2343,90 @@ a decision below Part 3 can now point at this row to justify an indirection.</p>
 runs — it was bought and never used.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-53">ADR-53 — The watchdog checks each phase before it runs, and may only warn</h3>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-12">ADR-12</a></p>
+<p><span class="f">Context</span> A phase's <code>Files:</code> and <code>Risk:</code> are written by
+<code>/r:spec-design</code> from the spec, before any code exists, and by phase five the tree may no
+longer match them. <a href="#adr-12">ADR-12</a> chose to trust them as written; in the decision
+review the maintainer chose an agent that verifies each phase instead. <em>Check a phase before it
+runs</em> (Part 1) and <em>determinism of approval</em> (Part 3) bound what that agent may do.</p>
+<p><span class="f">Decision</span> Before a phase's first step, the watchdog reads the phase block
+and the tree, derives which files must change and how deep the cut is, and emits a warn
+<code>Signal</code> naming any disagreement with the plan. The phase runs regardless.</p>
+<p><span class="f">Alternatives</span> No verifier, as <a href="#adr-12">ADR-12</a> stood —
+rejected by the maintainer. A separate pre-plan step kind in a fresh session, the recommended
+shape — rejected by the maintainer: one more session per phase for a job the watchdog's context
+already covers. One pass over every phase at run start — rejected: verdicts on late phases go
+stale as earlier ones land. Halting the phase on a mismatch — rejected: a false mismatch stops an
+unattended run until a person resumes it. Rewriting the plan's fields — rejected: a second writer
+to the plan file, and the driver's own checks would then trust values a model wrote.</p>
+<p><span class="f">Consequences</span> The watchdog pane must be up before phase one, so a
+<code>--no-watchdog</code> run skips the check with a named skip. A wrong plan still runs, with a
+warning in the TUI and the report. The check is judgement rather than a mechanical rule
+(<a href="#adr-33">ADR-33</a>), so its threshold lives in the watchdog's prompt with the rest.</p>
+<p><span class="f">Revisit when</span> a phase check warning was right and the phase failed anyway
+three times, or no warning has been right after ten plans.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-54">ADR-54 — The review is the driver's own fan-out: one workspace per reviewer, then one session to judge and fix</h3>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-5">ADR-5</a> and <a href="#adr-8">ADR-8</a> · amends <a href="#adr-23">ADR-23</a> and <a href="#adr-24">ADR-24</a></p>
+<p><span class="f">Context</span> <a href="#adr-5">ADR-5</a> put reviewer placeholders in the
+prompt and let each provider expand them its own way, and <a href="#adr-8">ADR-8</a> named the
+degradation when a provider had no way. In the decision review the maintainer chose a different
+shape, in these words: run one claude workspace with <code>/code-review</code> and one codex
+workspace with <code>/review</code>; they do not fix anything; they return a findings list; then
+judgement and fix of the relevant and real ones, P1 and P2 only. <em>Review each phase with every
+configured reviewer</em> (Part 1) and <em>evidence over autonomy</em> (Part 3).</p>
+<p><span class="f">Decision</span> <code>steps.review.reviewers</code> lists providers.
+<code>SessionManager</code> opens one workspace per entry at once on the phase branch; each runs
+its provider's native reviewer report-only and writes a findings file. When every file exists, a
+fix session on the implement row (<a href="#adr-25">ADR-25</a>) gives every finding a verdict and
+a severity, fixes only those it marks real at P1 or P2, and records the verdicts.</p>
+<p><span class="f">Alternatives</span> Placeholders expanded per provider
+(<a href="#adr-5">ADR-5</a>) — superseded: it depends on each provider's own parallel mechanism,
+which no two share and some lack. Driver workspaces only as the fallback for a provider with no
+mechanism, the recommended shape — rejected by the maintainer: two fan-out paths to keep working.
+One reviewer per phase — rejected: a single reader on every provider.</p>
+<p><span class="f">Consequences</span> The review is exactly as wide as the reviewer list and
+depends on no provider's fan-out. The driver gains its only concurrency in v1 — read-only
+workspaces over one branch — and a join. The findings formats differ by provider, so the fix
+session reads each file as written, with its reviewer named. A reviewer that cannot start fails
+the step rather than narrowing the review. The placeholders and the <code>fanout</code> capability
+leave the prompts and the config.</p>
+<p><span class="f">Revisit when</span> a provider's own parallel review is measurably wider than
+one workspace per reviewer, or the fix session dismisses more than half of one reviewer's findings
+across three runs.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-55">ADR-55 — Every review runs inside a session; there is no headless review step</h3>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-23">ADR-23</a></p>
+<p><span class="f">Context</span> <a href="#adr-23">ADR-23</a> accepted two step shapes because
+<code>codex review</code> runs headless. The maintainer pointed out that Codex CLI 0.154.0 also
+carries an interactive <code>/review</code> command, so its reviewer can run inside a herdr session
+like every other step. <em>See where a run is</em> (Part 1): a headless step was the one thing in
+the run with no workspace to watch.</p>
+<p><span class="f">Decision</span> A reviewer workspace is an ordinary <code>Session</code>. Its
+prompt tells the agent to run its native reviewer — <code>/code-review</code>,
+<code>/review</code> — and write the findings file; <code>providers.*.review</code> names that
+command.</p>
+<p><span class="f">Alternatives</span> Keep the headless subprocess for codex, as decided by default
+in round 11 — rejected by the maintainer: it was the one step the watchdog could see only once it
+had ended.</p>
+<p><span class="f">Consequences</span> One step shape, and the watchdog can read a reviewer session
+as it reads any other. A session is paid for where a subprocess would have done.</p>
+<p><span class="f">Revisit when</span> a provider worth using has a native reviewer that cannot run
+inside a session.</p>
+</div>
+
 </div>
 </section>
 
 <section id="p7">
 <h2 class="part" id="p7-h"><span class="pnum">Part 7</span> Technical details</h2>
-<p class="lede">Go renders it, herdr hosts the sessions, git holds the evidence, and MCP is the way back in. One block-style YAML file per project carries everything tunable — the phase pipeline, the per-step rows, the providers, the watchdog's allow-list and the notification hooks — over defaults built into the binary. The prompts are the product here, as they are in the skill-pack, and the watchdog's is the one carrying the most judgement. The binary needs nothing but Go to build and nothing from the skill-pack to run.</p>
+<p class="lede">Go renders it, herdr hosts the sessions, git holds the evidence, and MCP is the way back in. One block-style YAML file per project carries everything tunable — the phase pipeline, the per-step rows, the reviewer list, the providers, the watchdog's allow-list and the notification hooks — over defaults built into the binary. The prompts are the product here, as they are in the skill-pack, and the watchdog's is the one carrying the most judgement, now including the phase check. The binary needs nothing but Go to build and nothing from the skill-pack to run.</p>
 
 <h2 id="tech">Technologies</h2>
 
@@ -2321,16 +2457,16 @@ runs — it was bought and never used.</p>
       <td>One provider — herdr kind <code>claude</code></td>
       <td>the pack's existing agent, and the reference implementation of the adapter</td></tr>
   <tr><td>Codex CLI</td><td>0.154.0</td>
-      <td>One provider — herdr kind <code>codex</code>; its <code>codex review</code> is the
-          non-interactive native reviewer</td>
+      <td>One provider — herdr kind <code>codex</code>; its <code>/review</code> command is the
+          native reviewer, run inside the session</td>
       <td>a second vendor is what proves <a href="#adr-6">ADR-6</a> rather than asserting it</td></tr>
 </table>
 
-<p>The two native reviewers are not symmetric, which <a href="#adr-23">ADR-23</a> and
-<a href="#adr-24">ADR-24</a> exist to absorb: <code>codex review</code> takes
-<code>--uncommitted</code> or <code>--base &lt;branch&gt;</code> and runs headless, reporting only;
-Claude Code's <code>/code-review</code> is a skill that needs a session, and carries effort levels
-and a <code>--fix</code> this design deliberately does not use.</p>
+<p>Both native reviewers run inside a session (<a href="#adr-55">ADR-55</a>): Codex's
+<code>/review</code> and Claude Code's <code>/code-review</code>. Both report only here —
+<code>/code-review</code>'s <code>--fix</code> is deliberately not used
+(<a href="#adr-24">ADR-24</a>). Their findings formats differ, and the fix session reads each as
+written (<a href="#adr-54">ADR-54</a>).</p>
 
 <p><strong>What this rules out later.</strong> A self-contained Go binary shares no code with the
 skill-pack, so any rule both tools need — what a <code>## Resolve first</code> entry blocks, when a
@@ -2391,12 +2527,12 @@ steps:
     effort: medium
     timeout: 4h
   review:
-    prompt: review
-    check: verdict            # the find half runs on this row;
-    provider: claude          # the fix half runs on implement's row (ADR-25)
-    model: sonnet
-    effort: high
-    timeout: 2h
+    prompt: review            # delivered to every reviewer workspace
+    check: verdict            # every finding judged; every fixed one in the diff
+    reviewers:                # one workspace per entry, all at once (ADR-54)
+      - claude
+      - codex
+    timeout: 2h               # the fix half runs on implement's row (ADR-25)
 
 providers:                    # claude and codex ship built in; a block here adds or overrides one
   codex:
@@ -2404,9 +2540,8 @@ providers:                    # claude and codex ship built in; a block here add
     modelFlag: "-c model={model}"
     effortFlag: "-c model_reasoning_effort={effort}"
     doneSignal: sentinel
-    fanout: native            # native | sequential | none
     ask: mcp                  # mcp | none
-    review: "cmd:codex review --base {base}"
+    review: "/review"         # the native reviewer, run inside the session (ADR-55)
 
 watchdog:
   provider: claude
@@ -2438,9 +2573,11 @@ design, but the enforcement is not the surface.</p>
 
 <p>Prompts are embedded in the binary — <code>plan</code>, <code>implement</code>,
 <code>review</code>, <code>fix</code>, <code>milestone</code> and <code>watchdog</code> — each
-replaceable by a file of the same name under <code>.r-loop/prompts/</code>. A template receives the phase block, the plan
-path, the branch, the sentinel path and the acceptance criteria, and may contain
-<code>{{agent:&lt;name&gt;}}</code>, which the renderer expands for the resolved provider.</p>
+replaceable by a file of the same name under <code>.r-loop/prompts/</code>. A template receives the
+phase block, the plan path, the branch, the sentinel path and the acceptance criteria. The
+<code>review</code> prompt goes to every reviewer workspace and names that reviewer's findings
+path; the <code>fix</code> prompt receives every findings file; the <code>watchdog</code> prompt
+carries the phase check beside the rest of its judgement.</p>
 
 <p>Run state is <code>.r-loop/runs/</code>, ignored by git: one directory per run holding the resolved
 config, one record per step transition, the sentinel paths, the step logs, and — appended as they
@@ -2543,6 +2680,15 @@ accepted deliberately.</p>
       <td>Accepted in <a href="#adr-10">ADR-10</a>; the alternative is trusting a build that
           measurably did not run.</td>
       <td>a phase's gate build exceeds half the phase's wall time</td></tr>
+  <tr><td>Two reviewers' findings formats differ and the fix session misreads one</td><td>medium</td><td>medium</td>
+      <td>Accepted in <a href="#adr-54">ADR-54</a>. The fix prompt receives each file as written
+          with its reviewer named. If one format proves unreadable, that reviewer's prompt asks for
+          a fixed shape.</td>
+      <td>a finding fixed under the wrong severity, or dismissed unread</td></tr>
+  <tr><td>The phase check warns on every phase and is ignored</td><td>medium</td><td>low</td>
+      <td>Accepted in <a href="#adr-53">ADR-53</a>: warn only. Record each warning against whether
+          the phase then failed, and narrow the prompt from those rows.</td>
+      <td>warnings on three consecutive phases that then landed cleanly</td></tr>
 </table>
 
 <h2 id="assumptions">Assumptions</h2>
@@ -2562,9 +2708,15 @@ accepted deliberately.</p>
       <td>the first step kind that produces no artifact</td></tr>
   <tr><td>The six-month failure is "a step reported ok over a tree the next step did not
           recognise"</td>
-      <td>the pre-mortem was offered twice and skipped; this is the failure the two-signal rule is
-          built against</td>
+      <td>the pre-mortem was offered three times and skipped; this is the failure the two-signal
+          rule is built against</td>
       <td>if the real risk is provider-CLI drift instead, the defences are in the wrong place</td>
+      <td>one sentence from the maintainer</td></tr>
+  <tr><td>The last time the prose loop went wrong, a returned workflow was read as a pass and
+          merged</td>
+      <td>the question was offered three times and skipped; it is the failure the land gate is
+          built against</td>
+      <td>if the real failure was context loss or a hang, the defences sit at the wrong step</td>
       <td>one sentence from the maintainer</td></tr>
   <tr><td>The CLI surface designed before the provider-agnostic turn still fits</td>
       <td><code>--provider</code>, <code>--plain</code> and <code>--no-watchdog</code> were added;
