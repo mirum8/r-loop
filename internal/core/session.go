@@ -46,6 +46,17 @@ type Session struct {
 	Workspace, Pane, Agent, Sentinel string
 	Reviewer                         string
 	OpenQuestion, Reviewing          atomic.Bool
+	fix                              *fixHalf
+}
+
+type fixHalf struct {
+	verdictPath, roundTree string
+	findings               []string
+	spent                  time.Duration
+}
+
+type FindingsFile struct {
+	Reviewer, Path string
 }
 
 type Observer interface {
@@ -60,6 +71,8 @@ type Outcome struct {
 	Session *Session
 	Stalled bool
 	Halted  bool
+	Warning string
+	active  time.Duration
 }
 
 func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, error) {
@@ -186,6 +199,9 @@ func (m *SessionManager) waitAll(ctx context.Context, sessions []*Session, obs O
 	watches := make([]*watch, len(sessions))
 	for i, s := range sessions {
 		watches[i] = &watch{s: s, obs: obs}
+		if s.fix != nil {
+			watches[i].elapsed = s.fix.spent
+		}
 	}
 	pending := len(sessions)
 	last := m.now()
@@ -208,6 +224,7 @@ func (m *SessionManager) waitAll(ctx context.Context, sessions []*Session, obs O
 				continue
 			}
 			if out, done := m.tick(w, now, dt); done {
+				out.active = w.elapsed
 				outs[i], watches[i] = out, nil
 				pending--
 			}
@@ -234,7 +251,11 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 		return Outcome{}, false
 	}
 	w.elapsed += dt
-	if timeout := s.Ref.Kind.Row.Timeout; timeout > 0 && w.elapsed > timeout {
+	timeout := s.Ref.Kind.Row.Timeout
+	if s.fix != nil {
+		timeout = s.Ref.Kind.Row.ReviewTimeout
+	}
+	if timeout > 0 && w.elapsed > timeout {
 		return m.fail(s, "backstop "+timeout.String()), true
 	}
 	switch state {
@@ -300,6 +321,14 @@ func (m *SessionManager) judge(s *Session, sentinel Sentinel, sErr error) Outcom
 	}
 	if head != s.StartSHA {
 		return m.fail(s, "step committed before review")
+	}
+	if f := s.fix; f != nil {
+		ctx := m.evidence(s)
+		ctx.VerdictPath, ctx.RoundTree, ctx.FindingsFiles = f.verdictPath, f.roundTree, f.findings
+		if ok, missing := verdictCheck(ctx); !ok {
+			state, reason := Judge(sentinel, nil, false, missing)
+			return Outcome{State: state, Reason: reason, Session: s}
+		}
 	}
 	check, found := LookupCheck(s.Ref.Kind.Check)
 	if !found {

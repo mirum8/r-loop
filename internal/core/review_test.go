@@ -19,17 +19,26 @@ type reviewRig struct {
 	behave   func(vars map[string]any)
 	resolved [][]string
 	noReview map[string]bool
+	fixes    []map[string]any
+	onFix    func(vars map[string]any)
 }
 
 func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
 	r := &reviewRig{rig: newRig(t), noReview: map[string]bool{}}
 	r.sm.Prompts = promptsFunc(func(name string, vars map[string]any) (string, string, error) {
-		if name != "review" {
+		if name != "review" && name != "fix" {
 			return "do phase 3", "embedded", nil
 		}
 		copied := make(map[string]any, len(vars))
 		for k, v := range vars {
 			copied[k] = v
+		}
+		if name == "fix" {
+			r.fixes = append(r.fixes, copied)
+			if r.onFix != nil {
+				r.onFix(copied)
+			}
+			return fmt.Sprintf("fix r%d", vars["Round"]), "embedded", nil
 		}
 		r.reviews = append(r.reviews, copied)
 		if r.behave != nil {
@@ -106,11 +115,16 @@ func writeReview(t *testing.T, vars map[string]any, outcome string, findings int
 func TestReviewSplitsStartsThenPromptsAndReusesPanesWithFreshAgentsInRound2(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
 	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
 		findings := 0
 		if vars["Round"] == 1 {
 			findings = 1
 		}
 		writeReview(t, vars, "ok", findings)
+	}
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("claude-r1-1", "real", "P1", true, ""), entry("codex-r1-1", "real", "P2", true, ""))
 	}
 
 	out := r.run()
@@ -132,6 +146,13 @@ func TestReviewSplitsStartsThenPromptsAndReusesPanesWithFreshAgentsInRound2(t *t
 		"Store.Append run-1 event",
 		"Repo.Snapshot " + wt,
 		"Repo.TreeDiff tree-start tree-start",
+		`SessionHost.Prompt rloop-p3-implement "fix r1" false 0s`,
+		"Repo.Snapshot " + wt,
+		"Repo.TreeDiff tree-start tree-start",
+		"Repo.Snapshot " + wt,
+		"Repo.TreeDiff tree-start tree-start",
+		"Store.Append run-1 event",
+		"Store.Append run-1 event",
 		"Repo.Snapshot " + wt,
 		"Store.Append run-1 event",
 		"SessionHost.Interrupt rloop-p3-implement-rv-claude-r1",
@@ -164,11 +185,16 @@ func TestReviewSplitsStartsThenPromptsAndReusesPanesWithFreshAgentsInRound2(t *t
 func TestReviewPromptVariablesPerRound(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "codex"})
 	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
 		findings := 0
 		if vars["Round"] == 1 {
 			findings = 2
 		}
 		writeReview(t, vars, "ok", findings)
+	}
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("codex-r1-1", "real", "P1", true, ""), entry("codex-r1-2", "out-of-scope", "P3", false, ""))
 	}
 
 	r.run()

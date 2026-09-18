@@ -297,14 +297,6 @@ func TestReadFindingsParsesTheFile(t *testing.T) {
 	}
 }
 
-func TestVerdictCheckIsAStub(t *testing.T) {
-	ok, missing := runCheck(t, "verdict", EvidenceContext{})
-
-	if ok || missing != "verdict check not built yet" {
-		t.Fatalf("ok = %v, missing = %q", ok, missing)
-	}
-}
-
 func TestPlanAssumptions(t *testing.T) {
 	for name, tc := range map[string]struct {
 		plan string

@@ -226,6 +226,10 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 		if aborted || out.State != StepOK {
 			return kind.Name, out, aborted
 		}
+		if out.Warning != "" {
+			l.emit(Event{Kind: "warning", Phase: n, Step: kind.Name, Fields: map[string]string{"reason": out.Warning}})
+			l.fire(l.Hooks.OnWarn, "warning", n, kind.Name, out.Warning)
+		}
 		l.advance(n, kind.Name)
 		if kind.Name == "plan" && out.Session != nil {
 			planPath, _ := ref.Vars["PlanPath"].(string)
@@ -711,7 +715,7 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 		"Rounds":          0,
 		"ReviewCommand":   "",
 		"FindingsPath":    "",
-		"FindingsFiles":   "",
+		"FindingsFiles":   []FindingsFile(nil),
 		"PriorFindings":   "",
 		"PriorVerdicts":   "",
 		"RoundTree":       "",

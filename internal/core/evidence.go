@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -31,7 +33,7 @@ var (
 		"diff":      diffCheck,
 		"report":    reportCheck,
 		"findings":  findingsCheck,
-		"verdict":   func(EvidenceContext) (bool, string) { return false, "verdict check not built yet" },
+		"verdict":   verdictCheck,
 	}
 )
 
@@ -264,6 +266,140 @@ func checkFindingsFile(fsys fs.FS, p string) string {
 			return fmt.Sprintf("%s: duplicate id %s", p, fd.ID)
 		}
 		seen[fd.ID] = true
+	}
+	return ""
+}
+
+type Verdict struct {
+	Findings []VerdictEntry `json:"findings"`
+}
+
+type VerdictEntry struct {
+	ID       string   `json:"id"`
+	Reviewer string   `json:"reviewer"`
+	Title    string   `json:"title"`
+	Verdict  string   `json:"verdict"`
+	Severity string   `json:"severity"`
+	Fixed    bool     `json:"fixed"`
+	Files    []string `json:"files"`
+	Evidence string   `json:"evidence"`
+}
+
+func (e VerdictEntry) blocking() bool {
+	return e.Verdict == "real" && (e.Severity == "P1" || e.Severity == "P2")
+}
+
+var (
+	verdicts   = []string{"real", "not-real", "out-of-scope"}
+	severities = []string{"P1", "P2", "P3", "P4"}
+	pathLine   = regexp.MustCompile(`^[^\s:]+:\d+$`)
+)
+
+func ReadVerdict(path string) (Verdict, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Verdict{}, err
+	}
+	var v Verdict
+	if err := json.Unmarshal(data, &v); err != nil {
+		return Verdict{}, errors.New("unreadable")
+	}
+	for i, e := range v.Findings {
+		switch {
+		case e.ID == "":
+			return Verdict{}, fmt.Errorf("entry %d has no id", i+1)
+		case e.Verdict == "":
+			return Verdict{}, fmt.Errorf("entry %s has no verdict", e.ID)
+		case !slices.Contains(verdicts, e.Verdict):
+			return Verdict{}, fmt.Errorf("entry %s has verdict %q", e.ID, e.Verdict)
+		case e.Severity == "":
+			return Verdict{}, fmt.Errorf("entry %s has no severity", e.ID)
+		case !slices.Contains(severities, e.Severity):
+			return Verdict{}, fmt.Errorf("entry %s has severity %q", e.ID, e.Severity)
+		}
+	}
+	return v, nil
+}
+
+func verdictCheck(ctx EvidenceContext) (bool, string) {
+	var ids []string
+	for _, p := range ctx.FindingsFiles {
+		f, err := ReadFindings(p)
+		if err != nil {
+			return false, filepath.Base(p) + ": " + err.Error()
+		}
+		for _, fd := range f.Findings {
+			ids = append(ids, fd.ID)
+		}
+	}
+	v, err := ReadVerdict(ctx.VerdictPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, "no verdict at " + filepath.Base(ctx.VerdictPath)
+	}
+	if err != nil {
+		return false, filepath.Base(ctx.VerdictPath) + ": " + err.Error()
+	}
+	seen := map[string]bool{}
+	for _, e := range v.Findings {
+		switch {
+		case !slices.Contains(ids, e.ID):
+			return false, "verdict for unknown finding " + e.ID
+		case seen[e.ID]:
+			return false, "finding " + e.ID + " has two verdicts"
+		}
+		seen[e.ID] = true
+	}
+	for _, id := range ids {
+		if !seen[id] {
+			return false, "no verdict for finding " + id
+		}
+	}
+	var changed []string
+	for _, e := range v.Findings {
+		if missing := checkEntry(ctx, e, &changed); missing != "" {
+			return false, missing
+		}
+	}
+	return true, ""
+}
+
+func checkEntry(ctx EvidenceContext, e VerdictEntry, changed *[]string) string {
+	if e.Verdict == "not-real" {
+		if !pathLine.MatchString(e.Evidence) {
+			return "not-real finding " + e.ID + " has no path:line evidence"
+		}
+		p := e.Evidence[:strings.LastIndex(e.Evidence, ":")]
+		if _, err := fs.Stat(ctx.FS, p); err != nil {
+			return "evidence " + e.Evidence + " of " + e.ID + " is not in the worktree"
+		}
+	}
+	if !e.Fixed {
+		if e.blocking() {
+			return fmt.Sprintf("real %s finding %s is not fixed", e.Severity, e.ID)
+		}
+		return ""
+	}
+	if !e.blocking() {
+		return "fixed finding " + e.ID + " is not real at P1 or P2"
+	}
+	if len(e.Files) == 0 {
+		return "fixed finding " + e.ID + " names no files"
+	}
+	if *changed == nil {
+		now, err := ctx.Repo.Snapshot(ctx.Worktree)
+		if err != nil {
+			return "snapshot failed: " + err.Error()
+		}
+		diff, err := ctx.Repo.TreeDiff(ctx.RoundTree, now)
+		if err != nil {
+			return "tree diff failed: " + err.Error()
+		}
+		*changed = append([]string{}, diff...)
+	}
+	for _, f := range e.Files {
+		if !slices.Contains(*changed, f) {
+			return "fixed finding " + e.ID + ": " + f + " did not change in this round"
+		}
 	}
 	return ""
 }

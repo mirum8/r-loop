@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const maxAgentName = 32
@@ -56,6 +57,10 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 		worker.Reviewing.Store(true)
 		outs := sm.WaitAll(ctx, reviewers)
 		worker.Reviewing.Store(false)
+		var spent time.Duration
+		for _, o := range outs {
+			spent = max(spent, o.active)
+		}
 		findings, out := h.join(worker, reviewers, outs, rd.n)
 		if out.State == StepFailed {
 			return out
@@ -63,7 +68,14 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 		if out := h.checkTree(worker, tree); out.State == StepFailed {
 			return out
 		}
-		if findings == 0 {
+		fixed := false
+		verdictPath := filepath.Join(stepDir(worker), fmt.Sprintf("%s-verdict-r%d.json", worker.Ref.Key.Kind, rd.n))
+		if findings > 0 {
+			if fixed, out = h.fix(ctx, worker, reviewers, rd, verdictPath, spent, obs); out.State == StepFailed {
+				return out
+			}
+		}
+		if !fixed {
 			if err := h.event(worker, "review-clean", map[string]string{"round": strconv.Itoa(rd.n)}); err != nil {
 				return sm.fail(worker, "record: "+err.Error())
 			}
@@ -72,10 +84,68 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 		for _, r := range reviewers {
 			rd.prior = append(rd.prior, r.Ref.Vars["FindingsPath"].(string))
 		}
-		rd.verdicts = append(rd.verdicts, filepath.Join(stepDir(worker), fmt.Sprintf("%s-verdict-r%d.json", worker.Ref.Key.Kind, rd.n)))
+		rd.verdicts = append(rd.verdicts, verdictPath)
 		rd.prevTree = tree
 	}
-	return Outcome{State: StepOK, Session: worker}
+	return Outcome{State: StepOK, Session: worker, Warning: fmt.Sprintf("review round limit reached; round %d fixes unreviewed", row.Rounds)}
+}
+
+func (h ReviewHalf) fix(ctx context.Context, worker *Session, reviewers []*Session, rd reviewRound, verdictPath string, spent time.Duration, obs Observer) (bool, Outcome) {
+	sm := h.Sessions
+	key := worker.Ref.Key
+	files := make([]FindingsFile, len(reviewers))
+	paths := make([]string, len(reviewers))
+	for i, r := range reviewers {
+		paths[i] = r.Ref.Vars["FindingsPath"].(string)
+		files[i] = FindingsFile{Reviewer: r.Reviewer, Path: paths[i]}
+	}
+	vars := make(map[string]any, len(worker.Ref.Vars)+8)
+	for k, v := range worker.Ref.Vars {
+		vars[k] = v
+	}
+	sentinel := filepath.Join(stepDir(worker), fmt.Sprintf("%s-fix-r%d-a%d.sentinel", key.Kind, rd.n, key.Attempt))
+	vars["Sentinel"] = sentinel
+	vars["ReviewedKind"] = key.Kind
+	vars["Round"] = rd.n
+	vars["Rounds"] = rd.rounds
+	vars["RoundTree"] = rd.tree
+	vars["FindingsFiles"] = files
+	vars["VerdictPath"] = verdictPath
+	if worker.Ref.AskURL != "" {
+		vars["AskURL"] = worker.Ref.AskURL
+	}
+	if err := os.Remove(verdictPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, sm.fail(worker, "fix: "+err.Error())
+	}
+	text, _, err := sm.Prompts.Render("fix", vars)
+	if err == nil {
+		err = sm.Host.Prompt(worker.Agent, text, false, 0)
+	}
+	if err != nil {
+		return false, sm.fail(worker, "fix: "+err.Error())
+	}
+	own := worker.Sentinel
+	worker.Sentinel, worker.fix = sentinel, &fixHalf{verdictPath: verdictPath, roundTree: rd.tree, findings: paths, spent: spent}
+	out := sm.waitAll(ctx, []*Session{worker}, obs)[0]
+	worker.Sentinel, worker.fix = own, nil
+	if out.State != StepOK {
+		return false, out
+	}
+	v, err := ReadVerdict(verdictPath)
+	if err != nil {
+		return false, sm.fail(worker, "evidence missing: "+err.Error())
+	}
+	fixed := false
+	for _, e := range v.Findings {
+		fixed = fixed || e.blocking()
+		if err := h.event(worker, "finding", map[string]string{
+			"round": strconv.Itoa(rd.n), "reviewer": e.Reviewer, "id": e.ID, "title": e.Title,
+			"verdict": e.Verdict, "severity": e.Severity, "fixed": strconv.FormatBool(e.Fixed), "evidence": e.Evidence,
+		}); err != nil {
+			return false, sm.fail(worker, "record: "+err.Error())
+		}
+	}
+	return fixed, Outcome{}
 }
 
 func (h ReviewHalf) open(worker *Session, rows []Reviewer, args []ProviderArgs, prev []*Session, rd reviewRound) ([]*Session, Outcome) {

@@ -15,26 +15,29 @@ var stepTemplates = []string{"plan", "implement", "review", "fix", "milestone", 
 
 func fullVars() map[string]any {
 	return map[string]any{
-		"PhaseNumber":     7,
-		"PhaseTitle":      "PromptRenderer",
-		"PhaseBlock":      "### Phase 7 — PromptRenderer",
-		"Criteria":        "- [ ] render prompts",
-		"TodoPath":        "docs/todo.md",
-		"SpecDir":         "docs",
-		"PlanPath":        ".task-plans/phase-7.md",
-		"Branch":          "r-loop/phase-7",
-		"Base":            "main",
-		"Worktree":        "/wt/phase-7",
-		"Sentinel":        "/runs/r1/phase-7/plan-a1.sentinel",
-		"RunDir":          "/runs/r1",
-		"AskURL":          "",
-		"PhaseWarnings":   "",
-		"ReviewedKind":    "implement",
-		"Round":           1,
-		"Rounds":          2,
-		"ReviewCommand":   "/review",
-		"FindingsPath":    "/runs/r1/phase-7/implement-rv-codex-r1.findings.json",
-		"FindingsFiles":   "/runs/r1/phase-7/implement-rv-codex-r1.findings.json",
+		"PhaseNumber":   7,
+		"PhaseTitle":    "PromptRenderer",
+		"PhaseBlock":    "### Phase 7 — PromptRenderer",
+		"Criteria":      "- [ ] render prompts",
+		"TodoPath":      "docs/todo.md",
+		"SpecDir":       "docs",
+		"PlanPath":      ".task-plans/phase-7.md",
+		"Branch":        "r-loop/phase-7",
+		"Base":          "main",
+		"Worktree":      "/wt/phase-7",
+		"Sentinel":      "/runs/r1/phase-7/plan-a1.sentinel",
+		"RunDir":        "/runs/r1",
+		"AskURL":        "",
+		"PhaseWarnings": "",
+		"ReviewedKind":  "implement",
+		"Round":         1,
+		"Rounds":        2,
+		"ReviewCommand": "/review",
+		"FindingsPath":  "/runs/r1/phase-7/implement-findings-codex-r1.json",
+		"FindingsFiles": []core.FindingsFile{
+			{Reviewer: "claude", Path: "/runs/r1/phase-7/implement-findings-claude-r1.json"},
+			{Reviewer: "codex", Path: "/runs/r1/phase-7/implement-findings-codex-r1.json"},
+		},
 		"PriorFindings":   "",
 		"PriorVerdicts":   "",
 		"RoundTree":       "",
@@ -264,7 +267,7 @@ func TestReviewTargetsPlanOrWorktree(t *testing.T) {
 	if !strings.Contains(codeReview, "uncommitted changes in /wt/phase-7") {
 		t.Errorf("implement review does not name the worktree changes:\n%s", codeReview)
 	}
-	for _, want := range []string{"/review", "round 1 of 2", `"reviewer":"<name>"`, "<name>-r<round>-<n>", "implement-rv-codex-r1.findings.json"} {
+	for _, want := range []string{"/review", "round 1 of 2", `"reviewer":"<name>"`, "<name>-r<round>-<n>", "implement-findings-codex-r1.json", "unique", "exactly once"} {
 		if !strings.Contains(codeReview, want) {
 			t.Errorf("review missing %q", want)
 		}
@@ -293,7 +296,16 @@ func TestReviewNamesPriorRounds(t *testing.T) {
 func TestFixAsksForVerdicts(t *testing.T) {
 	text := render(t, New(t.TempDir()), "fix", fullVars())
 
-	for _, want := range []string{"real", "not-real", "out-of-scope", "P1", "P4", "path:line", "implement-r1.verdict.json", `"evidence"`} {
+	for _, want := range []string{
+		"real", "not-real", "out-of-scope", "P1", "P4", "path:line", "implement-r1.verdict.json", `"evidence"`,
+		"- claude: `/runs/r1/phase-7/implement-findings-claude-r1.json`",
+		"- codex: `/runs/r1/phase-7/implement-findings-codex-r1.json`",
+		`{"findings":[{"id":"<id>","reviewer":"<name>","title":"…","verdict":"real|not-real|out-of-scope","severity":"P1|P2|P3|P4","fixed":true|false,"files":["…"],"evidence":"<path:line>"}]}`,
+		"Only a finding that is `real` at `P1` or `P2` may be fixed",
+		"a `path:line` you have read",
+		"Do not commit",
+		"exactly once",
+	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("fix missing %q", want)
 		}
