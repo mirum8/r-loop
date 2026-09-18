@@ -14,6 +14,8 @@ import (
 
 	"r-loop/internal/config"
 	"r-loop/internal/core"
+	"r-loop/internal/face/tui"
+	"r-loop/internal/plan"
 	"r-loop/internal/store"
 )
 
@@ -108,10 +110,52 @@ func (w *Wiring) ready(list []core.Phase) error {
 		numbers[i] = ph.Number
 	}
 	if blocking := w.Plan.Blocking(numbers); len(blocking) > 0 {
-		return exit(4, "## Resolve first entry %q blocks this run; resolve it with /r:plan-unblock %s", blocking[0].Name, w.Opts.Todo)
+		if w.Face == core.Face(w.Plain) {
+			return exit(4, "## Resolve first entry %q blocks this run; resolve it with /r:plan-unblock %s", blocking[0].Name, w.Opts.Todo)
+		}
+		if err := w.unblock(blocking); err != nil {
+			return err
+		}
 	}
 	if err := store.EnsureExcluded(w.Repo.Root()); err != nil {
 		return exit(2, "%v", err)
+	}
+	return nil
+}
+
+func (w *Wiring) unblock(entries []core.Entry) error {
+	if w.TUI != nil {
+		w.TUI.Start(tui.Header{Todo: w.Opts.Todo, Started: time.Now(), Watchdog: !w.Opts.NoWatchdog}, w.Plan.Phases, nil)
+		defer w.TUI.Stop()
+	}
+	now := time.Now
+	if w.Env.Now != nil {
+		now = w.Env.Now
+	}
+	if err := resolveFirst(plan.Reader{}, w.Repo, w.Face, w.Todo, entries, now()); err != nil {
+		return err
+	}
+	pl, err := plan.Reader{}.Read(w.Todo)
+	if err != nil {
+		return exit(2, "%v", err)
+	}
+	w.Plan, w.Loop.Plan, w.Gate.Boundary.Plan = pl, pl, pl
+	return nil
+}
+
+func resolveFirst(src core.PlanSource, repo interface{ Commit(string) (string, error) }, face core.Face, todo string, entries []core.Entry, now time.Time) error {
+	for i, e := range entries {
+		q := core.Question{ID: "r" + strconv.Itoa(i+1), Step: core.StepKey{Kind: "resolve first"}, Text: e.Name + "\n" + e.Body, AskedAt: now}
+		answer, err := face.Ask(q)
+		if err != nil {
+			return exit(4, "## Resolve first entry %q was not answered: %v", e.Name, err)
+		}
+		if err := src.Stamp(todo, e.Name, now.Format("2006-01-02")+" — "+answer); err != nil {
+			return exit(2, "%v", err)
+		}
+		if _, err := repo.Commit("plan: resolve " + e.Name); err != nil {
+			return exit(2, "%v", err)
+		}
 	}
 	return nil
 }

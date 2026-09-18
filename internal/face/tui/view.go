@@ -50,9 +50,7 @@ func (m Model) View() string {
 		}
 	}
 	lines = append(lines, "")
-	for _, q := range m.Questions {
-		lines = append(lines, fill(th.Question, fmt.Sprintf("?  %s  phase %d %s: %s", q.ID, q.Phase, q.Kind, q.Text), w))
-	}
+	lines = append(lines, m.questions(w)...)
 	lines = append(lines, m.footer(w)...)
 	pad := strings.Repeat(" ", margin)
 	for i, l := range lines {

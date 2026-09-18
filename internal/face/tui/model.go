@@ -65,6 +65,8 @@ func (s Step) Remaining(now time.Time) (time.Duration, bool) {
 type Open struct {
 	ID, Kind, Text string
 	Phase          int
+	Options        []string
+	reply          chan string
 }
 
 type Model struct {
@@ -74,6 +76,10 @@ type Model struct {
 	Live      *Step
 	Warnings  []string
 	Questions []Open
+	Draft     string
+	draftFor  string
+	Answered  []string
+	done      map[string]bool
 	Status    string
 	Blocked   string
 	Resume    string
@@ -85,7 +91,7 @@ type Model struct {
 }
 
 func NewModel(h Header, phases []core.Phase, th Theme) Model {
-	m := Model{Header: h, Now: h.Started, Width: 80, Height: 24, theme: th}
+	m := Model{Header: h, Now: h.Started, Width: 80, Height: 24, theme: th, done: map[string]bool{}}
 	for _, ph := range phases {
 		state := core.PhaseUnticked
 		if landed(ph) {
@@ -121,7 +127,11 @@ func (m Model) Apply(ev core.Event) Model {
 		m.Questions = append(m.Questions, Open{ID: ev.Fields["id"], Phase: ev.Phase, Kind: ev.Step, Text: ev.Fields["text"]})
 	case "human":
 		if ev.Fields["what"] == "answer" {
-			m.close(ev.Fields["id"])
+			by := ev.Fields["by"]
+			if by == "" {
+				by = "maintainer"
+			}
+			m.settle(ev.Fields["id"], by)
 		}
 	case "finished":
 		m.end("finished")
@@ -204,16 +214,6 @@ func (m *Model) warn(ev core.Event) {
 	}
 }
 
-func (m *Model) close(id string) {
-	var open []Open
-	for _, q := range m.Questions {
-		if q.ID != id {
-			open = append(open, q)
-		}
-	}
-	m.Questions = open
-}
-
 func (m *Model) end(status string) {
 	m.Status = status
 	m.Current = 0
@@ -239,6 +239,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 	case eventMsg:
 		return m.Apply(core.Event(msg)), nil
+	case askMsg:
+		return m.ask(msg), nil
+	case withdrawMsg:
+		m.settle(string(msg), "")
 	case closedMsg:
 		if m.Status == "" {
 			m.end("ended")
@@ -253,6 +257,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case msg.Type == tea.KeyCtrlC && m.Status == "":
 			m.Notice = "use r-loop abort to stop the run"
+		default:
+			m.input(msg)
 		}
 	}
 	return m, nil
@@ -303,7 +309,42 @@ func (f *Face) Emit(ev core.Event) {
 }
 
 func (f *Face) Ask(q core.Question) (string, error) {
+	f.mu.Lock()
+	prog, done := f.prog, f.done
+	f.mu.Unlock()
+	if prog == nil {
+		return "", core.ErrNoInput
+	}
+	reply := make(chan string, 1)
+	prog.Send(askMsg{q: q, reply: reply})
+	select {
+	case a, ok := <-reply:
+		if ok {
+			return a, nil
+		}
+	case <-done:
+	}
 	return "", core.ErrNoInput
+}
+
+func (f *Face) Withdraw(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.prog != nil {
+		f.prog.Send(withdrawMsg(id))
+	}
+}
+
+func (f *Face) Stop() {
+	f.mu.Lock()
+	prog, done := f.prog, f.done
+	f.prog = nil
+	f.mu.Unlock()
+	if prog == nil {
+		return
+	}
+	prog.Quit()
+	<-done
 }
 
 func (f *Face) Close() {

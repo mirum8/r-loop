@@ -365,12 +365,12 @@ Contracts: `tech-design.md#milestone-6-the-tui`
 **Implements:** Close a blocking plan decision at startup · Answer an agent's question without leaving the loop
 **Depends on:** Phase 22
 **Files:** `internal/face/tui/input.go` (new) · `internal/app/preflight.go` (modify) · `internal/face/tui/input_test.go` (new) · `internal/app/resolve_test.go` (new)
-- [ ] `tui.Face.Ask(q)` shows the question in the questions area with numbered options; a digit picks an option, typed text is a free answer, `enter` submits, `esc` clears the draft; the answer returns to the caller and the question becomes an `answered` line naming who answered
-- [ ] several open questions queue in arrival order; the area shows the count and the oldest first
-- [ ] a question whose options are exactly `yes` and `no` renders as a consent line that `y` and `n` answer
-- [ ] in TUI mode `app.Preflight` no longer refuses on a blocking `## Resolve first` entry: for each, in document order, it calls `Face.Ask` with the entry's `Name` and full `Body` as the text and a free-text answer; the plan format carries no recommendation field, so none is invented; `--plain` keeps exit 4
-- [ ] each answer is written with `PlanSource.Stamp(todo, name, "<yyyy-mm-dd> — <answer>")`, and the stamped todo is committed in the primary tree as `plan: resolve <entry name>` before any phase is scheduled, so the run starts from a clean tree
-- [ ] `input_test.go` proves an option picked by digit, a free-text answer, two queued questions answered in order, and the consent line; `resolve_test.go` proves a blocking entry stamped and committed before the loop starts, with fake plan source, repo and face
+- [x] `tui.Face.Ask(q)` shows the question in the questions area with numbered options; a digit picks an option, typed text is a free answer, `enter` submits, `esc` clears the draft; the answer returns to the caller and the question becomes an `answered` line naming who answered
+- [x] several open questions queue in arrival order; the area shows the count and the oldest first
+- [x] a question whose options are exactly `yes` and `no` renders as a consent line that `y` and `n` answer
+- [x] in TUI mode `app.Preflight` no longer refuses on a blocking `## Resolve first` entry: for each, in document order, it calls `Face.Ask` with the entry's `Name` and full `Body` as the text and a free-text answer; the plan format carries no recommendation field, so none is invented; `--plain` keeps exit 4
+- [x] each answer is written with `PlanSource.Stamp(todo, name, "<yyyy-mm-dd> — <answer>")`, and the stamped todo is committed in the primary tree as `plan: resolve <entry name>` before any phase is scheduled, so the run starts from a clean tree
+- [x] `input_test.go` proves an option picked by digit, a free-text answer, two queued questions answered in order, and the consent line; `resolve_test.go` proves a blocking entry stamped and committed before the loop starts, with fake plan source, repo and face
 **Done when:** `go test ./internal/face/... ./internal/app/...` is green.
 
 ## Milestone 7 — The watchdog
