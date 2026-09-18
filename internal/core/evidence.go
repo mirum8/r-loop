@@ -168,11 +168,27 @@ func section(lines []string, heading string) ([]string, bool) {
 func listItems(lines []string) []string {
 	var out []string
 	for _, l := range lines {
-		if item, ok := strings.CutPrefix(l, "- "); ok {
+		if item, ok := listItem(l); ok {
 			out = append(out, strings.TrimSpace(item))
 		}
 	}
 	return out
+}
+
+func listItem(l string) (string, bool) {
+	for _, bullet := range []string{"- ", "* ", "+ "} {
+		if item, ok := strings.CutPrefix(l, bullet); ok {
+			return item, true
+		}
+	}
+	digits := len(l) - len(strings.TrimLeft(l, "0123456789"))
+	if digits == 0 || digits+1 >= len(l) {
+		return "", false
+	}
+	if (l[digits] == '.' || l[digits] == ')') && l[digits+1] == ' ' {
+		return l[digits+2:], true
+	}
+	return "", false
 }
 
 type Findings struct {

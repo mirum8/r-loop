@@ -128,6 +128,39 @@ func TestPlanFileCheckFailsOnAnEmptyTestsSection(t *testing.T) {
 	}
 }
 
+func TestPlanFileCheckAcceptsNumberedAndStarAndPlusTestItems(t *testing.T) {
+	sections := map[string]string{
+		"numbered with prose": "Write these first in `greet/greet_test.go`. They must fail before `greet.go` exists:\n\n" +
+			"1. `TestHello/named`: `Hello(\"Alice\")` returns exactly `Hello, Alice!`.\n" +
+			"2. `TestHello/empty name`: `Hello(\"\")` returns exactly `Hello, world!`.\n\n" +
+			"Verify with `go test ./greet/...`, which must be green.\n",
+		"numbered with parenthesis": "2) TestReadsPhases\n",
+		"star bullet":               "* TestReadsPhases\n",
+		"plus bullet":               "+ TestReadsPhases\n",
+	}
+	for name, body := range sections {
+		t.Run(name, func(t *testing.T) {
+			plan := strings.Replace(goodPlan, "- TestReadsPhases\n", body, 1)
+
+			ok, missing := runCheck(t, "plan-file", planCtx(plan, planPath))
+
+			if !ok {
+				t.Fatalf("missing = %q", missing)
+			}
+		})
+	}
+}
+
+func TestPlanFileCheckFailsOnATestsSectionOfProseOnly(t *testing.T) {
+	plan := strings.Replace(goodPlan, "- TestReadsPhases\n", "Write the tests in greet_test.go.\n\nVerify with `go test ./greet/...`, 2 of them.\n", 1)
+
+	ok, missing := runCheck(t, "plan-file", planCtx(plan, planPath))
+
+	if ok || missing != "## Tests is empty" {
+		t.Fatalf("ok = %v, missing = %q", ok, missing)
+	}
+}
+
 func TestPlanFileCheckFailsWhenThePlanStepChangedASecondFile(t *testing.T) {
 	ok, missing := runCheck(t, "plan-file", planCtx(goodPlan, planPath, "internal/plan/reader.go"))
 
