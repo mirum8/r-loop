@@ -676,7 +676,7 @@ func TestReportCountsHumanTouchesAndListsAutomaticDecisions(t *testing.T) {
 			ev("human", 1, "implement", map[string]string{"what": "answer"}),
 			ev("human", 1, "implement", map[string]string{"what": "consent"}),
 			ev("nudge", 1, "implement", nil),
-			ev("restart", 1, "implement", map[string]string{"step": "phase-1/implement", "attempt": "2", "addendum": "use the fake", "provider": "claude", "remedy": "rm lock"}),
+			ev("restart", 1, "implement", map[string]string{"step": "phase-1/implement", "attempt": "2", "addendum": "use the fake", "provider": "claude", "model": "sonnet", "remedy": "rm lock"}),
 			ev("gate-fix", 1, "", map[string]string{"phase": "1", "round": "1"}),
 			ev("warning", 1, "implement", map[string]string{"reason": "review round limit reached; round 3 fixes unreviewed"}),
 			ev("warning", 1, "implement", map[string]string{"reason": "files outside plan"}),
@@ -698,7 +698,7 @@ func TestReportCountsHumanTouchesAndListsAutomaticDecisions(t *testing.T) {
 		"human touches: 3\n",
 		"## Automatic decisions\n\n" +
 			"- phase 1 implement: nudge\n" +
-			"- phase 1 implement: restart as attempt 2 on claude — use the fake (remedy: rm lock)\n" +
+			"- phase 1 implement: restart as attempt 2 on claude model sonnet effort provider default — use the fake (remedy: rm lock)\n" +
 			"- phase 1: gate-fix round 1\n" +
 			"- phase 1 implement: review round limit reached; round 3 fixes unreviewed\n" +
 			"- q1 phase 1 implement: timed out; the agent took sqlite\n",

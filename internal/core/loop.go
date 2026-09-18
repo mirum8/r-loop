@@ -72,10 +72,11 @@ type RunLoop struct {
 	Runners  map[string]StepRunner
 	RunID    string
 
-	Watcher      Watcher
-	Ask          AskChannel
-	RemedyWindow time.Duration
-	MaxRestarts  int
+	Watcher         Watcher
+	Ask             AskChannel
+	RemedyWindow    time.Duration
+	MaxRestarts     int
+	QuestionTimeout time.Duration
 
 	mu       sync.Mutex
 	runDir   string
@@ -409,7 +410,11 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 		}
 		next := l.ref(ref.Phase, kind, key.Attempt+1, ref.Base)
 		next.Vars["Addendum"] = rs.Addendum
-		l.emit(Event{Kind: "restart", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "attempt": strconv.Itoa(next.Key.Attempt), "addendum": rs.Addendum, "provider": rs.Provider, "remedy": rs.Remedy}})
+		f := map[string]string{"step": step, "attempt": strconv.Itoa(next.Key.Attempt), "addendum": rs.Addendum, "provider": rs.Provider, "remedy": rs.Remedy}
+		if rs.Provider != "" {
+			f["model"], f["effort"] = kind.Row.Model, kind.Row.Effort
+		}
+		l.emit(Event{Kind: "restart", Phase: key.Phase, Step: key.Kind, Fields: f})
 		return next, true
 	}
 }
@@ -576,6 +581,10 @@ func (l *RunLoop) question(ctx context.Context, q Question) {
 	if ctx.Err() != nil {
 		return
 	}
+	if l.QuestionTimeout > 0 {
+		t := time.AfterFunc(l.QuestionTimeout, func() { l.timeOut(q) })
+		context.AfterFunc(ctx, func() { t.Stop() })
+	}
 	answer, err := l.Face.Ask(q)
 	if err != nil {
 		if !errors.Is(err, ErrNoInput) {
@@ -584,6 +593,31 @@ func (l *RunLoop) question(ctx context.Context, q Question) {
 		return
 	}
 	l.Answer(q.ID, answer, "maintainer")
+}
+
+func (l *RunLoop) timeOut(q Question) {
+	l.mu.Lock()
+	_, open := l.asked[q.ID]
+	l.mu.Unlock()
+	if !open {
+		return
+	}
+	text := fmt.Sprintf("No answer within %s. Proceed with the option you judge safest and name it in your sentinel's reason.", shortDuration(l.QuestionTimeout))
+	if q.Recommended != "" {
+		text = fmt.Sprintf("No answer within %s. Proceed with your recommendation: %s", shortDuration(l.QuestionTimeout), q.Recommended)
+	}
+	l.Deliver(q.ID, text, "timeout", "")
+}
+
+func shortDuration(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
 }
 
 func (l *RunLoop) Answer(id, text, by string) error {
@@ -604,7 +638,7 @@ func (l *RunLoop) Deliver(id, text, by, citation string) error {
 	}
 	q.Answer, q.AnsweredBy, q.Citation, q.AnsweredAt = text, by, citation, time.Now()
 	l.recordQuestion(q)
-	if citation != "" {
+	if by != "maintainer" {
 		l.emit(Event{Kind: "question-answered", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"id": id, "answer": text, "by": by, "citation": citation}})
 	} else {
 		l.emit(Event{Kind: "human", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": id}})

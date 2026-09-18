@@ -292,6 +292,7 @@ func TestARetryNeedsAnAddendumAndAProviderRemedyNeedsAProvider(t *testing.T) {
 	store := &fakeStore{}
 	w, _ := failedImplement(t, store)
 	rem := newRemedies(w, store, &fakeFace{}, "retry", "provider")
+	rem.Fallbacks = map[string]Fallback{"implement": {Provider: "claude"}}
 	rem.Propose("retry", "none", "flaky")
 	rem.Propose("provider", "none", "codex is down")
 

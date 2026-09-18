@@ -13,9 +13,9 @@ func Banner(cfg LoopConfig) string {
 		row := cfg.Steps[name]
 		k := "steps." + name + "."
 		fmt.Fprintf(&b, "%s  %s  %s  %s  %s  %s  ← %s\n", name, row.Provider, orDefault(row.Model), orDefault(row.Effort),
-			duration(row.Timeout), row.Check, sources(p[k+"provider"], p[k+"model"], p[k+"effort"]))
+			Duration(row.Timeout), row.Check, sources(p[k+"provider"], p[k+"model"], p[k+"effort"]))
 		if row.Rounds > 0 && len(row.Reviewers) > 0 {
-			fmt.Fprintf(&b, "  review rounds %d %s  ← %s\n", row.Rounds, duration(row.ReviewTimeout), p[k+"rounds"])
+			fmt.Fprintf(&b, "  review rounds %d %s  ← %s\n", row.Rounds, Duration(row.ReviewTimeout), p[k+"rounds"])
 			for _, rv := range row.Reviewers {
 				fmt.Fprintf(&b, "  reviewer %s  ← %s\n", roleLine(rv.Provider, rv.Model, rv.Effort), p[k+"reviewers"])
 			}
@@ -55,7 +55,7 @@ func sources(provider, model, effort string) string {
 	return "provider " + provider + " model " + model + " effort " + effort
 }
 
-func duration(d time.Duration) string {
+func Duration(d time.Duration) string {
 	s := d.String()
 	if strings.HasSuffix(s, "m0s") {
 		s = strings.TrimSuffix(s, "0s")

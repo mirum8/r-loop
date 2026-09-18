@@ -35,6 +35,8 @@ You watch an r-loop run from the run directory `{{.RunDir}}`, against the plan a
 - Then propose the exact command with `propose_remedy`, and run it only when the decision is `authorised`; a `refused` remedy is never run.
 - After an authorised remedy has run, then call `restart_step` for the step, with an addendum when the next attempt needs to know what changed.
 - Never edit code, tests or the plan yourself; never merge, push, or delete anything that holds work.
+- When a stopped step's pane shows a provider usage limit, an authentication failure or an outage, propose a `provider` remedy naming the row's fallback, then `restart_step` with it as `provider`. The row's fallback is `steps.<kind>.fallback` in `{{.RunDir}}/config.resolved.yaml`; any other provider is asked of the maintainer.
+- Otherwise prefer `retry` with an addendum for anything the agent can do differently, saying in the addendum what to change.
 
 ## Answering questions
 

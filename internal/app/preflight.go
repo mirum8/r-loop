@@ -234,6 +234,14 @@ func (w *Wiring) banner(out io.Writer, prompts []string) {
 		state = "off"
 	}
 	fmt.Fprintf(out, "watchdog: %s\n", state)
+	if !w.Opts.Unattended {
+		fmt.Fprintln(out, "mode: attended")
+		return
+	}
+	fmt.Fprintf(out, "mode: unattended  allow + %s  question timeout %s\n", strings.Join(addedClasses(w.Config), ", "), config.Duration(w.Config.Unattended.QuestionTimeout))
+	if w.Opts.NoWatchdog {
+		fmt.Fprintln(out, "no watchdog: failures are not remedied")
+	}
 }
 
 func pipeline(kinds []core.StepKind) string {

@@ -314,13 +314,32 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	}
 	w.Watch = &core.Watch{Store: w.Store, Face: w.Face, Checks: core.ShippedChecks(cfg.Watchdog.OvertimeFactor, cfg.Watchdog.DiffFactor), Repo: repo, Plan: pl}
 	w.Loop.Watcher = w.Watch
-	w.Remedies = &core.Remedies{Allow: cfg.Watchdog.Allow, Face: w.Face, Store: w.Store, Window: cfg.Watchdog.RemedyWindow, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts}
-	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: cfg.Watchdog.Allow}
+	allow := cfg.Watchdog.Allow
+	if opts.Unattended {
+		allow = append(slices.Clone(allow), addedClasses(cfg)...)
+		w.Loop.QuestionTimeout = cfg.Unattended.QuestionTimeout
+	}
+	fallbacks := map[string]core.Fallback{}
+	for _, k := range kinds {
+		fallbacks[k.Name] = k.Row.Fallback
+	}
+	w.Remedies = &core.Remedies{Allow: allow, Face: w.Face, Store: w.Store, Window: cfg.Watchdog.RemedyWindow, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks}
+	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow}
 	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Repo: repo, AnswerWindow: cfg.Watchdog.AnswerWindow}
 	if !opts.NoWatchdog {
 		w.Loop.RemedyWindow = cfg.Watchdog.RemedyWindow
 	}
 	return w, nil
+}
+
+func addedClasses(cfg config.LoopConfig) []string {
+	var added []string
+	for _, c := range cfg.Unattended.Allow {
+		if !slices.Contains(cfg.Watchdog.Allow, c) && !slices.Contains(added, c) {
+			added = append(added, c)
+		}
+	}
+	return added
 }
 
 func (w *Wiring) startWatchdog(ctx context.Context) error {

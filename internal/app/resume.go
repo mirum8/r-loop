@@ -29,8 +29,9 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 	fs.SetOutput(io.Discard)
 	replan := fs.Bool("replan", false, "")
 	plain := fs.Bool("plain", false, "")
+	unattended := fs.Bool("unattended", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
-		return nil, core.RunOptions{}, exit(2, "usage: r-loop resume [--replan]")
+		return nil, core.RunOptions{}, exit(2, "usage: r-loop resume [--replan] [--unattended]")
 	}
 	repo, err := gitrepo.Open(env.Dir)
 	if err != nil {
@@ -54,7 +55,7 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 	if run.Status == core.RunFinished {
 		return nil, core.RunOptions{}, exit(2, "nothing to resume: run %s finished", id)
 	}
-	w, err := Wire(Options{Todo: run.Todo, Plain: *plain}, env)
+	w, err := Wire(Options{Todo: run.Todo, Plain: *plain, Unattended: *unattended}, env)
 	if err != nil {
 		return nil, core.RunOptions{}, err
 	}

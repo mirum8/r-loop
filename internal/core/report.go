@@ -65,7 +65,7 @@ func decisions(st RunState) []string {
 		case "restart":
 			line := where(ev.Phase, ev.Step) + ": restart as attempt " + f["attempt"]
 			if f["provider"] != "" {
-				line += " on " + f["provider"]
+				line += fmt.Sprintf(" on %s model %s effort %s", f["provider"], orDefault(f["model"]), orDefault(f["effort"]))
 			}
 			if f["addendum"] != "" {
 				line += " — " + f["addendum"]
@@ -291,4 +291,11 @@ func skipLines(st RunState) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+func orDefault(v string) string {
+	if v == "" {
+		return "provider default"
+	}
+	return v
 }

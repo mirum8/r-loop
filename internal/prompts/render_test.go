@@ -405,3 +405,19 @@ func TestMilestoneNamesReport(t *testing.T) {
 		}
 	}
 }
+
+func TestWatchdogCarriesTheUnattendedProviderRule(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"a provider usage limit, an authentication failure or an outage",
+		"propose a `provider` remedy naming the row's fallback",
+		"then `restart_step` with it",
+		"/config.resolved.yaml`",
+		"prefer `retry` with an addendum for anything the agent can do differently",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q:\n%s", want, text)
+		}
+	}
+}
