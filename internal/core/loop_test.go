@@ -767,9 +767,9 @@ func TestReviewHookRunsOnlyForAnOkStepWithReviewersAndRounds(t *testing.T) {
 			kind.Row.Reviewers, kind.Row.Rounds = c.reviewers, c.rounds
 			r.loop.Kinds[1] = kind
 			calls := 0
-			r.loop.Runners = map[string]StepRunner{"diff": singleRunner{sm: r.loop.Sessions, review: func(ctx context.Context, s *Session, out Outcome) Outcome {
+			r.loop.Runners = map[string]StepRunner{"diff": singleRunner{sm: r.loop.Sessions, review: func(ctx context.Context, ref StepRef, s *Session, obs Observer) Outcome {
 				calls++
-				return out
+				return Outcome{State: StepOK, Session: s}
 			}}}
 
 			r.run(RunOptions{Phases: []int{2}})

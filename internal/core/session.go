@@ -44,6 +44,7 @@ type Session struct {
 	Ref                              StepRef
 	Dir, StartSHA, StartTree         string
 	Workspace, Pane, Agent, Sentinel string
+	Reviewer                         string
 	OpenQuestion, Reviewing          atomic.Bool
 }
 
@@ -151,77 +152,127 @@ func (m *SessionManager) start(s *Session, stepDir string) error {
 	return m.Host.Prompt(s.Agent, text, false, 0)
 }
 
+type watch struct {
+	s              *Session
+	obs            Observer
+	elapsed, quiet time.Duration
+	stalled        bool
+}
+
 func (m *SessionManager) Wait(ctx context.Context, s *Session, obs Observer) Outcome {
 	obs.Started(s)
-	grace := m.StallGrace
-	if grace <= 0 {
-		grace = defaultStallGrace
-	}
+	return m.waitAll(ctx, []*Session{s}, obs)[0]
+}
+
+func (m *SessionManager) WaitAll(ctx context.Context, sessions []*Session) []Outcome {
+	return m.waitAll(ctx, sessions, nopObserver{})
+}
+
+type nopObserver struct{}
+
+func (nopObserver) Started(*Session) {}
+func (nopObserver) Stalled(*Session) {}
+func (nopObserver) Resumed(*Session) {}
+
+func (m *SessionManager) waitAll(ctx context.Context, sessions []*Session, obs Observer) []Outcome {
 	poll := m.Poll
 	if poll <= 0 {
 		poll = defaultPoll
 	}
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
-	timeout := s.Ref.Kind.Row.Timeout
+	outs := make([]Outcome, len(sessions))
+	watches := make([]*watch, len(sessions))
+	for i, s := range sessions {
+		watches[i] = &watch{s: s, obs: obs}
+	}
+	pending := len(sessions)
 	last := m.now()
-	var elapsed, quiet time.Duration
-	stalled := false
-	for {
+	for pending > 0 {
 		select {
 		case <-ctx.Done():
-			return m.fail(s, "interrupted: "+ctx.Err().Error())
+			for i, w := range watches {
+				if w != nil {
+					outs[i] = m.fail(w.s, "interrupted: "+ctx.Err().Error())
+				}
+			}
+			return outs
 		case <-ticker.C:
 		}
 		now := m.now()
 		dt := now.Sub(last)
 		last = now
-		sentinel, err := ReadSentinel(s.Sentinel)
-		if !errors.Is(err, ErrNoSentinel) {
-			return m.judge(s, sentinel, err)
-		}
-		state, _ := m.Host.State(s.Agent)
-		if state == AgentGone {
-			return m.fail(s, "agent gone")
-		}
-		if s.OpenQuestion.Load() || s.Reviewing.Load() {
-			continue
-		}
-		elapsed += dt
-		if timeout > 0 && elapsed > timeout {
-			return m.fail(s, "backstop "+timeout.String())
-		}
-		switch state {
-		case AgentWorking:
-			quiet = 0
-			if stalled {
-				stalled = false
-				m.recordAt(now, s.Ref.Key, StepRunning, "")
-				obs.Resumed(s)
+		for i, w := range watches {
+			if w == nil {
+				continue
 			}
-			continue
-		case AgentIdle, AgentBlocked:
-			quiet += dt
-		default:
-			continue
+			if out, done := m.tick(w, now, dt); done {
+				outs[i], watches[i] = out, nil
+				pending--
+			}
 		}
-		if quiet < grace {
-			continue
+	}
+	return outs
+}
+
+func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcome, bool) {
+	s := w.s
+	grace := m.StallGrace
+	if grace <= 0 {
+		grace = defaultStallGrace
+	}
+	sentinel, err := ReadSentinel(s.Sentinel)
+	if !errors.Is(err, ErrNoSentinel) {
+		return m.judge(s, sentinel, err), true
+	}
+	state, _ := m.Host.State(s.Agent)
+	if state == AgentGone {
+		return m.fail(s, "agent gone"), true
+	}
+	if s.OpenQuestion.Load() || s.Reviewing.Load() {
+		return Outcome{}, false
+	}
+	w.elapsed += dt
+	if timeout := s.Ref.Kind.Row.Timeout; timeout > 0 && w.elapsed > timeout {
+		return m.fail(s, "backstop "+timeout.String()), true
+	}
+	switch state {
+	case AgentWorking:
+		w.quiet = 0
+		if w.stalled {
+			w.stalled = false
+			m.recordState(now, s, StepRunning)
+			w.obs.Resumed(s)
 		}
-		if stalled {
-			out := m.fail(s, "stalled: no response to nudge")
-			out.Stalled = true
-			return out
-		}
-		stalled, quiet = true, 0
-		m.recordAt(now, s.Ref.Key, StepStalled, "")
-		obs.Stalled(s)
-		if err := m.Host.Prompt(s.Agent, nudge(grace), false, 0); err != nil {
-			out := m.fail(s, "stalled: nudge not delivered: "+err.Error())
-			out.Stalled = true
-			return out
-		}
-		m.event(now, s, Event{Kind: "nudge"})
+		return Outcome{}, false
+	case AgentIdle, AgentBlocked:
+		w.quiet += dt
+	default:
+		return Outcome{}, false
+	}
+	if w.quiet < grace {
+		return Outcome{}, false
+	}
+	if w.stalled {
+		out := m.fail(s, "stalled: no response to nudge")
+		out.Stalled = true
+		return out, true
+	}
+	w.stalled, w.quiet = true, 0
+	m.recordState(now, s, StepStalled)
+	w.obs.Stalled(s)
+	if err := m.Host.Prompt(s.Agent, nudge(grace), false, 0); err != nil {
+		out := m.fail(s, "stalled: nudge not delivered: "+err.Error())
+		out.Stalled = true
+		return out, true
+	}
+	m.event(now, s, Event{Kind: "nudge"})
+	return Outcome{}, false
+}
+
+func (m *SessionManager) recordState(at time.Time, s *Session, state StepState) {
+	if s.Reviewer == "" {
+		m.recordAt(at, s.Ref.Key, state, "")
 	}
 }
 
@@ -263,7 +314,7 @@ func (m *SessionManager) evidence(s *Session) EvidenceContext {
 		v, _ := s.Ref.Vars[k].(string)
 		return v
 	}
-	return EvidenceContext{
+	ctx := EvidenceContext{
 		Repo:        m.Repo,
 		Worktree:    s.Dir,
 		StartSHA:    s.StartSHA,
@@ -274,6 +325,11 @@ func (m *SessionManager) evidence(s *Session) EvidenceContext {
 		ReportPath:  str("ReportPath"),
 		FS:          os.DirFS(s.Dir),
 	}
+	if s.Reviewer != "" {
+		p := str("FindingsPath")
+		ctx.FS, ctx.FindingsFiles = os.DirFS(filepath.Dir(p)), []string{filepath.Base(p)}
+	}
+	return ctx
 }
 
 func (m *SessionManager) Finish(s *Session, out Outcome) Outcome {
