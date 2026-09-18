@@ -325,12 +325,12 @@ Contracts: `tech-design.md#milestone-5-the-ask-channel`
 **Depends on:** Phase 11
 **Files:** `internal/askmcp/server.go` (new) · `internal/core/session.go` (modify) · `internal/askmcp/server_test.go` (new)
 **Risk:** concurrency
-- [ ] `askmcp.Server{RunDir string}` implements `core.AskChannel` with the MCP go-sdk v1.8.0 streamable HTTP handler on `127.0.0.1:<free port>`; `Serve(ctx)` writes a 32-hex-char token to `<RunDir>/token` (mode 0600) and returns `http://127.0.0.1:<port>/mcp/<token>`
-- [ ] `StepURL(key)` is `<base>/<phase>/<kind>/<attempt>`, and for a reviewer `<base>/<phase>/<kind>-rv-<provider>/<attempt>`; the handler resolves the asking `StepKey` from the path and answers 404 to a wrong token or an unknown path
-- [ ] tool `ask_user(question: string, options?: string[], recommended?: string) → {answer: string}`: the call creates `Question{ID: "q<seq>", Step, Text, Options, Recommended, AskedAt}`, sends it on `Questions()`, and blocks until `Answer(id, …)` or until the server's context ends, when the tool returns an error and never an invented answer
-- [ ] `Answer(id, answer, by, citation)` completes the pending call and fills `Answer`, `AnsweredBy`, `Citation`, `AnsweredAt`; an unknown or already-answered id is an error
-- [ ] `SessionManager` sets the step's `AskURL` from `StepURL` when the resolved provider's `Ask` is true, writing `<RunDir>/phase-<N>/<agent>.mcp.json` first for a provider whose ask flag takes `{mcpConfig}`; with `ask: none` no flag is passed and `Event{Kind: "ask-none", Fields{provider}}` is emitted once per step
-- [ ] `server_test.go` uses the go-sdk client against the real handler: `ask_user` blocks until `Answer` and returns the text, a wrong token is 404, two concurrent questions from two step paths get distinct ids and their own answers, and cancelling the context returns an error to the caller
+- [x] `askmcp.Server{RunDir string}` implements `core.AskChannel` with the MCP go-sdk v1.8.0 streamable HTTP handler on `127.0.0.1:<free port>`; `Serve(ctx)` writes a 32-hex-char token to `<RunDir>/token` (mode 0600) and returns `http://127.0.0.1:<port>/mcp/<token>`
+- [x] `StepURL(key)` is `<base>/<phase>/<kind>/<attempt>`, and for a reviewer `<base>/<phase>/<kind>-rv-<provider>/<attempt>`; the handler resolves the asking `StepKey` from the path and answers 404 to a wrong token or an unknown path
+- [x] tool `ask_user(question: string, options?: string[], recommended?: string) → {answer: string}`: the call creates `Question{ID: "q<seq>", Step, Text, Options, Recommended, AskedAt}`, sends it on `Questions()`, and blocks until `Answer(id, …)` or until the server's context ends, when the tool returns an error and never an invented answer
+- [x] `Answer(id, answer, by, citation)` completes the pending call and fills `Answer`, `AnsweredBy`, `Citation`, `AnsweredAt`; an unknown or already-answered id is an error
+- [x] `SessionManager` sets the step's `AskURL` from `StepURL` when the resolved provider's `Ask` is true, writing `<RunDir>/phase-<N>/<agent>.mcp.json` first for a provider whose ask flag takes `{mcpConfig}`; with `ask: none` no flag is passed and `Event{Kind: "ask-none", Fields{provider}}` is emitted once per step
+- [x] `server_test.go` uses the go-sdk client against the real handler: `ask_user` blocks until `Answer` and returns the text, a wrong token is 404, two concurrent questions from two step paths get distinct ids and their own answers, and cancelling the context returns an error to the caller
 **Done when:** `go test ./internal/askmcp/... ./internal/core/...` is green.
 
 ### Phase 21 — Questions in plain mode, end to end

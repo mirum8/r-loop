@@ -75,7 +75,7 @@ func newRig(t *testing.T) *rig {
 		Store:   r.store,
 		Resolve: func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
 			r.resolve = []string{provider, model, effort, askURL, mcpConfigPath}
-			return ProviderArgs{Kind: "codex", Args: []string{"-c", "model=" + model}}, nil
+			return ProviderArgs{Kind: "codex", Args: []string{"-c", "model=" + model}, Ask: true}, nil
 		},
 		Now:        clock.Now,
 		Poll:       time.Millisecond,
@@ -211,26 +211,104 @@ func (f promptsFunc) Render(name string, vars map[string]any) (string, string, e
 	return f(name, vars)
 }
 
-func TestSpawnWithAnAskURLWritesAnMCPConfigForTheAgent(t *testing.T) {
-	r := newRig(t)
-	ref := r.ref(1)
-	ref.AskURL = "http://127.0.0.1:7000/run-1/3/implement/1"
-
-	if _, err := r.sm.Spawn(context.Background(), ref); err != nil {
-		t.Fatal(err)
+func claudeLikeResolve(r *rig) func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
+	return func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
+		r.resolve = []string{provider, model, effort, askURL, mcpConfigPath}
+		args := []string{"--model", model}
+		if mcpConfigPath != "" {
+			args = append(args, "--mcp-config", mcpConfigPath)
+		}
+		return ProviderArgs{Kind: "claude", Args: args, Ask: true}, nil
 	}
+}
 
-	path := filepath.Join(r.runDir, "phase-3", "implement-a1.mcp.json")
-	if !reflect.DeepEqual(r.resolve, []string{"codex", "gpt-5.6-sol", "medium", ref.AskURL, path}) {
+type configCheckingHost struct {
+	*scriptedHost
+	path    string
+	present bool
+}
+
+func (h *configCheckingHost) Start(pane, name, kind string, args []string) (Agent, error) {
+	_, err := os.Stat(h.path)
+	h.present = err == nil
+	return h.scriptedHost.Start(pane, name, kind, args)
+}
+
+func TestAnAskingProviderGetsTheStepURLAndAnMCPConfigWrittenBeforeItStarts(t *testing.T) {
+	r := newRig(t)
+	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
+	r.sm.Resolve = claudeLikeResolve(r)
+	path := filepath.Join(r.runDir, "phase-3", "rloop-p3-implement.mcp.json")
+	host := &configCheckingHost{scriptedHost: r.host, path: path}
+	r.sm.Host = host
+	var vars map[string]any
+	r.sm.Prompts = promptsFunc(func(name string, v map[string]any) (string, string, error) {
+		vars = v
+		return "text", "embedded", nil
+	})
+
+	s := r.spawn(t, 1)
+
+	url := "http://127.0.0.1:7000/mcp/tok/run-1/3/implement/1"
+	if s.Ref.AskURL != url || vars["AskURL"] != url {
+		t.Fatalf("ask url = %q, var = %v", s.Ref.AskURL, vars["AskURL"])
+	}
+	if !reflect.DeepEqual(r.resolve, []string{"codex", "gpt-5.6-sol", "medium", url, path}) {
 		t.Fatalf("resolve = %q", r.resolve)
+	}
+	if !host.present {
+		t.Fatal("the mcp config was not there when the agent started")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"mcpServers":{"r-loop":{"type":"http","url":"http://127.0.0.1:7000/run-1/3/implement/1"}}}`
-	if string(data) != want {
+	if want := `{"mcpServers":{"r-loop":{"type":"http","url":"` + url + `"}}}`; string(data) != want {
 		t.Fatalf("mcp config = %s", data)
+	}
+	if len(r.events("ask-none")) != 0 {
+		t.Fatal("recorded ask-none for an asking provider")
+	}
+}
+
+func TestAProviderTakingTheURLDirectlyGetsNoMCPConfigFile(t *testing.T) {
+	r := newRig(t)
+	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
+
+	s := r.spawn(t, 1)
+
+	url := "http://127.0.0.1:7000/mcp/tok/run-1/3/implement/1"
+	if s.Ref.AskURL != url {
+		t.Fatalf("ask url = %q", s.Ref.AskURL)
+	}
+	if got := r.count("SessionHost.Start pane-1 rloop-p3-implement codex [-c model=gpt-5.6-sol]"); got != 1 {
+		t.Fatalf("calls =\n%s", strings.Join(r.shared.Calls(), "\n"))
+	}
+	matches, _ := filepath.Glob(filepath.Join(r.runDir, "phase-3", "*.mcp.json"))
+	if len(matches) != 0 {
+		t.Fatalf("wrote %v", matches)
+	}
+}
+
+func TestAnAskNoneProviderGetsNoAskFlagAndRecordsAskNoneOnce(t *testing.T) {
+	r := newRig(t)
+	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
+	r.sm.Resolve = func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
+		r.resolve = []string{provider, model, effort, askURL, mcpConfigPath}
+		return ProviderArgs{Kind: "codex", Args: []string{"-c", "model=" + model}}, nil
+	}
+
+	s := r.spawn(t, 1)
+
+	if !reflect.DeepEqual(r.resolve, []string{"codex", "gpt-5.6-sol", "medium", "", ""}) {
+		t.Fatalf("resolve = %q", r.resolve)
+	}
+	if s.Ref.AskURL != "" || r.count("AskChannel.StepURL") != 0 {
+		t.Fatalf("ask url = %q", s.Ref.AskURL)
+	}
+	events := r.events("ask-none")
+	if len(events) != 1 || events[0].Fields["provider"] != "codex" || events[0].Phase != 3 || events[0].Step != "implement" {
+		t.Fatalf("ask-none events = %+v", events)
 	}
 }
 
@@ -655,14 +733,12 @@ func TestAnUndeliveredNudgeFailsTheStepNamingTheHerdrError(t *testing.T) {
 
 func TestTheMCPConfigIsReadableOnlyByItsOwner(t *testing.T) {
 	r := newRig(t)
-	ref := r.ref(1)
-	ref.AskURL = "http://127.0.0.1:7000/run-1/3/implement/1?token=secret"
+	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/secret"}
+	r.sm.Resolve = claudeLikeResolve(r)
 
-	if _, err := r.sm.Spawn(context.Background(), ref); err != nil {
-		t.Fatal(err)
-	}
+	r.spawn(t, 1)
 
-	info, err := os.Stat(filepath.Join(r.runDir, "phase-3", "implement-a1.mcp.json"))
+	info, err := os.Stat(filepath.Join(r.runDir, "phase-3", "rloop-p3-implement.mcp.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

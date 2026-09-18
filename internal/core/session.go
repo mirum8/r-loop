@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -22,6 +24,7 @@ type SessionManager struct {
 	Repo       Repo
 	Prompts    Prompts
 	Store      Store
+	Ask        AskChannel
 	Resolve    func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error)
 	Now        func() time.Time
 	Poll       time.Duration
@@ -101,38 +104,46 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 	if err != nil {
 		return s, fmt.Errorf("spawn: %w", err)
 	}
-	if err := m.start(s, stepDir, base); err != nil {
+	if err := m.start(s, stepDir); err != nil {
 		return s, fmt.Errorf("spawn: %w", err)
 	}
 	return s, m.record(key, StepRunning, "")
 }
 
-func (m *SessionManager) start(s *Session, stepDir, base string) error {
-	ref := s.Ref
-	mcpPath := ""
-	if ref.AskURL != "" {
-		mcpPath = filepath.Join(stepDir, base+".mcp.json")
-		data, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"r-loop": map[string]string{"type": "http", "url": ref.AskURL}}})
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(mcpPath, data, 0o600); err != nil {
-			return err
-		}
-	}
-	row := ref.Kind.Row
-	args, err := m.Resolve(row.Provider, row.Model, row.Effort, ref.AskURL, mcpPath)
+func (m *SessionManager) start(s *Session, stepDir string) error {
+	row := s.Ref.Kind.Row
+	args, err := m.Resolve(row.Provider, row.Model, row.Effort, "", "")
 	if err != nil {
 		return err
 	}
+	if !args.Ask {
+		if err := m.event(m.now(), s, Event{Kind: "ask-none", Fields: map[string]string{"provider": row.Provider}}); err != nil {
+			return err
+		}
+	} else if m.Ask != nil {
+		s.Ref.AskURL = m.Ask.StepURL(s.Ref.Key)
+		mcpPath := filepath.Join(stepDir, s.Agent+".mcp.json")
+		if args, err = m.Resolve(row.Provider, row.Model, row.Effort, s.Ref.AskURL, mcpPath); err != nil {
+			return err
+		}
+		if slices.ContainsFunc(args.Args, func(a string) bool { return strings.Contains(a, mcpPath) }) {
+			if err := writeMCPConfig(mcpPath, s.Ref.AskURL); err != nil {
+				return err
+			}
+		}
+	}
+	ref := s.Ref
 	if _, err := m.Host.Start(s.Pane, s.Agent, args.Kind, args.Args); err != nil {
 		return err
 	}
-	vars := make(map[string]any, len(ref.Vars)+1)
+	vars := make(map[string]any, len(ref.Vars)+2)
 	for k, v := range ref.Vars {
 		vars[k] = v
 	}
 	vars["Sentinel"] = s.Sentinel
+	if ref.AskURL != "" {
+		vars["AskURL"] = ref.AskURL
+	}
 	text, _, err := m.Prompts.Render(ref.Kind.Prompt, vars)
 	if err != nil {
 		return err
@@ -212,6 +223,14 @@ func (m *SessionManager) Wait(ctx context.Context, s *Session, obs Observer) Out
 		}
 		m.event(now, s, Event{Kind: "nudge"})
 	}
+}
+
+func writeMCPConfig(path, url string) error {
+	data, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"r-loop": map[string]string{"type": "http", "url": url}}})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }
 
 func nudge(grace time.Duration) string {
