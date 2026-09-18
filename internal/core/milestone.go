@@ -75,7 +75,7 @@ func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone
 	if err != nil {
 		out = b.Sessions.Finish(s, Outcome{State: StepFailed, Reason: err.Error(), Session: s})
 	} else {
-		out = b.Sessions.Finish(s, b.Sessions.Wait(ctx, s, nopObserver{}))
+		out = b.Sessions.Finish(s, b.Sessions.Wait(ctx, s, stepRecorder{b.Sessions.Store, b.Face}))
 	}
 	if out.State != StepOK {
 		return fmt.Sprintf("%s: %s", out.State, out.Reason)

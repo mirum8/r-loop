@@ -724,3 +724,33 @@ func TestMilestoneReportFailedLeavesThePrimaryTreeClean(t *testing.T) {
 		t.Errorf("report-skipped not recorded")
 	}
 }
+
+func TestGateFixAndMilestoneSessionsStoreTheirLiveStepMetadata(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, _, _ := e.boundaryGate("ok")
+	g.FixRounds = 1
+	g.FixKind.Row.Provider = "codex"
+	g.Runner = runnerFunc(func(ctx context.Context, ref core.StepRef, obs core.Observer) core.Outcome {
+		obs.Started(&core.Session{Ref: ref, Workspace: "w9"})
+		return core.Outcome{State: core.StepFailed, Reason: "no fix"}
+	})
+	g.Land(context.Background(), phaseOne("exit 1"))
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatalf("Land 1: %v", err)
+	}
+	if _, err := g.Land(context.Background(), phaseTwo("")); err != nil {
+		t.Fatalf("Land 2: %v", err)
+	}
+
+	var got []string
+	for _, ev := range e.store.events("step") {
+		f := ev.Fields
+		got = append(got, fmt.Sprintf("%d %s %s %s %s %s", ev.Phase, ev.Step, f["state"], f["attempt"], f["provider"], f["workspace"]))
+	}
+	want := []string{"1 gatefix running 1 codex w9", "2 milestone running 1 claude w1"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("step events %q, want %q", got, want)
+	}
+}

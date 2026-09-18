@@ -17,6 +17,7 @@ import (
 	"r-loop/internal/face/plain"
 	"r-loop/internal/gitrepo"
 	"r-loop/internal/herdr"
+	"r-loop/internal/notify"
 	"r-loop/internal/plan"
 	"r-loop/internal/prompts"
 	"r-loop/internal/providers"
@@ -36,6 +37,7 @@ type Env struct {
 	Dir, Home, Herdr, Git string
 	PID                   int
 	Stdout, Stderr        io.Writer
+	Now                   func() time.Time
 }
 
 type ExitError struct {
@@ -61,6 +63,7 @@ type Wiring struct {
 	Host     herdr.Client
 	Repo     *gitrepo.Repo
 	Face     *plain.Face
+	Notify   *notify.Shell
 	Gate     *core.LandGate
 	Loop     *core.RunLoop
 }
@@ -128,6 +131,9 @@ func ParseArgs(args []string) (Options, error) {
 }
 
 func Main(args []string, env Env) int {
+	if len(args) > 0 && args[0] == "status" {
+		return Status(args[1:], env)
+	}
 	opts, err := ParseArgs(args)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "usage: r-loop <todo.md> [flags]: %v\n", err)
@@ -191,6 +197,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Repo:     repo,
 		Face:     &plain.Face{Out: env.Stdout},
 	}
+	w.Notify = &notify.Shell{Emit: w.Face.Emit}
 	rows := map[string]core.StepRow{}
 	promptNames := map[string]string{}
 	checks := map[string]string{}
@@ -244,6 +251,8 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Sessions:    sm,
 		Store:       w.Store,
 		Face:        w.Face,
+		Notifier:    w.Notify,
+		Hooks:       core.Hooks(cfg.Notify),
 		Lander:      w.Gate,
 		Runners:     runners,
 		MaxRestarts: cfg.Watchdog.MaxRestarts,
@@ -258,6 +267,7 @@ func (w *Wiring) bind(runID string) {
 	w.Gate.Boundary.RunID = runID
 	w.Gate.Boundary.RunDir = dir
 	w.Face.Report = filepath.Join(dir, "report.md")
+	w.Notify.Log = filepath.Join(dir, "notify.log")
 }
 
 func (w *Wiring) resolve(provider, model, effort, askURL, mcpConfigPath string) (core.ProviderArgs, error) {

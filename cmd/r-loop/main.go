@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"r-loop/internal/app"
 )
@@ -25,5 +26,5 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	home, _ := os.UserHomeDir()
-	return app.Main(args, app.Env{Dir: dir, Home: home, Herdr: "herdr", Git: "git", PID: os.Getpid(), Stdout: stdout, Stderr: stderr})
+	return app.Main(args, app.Env{Dir: dir, Home: home, Herdr: "herdr", Git: "git", PID: os.Getpid(), Stdout: stdout, Stderr: stderr, Now: time.Now})
 }

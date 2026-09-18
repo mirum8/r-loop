@@ -137,7 +137,7 @@ func (g *LandGate) fix(ctx context.Context, phase Phase, command, output string)
 	if err := g.Store.Append(g.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepQueued}); err != nil {
 		return Outcome{State: StepFailed, Reason: "record: " + err.Error()}
 	}
-	return g.Runner.Run(ctx, ref, nopObserver{})
+	return g.Runner.Run(ctx, ref, stepRecorder{g.Store, g.Face})
 }
 
 func (g *LandGate) emit(ev Event) {
@@ -152,4 +152,23 @@ func recordEvent(store Store, face Face, runID string, ev Event) {
 	if face != nil {
 		face.Emit(ev)
 	}
+}
+
+type stepRecorder struct {
+	store Store
+	face  Face
+}
+
+func (r stepRecorder) Started(s *Session) { r.record(s, StepRunning) }
+func (r stepRecorder) Stalled(s *Session) { r.record(s, StepStalled) }
+func (r stepRecorder) Resumed(s *Session) { r.record(s, StepRunning) }
+
+func (r stepRecorder) record(s *Session, state StepState) {
+	key := s.Ref.Key
+	recordEvent(r.store, r.face, key.Run, Event{Kind: "step", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{
+		"state":     string(state),
+		"attempt":   strconv.Itoa(key.Attempt),
+		"provider":  s.Ref.Kind.Row.Provider,
+		"workspace": s.Workspace,
+	}})
 }

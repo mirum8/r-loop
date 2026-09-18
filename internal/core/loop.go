@@ -627,6 +627,9 @@ func (l *RunLoop) emitStep(ref StepRef, state StepState, reason string, s *Sessi
 	}}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if err := l.Store.Append(l.RunID, Record{Kind: RecordEvent, At: ev.At, Event: &ev}); err != nil {
+		l.Face.Emit(Event{At: ev.At, Kind: "warning", Fields: map[string]string{"reason": "store: " + err.Error()}})
+	}
 	l.Face.Emit(ev)
 	l.writeReport()
 }

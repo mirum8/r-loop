@@ -262,12 +262,12 @@ Contracts: `tech-design.md#milestone-3-the-serial-loop-landing-and-the-plain-fac
 **Implements:** See where a run is · Be told when a run halts
 **Depends on:** Phase 15
 **Files:** `cmd/r-loop/main.go` (modify) · `internal/app/wire.go` (modify) · `internal/app/status.go` (new) · `internal/notify/notify.go` (new) · `internal/app/status_test.go` (new) · `internal/notify/notify_test.go` (new)
-- [ ] `r-loop status [--plain]` reads `.r-loop/runs/current` (else the newest run) and `Store.Load`s it; with no run it prints `no run` and exits 0
-- [ ] `status --plain` prints `run <id> <status>`, one `phase <N> <state>` per phase of the plan (`blocked` followed by its reason or the phase it waits on), `live <kind> <provider> <workspace> <elapsed>` when a step is live, `question q<seq> <text>` per open question, and `warning <reason>` per warning
-- [ ] `notify.Shell` implements `core.Notifier`: `Fire(hook, env)` runs `sh -c <hook>` with `R_LOOP_RUN`, `R_LOOP_STATUS` (`halted|finished|warning`), `R_LOOP_PHASE`, `R_LOOP_STEP`, `R_LOOP_REASON`, `R_LOOP_TODO`, `R_LOOP_REPORT` added to the environment and a 60 s timeout; an empty hook is a no-op
-- [ ] a hook's non-zero exit or timeout is logged to `<RunDir>/notify.log` with its output and emitted as `Event{Kind: "notify-failed"}`; it never changes the run's outcome or exit code
-- [ ] `app.Wire` passes `notify.Shell` and the configured `notify.onHalt`, `onWarn`, `onDone` into the loop's `Hooks`
-- [ ] `status_test.go` proves the status lines for a stored run with a live step, an open question and a warning, and `no run`; `notify_test.go` proves the environment a hook sees and that a hook exiting 1 leaves a fake loop's exit code unchanged
+- [x] `r-loop status [--plain]` reads `.r-loop/runs/current` (else the newest run) and `Store.Load`s it; with no run it prints `no run` and exits 0
+- [x] `status --plain` prints `run <id> <status>`, one `phase <N> <state>` per phase of the plan (`blocked` followed by its reason or the phase it waits on), `live <kind> <provider> <workspace> <elapsed>` when a step is live, `question q<seq> <text>` per open question, and `warning <reason>` per warning
+- [x] `notify.Shell` implements `core.Notifier`: `Fire(hook, env)` runs `sh -c <hook>` with `R_LOOP_RUN`, `R_LOOP_STATUS` (`halted|finished|warning`), `R_LOOP_PHASE`, `R_LOOP_STEP`, `R_LOOP_REASON`, `R_LOOP_TODO`, `R_LOOP_REPORT` added to the environment and a 60 s timeout; an empty hook is a no-op
+- [x] a hook's non-zero exit or timeout is logged to `<RunDir>/notify.log` with its output and emitted as `Event{Kind: "notify-failed"}`; it never changes the run's outcome or exit code
+- [x] `app.Wire` passes `notify.Shell` and the configured `notify.onHalt`, `onWarn`, `onDone` into the loop's `Hooks`
+- [x] `status_test.go` proves the status lines for a stored run with a live step, an open question and a warning, and `no run`; `notify_test.go` proves the environment a hook sees and that a hook exiting 1 leaves a fake loop's exit code unchanged
 **Done when:** `go test ./internal/app/... ./internal/notify/...` is green.
 
 ### Phase 17 — Resume and abort

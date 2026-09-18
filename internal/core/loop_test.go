@@ -291,6 +291,24 @@ func TestEveryStateChangeIsAStepEvent(t *testing.T) {
 	}
 }
 
+func TestStepEventsAreStoredWithProviderAndWorkspace(t *testing.T) {
+	r := newLoopRig(t)
+
+	r.run(RunOptions{Phases: []int{2}})
+
+	var got []string
+	for _, rec := range r.store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == "step" && rec.Event.Step == "plan" {
+			f := rec.Event.Fields
+			got = append(got, f["state"]+" "+f["attempt"]+" "+f["provider"]+" "+f["workspace"])
+		}
+	}
+	want := []string{"queued 1 codex ", "spawned 1 codex ws-1", "running 1 codex ws-1", "ok 1 codex ws-1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("stored step events\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestStepRefUsesPhaseBranchWorktreeAndBase(t *testing.T) {
 	r := newLoopRig(t)
 
