@@ -6,12 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"r-loop/internal/askmcp"
 	"r-loop/internal/config"
 	"r-loop/internal/core"
 	"r-loop/internal/face/plain"
@@ -36,6 +38,7 @@ type Options struct {
 type Env struct {
 	Dir, Home, Herdr, Git string
 	PID                   int
+	Stdin                 io.Reader
 	Stdout, Stderr        io.Writer
 	Now                   func() time.Time
 }
@@ -66,6 +69,7 @@ type Wiring struct {
 	Notify   *notify.Shell
 	Gate     *core.LandGate
 	Loop     *core.RunLoop
+	Ask      *askmcp.Server
 }
 
 type overrides struct {
@@ -139,6 +143,8 @@ func Main(args []string, env Env) int {
 			return Resume(args[1:], env)
 		case "abort":
 			return Abort(args[1:], env)
+		case "answer":
+			return Answer(args[1:], env)
 		}
 	}
 	opts, err := ParseArgs(args)
@@ -170,7 +176,16 @@ func fail(env Env, err error) int {
 }
 
 func (w *Wiring) Execute(opts core.RunOptions) int {
-	code := w.Loop.Run(context.Background(), opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	code := 2
+	if _, err := w.Ask.Serve(ctx); err != nil {
+		fmt.Fprintf(w.Env.Stderr, "r-loop: ask server: %v\n", err)
+	} else {
+		go w.pollAnswers(ctx)
+		code = w.Loop.Run(ctx, opts)
+	}
+	cancel()
 	w.Face.Close()
 	if err := w.Store.ClearCurrent(); err != nil {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: clear current: %v\n", err)
@@ -210,8 +225,9 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Prompts:  prompts.New(root),
 		Host:     herdr.Client{Bin: env.Herdr},
 		Repo:     repo,
-		Face:     &plain.Face{Out: env.Stdout},
+		Face:     &plain.Face{Out: env.Stdout, In: env.Stdin, TTY: terminal(env.Stdin)},
 	}
+	w.Ask = &askmcp.Server{Store: w.Store}
 	w.Notify = &notify.Shell{Emit: w.Face.Emit}
 	rows := map[string]core.StepRow{}
 	promptNames := map[string]string{}
@@ -228,6 +244,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Repo:       repo,
 		Prompts:    w.Prompts,
 		Store:      w.Store,
+		Ask:        w.Ask,
 		Resolve:    w.resolve,
 		Now:        time.Now,
 		StallGrace: cfg.Watchdog.StallGrace,
@@ -270,6 +287,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Hooks:       core.Hooks(cfg.Notify),
 		Lander:      w.Gate,
 		Runners:     runners,
+		Ask:         w.Ask,
 		MaxRestarts: cfg.Watchdog.MaxRestarts,
 	}
 	return w, nil
@@ -283,6 +301,19 @@ func (w *Wiring) bind(runID string) {
 	w.Gate.Boundary.RunDir = dir
 	w.Face.Report = filepath.Join(dir, "report.md")
 	w.Notify.Log = filepath.Join(dir, "notify.log")
+	w.Ask.RunDir, w.Ask.RunID = dir, runID
+	if run, err := w.Store.Load(runID); err == nil {
+		w.Ask.Seq = len(run.Questions)
+	}
+}
+
+func terminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func (w *Wiring) resolve(provider, model, effort, askURL, mcpConfigPath string) (core.ProviderArgs, error) {

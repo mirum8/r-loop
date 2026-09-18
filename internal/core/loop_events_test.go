@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -444,9 +446,15 @@ func TestQuestionAnsweredThroughTheFaceReturnsToRunning(t *testing.T) {
 			order = append(order, strings.Fields(c)[0])
 		}
 	}
-	wantOrder := []string{"Store.Append", "Face.Emit", "Watcher.Route", "Face.Ask", "AskChannel.Answer", "Store.Append"}
+	wantOrder := []string{"Store.Append", "Face.Emit", "Watcher.Route", "Face.Ask", "Store.Append", "AskChannel.Answer"}
 	if !reflect.DeepEqual(order, wantOrder) {
 		t.Errorf("order %v, want %v", order, wantOrder)
+	}
+	calls := r.shared.Calls()
+	asked := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "Face.Ask") })
+	answered := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "AskChannel.Answer") })
+	if running := slices.Index(calls[asked:], "Store.Append run-1 step"); running < 0 || asked+running > answered {
+		t.Errorf("running not recorded before the answer reached the agent: %v", calls[asked:])
 	}
 	st, _ := r.store.Load("run-1")
 	if len(st.Questions) != 1 || st.Questions[0].Answer != "sqlite" || st.Questions[0].AnsweredBy != "maintainer" {
@@ -695,12 +703,35 @@ func TestTheStepStaysWaitingUntilItsLastQuestionIsAnswered(t *testing.T) {
 type gatedFace struct {
 	*fakeFace
 	gate chan struct{}
+	mu   sync.Mutex
+	gone map[string]chan struct{}
 }
 
 func (f *gatedFace) Ask(q Question) (string, error) {
 	f.record("Face.Ask %s", q.ID)
-	<-f.gate
-	return "yes", nil
+	select {
+	case <-f.gate:
+		return "yes", nil
+	case <-f.withdrawn(q.ID):
+		return "", ErrNoInput
+	}
+}
+
+func (f *gatedFace) withdrawn(id string) chan struct{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.gone == nil {
+		f.gone = map[string]chan struct{}{}
+	}
+	if f.gone[id] == nil {
+		f.gone[id] = make(chan struct{})
+	}
+	return f.gone[id]
+}
+
+func (f *gatedFace) Withdraw(id string) {
+	f.record("Face.Withdraw %s", id)
+	close(f.withdrawn(id))
 }
 
 func waitFor(t *testing.T, cond func() bool) {
@@ -748,5 +779,63 @@ func TestAWatchdogQuestionGoesStraightToTheFaceWithoutTouchingTheStep(t *testing
 	st, _ := r.store.Load("run-1")
 	if len(st.Questions) != 1 || st.Questions[0].Answer != "yes" || st.Questions[0].AnsweredBy != "maintainer" {
 		t.Errorf("questions %+v", st.Questions)
+	}
+}
+
+func TestAFileAnswerWinsAndWithdrawsTheQuestionFromTheFace(t *testing.T) {
+	r := newEventsRig(t)
+	gate := make(chan struct{})
+	r.loop.Face = &gatedFace{fakeFace: r.face, gate: gate}
+	s := &Session{Ref: StepRef{Key: StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}}}
+	r.loop.runDir = r.store.dir
+	r.loop.setLive(s)
+	file := filepath.Join(r.store.dir, "answers", "q1")
+	writeFile(file, "postgres")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { r.loop.question(ctx, Question{ID: "q1", Step: s.Ref.Key, Text: "which db?"}); close(done) }()
+	waitFor(t, func() bool { return len(r.calls("Face.Ask ")) == 1 })
+
+	if err := r.loop.Answer("q1", "postgres", "maintainer"); err != nil {
+		t.Fatal(err)
+	}
+
+	if s.OpenQuestion.Load() {
+		t.Error("step still frozen after the file answer")
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Errorf("answer file left behind: %v", err)
+	}
+	<-done
+	if got := r.calls("Face.Withdraw "); !reflect.DeepEqual(got, []string{"q1"}) {
+		t.Errorf("withdrawn %v", got)
+	}
+	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{`q1 "postgres" maintainer ""`}) {
+		t.Errorf("answers %v", got)
+	}
+	st, _ := r.store.Load("run-1")
+	if len(st.Questions) != 1 || st.Questions[0].Answer != "postgres" || st.Questions[0].AnsweredBy != "maintainer" {
+		t.Errorf("questions %+v", st.Questions)
+	}
+	if human := r.events("human"); len(human) != 1 || human[0].Fields["id"] != "q1" {
+		t.Errorf("human %+v", human)
+	}
+	if got := r.stepStates("implement"); !reflect.DeepEqual(got, []string{"waiting-input", "running"}) {
+		t.Errorf("implement states %v", got)
+	}
+}
+
+func TestAnsweringAQuestionThatIsNotOpenIsAnError(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.runDir = r.store.dir
+
+	err := r.loop.Answer("q9", "yes", "maintainer")
+
+	if err == nil || !strings.Contains(err.Error(), "q9") {
+		t.Fatalf("err %v", err)
+	}
+	if got := r.calls("AskChannel.Answer "); len(got) != 0 {
+		t.Errorf("answered %v", got)
 	}
 }

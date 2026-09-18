@@ -1,9 +1,11 @@
 package plain
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -12,8 +14,14 @@ import (
 
 type Face struct {
 	Out    io.Writer
+	In     io.Reader
+	TTY    bool
 	Report string
 	mu     sync.Mutex
+	readMu sync.Mutex
+	once   sync.Once
+	lines  chan string
+	gone   map[string]chan struct{}
 }
 
 func (f *Face) Emit(ev core.Event) {
@@ -45,13 +53,86 @@ func (f *Face) Emit(ev core.Event) {
 }
 
 func (f *Face) Ask(q core.Question) (string, error) {
+	f.readMu.Lock()
+	defer f.readMu.Unlock()
+	block := fmt.Sprintf("?  %s  %s%s\n", q.ID, where(q.Step.Phase, q.Step.Kind), q.Text)
+	for i, o := range q.Options {
+		block += fmt.Sprintf("   %d. %s\n", i+1, o)
+	}
+	f.print("%s", block)
+	if !f.TTY || f.In == nil {
+		f.print("question %s stays open — answer from the TUI or resume later\n", q.ID)
+		return "", core.ErrNoInput
+	}
+	f.once.Do(f.read)
+	gone := f.withdrawn(q.ID)
+	for {
+		f.print("answer %s> ", q.ID)
+		var line string
+		select {
+		case l, ok := <-f.lines:
+			if !ok {
+				return "", core.ErrNoInput
+			}
+			line = strings.TrimSpace(l)
+		case <-gone:
+			f.print("\n%s answered elsewhere\n", q.ID)
+			return "", core.ErrNoInput
+		}
+		if line == "" {
+			continue
+		}
+		if n, err := strconv.Atoi(line); err == nil && n >= 1 && n <= len(q.Options) {
+			return q.Options[n-1], nil
+		}
+		return line, nil
+	}
+}
+
+func (f *Face) read() {
+	f.lines = make(chan string)
+	go func() {
+		r := bufio.NewReader(f.In)
+		for {
+			line, err := r.ReadString('\n')
+			if line != "" {
+				f.lines <- line
+			}
+			if err != nil {
+				close(f.lines)
+				return
+			}
+		}
+	}()
+}
+
+func (f *Face) Withdraw(id string) {
+	gone := f.withdrawn(id)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	fmt.Fprintf(f.Out, "?  %s  %s%s\n", q.ID, where(q.Step.Phase, q.Step.Kind), q.Text)
-	for i, o := range q.Options {
-		fmt.Fprintf(f.Out, "   %d. %s\n", i+1, o)
+	select {
+	case <-gone:
+	default:
+		close(gone)
 	}
-	return "", core.ErrNoInput
+}
+
+func (f *Face) withdrawn(id string) chan struct{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.gone == nil {
+		f.gone = map[string]chan struct{}{}
+	}
+	if f.gone[id] == nil {
+		f.gone[id] = make(chan struct{})
+	}
+	return f.gone[id]
+}
+
+func (f *Face) print(format string, args ...any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fmt.Fprintf(f.Out, format, args...)
 }
 
 func (f *Face) Close() {

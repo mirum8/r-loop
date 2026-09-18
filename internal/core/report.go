@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 func Report(state RunState, plan Plan) string {
@@ -160,7 +161,11 @@ func questionLines(st RunState) []string {
 		if q.AnsweredBy == "" {
 			line += " (open)"
 		} else {
-			line += fmt.Sprintf(" → %s (%s)", q.Answer, q.AnsweredBy)
+			who := q.AnsweredBy
+			if q.Citation != "" {
+				who += ", cites " + q.Citation
+			}
+			line += fmt.Sprintf(" → %s (%s, waited %s)", q.Answer, who, max(q.AnsweredAt.Sub(q.AskedAt), 0).Round(time.Second))
 		}
 		out = append(out, line)
 	}
@@ -209,7 +214,16 @@ func findingLines(st RunState) []string {
 
 func skipLines(st RunState) []string {
 	var out []string
+	askNone := map[string]bool{}
 	for _, ev := range st.Events {
+		if ev.Kind == "ask-none" {
+			step := where(ev.Phase, ev.Step)
+			if !askNone[step] {
+				askNone[step] = true
+				out = append(out, fmt.Sprintf("%s: ask: none (%s)", step, ev.Fields["provider"]))
+			}
+			continue
+		}
 		if ev.Kind == "phase-skipped" || !strings.HasSuffix(ev.Kind, "-skipped") {
 			continue
 		}

@@ -629,7 +629,7 @@ func TestReportSectionsOfAFailedRun(t *testing.T) {
 	if !strings.HasPrefix(rep, "human touches: 0\n") {
 		t.Errorf("report does not open with human touches:\n%s", rep)
 	}
-	for _, absent := range []string{"## Questions", "## Signals", "## Remedies", "## Findings", "## Skips"} {
+	for _, absent := range []string{"## Questions", "## Signals", "## Remedies", "## Findings"} {
 		if strings.Contains(rep, absent) {
 			t.Errorf("empty section %s present", absent)
 		}
@@ -674,7 +674,7 @@ func TestReportCountsHumanTouchesAndListsAutomaticDecisions(t *testing.T) {
 			"- phase 1 implement: review round limit reached; round 3 fixes unreviewed\n" +
 			"- q1 phase 1 implement: timed out; the agent took sqlite\n",
 		"## Landed\n\n- phase 2 abc gate skipped\n",
-		"## Questions\n\n- q1 phase 1 implement: which db? → sqlite (timeout)\n- q2 phase 1 implement: keep api? → yes (maintainer)\n",
+		"## Questions\n\n- q1 phase 1 implement: which db? → sqlite (timeout, waited 0s)\n- q2 phase 1 implement: keep api? → yes (maintainer, waited 0s)\n",
 		"## Signals\n\n- warn from watchdog, phase 1 implement: drifting\n",
 		"## Remedies\n\n- phase 1 implement: lock `rm lock` — authorised\n",
 		"## Findings\n\n- phase 1 implement r1 codex codex-r1-1 nil map: real P1 fixed true — x.go:3\n",
@@ -689,6 +689,40 @@ func TestReportCountsHumanTouchesAndListsAutomaticDecisions(t *testing.T) {
 	}
 	if strings.Contains(rep, "## Halt") {
 		t.Errorf("finished run has a Halt section:\n%s", rep)
+	}
+}
+
+func TestReportQuestionsNameTheAnswererCitationAndWaitAndSkipsListAskNonePerStep(t *testing.T) {
+	asked := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	ev := func(kind string, phase int, step string, fields map[string]string) Event {
+		return Event{Kind: kind, Phase: phase, Step: step, Fields: fields}
+	}
+	st := RunState{
+		ID: "run-1", Status: RunRunning,
+		Events: []Event{
+			ev("ask-none", 1, "plan", map[string]string{"provider": "gemini"}),
+			ev("ask-none", 1, "plan", map[string]string{"provider": "gemini"}),
+			ev("ask-none", 2, "implement", map[string]string{"provider": "gemini"}),
+		},
+		Questions: []Question{
+			{ID: "q1", Step: StepKey{Phase: 1, Kind: "implement"}, Text: "which db?", Answer: "postgres", AnsweredBy: "maintainer", AskedAt: asked, AnsweredAt: asked.Add(4 * time.Minute)},
+			{ID: "q2", Step: StepKey{Phase: 1, Kind: "implement-rv-codex"}, Text: "keep api?", Answer: "yes", AnsweredBy: "watchdog", Citation: "spec.html#adr-12", AskedAt: asked, AnsweredAt: asked.Add(30 * time.Second)},
+			{ID: "q3", Step: StepKey{Phase: 2, Kind: "plan"}, Text: "rename?", AskedAt: asked},
+		},
+	}
+
+	rep := Report(st, threePhasePlan())
+
+	for _, want := range []string{
+		"## Questions\n\n" +
+			"- q1 phase 1 implement: which db? → postgres (maintainer, waited 4m0s)\n" +
+			"- q2 phase 1 implement-rv-codex: keep api? → yes (watchdog, cites spec.html#adr-12, waited 30s)\n" +
+			"- q3 phase 2 plan: rename? (open)\n",
+		"## Skips\n\n- phase 1 plan: ask: none (gemini)\n- phase 2 implement: ask: none (gemini)\n",
+	} {
+		if !strings.Contains(rep, want) {
+			t.Errorf("report lacks %q:\n%s", want, rep)
+		}
 	}
 }
 

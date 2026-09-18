@@ -82,6 +82,12 @@ type RunLoop struct {
 	blocked  []int
 	restarts map[string]int
 	open     map[*Session]int
+	asked    map[string]openAsk
+}
+
+type openAsk struct {
+	q Question
+	s *Session
 }
 
 func (l *RunLoop) watcher() Watcher {
@@ -481,45 +487,80 @@ func (l *RunLoop) serveQuestions(ctx context.Context) {
 }
 
 func (l *RunLoop) question(ctx context.Context, q Question) {
-	if q.Step.Kind == "watchdog" {
-		l.recordQuestion(q)
-		l.emit(Event{Kind: "question", Step: q.Step.Kind, Fields: map[string]string{"id": q.ID, "text": q.Text}})
-		l.askFace(q)
-		return
+	var s *Session
+	if q.Step.Kind != "watchdog" {
+		if s = l.askingSession(ctx, q.Step); s == nil {
+			return
+		}
+		if l.openQuestion(s, 1) == 1 {
+			l.stepState(s, StepWaitingInput)
+		}
 	}
-	s := l.askingSession(ctx, q.Step)
-	if s == nil {
-		return
-	}
-	if l.openQuestion(s, 1) == 1 {
-		l.stepState(s, StepWaitingInput)
-	}
+	l.track(q, s)
 	l.recordQuestion(q)
 	l.emit(Event{Kind: "question", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"id": q.ID, "text": q.Text}})
-	if !l.watcher().Route(ctx, q) && !l.askFace(q) {
+	if s != nil && l.watcher().Route(ctx, q) {
+		if _, ok := l.claim(q.ID); ok {
+			l.release(s)
+		}
 		return
 	}
-	if l.openQuestion(s, -1) == 0 {
-		l.stepState(s, StepRunning)
-	}
-}
-
-func (l *RunLoop) askFace(q Question) bool {
 	answer, err := l.Face.Ask(q)
 	if err != nil {
 		if !errors.Is(err, ErrNoInput) {
 			l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "ask " + q.ID + ": " + err.Error()}})
 		}
-		return false
+		return
 	}
-	if err := l.Ask.Answer(q.ID, answer, "maintainer", ""); err != nil {
-		l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "answer " + q.ID + ": " + err.Error()}})
-		return false
+	l.Answer(q.ID, answer, "maintainer")
+}
+
+func (l *RunLoop) Answer(id, text, by string) error {
+	defer os.Remove(filepath.Join(l.Store.Dir(l.RunID), "answers", id))
+	open, ok := l.claim(id)
+	if !ok {
+		err := fmt.Errorf("question %s is not open", id)
+		l.emit(Event{Kind: "note", Fields: map[string]string{"reason": "answer dropped: " + err.Error()}})
+		return err
 	}
-	q.Answer, q.AnsweredBy, q.AnsweredAt = answer, "maintainer", time.Now()
+	q := open.q
+	if open.s != nil {
+		l.release(open.s)
+	}
+	q.Answer, q.AnsweredBy, q.AnsweredAt = text, by, time.Now()
 	l.recordQuestion(q)
-	l.emit(Event{Kind: "human", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": q.ID}})
-	return true
+	l.emit(Event{Kind: "human", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": id}})
+	if w, ok := l.Face.(interface{ Withdraw(id string) }); ok {
+		w.Withdraw(id)
+	}
+	if err := l.Ask.Answer(id, text, by, ""); err != nil {
+		l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "answer " + id + ": " + err.Error()}})
+		return err
+	}
+	return nil
+}
+
+func (l *RunLoop) track(q Question, s *Session) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.asked == nil {
+		l.asked = map[string]openAsk{}
+	}
+	l.asked[q.ID] = openAsk{q: q, s: s}
+}
+
+func (l *RunLoop) claim(id string) (openAsk, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	open, ok := l.asked[id]
+	delete(l.asked, id)
+	return open, ok
+}
+
+func (l *RunLoop) release(s *Session) {
+	if l.openQuestion(s, -1) == 0 {
+		l.stepState(s, StepRunning)
+	}
 }
 
 func (l *RunLoop) openQuestion(s *Session, delta int) int {
