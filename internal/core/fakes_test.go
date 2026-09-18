@@ -227,6 +227,7 @@ func (f *fakeRepo) Run(dir, command string, timeout time.Duration) (int, string,
 
 type fakeStore struct {
 	callLog
+	mu         sync.Mutex
 	Records    map[string][]Record
 	Metas      map[string]RunMeta
 	CurrentRun string
@@ -249,6 +250,8 @@ func (f *fakeStore) Create(meta RunMeta) (string, error) {
 
 func (f *fakeStore) Append(runID string, rec Record) error {
 	f.record("Store.Append %s %s", runID, rec.Kind)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.Records == nil {
 		f.Records = map[string][]Record{}
 	}
@@ -258,6 +261,8 @@ func (f *fakeStore) Append(runID string, rec Record) error {
 
 func (f *fakeStore) Load(runID string) (RunState, error) {
 	f.record("Store.Load %s", runID)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	st := RunState{ID: runID, Todo: f.Metas[runID].Todo, Started: f.Metas[runID].Started, Status: RunCreated, Steps: map[StepKey]StepState{}}
 	for _, rec := range f.Records[runID] {
 		switch rec.Kind {
@@ -311,11 +316,15 @@ func (f *fakeStore) ClearCurrent() error {
 
 func (f *fakeStore) Aborted(runID string) bool {
 	f.record("Store.Aborted %s", runID)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.Aborts[runID]
 }
 
 func (f *fakeStore) MarkAbort(runID string) error {
 	f.record("Store.MarkAbort %s", runID)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.Aborts == nil {
 		f.Aborts = map[string]bool{}
 	}
