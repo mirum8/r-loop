@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"r-loop/internal/core"
+	"r-loop/internal/face/tui"
 	"r-loop/internal/store"
 )
 
@@ -491,5 +493,52 @@ func TestGateFixReviewersAreValidatedWhenImplementIsNotInThePipeline(t *testing.
 
 	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), "provider bare has no review command") {
 		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestWithoutATerminalOnStdoutTheFaceIsPlainEvenWithoutPlainFlag(t *testing.T) {
+	f := newFixture(t)
+	null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer null.Close()
+	f.env.Stdout = null
+
+	w, err := Wire(Options{Todo: f.todo}, f.env)
+
+	if err != nil || w.TUI != nil || w.Face != core.Face(w.Plain) {
+		t.Fatalf("err %v tui %v face %T", err, w.TUI, w.Face)
+	}
+}
+
+func TestTheBannerNamesTheTUIFace(t *testing.T) {
+	f := newFixture(t)
+	w, err := Wire(Options{Todo: f.todo, Plain: true}, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.TUI = &tui.Face{}
+	var out bytes.Buffer
+
+	w.banner(&out, nil)
+
+	if !strings.HasPrefix(out.String(), "face: tui\n") {
+		t.Fatalf("banner:\n%s", out.String())
+	}
+}
+
+func TestTheTUIIsChosenOnlyWithATerminalOnStdinAndStdoutAndNoPlainFlag(t *testing.T) {
+	for _, tc := range []struct {
+		plain, stdin, stdout, want bool
+	}{
+		{false, true, true, true},
+		{true, true, true, false},
+		{false, false, true, false},
+		{false, true, false, false},
+	} {
+		if got := useTUI(tc.plain, tc.stdin, tc.stdout); got != tc.want {
+			t.Errorf("plain=%v stdin=%v stdout=%v: got %v", tc.plain, tc.stdin, tc.stdout, got)
+		}
 	}
 }

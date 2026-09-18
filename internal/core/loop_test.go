@@ -309,6 +309,34 @@ func TestStepEventsAreStoredWithProviderAndWorkspace(t *testing.T) {
 	}
 }
 
+func TestStepEventsCarryModelEffortBackstopAndRounds(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Kinds[0].Row.Model, r.loop.Kinds[0].Row.Effort = "opus", "high"
+	r.loop.Kinds[0].Row.Timeout = time.Hour
+	r.loop.Kinds[0].Row.Rounds = 2
+
+	r.run(RunOptions{Phases: []int{2}})
+
+	f := r.events("step")[0].Fields
+	if f["model"] != "opus" || f["effort"] != "high" || f["backstop"] != "1h0m0s" || f["rounds"] != "2" {
+		t.Errorf("step fields %v", f)
+	}
+}
+
+func TestAReviewRoundIsARunningStepEventNamingTheRound(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.runDir = t.TempDir()
+	ref := StepRef{Key: StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}, Kind: r.loop.Kinds[1]}
+	ref.Kind.Row.Rounds = 3
+
+	(&loopObserver{l: r.loop, ref: ref}).Reviewing(&Session{Workspace: "ws-9"}, 2)
+
+	ev := r.events("step")[0]
+	if ev.Phase != 2 || ev.Step != "implement" || ev.Fields["state"] != "running" || ev.Fields["round"] != "2" || ev.Fields["rounds"] != "3" || ev.Fields["workspace"] != "ws-9" {
+		t.Errorf("event %+v", ev)
+	}
+}
+
 func TestStepRefUsesPhaseBranchWorktreeAndBase(t *testing.T) {
 	r := newLoopRig(t)
 
@@ -830,5 +858,21 @@ func TestReviewHookRunsOnlyForAnOkStepWithReviewersAndRounds(t *testing.T) {
 				t.Errorf("review called %d times, want %d", calls, c.want)
 			}
 		})
+	}
+}
+
+func TestAGateFixReviewRoundIsARunningStepEventNamingTheRound(t *testing.T) {
+	store := &fakeStore{}
+	face := &fakeFace{}
+	s := &Session{Workspace: "ws-5", Ref: StepRef{
+		Key:  StepKey{Run: "run-1", Phase: 3, Kind: "gatefix", Attempt: 1},
+		Kind: StepKind{Name: "gatefix", Row: StepRow{Provider: "codex", Model: "gpt-5", Effort: "high", Timeout: time.Hour, Rounds: 1}},
+	}}
+
+	stepRecorder{store, face}.Reviewing(s, 1)
+
+	f := face.Events[0].Fields
+	if face.Events[0].Kind != "step" || f["state"] != "running" || f["round"] != "1" || f["rounds"] != "1" || f["model"] != "gpt-5" || f["effort"] != "high" || f["backstop"] != "1h0m0s" || f["workspace"] != "ws-5" {
+		t.Fatalf("event %+v", face.Events)
 	}
 }

@@ -146,11 +146,14 @@ func (r *rig) count(prefix string) int {
 
 type recObserver struct {
 	started, stalled, resumed int
+	rounds                    []int
 }
 
 func (o *recObserver) Started(*Session) { o.started++ }
 func (o *recObserver) Stalled(*Session) { o.stalled++ }
 func (o *recObserver) Resumed(*Session) { o.resumed++ }
+
+func (o *recObserver) Reviewing(_ *Session, round int) { o.rounds = append(o.rounds, round) }
 
 func TestSpawnRecordsSpawnedBeforeOpenThenStartsPromptsAndRecordsRunning(t *testing.T) {
 	r := newRig(t)

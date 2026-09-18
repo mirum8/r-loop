@@ -159,16 +159,13 @@ type stepRecorder struct {
 	face  Face
 }
 
-func (r stepRecorder) Started(s *Session) { r.record(s, StepRunning) }
-func (r stepRecorder) Stalled(s *Session) { r.record(s, StepStalled) }
-func (r stepRecorder) Resumed(s *Session) { r.record(s, StepRunning) }
+func (r stepRecorder) Started(s *Session) { r.record(s, StepRunning, 0) }
+func (r stepRecorder) Stalled(s *Session) { r.record(s, StepStalled, 0) }
+func (r stepRecorder) Resumed(s *Session) { r.record(s, StepRunning, 0) }
 
-func (r stepRecorder) record(s *Session, state StepState) {
+func (r stepRecorder) Reviewing(s *Session, round int) { r.record(s, StepRunning, round) }
+
+func (r stepRecorder) record(s *Session, state StepState, round int) {
 	key := s.Ref.Key
-	recordEvent(r.store, r.face, key.Run, Event{Kind: "step", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{
-		"state":     string(state),
-		"attempt":   strconv.Itoa(key.Attempt),
-		"provider":  s.Ref.Kind.Row.Provider,
-		"workspace": s.Workspace,
-	}})
+	recordEvent(r.store, r.face, key.Run, Event{Kind: "step", Phase: key.Phase, Step: key.Kind, Fields: stepFields(s.Ref, state, "", s.Workspace, round)})
 }

@@ -707,15 +707,17 @@ func (o *loopObserver) Resumed(s *Session) {
 	o.l.emitStep(o.ref, StepRunning, "", s)
 }
 
+func (o *loopObserver) Reviewing(s *Session, round int) {
+	o.l.emitRound(o.ref, StepRunning, "", s, round)
+}
+
 func (l *RunLoop) emitStep(ref StepRef, state StepState, reason string, s *Session) {
+	l.emitRound(ref, state, reason, s, 0)
+}
+
+func (l *RunLoop) emitRound(ref StepRef, state StepState, reason string, s *Session, round int) {
 	ws, _ := sessionPlace(s)
-	ev := Event{At: time.Now(), Kind: "step", Phase: ref.Key.Phase, Step: ref.Key.Kind, Fields: map[string]string{
-		"state":     string(state),
-		"attempt":   strconv.Itoa(ref.Key.Attempt),
-		"provider":  ref.Kind.Row.Provider,
-		"reason":    reason,
-		"workspace": ws,
-	}}
+	ev := Event{At: time.Now(), Kind: "step", Phase: ref.Key.Phase, Step: ref.Key.Kind, Fields: stepFields(ref, state, reason, ws, round)}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := l.Store.Append(l.RunID, Record{Kind: RecordEvent, At: ev.At, Event: &ev}); err != nil {
@@ -723,6 +725,25 @@ func (l *RunLoop) emitStep(ref StepRef, state StepState, reason string, s *Sessi
 	}
 	l.Face.Emit(ev)
 	l.writeReport()
+}
+
+func stepFields(ref StepRef, state StepState, reason, ws string, round int) map[string]string {
+	row := ref.Kind.Row
+	f := map[string]string{
+		"state":     string(state),
+		"attempt":   strconv.Itoa(ref.Key.Attempt),
+		"provider":  row.Provider,
+		"model":     row.Model,
+		"effort":    row.Effort,
+		"backstop":  row.Timeout.String(),
+		"rounds":    strconv.Itoa(row.Rounds),
+		"reason":    reason,
+		"workspace": ws,
+	}
+	if round > 0 {
+		f["round"] = strconv.Itoa(round)
+	}
+	return f
 }
 
 func (l *RunLoop) emit(ev Event) {

@@ -13,10 +13,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/term"
+
 	"r-loop/internal/askmcp"
 	"r-loop/internal/config"
 	"r-loop/internal/core"
 	"r-loop/internal/face/plain"
+	"r-loop/internal/face/tui"
 	"r-loop/internal/gitrepo"
 	"r-loop/internal/herdr"
 	"r-loop/internal/notify"
@@ -65,7 +68,9 @@ type Wiring struct {
 	Prompts  *prompts.Renderer
 	Host     herdr.Client
 	Repo     *gitrepo.Repo
-	Face     *plain.Face
+	Face     core.Face
+	Plain    *plain.Face
+	TUI      *tui.Face
 	Notify   *notify.Shell
 	Gate     *core.LandGate
 	Loop     *core.RunLoop
@@ -183,6 +188,7 @@ func (w *Wiring) Execute(opts core.RunOptions) int {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: ask server: %v\n", err)
 	} else {
 		go w.pollAnswers(ctx)
+		w.startTUI()
 		code = w.Loop.Run(ctx, opts)
 	}
 	cancel()
@@ -225,7 +231,13 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Prompts:  prompts.New(root),
 		Host:     herdr.Client{Bin: env.Herdr},
 		Repo:     repo,
-		Face:     &plain.Face{Out: env.Stdout, In: env.Stdin, TTY: terminal(env.Stdin)},
+		Plain:    &plain.Face{Out: env.Stdout, In: env.Stdin, TTY: terminal(env.Stdin)},
+	}
+	w.Face = w.Plain
+	if useTUI(opts.Plain, terminal(env.Stdin), terminal(env.Stdout)) {
+		_, noColor := os.LookupEnv("NO_COLOR")
+		w.TUI = &tui.Face{In: env.Stdin, Out: env.Stdout, NoColor: noColor}
+		w.Face = w.TUI
 	}
 	w.Ask = &askmcp.Server{Store: w.Store}
 	w.Notify = &notify.Shell{Emit: w.Face.Emit}
@@ -293,13 +305,38 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	return w, nil
 }
 
+func (w *Wiring) startTUI() {
+	if w.TUI == nil {
+		return
+	}
+	run, _ := w.Store.Load(w.Loop.RunID)
+	started := run.Started
+	if started.IsZero() {
+		started = time.Now()
+	}
+	w.TUI.Start(tui.Header{
+		RunID:    w.Loop.RunID,
+		Todo:     w.Opts.Todo,
+		Report:   w.Plain.Report,
+		Started:  started,
+		Watchdog: !w.Opts.NoWatchdog,
+	}, w.Plan.Phases, run.Events)
+}
+
+func (w *Wiring) faceName() string {
+	if w.TUI != nil {
+		return "tui"
+	}
+	return "plain"
+}
+
 func (w *Wiring) bind(runID string) {
 	dir := w.Store.Dir(runID)
 	w.Loop.RunID = runID
 	w.Gate.RunID = runID
 	w.Gate.Boundary.RunID = runID
 	w.Gate.Boundary.RunDir = dir
-	w.Face.Report = filepath.Join(dir, "report.md")
+	w.Plain.Report = filepath.Join(dir, "report.md")
 	w.Notify.Log = filepath.Join(dir, "notify.log")
 	w.Ask.RunDir, w.Ask.RunID = dir, runID
 	if run, err := w.Store.Load(runID); err == nil {
@@ -307,13 +344,13 @@ func (w *Wiring) bind(runID string) {
 	}
 }
 
-func terminal(r io.Reader) bool {
-	f, ok := r.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+func useTUI(plain, stdinTTY, stdoutTTY bool) bool {
+	return !plain && stdinTTY && stdoutTTY
+}
+
+func terminal(v any) bool {
+	f, ok := v.(*os.File)
+	return ok && term.IsTerminal(f.Fd())
 }
 
 func (w *Wiring) resolve(provider, model, effort, askURL, mcpConfigPath string) (core.ProviderArgs, error) {

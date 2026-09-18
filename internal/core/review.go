@@ -60,6 +60,7 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 		if err := h.event(worker, "review-round", map[string]string{"round": strconv.Itoa(rd.n), "tree": tree, "attempt": strconv.Itoa(ref.Key.Attempt)}); err != nil {
 			return sm.fail(worker, "record: "+err.Error())
 		}
+		obs.Reviewing(worker, rd.n)
 		var out Outcome
 		if reviewers, out = h.open(worker, row.Reviewers, args, reviewers, rd); out.State == StepFailed {
 			return out

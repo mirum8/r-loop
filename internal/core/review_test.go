@@ -456,6 +456,18 @@ func TestZeroFindingsEndsTheHalfClean(t *testing.T) {
 	}
 }
 
+func TestEachReviewRoundIsReportedToTheObserver(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+	obs := &recObserver{}
+
+	ReviewHalf{Sessions: r.sm, Store: r.store}.Run(context.Background(), r.worker.Ref, r.worker, obs)
+
+	if !reflect.DeepEqual(obs.rounds, []int{1}) {
+		t.Fatalf("rounds %v", obs.rounds)
+	}
+}
+
 func TestDefaultRunnersRunTheReviewHalfBeforeTheCommit(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "codex"})
 	r.behave = func(vars map[string]any) { writeReview(t, vars, "failed", 0) }

@@ -188,7 +188,7 @@ func implementStates(st core.RunState) []string {
 
 func TestAQuestionFromTheAgentWaitsPastTheBackstopAndTakesTheTypedOption(t *testing.T) {
 	stdin, typed := io.Pipe()
-	r := startAskRun(t, func(w *Wiring) { w.Face.In, w.Face.TTY = stdin, true })
+	r := startAskRun(t, func(w *Wiring) { w.Plain.In, w.Plain.TTY = stdin, true })
 	r.waitFor(t, func() bool { return r.implement() == core.StepWaitingInput })
 	var status bytes.Buffer
 	env := r.f.env
@@ -253,7 +253,7 @@ func TestAQuestionWithoutATerminalIsAnsweredByRLoopAnswerFromAnotherProcess(t *t
 
 func TestAFileAnswerWinsOverALaterTypedAnswer(t *testing.T) {
 	stdin, typed := io.Pipe()
-	r := startAskRun(t, func(w *Wiring) { w.Face.In, w.Face.TTY = stdin, true })
+	r := startAskRun(t, func(w *Wiring) { w.Plain.In, w.Plain.TTY = stdin, true })
 	r.waitFor(t, func() bool { return r.implement() == core.StepWaitingInput })
 
 	var out, errOut bytes.Buffer

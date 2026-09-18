@@ -1,0 +1,13 @@
+  r-loop  20260918-140000  docs/x/todo.md                                          started 14:00 · 43m0s · watchdog on
+
+  PHASES                    │  PHASE 2 · implement
+  ✓  1 scaffold             │  provider   codex · gpt-5 · medium
+  p  2 config reader        │  session    ws-4
+  ·  3 state store          │  state      waiting-input
+  ·  4 session manager      │  started    14:31:00   elapsed 12m0s
+                            │  backstop   paused
+                            │
+                            │  WARNINGS
+                            │  !  14:35  phase 2 implement: diff is large
+
+  ?  q2  phase 2 implement: Which port?                                                                               

@@ -177,7 +177,7 @@ func (w *Wiring) promptSources() ([]string, error) {
 }
 
 func (w *Wiring) banner(out io.Writer, prompts []string) {
-	fmt.Fprintln(out, "face: plain")
+	fmt.Fprintf(out, "face: %s\n", w.faceName())
 	fmt.Fprint(out, config.Banner(w.Config))
 	for _, l := range prompts {
 		fmt.Fprintln(out, l)

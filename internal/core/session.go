@@ -66,6 +66,7 @@ type Observer interface {
 	Started(*Session)
 	Stalled(*Session)
 	Resumed(*Session)
+	Reviewing(s *Session, round int)
 }
 
 type Outcome struct {
@@ -193,6 +194,8 @@ type nopObserver struct{}
 func (nopObserver) Started(*Session) {}
 func (nopObserver) Stalled(*Session) {}
 func (nopObserver) Resumed(*Session) {}
+
+func (nopObserver) Reviewing(*Session, int) {}
 
 func (m *SessionManager) waitAll(ctx context.Context, sessions []*Session, obs Observer) []Outcome {
 	poll := m.Poll

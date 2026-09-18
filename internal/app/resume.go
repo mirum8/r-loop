@@ -28,7 +28,7 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 	fs := flag.NewFlagSet("r-loop resume", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	replan := fs.Bool("replan", false, "")
-	fs.Bool("plain", false, "")
+	plain := fs.Bool("plain", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
 		return nil, core.RunOptions{}, exit(2, "usage: r-loop resume [--replan]")
 	}
@@ -54,7 +54,7 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 	if run.Status == core.RunFinished {
 		return nil, core.RunOptions{}, exit(2, "nothing to resume: run %s finished", id)
 	}
-	w, err := Wire(Options{Todo: run.Todo, Plain: true}, env)
+	w, err := Wire(Options{Todo: run.Todo, Plain: *plain}, env)
 	if err != nil {
 		return nil, core.RunOptions{}, err
 	}
