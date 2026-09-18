@@ -295,3 +295,59 @@ func TestMissingBinaryOnPathIsErrNoBinary(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func busyThenStarted(t *testing.T, failures int) (Client, string) {
+	t.Helper()
+	dir := t.TempDir()
+	count := filepath.Join(dir, "count")
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\n" +
+		"n=$(cat \"" + count + "\" 2>/dev/null || echo 0)\n" +
+		"n=$((n+1))\n" +
+		"echo $n > \"" + count + "\"\n" +
+		"if [ $n -le " + string(rune('0'+failures)) + " ]; then\n" +
+		"  printf '%s' '{\"error\":{\"code\":\"agent_pane_busy\",\"message\":\"agent target pane w1:p1 is not an available shell\"}}' >&2\n" +
+		"  exit 1\n" +
+		"fi\n" +
+		"printf '%s' '{\"result\":{\"agent\":{\"name\":\"a1\",\"pane_id\":\"w1:p1\",\"agent_status\":\"idle\"}}}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return Client{Bin: bin}, count
+}
+
+func shrinkPaneBusyWait(t *testing.T, budget time.Duration) {
+	t.Helper()
+	oldBudget, oldBackoff := paneBusyBudget, paneBusyBackoff
+	paneBusyBudget, paneBusyBackoff = budget, time.Millisecond
+	t.Cleanup(func() { paneBusyBudget, paneBusyBackoff = oldBudget, oldBackoff })
+}
+
+func TestStartRetriesWhilePaneShellIsNotReady(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, count := busyThenStarted(t, 3)
+
+	agent, err := c.Start("w1:p1", "a1", "claude", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if agent != (core.Agent{Name: "a1", Pane: "w1:p1"}) {
+		t.Fatalf("agent %+v", agent)
+	}
+	if data, _ := os.ReadFile(count); strings.TrimSpace(string(data)) != "4" {
+		t.Fatalf("calls %q", data)
+	}
+}
+
+func TestStartGivesUpOnBusyPaneAfterBudget(t *testing.T) {
+	shrinkPaneBusyWait(t, 20*time.Millisecond)
+	c, _ := busyThenStarted(t, 9)
+
+	_, err := c.Start("w1:p1", "a1", "claude", nil)
+
+	var herr Error
+	if !errors.As(err, &herr) || herr.Code != "agent_pane_busy" {
+		t.Fatalf("got %#v", err)
+	}
+}

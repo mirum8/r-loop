@@ -17,6 +17,11 @@ import (
 
 var ErrNoBinary = errors.New("herdr binary not found")
 
+var (
+	paneBusyBudget  = 20 * time.Second
+	paneBusyBackoff = 250 * time.Millisecond
+)
+
 type Error struct {
 	Code, Message string
 }
@@ -135,8 +140,18 @@ type agentResult struct {
 func (c Client) Start(pane, name, kind string, args []string) (core.Agent, error) {
 	argv := append([]string{"agent", "start", name, "--kind", kind, "--pane", pane, "--"}, args...)
 	var out agentResult
-	if err := c.call(&out, argv...); err != nil {
-		return core.Agent{}, err
+	deadline := time.Now().Add(paneBusyBudget)
+	for {
+		err := c.call(&out, argv...)
+		var herr Error
+		if errors.As(err, &herr) && herr.Code == "agent_pane_busy" && time.Now().Before(deadline) {
+			time.Sleep(paneBusyBackoff)
+			continue
+		}
+		if err != nil {
+			return core.Agent{}, err
+		}
+		break
 	}
 	return core.Agent{Name: out.Result.Agent.Name, Pane: out.Result.Agent.Pane}, nil
 }
