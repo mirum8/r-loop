@@ -1,6 +1,9 @@
 package core
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 type StepKey struct {
 	Run     string
@@ -151,4 +154,18 @@ type RunState struct {
 	Remedies  []Remedy
 	Events    []Event
 	Warnings  []string
+}
+
+func (p Plan) Unticked() []int {
+	var out []int
+	for _, ph := range p.Phases {
+		for _, it := range ph.Items {
+			if !it.Done {
+				out = append(out, ph.Number)
+				break
+			}
+		}
+	}
+	sort.Ints(out)
+	return out
 }

@@ -38,7 +38,7 @@ fallback, the gate fix and the watchdog each name their own model and effort, an
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
 
-### Phase 1 — Module skeleton, core types, ports and the boundary test
+### Phase 1 — Module skeleton, core types, ports and the boundary test ✅ <!-- built: 232563b -->
 **Implements:** Run every remaining phase of a plan
 **Depends on:** —
 **Files:** `go.mod` (new) · `cmd/r-loop/main.go` (new) · `internal/core/types.go` (new) · `internal/core/states.go` (new) · `internal/core/ports.go` (new) · `internal/core/fakes_test.go` (new) · `internal/core/boundary_test.go` (new) · `internal/core/states_test.go` (new)
@@ -58,12 +58,12 @@ Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
 **Implements:** Run every remaining phase of a plan
 **Depends on:** Phase 1
 **Files:** `internal/plan/reader.go` (new) · `internal/plan/reader_test.go` (new) · `internal/plan/testdata/todo.md` (new)
-- [x] `plan.Reader` implements `core.PlanSource.Read(path) (core.Plan, error)`; `Plan.Topic` is the todo's parent directory name
-- [x] a phase is a `### Phase N — title` heading (`—` or `-`, one or more spaces around) up to the next `###` or `##` heading; `Block` holds that raw text verbatim; `Number`, `Title` (with any `<!-- built: … -->` marker and `✅` removed), `Implements` (split on ` · `), `DependsOn` (`—`, `-`, `none` or absent mean none; otherwise every integer after `Phase`), `Files` (every backticked path on the `**Files:**` line), `Risk`, `Items` (`- [ ]` open, `- [x]`/`- [X]` done), `DoneWhen` (the text after `**Done when:**` up to the next `**` line or heading)
-- [x] a milestone is a `## Milestone N — name` heading; each phase's `Milestone` is the number of the nearest such heading above it, `0` when there is none; `Milestone.Phases` lists its phases in document order
-- [x] two headings with the same phase number, a phase number that skips a value, a `Depends on:` naming a phase that does not exist, or a `### Phase` heading without its dash return an error naming the line — the reader fails closed and never guesses
-- [x] `Plan.Unticked() []int` returns the phases with at least one open item, in numeric order; a phase whose every item is `[x]` is ticked
-- [x] `internal/plan/testdata/todo.md` is a real `/r:spec-design` plan with milestones, a `## Waves` block and a `<!-- built: … -->` marker; `reader_test.go` asserts the phase count, one phase's every field including `Block`, the milestone grouping, `Unticked`, and each fail-closed error
+- [ ] `plan.Reader` implements `core.PlanSource.Read(path) (core.Plan, error)`; `Plan.Topic` is the todo's parent directory name
+- [ ] a phase is a `### Phase N — title` heading (`—` or `-`, one or more spaces around) up to the next `###` or `##` heading; `Block` holds that raw text verbatim; `Number`, `Title` (with any `<!-- built: … -->` marker and `✅` removed), `Implements` (split on ` · `), `DependsOn` (`—`, `-`, `none` or absent mean none; otherwise every integer after `Phase`), `Files` (every backticked path on the `**Files:**` line), `Risk`, `Items` (`- [ ]` open, `- [x]`/`- [X]` done), `DoneWhen` (the text after `**Done when:**` up to the next `**` line or heading)
+- [ ] a milestone is a `## Milestone N — name` heading; each phase's `Milestone` is the number of the nearest such heading above it, `0` when there is none; `Milestone.Phases` lists its phases in document order
+- [ ] two headings with the same phase number, a phase number that skips a value, a `Depends on:` naming a phase that does not exist, or a `### Phase` heading without its dash return an error naming the line — the reader fails closed and never guesses
+- [ ] `Plan.Unticked() []int` returns the phases with at least one open item, in numeric order; a phase whose every item is `[x]` is ticked
+- [ ] `internal/plan/testdata/todo.md` is a real `/r:spec-design` plan with milestones, a `## Waves` block and a `<!-- built: … -->` marker; `reader_test.go` asserts the phase count, one phase's every field including `Block`, the milestone grouping, `Unticked`, and each fail-closed error
 **Done when:** `go test ./internal/plan/...` is green.
 
 ### Phase 3 — PlanReader: Resolve first, tick and stamp
