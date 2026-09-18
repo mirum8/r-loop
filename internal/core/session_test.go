@@ -1,0 +1,672 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+)
+
+type scriptedHost struct {
+	fakeSessionHost
+	StartErr error
+	script   func(n int) AgentState
+	polls    int
+}
+
+func (h *scriptedHost) Start(pane, name, kind string, args []string) (Agent, error) {
+	a, err := h.fakeSessionHost.Start(pane, name, kind, args)
+	if h.StartErr != nil {
+		return a, h.StartErr
+	}
+	return a, err
+}
+
+func (h *scriptedHost) State(agent string) (AgentState, error) {
+	h.record("SessionHost.State %s", agent)
+	h.polls++
+	if h.script == nil {
+		return AgentWorking, nil
+	}
+	return h.script(h.polls), nil
+}
+
+type stepClock struct {
+	t    time.Time
+	step time.Duration
+}
+
+func (c *stepClock) Now() time.Time {
+	c.t = c.t.Add(c.step)
+	return c.t
+}
+
+type rig struct {
+	shared  *callLog
+	host    *scriptedHost
+	repo    *fakeRepo
+	store   *fakeStore
+	prompts *fakePrompts
+	sm      *SessionManager
+	runDir  string
+	resolve []string
+}
+
+func newRig(t *testing.T) *rig {
+	shared := &callLog{}
+	r := &rig{
+		shared:  shared,
+		host:    &scriptedHost{fakeSessionHost: fakeSessionHost{callLog: callLog{Shared: shared}}},
+		repo:    &fakeRepo{callLog: callLog{Shared: shared}, RootDir: "/repo", SHA: "sha-start", Tree: "tree-start"},
+		store:   &fakeStore{callLog: callLog{Shared: shared}},
+		prompts: &fakePrompts{callLog: callLog{Shared: shared}, Texts: map[string]string{"implement": "do phase 3"}},
+		runDir:  t.TempDir(),
+	}
+	clock := &stepClock{t: time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC), step: time.Minute}
+	r.sm = &SessionManager{
+		Host:    r.host,
+		Repo:    r.repo,
+		Prompts: r.prompts,
+		Store:   r.store,
+		Resolve: func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
+			r.resolve = []string{provider, model, effort, askURL, mcpConfigPath}
+			return ProviderArgs{Kind: "codex", Args: []string{"-c", "model=" + model}}, nil
+		},
+		Now:        clock.Now,
+		Poll:       time.Millisecond,
+		StallGrace: 2 * time.Minute,
+	}
+	return r
+}
+
+func (r *rig) ref(attempt int) StepRef {
+	return StepRef{
+		Key:      StepKey{Run: "run-1", Phase: 3, Kind: "implement", Attempt: attempt},
+		Kind:     StepKind{Name: "implement", Prompt: "implement", Check: "diff", Row: StepRow{Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium", Timeout: time.Hour}},
+		Phase:    Phase{Number: 3, Title: "Plan reader"},
+		Worktree: "/repo/.r-loop/wt/phase-3",
+		Branch:   "r-loop/phase-3",
+		Base:     "main",
+		RunDir:   r.runDir,
+		Vars:     map[string]any{"PhaseNumber": 3},
+	}
+}
+
+func (r *rig) spawn(t *testing.T, attempt int) *Session {
+	t.Helper()
+	s, err := r.sm.Spawn(context.Background(), r.ref(attempt))
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	return s
+}
+
+func (r *rig) writeSentinel(t *testing.T, s *Session, outcome, reason string) {
+	t.Helper()
+	body := `{"outcome":"` + outcome + `","reason":"` + reason + `","at":"2026-09-18T10:05:00Z"}`
+	if err := os.WriteFile(s.Sentinel, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (r *rig) steps() []StepState {
+	var out []StepState
+	for _, rec := range r.store.Records["run-1"] {
+		if rec.Kind == RecordStep {
+			out = append(out, rec.State)
+		}
+	}
+	return out
+}
+
+func (r *rig) events(kind string) []Event {
+	var out []Event
+	for _, rec := range r.store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == kind {
+			out = append(out, *rec.Event)
+		}
+	}
+	return out
+}
+
+func (r *rig) count(prefix string) int {
+	n := 0
+	for _, c := range r.shared.Calls() {
+		if strings.HasPrefix(c, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+type recObserver struct {
+	started, stalled, resumed int
+}
+
+func (o *recObserver) Started(*Session) { o.started++ }
+func (o *recObserver) Stalled(*Session) { o.stalled++ }
+func (o *recObserver) Resumed(*Session) { o.resumed++ }
+
+func TestSpawnRecordsSpawnedBeforeOpenThenStartsPromptsAndRecordsRunning(t *testing.T) {
+	r := newRig(t)
+
+	s := r.spawn(t, 1)
+
+	sentinel := filepath.Join(r.runDir, "phase-3", "implement-a1.sentinel")
+	want := []string{
+		"Repo.AddWorktree /repo/.r-loop/wt/phase-3 r-loop/phase-3 main",
+		"Repo.HeadSHA /repo/.r-loop/wt/phase-3",
+		"Repo.Snapshot /repo/.r-loop/wt/phase-3",
+		"Store.Append run-1 step",
+		"SessionHost.Open /repo/.r-loop/wt/phase-3 rloop-p3-implement map[R_LOOP_PHASE:3 R_LOOP_RUN:run-1 R_LOOP_SENTINEL:" + sentinel + " R_LOOP_STEP:implement]",
+		"SessionHost.Start pane-1 rloop-p3-implement codex [-c model=gpt-5.6-sol]",
+		"Prompts.Render implement",
+		`SessionHost.Prompt rloop-p3-implement "do phase 3" false 0s`,
+		"Store.Append run-1 step",
+	}
+	if got := r.shared.Calls(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("calls =\n%s", strings.Join(got, "\n"))
+	}
+	if got := r.steps(); !reflect.DeepEqual(got, []StepState{StepSpawned, StepRunning}) {
+		t.Fatalf("steps = %v", got)
+	}
+	if s.StartSHA != "sha-start" || s.StartTree != "tree-start" || s.Dir != "/repo/.r-loop/wt/phase-3" {
+		t.Fatalf("session = %+v", s)
+	}
+	if s.Workspace != "ws-1" || s.Agent != "rloop-p3-implement" || s.Sentinel != sentinel {
+		t.Fatalf("session = %+v", s)
+	}
+	if !reflect.DeepEqual(r.resolve, []string{"codex", "gpt-5.6-sol", "medium", "", ""}) {
+		t.Fatalf("resolve = %q", r.resolve)
+	}
+	if _, err := os.Stat(filepath.Dir(sentinel)); err != nil {
+		t.Fatalf("sentinel dir: %v", err)
+	}
+}
+
+func TestSpawnRendersTheStepVariablesPlusTheSentinel(t *testing.T) {
+	r := newRig(t)
+	var got map[string]any
+	r.sm.Prompts = promptsFunc(func(name string, vars map[string]any) (string, string, error) {
+		got = vars
+		return "text", "embedded", nil
+	})
+
+	s := r.spawn(t, 1)
+
+	want := map[string]any{"PhaseNumber": 3, "Sentinel": s.Sentinel}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("vars = %v", got)
+	}
+}
+
+type promptsFunc func(name string, vars map[string]any) (string, string, error)
+
+func (f promptsFunc) Render(name string, vars map[string]any) (string, string, error) {
+	return f(name, vars)
+}
+
+func TestSpawnWithAnAskURLWritesAnMCPConfigForTheAgent(t *testing.T) {
+	r := newRig(t)
+	ref := r.ref(1)
+	ref.AskURL = "http://127.0.0.1:7000/run-1/3/implement/1"
+
+	if _, err := r.sm.Spawn(context.Background(), ref); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(r.runDir, "phase-3", "implement-a1.mcp.json")
+	if !reflect.DeepEqual(r.resolve, []string{"codex", "gpt-5.6-sol", "medium", ref.AskURL, path}) {
+		t.Fatalf("resolve = %q", r.resolve)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"mcpServers":{"r-loop":{"type":"http","url":"http://127.0.0.1:7000/run-1/3/implement/1"}}}`
+	if string(data) != want {
+		t.Fatalf("mcp config = %s", data)
+	}
+}
+
+func TestSpawnInPrimaryMakesNoWorktreeAndRunsInTheRepoRoot(t *testing.T) {
+	r := newRig(t)
+	ref := r.ref(1)
+	ref.InPrimary = true
+	ref.Worktree = ""
+
+	s, err := r.sm.Spawn(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n := r.count("Repo.AddWorktree"); n != 0 {
+		t.Fatalf("AddWorktree called %d times", n)
+	}
+	if s.Dir != "/repo" || r.host.Opened[0].CWD != "/repo" {
+		t.Fatalf("dir = %q, opened = %+v", s.Dir, r.host.Opened)
+	}
+}
+
+func TestSpawnFailureAfterOpenLeavesTheWorkspaceStandingAndNamesIt(t *testing.T) {
+	r := newRig(t)
+	r.host.StartErr = errors.New("herdr: pane_not_found: no pane pane-1")
+
+	s, err := r.sm.Spawn(context.Background(), r.ref(1))
+
+	if err == nil || err.Error() != "spawn: herdr: pane_not_found: no pane pane-1" {
+		t.Fatalf("err = %v", err)
+	}
+	if s == nil || s.Workspace != "ws-1" {
+		t.Fatalf("session = %+v", s)
+	}
+	if r.count("SessionHost.Close") != 0 || r.count("SessionHost.Start") != 1 || r.count("SessionHost.Prompt") != 0 {
+		t.Fatalf("calls = %q", r.shared.Calls())
+	}
+	if got := r.steps(); !reflect.DeepEqual(got, []StepState{StepSpawned}) {
+		t.Fatalf("steps = %v", got)
+	}
+}
+
+func TestAttemptTwoGetsTheSuffixedNameAndSentinel(t *testing.T) {
+	r := newRig(t)
+
+	s := r.spawn(t, 2)
+
+	if s.Agent != "rloop-p3-implement-a2" || r.host.Opened[0].Label != "rloop-p3-implement-a2" {
+		t.Fatalf("agent = %q, label = %q", s.Agent, r.host.Opened[0].Label)
+	}
+	if filepath.Base(s.Sentinel) != "implement-a2.sentinel" {
+		t.Fatalf("sentinel = %q", s.Sentinel)
+	}
+}
+
+func TestOkSentinelWithEvidenceIsOkAndCommitsOnlyInFinish(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.repo.TreeChanges = []string{"internal/plan/reader.go"}
+	r.host.script = func(n int) AgentState {
+		if n == 2 {
+			r.writeSentinel(t, s, "ok", "done")
+		}
+		return AgentWorking
+	}
+	obs := &recObserver{}
+
+	out := r.sm.Wait(context.Background(), s, obs)
+
+	if out.State != StepOK || out.Reason != "" || out.Session != s {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if obs.started != 1 {
+		t.Fatalf("started = %d", obs.started)
+	}
+	if r.count("Repo.CommitAll") != 0 {
+		t.Fatal("committed before Finish")
+	}
+	if got := r.steps(); !reflect.DeepEqual(got, []StepState{StepSpawned, StepRunning}) {
+		t.Fatalf("steps = %v", got)
+	}
+
+	fin := r.sm.Finish(s, out)
+
+	if fin.State != StepOK {
+		t.Fatalf("finish = %+v", fin)
+	}
+	commits := slices.DeleteFunc(r.shared.Calls(), func(c string) bool { return !strings.HasPrefix(c, "Repo.CommitAll") })
+	if !reflect.DeepEqual(commits, []string{`Repo.CommitAll /repo/.r-loop/wt/phase-3 "r-loop: phase 3 implement"`}) {
+		t.Fatalf("commits = %q", commits)
+	}
+	if got := r.steps(); !reflect.DeepEqual(got, []StepState{StepSpawned, StepRunning, StepOK}) {
+		t.Fatalf("steps = %v", got)
+	}
+}
+
+func TestFinishOfAnInPrimaryStepCommitsNothing(t *testing.T) {
+	r := newRig(t)
+	ref := r.ref(1)
+	ref.InPrimary = true
+	s, _ := r.sm.Spawn(context.Background(), ref)
+
+	r.sm.Finish(s, Outcome{State: StepOK, Session: s})
+
+	if r.count("Repo.CommitAll") != 0 {
+		t.Fatal("committed an InPrimary step")
+	}
+	if got := r.steps(); got[len(got)-1] != StepOK {
+		t.Fatalf("steps = %v", got)
+	}
+}
+
+func TestFinishFailsTheStepWhenTheCommitFails(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.repo.Err = errors.New("index locked")
+
+	fin := r.sm.Finish(s, Outcome{State: StepOK, Session: s})
+
+	if fin.State != StepFailed || fin.Reason != "commit: index locked; snapshot: index locked" {
+		t.Fatalf("finish = %+v", fin)
+	}
+	if got := r.steps(); got[len(got)-1] != StepFailed {
+		t.Fatalf("steps = %v", got)
+	}
+}
+
+func TestOkSentinelWithNoChangeFailsAndFinishRecordsASnapshotWithoutCommitting(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.host.script = func(n int) AgentState {
+		r.writeSentinel(t, s, "ok", "done")
+		return AgentWorking
+	}
+
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+
+	if out.State != StepFailed || out.Reason != "evidence missing: no change since the step started" {
+		t.Fatalf("outcome = %+v", out)
+	}
+
+	r.repo.Tree = "tree-left"
+	r.sm.Finish(s, out)
+
+	if r.count("Repo.CommitAll") != 0 {
+		t.Fatal("committed a failed step")
+	}
+	recs := r.store.Records["run-1"]
+	snap, last := recs[len(recs)-2], recs[len(recs)-1]
+	if snap.Kind != RecordEvent || snap.Event.Kind != "snapshot" || !reflect.DeepEqual(snap.Event.Fields, map[string]string{"step": "implement-a1", "tree": "tree-left"}) {
+		t.Fatalf("snapshot = %+v", snap.Event)
+	}
+	if last.Kind != RecordStep || last.State != StepFailed || last.Reason != out.Reason || *last.Step != s.Ref.Key {
+		t.Fatalf("last = %+v", last)
+	}
+}
+
+func TestAnAgentCommitFailsTheStep(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.repo.TreeChanges = []string{"a.go"}
+	r.host.script = func(n int) AgentState {
+		r.repo.SHA = "sha-agent"
+		r.writeSentinel(t, s, "ok", "done")
+		return AgentWorking
+	}
+
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+
+	if out.State != StepFailed || out.Reason != "step committed before review" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestAFailedSentinelFailsWithItsReason(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.host.script = func(n int) AgentState {
+		r.writeSentinel(t, s, "failed", "tests do not compile")
+		return AgentWorking
+	}
+
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+
+	if out.State != StepFailed || out.Reason != "tests do not compile" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestAGoneAgentFailsTheStep(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.host.script = func(n int) AgentState { return AgentGone }
+
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+
+	if out.State != StepFailed || out.Reason != "agent gone" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+const nudgeText = "r-loop: no sentinel and no activity for 2m0s. If your work is done, write the sentinel now. If you are blocked, call ask_user, or write a failed sentinel with the reason."
+
+func TestIdleForTheGraceStallsAndNudgesOnceThenWorkingResumes(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.repo.TreeChanges = []string{"a.go"}
+	r.host.script = func(n int) AgentState {
+		switch {
+		case n <= 3:
+			return AgentIdle
+		case n <= 5:
+			return AgentWorking
+		}
+		r.writeSentinel(t, s, "ok", "done")
+		return AgentWorking
+	}
+	obs := &recObserver{}
+
+	out := r.sm.Wait(context.Background(), s, obs)
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if obs.stalled != 1 || obs.resumed != 1 {
+		t.Fatalf("observer = %+v", obs)
+	}
+	nudges := slices.DeleteFunc(r.shared.Calls(), func(c string) bool { return !strings.HasPrefix(c, "SessionHost.Prompt") })
+	want := []string{
+		`SessionHost.Prompt rloop-p3-implement "do phase 3" false 0s`,
+		"SessionHost.Prompt rloop-p3-implement \"" + nudgeText + "\" false 0s",
+	}
+	if !reflect.DeepEqual(nudges, want) {
+		t.Fatalf("prompts = %q", nudges)
+	}
+	if len(r.events("nudge")) != 1 {
+		t.Fatalf("nudge events = %+v", r.events("nudge"))
+	}
+	if got := r.steps(); !reflect.DeepEqual(got, []StepState{StepSpawned, StepRunning, StepStalled, StepRunning}) {
+		t.Fatalf("steps = %v", got)
+	}
+}
+
+func TestStillIdleAfterTheNudgeFailsAsStalledAndLeavesTheSession(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.host.script = func(n int) AgentState { return AgentBlocked }
+	obs := &recObserver{}
+
+	out := r.sm.Wait(context.Background(), s, obs)
+
+	if out.State != StepFailed || out.Reason != "stalled: no response to nudge" || !out.Stalled {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if obs.stalled != 1 || len(r.events("nudge")) != 1 {
+		t.Fatalf("observer = %+v, nudges = %d", obs, len(r.events("nudge")))
+	}
+	if r.count("SessionHost.Close") != 0 || r.count("SessionHost.Interrupt") != 0 {
+		t.Fatalf("calls = %q", r.shared.Calls())
+	}
+}
+
+func TestTheBackstopFailsAStepThatKeepsWorking(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+
+	if out.State != StepFailed || out.Reason != "backstop 1h0m0s" || out.Stalled {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if r.host.polls != 61 {
+		t.Fatalf("polls = %d", r.host.polls)
+	}
+}
+
+func TestAnOpenQuestionSuspendsTheStallClockAndTheBackstop(t *testing.T) {
+	r := newRig(t)
+	ref := r.ref(1)
+	ref.Kind.Row.Timeout = 5 * time.Minute
+	s, _ := r.sm.Spawn(context.Background(), ref)
+	s.OpenQuestion.Store(true)
+	r.repo.TreeChanges = []string{"a.go"}
+	r.host.script = func(n int) AgentState {
+		if n == 30 {
+			r.writeSentinel(t, s, "ok", "done")
+		}
+		return AgentIdle
+	}
+	obs := &recObserver{}
+
+	out := r.sm.Wait(context.Background(), s, obs)
+
+	if out.State != StepOK || obs.stalled != 0 || len(r.events("nudge")) != 0 {
+		t.Fatalf("outcome = %+v, observer = %+v", out, obs)
+	}
+}
+
+func TestReviewingSuspendsTheStallClockAndTheBackstop(t *testing.T) {
+	r := newRig(t)
+	ref := r.ref(1)
+	ref.Kind.Row.Timeout = 5 * time.Minute
+	s, _ := r.sm.Spawn(context.Background(), ref)
+	s.Reviewing.Store(true)
+	r.repo.TreeChanges = []string{"a.go"}
+	r.host.script = func(n int) AgentState {
+		if n == 30 {
+			s.Reviewing.Store(false)
+		}
+		return AgentWorking
+	}
+
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+
+	if out.State != StepFailed || out.Reason != "backstop 5m0s" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if r.host.polls != 35 {
+		t.Fatalf("polls = %d", r.host.polls)
+	}
+}
+
+func TestWaitEndsWhenTheContextIsCancelled(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.host.script = func(n int) AgentState {
+		cancel()
+		return AgentWorking
+	}
+
+	out := r.sm.Wait(ctx, s, &recObserver{})
+
+	if out.State != StepFailed || out.Reason != "interrupted: context canceled" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestStopInterruptsTheAgentAndNeverClosesTheWorkspace(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+
+	if err := r.sm.Stop(s); err != nil {
+		t.Fatal(err)
+	}
+
+	if r.count("SessionHost.Interrupt rloop-p3-implement") != 1 || r.count("SessionHost.Close") != 0 {
+		t.Fatalf("calls = %q", r.shared.Calls())
+	}
+}
+
+func TestARelativeWorktreeRunsUnderTheRepoRoot(t *testing.T) {
+	r := newRig(t)
+	ref := r.ref(1)
+	ref.Worktree = ".r-loop/wt/phase-3"
+
+	s, err := r.sm.Spawn(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if r.count("Repo.AddWorktree .r-loop/wt/phase-3 r-loop/phase-3 main") != 1 {
+		t.Fatalf("calls = %q", r.shared.Calls())
+	}
+	if s.Dir != "/repo/.r-loop/wt/phase-3" || r.host.Opened[0].CWD != s.Dir {
+		t.Fatalf("dir = %q", s.Dir)
+	}
+}
+
+func TestFinishReportsFailureWhenTheOkStateCannotBeRecorded(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.store.Err = errors.New("disk full")
+
+	fin := r.sm.Finish(s, Outcome{State: StepOK, Session: s})
+
+	if fin.State != StepFailed || fin.Reason != "record: disk full" {
+		t.Fatalf("finish = %+v", fin)
+	}
+}
+
+func TestFinishNamesASnapshotThatCouldNotBeTaken(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.repo.Err = errors.New("index locked")
+
+	fin := r.sm.Finish(s, Outcome{State: StepFailed, Reason: "agent gone", Session: s})
+
+	if fin.State != StepFailed || fin.Reason != "agent gone; snapshot: index locked" {
+		t.Fatalf("finish = %+v", fin)
+	}
+}
+
+type failingPromptHost struct {
+	*scriptedHost
+	prompts int
+}
+
+func (h *failingPromptHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	h.prompts++
+	if h.prompts > 1 {
+		return errors.New("herdr: agent_busy: pane locked")
+	}
+	return nil
+}
+
+func TestAnUndeliveredNudgeFailsTheStepNamingTheHerdrError(t *testing.T) {
+	r := newRig(t)
+	r.host.script = func(n int) AgentState { return AgentIdle }
+	r.sm.Host = &failingPromptHost{scriptedHost: r.host}
+	s := r.spawn(t, 1)
+
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+
+	if out.State != StepFailed || out.Reason != "stalled: nudge not delivered: herdr: agent_busy: pane locked" || !out.Stalled {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if len(r.events("nudge")) != 0 {
+		t.Fatal("recorded a nudge that was not delivered")
+	}
+}
+
+func TestTheMCPConfigIsReadableOnlyByItsOwner(t *testing.T) {
+	r := newRig(t)
+	ref := r.ref(1)
+	ref.AskURL = "http://127.0.0.1:7000/run-1/3/implement/1?token=secret"
+
+	if _, err := r.sm.Spawn(context.Background(), ref); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(filepath.Join(r.runDir, "phase-3", "implement-a1.mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v", info.Mode().Perm())
+	}
+}
