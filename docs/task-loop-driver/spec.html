@@ -1,0 +1,2598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>r-loop — a provider-agnostic task loop driver</title>
+<style>
+:root {
+  --ivory:    #FAF9F5;
+  --surface:  #FFFFFF;
+  --gray-150: #F0EEE6;
+  --gray-300: #D1CFC5;
+  --gray-500: #87867F;
+  --gray-700: #3D3D3A;
+  --slate:    #141413;
+  --clay:     #D97757;
+  --olive:    #788C5D;
+  --serif: ui-serif, Georgia, "Times New Roman", serif;
+  --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ivory); color: var(--gray-700);
+       font-family: var(--sans); font-size: 15px; line-height: 1.62; }
+.wrap { max-width: 70rem; margin: 0 auto; padding: 0 2rem;
+        display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 3.5rem; }
+header { grid-column: 1 / -1; padding: 3.5rem 0 1.5rem; border-bottom: 1px solid var(--gray-300); }
+h1 { font-family: var(--serif); color: var(--slate); font-size: 2.35rem;
+     line-height: 1.15; margin: 0 0 .5rem; font-weight: 600; letter-spacing: -.01em; }
+.subtitle { color: var(--gray-500); font-size: 1.02rem; margin: 0; max-width: 46rem; }
+.ribbon { font-family: var(--mono); font-size: 11px; letter-spacing: .05em;
+          text-transform: uppercase; color: var(--gray-500); margin: 0 0 1.1rem; }
+main { padding-bottom: 6rem; min-width: 0; }
+h2.part { font-family: var(--serif); color: var(--slate); font-size: 1.72rem; font-weight: 600;
+          margin: 4.2rem 0 .6rem; padding-top: 1.4rem; border-top: 2px solid var(--slate);
+          letter-spacing: -.01em; }
+h2.part:first-of-type { margin-top: 2.6rem; }
+.pnum { display: block; font-family: var(--mono); font-size: 11px; letter-spacing: .09em;
+        text-transform: uppercase; color: var(--clay); margin-bottom: .35rem; font-weight: 400; }
+p.lede { font-size: 1.05rem; color: var(--gray-700); max-width: 44rem; margin: 0 0 2.2rem;
+         padding-left: 1rem; border-left: 3px solid var(--gray-300); }
+main h2:not(.part) { font-family: var(--serif); color: var(--slate); font-size: 1.22rem;
+                     font-weight: 600; margin: 2.6rem 0 .8rem; }
+h3 { font-family: var(--serif); color: var(--slate); font-size: 1.06rem; font-weight: 600;
+     margin: 2rem 0 .5rem; }
+h4 { font-family: var(--sans); color: var(--slate); font-size: .95rem; font-weight: 600;
+     margin: 1.5rem 0 .4rem; }
+p, li { max-width: 44rem; }
+code { font-family: var(--mono); font-size: .875em; background: var(--gray-150);
+       padding: .08em .34em; border-radius: 3px; color: var(--slate); }
+pre { background: var(--surface); border: 1px solid var(--gray-300); border-radius: 6px;
+      padding: .9rem 1.1rem; overflow-x: auto; max-width: 46rem; }
+pre code { background: none; padding: 0; font-size: 12.5px; line-height: 1.6; }
+table { border-collapse: collapse; width: 100%; max-width: 48rem; margin: 1.1rem 0 1.6rem;
+        font-size: 14px; }
+th { text-align: left; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em;
+     text-transform: uppercase; color: var(--gray-500); font-weight: 500;
+     border-bottom: 1px solid var(--gray-300); padding: .5rem .7rem .45rem; vertical-align: bottom; }
+td { border-bottom: 1px solid var(--gray-150); padding: .55rem .7rem; vertical-align: top; }
+tr.driving td { background: var(--gray-150); }
+tr.driving td:first-child { font-weight: 600; color: var(--slate); }
+.term { color: var(--olive); font-weight: 600; }
+.term-bad { color: var(--gray-500); font-weight: 600; }
+dl.glance { background: var(--surface); border: 1px solid var(--gray-300); border-radius: 8px;
+            padding: 1.25rem 1.4rem; margin: 2rem 0 0; max-width: 46rem;
+            display: grid; grid-template-columns: 11rem minmax(0,1fr); gap: .45rem 1.2rem; }
+dl.glance dt { font-family: var(--mono); font-size: 10.5px; letter-spacing: .05em;
+               text-transform: uppercase; color: var(--gray-500); padding-top: .18rem; }
+dl.glance dd { margin: 0; color: var(--gray-700); font-size: 14px; }
+.adr { border-left: 3px solid var(--clay); background: var(--surface); padding: .2rem 1.3rem 1rem;
+       margin: 1.6rem 0; border-radius: 0 6px 6px 0; }
+.adr h3 { margin-top: 1rem; }
+.adr p { margin: .4rem 0; max-width: 42rem; }
+.adr .f { font-family: var(--mono); font-size: 10.5px; letter-spacing: .05em;
+          text-transform: uppercase; color: var(--clay); margin-right: .45rem; }
+table.risks { max-width: 50rem; }
+table.risks th { background: var(--gray-150); border-bottom: 2px solid var(--gray-300);
+                 color: var(--slate); }
+table.risks td:first-child { font-weight: 600; color: var(--slate); }
+.tag { font-family: var(--mono); font-size: 10.5px; color: var(--gray-500); }
+.assumed { font-family: var(--mono); font-size: 10.5px; color: var(--clay); }
+figure.svg-figure { margin: 1.8rem 0 2.2rem; max-width: 48rem; }
+figure.svg-figure svg { width: 100%; height: auto; display: block;
+                        background: var(--surface); border: 1px solid var(--gray-300);
+                        border-radius: 6px; padding: .8rem; }
+figcaption { font-size: 13px; color: var(--gray-500); margin-top: .6rem; max-width: 42rem; }
+.s-fill  { fill: var(--surface); }
+.g-fill  { fill: var(--gray-150); }
+.stroke  { stroke: var(--gray-300); fill: none; }
+.stroke2 { stroke: var(--gray-500); fill: none; }
+.clay    { stroke: var(--clay); fill: none; }
+.clay-f  { fill: var(--clay); }
+.lbl     { font-family: var(--mono); font-size: 13px; fill: var(--gray-700); }
+.lbl-sm  { font-family: var(--mono); font-size: 11.5px; fill: var(--gray-500); }
+.lbl-hd  { font-family: var(--mono); font-size: 13px; fill: var(--slate); font-weight: 600; }
+.sidenav { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto;
+           padding: 2rem 0; font-size: 13px; }
+.sidenav ol, .sidenav ul { list-style: none; margin: 0; padding: 0; }
+.sidenav a { display: block; padding: .18rem 0; text-decoration: none; line-height: 1.35; }
+.sidenav a:hover { color: var(--clay); }
+.sidenav li.p { margin-top: .9rem; }
+.sidenav li.p > a { font-family: var(--mono); font-size: 11px; letter-spacing: .04em;
+                    text-transform: uppercase; color: var(--slate); }
+.sidenav li.s a { color: var(--gray-500); padding-left: .9rem; }
+section:target > h2 { color: var(--clay); }
+@media (max-width: 900px) {
+  .wrap { display: block; padding: 0 1.2rem; }
+  .sidenav { position: static; max-height: none; overflow: visible;
+             border-bottom: 1px solid var(--gray-300); margin-bottom: 2rem; }
+  dl.glance { grid-template-columns: 1fr; gap: .1rem; }
+  dl.glance dd { margin-bottom: .6rem; }
+}
+@media print {
+  .wrap { display: block; }
+  .sidenav { position: static; max-height: none; overflow: visible; break-after: page; }
+  .sidenav a { color: var(--gray-700); }
+  h2.part { break-before: page; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="ribbon">Specification · r-loop · drafted 2026-09-17 · revised 2026-09-18</p>
+  <h1>r-loop — a provider-agnostic task loop driver</h1>
+  <p class="subtitle">A terminal supervisor that walks a phased implementation plan to completion,
+  opening one fresh agent session per step and deciding everything between them in code. The agent
+  can be Claude, Codex, opencode or anything else herdr can start.</p>
+</header>
+
+<nav class="sidenav">
+  <ol class="toc">
+    <li class="p"><a href="#p1">Part 1 · Business requirements</a>
+      <ul>
+        <li class="s"><a href="#problem">Problem, goals &amp; non-goals</a></li>
+        <li class="s"><a href="#actors">Actors</a></li>
+        <li class="s"><a href="#stories">User stories</a></li>
+        <li class="s"><a href="#v1">The v1 line</a></li>
+      </ul></li>
+    <li class="p"><a href="#p2">Part 2 · Domain</a>
+      <ul>
+        <li class="s"><a href="#model">Domain model</a></li>
+        <li class="s"><a href="#lifecycles">Lifecycles</a></li>
+        <li class="s"><a href="#invariants">Invariants</a></li>
+        <li class="s"><a href="#flows">Key flows</a></li>
+      </ul></li>
+    <li class="p"><a href="#p3">Part 3 · Architectural characteristics</a>
+      <ul>
+        <li class="s"><a href="#driving">Driving characteristics</a></li>
+        <li class="s"><a href="#supporting">Supporting</a></li>
+        <li class="s"><a href="#not-optimising">What we are not optimising for</a></li>
+      </ul></li>
+    <li class="p"><a href="#p4">Part 4 · Logical components</a>
+      <ul>
+        <li class="s"><a href="#cut">The component cut</a></li>
+        <li class="s"><a href="#component-diagram">Component diagram</a></li>
+      </ul></li>
+    <li class="p"><a href="#p5">Part 5 · Architectural style</a>
+      <ul>
+        <li class="s"><a href="#style">The style</a></li>
+        <li class="s"><a href="#topology">Topology</a></li>
+        <li class="s"><a href="#talk">How components talk</a></li>
+      </ul></li>
+    <li class="p"><a href="#p6">Part 6 · Decisions</a>
+      <ul>
+        <li class="s"><a href="#adr-index">ADR-1 … ADR-52</a></li>
+      </ul></li>
+    <li class="p"><a href="#p7">Part 7 · Technical details</a>
+      <ul>
+        <li class="s"><a href="#tech">Technologies</a></li>
+        <li class="s"><a href="#api">API</a></li>
+        <li class="s"><a href="#rollout">Rollout</a></li>
+      </ul></li>
+    <li class="p"><a href="#risks">Risks, assumptions &amp; open questions</a>
+      <ul>
+        <li class="s"><a href="#risk-table">Risks</a></li>
+        <li class="s"><a href="#assumptions">Assumptions</a></li>
+        <li class="s"><a href="#open-questions">Open questions</a></li>
+      </ul></li>
+  </ol>
+</nav>
+
+<main>
+
+<dl class="glance">
+  <dt>What it is</dt><dd>A Go TUI that runs a <code>todo.md</code> phase by phase, one agent session per step, with a watchdog agent beside it.</dd>
+  <dt>Driving characteristics</dt><dd>zero loop approvals made by a model · two signals before a step is done · five extension seams, none of which edits the loop</dd>
+  <dt>Style</dt><dd>Supervisor over out-of-process workers, with a hexagonal core — one self-contained binary in a herdr pane, serving two MCP surfaces</dd>
+  <dt>Components</dt><dd>13 — <code>RunLoop</code>, <code>PlanReader</code>, <code>StepKinds</code>, <code>SessionManager</code>, <code>ProviderRegistry</code>, <code>PromptRenderer</code>, <code>LandGate</code>, <code>StateStore</code>, <code>ConfigReader</code>, <code>AskServer</code>, <code>Watch</code>, <code>Remedies</code>, <code>Ui</code></dd>
+  <dt>Stack</dt><dd>Go 1.25 · Bubble Tea 1.3 · MCP go-sdk 1.8 · yaml.v3 · herdr 0.9.0 · git 2.50 — nothing from the skill-pack at run time</dd>
+  <dt>v1</dt><dd>18 of 19 stories; concurrent phases, drift-watching and a non-<code>todo.md</code> source deferred</dd>
+</dl>
+
+<section id="p1">
+<h2 class="part" id="p1-h"><span class="pnum">Part 1</span> Business requirements</h2>
+<p class="lede">Three things are wrong today: a loop a model executes from prose, a pipeline welded to one vendor, and nobody watching a four-hour step that has gone the wrong way. What has to become true is that the driver decides, any agent can do the work, and a wrong turn or a blocked session reaches someone — or is dealt with — before it costs the rest of the night. The nineteen capabilities below divide between three actors, and the watchdog's three are written last because everything they may do is bounded by what it may never do.</p>
+
+<h2 id="problem">Problem, goals &amp; non-goals</h2>
+
+<p>The pack already runs plans to completion, and the loop that does it is prose: 1,057 lines of
+<code>skills/plan-run/SKILL.md</code> executed by a model that reads the file, decides what the
+verdict means, decides whether a phase may merge, and ticks the boxes. The measured result is that
+the loop stops more often than it finishes — the pack's own store holds <strong>8 runs halted at
+<code>implement-stopped</code> against 4 that finished</strong>, across 29 recorded
+<code>/r:plan-run</code> invocations. Each halt is a context that has to be rebuilt by hand.</p>
+
+<p>The second problem is lock-in. Everything the loop orchestrates is a Claude Code
+<code>Workflow</code> script, and the <code>Workflow</code> tool exists only inside Claude Code.
+A plan cannot be built by Codex, by opencode, or by an agent that does not exist yet, however good
+that agent gets at writing code.</p>
+
+<p>The third is that nothing is watching. A step session is fresh and sees one phase, so an
+implementation that has gone down the wrong path runs to the end of its four hours and is then
+reviewed on its merits. Nobody notices that it stopped building what the phase asked for, because
+noticing needs the whole run in view and every context in the design is deliberately narrow.</p>
+
+<table>
+  <tr><th>Goal</th><th>Metric</th></tr>
+  <tr><td>No loop <em>approval</em> is made by a model</td>
+      <td>0 of the five loop decisions — spawn, stall, verdict, land, tick — can be made by a model
+          in the direction of proceeding; exactly 1, stopping, can be made in the halting
+          direction</td></tr>
+  <tr><td>A stopped run resumes where it stopped</td>
+      <td>a resume re-runs at most 1 step, never a whole phase, and never across a reboot</td></tr>
+  <tr><td>The driver grows without its loop being edited</td>
+      <td>a new provider is 1 config block and 0 lines of Go; a new step kind is 1 prompt and 1
+          config entry when a shipped evidence check fits; a new check, plan source or session host
+          is 1 new package and 0 edits under the core</td></tr>
+  <tr><td>It runs on its own</td>
+      <td>0 files from the skill-pack read at run time; Go is the only prerequisite to build it,
+          and the <code>todo.md</code> format is the only contract between the two</td></tr>
+  <tr><td>Every step's depth is a setting</td>
+      <td>provider, model and effort settable for all 3 steps, in a file and per run</td></tr>
+  <tr><td>A halt or a question reaches you immediately</td>
+      <td>a question arrives as an explicit state, never inferred from silence; a halt the moment it
+          happens; a step with no signal at all falls back to its backstop (1 h plan · 4 h implement
+          · 2 h review)</td></tr>
+  <tr><td>A wrong turn is stopped before it finishes</td>
+      <td>a running step can be halted mid-flight, and every halt called that way is recorded with
+          its reason so the threshold can be tuned from rows rather than argued</td></tr>
+  <tr><td>A routine blocker costs no halt at all</td>
+      <td>the 4 remedy classes run without a person once pre-authorised; everything else asks
+          once</td></tr>
+  <tr><td>A merge is never made on an unproven phase</td>
+      <td>the phase's own <code>Done when:</code> command exits 0 in the primary tree before
+          <code>git merge</code> runs, or the run halts</td></tr>
+</table>
+
+<table>
+  <tr><th>Non-goal</th><th>Revisit when</th></tr>
+  <tr><td>Concurrent phases</td>
+      <td>a plan with 6 or more independent leaves has been run twice serially</td></tr>
+  <tr><td>Matching the fan-out depth of the pack's Workflows</td>
+      <td>the review step's fixes per run falls below what <code>/r:task-review</code> records
+          for the same repo</td></tr>
+  <tr><td>Any source other than a <code>todo.md</code></td>
+      <td>a backlog run is wanted without going through <code>/r:issues-fix</code></td></tr>
+  <tr><td>A web dashboard or a progress server</td>
+      <td>never — herdr is the view, and every step is already a workspace</td></tr>
+  <tr><td>Finishing a plan with nobody present</td>
+      <td>halts that need a human drop below one per run — the watchdog's remedies and the ask
+          channel are the two things moving that number</td></tr>
+  <tr><td>A watchdog that can approve anything</td>
+      <td>never — this is the line the first driving characteristic rests on</td></tr>
+  <tr><td>Replacing <code>/r:plan-run</code></td>
+      <td>the driver has run a full plan end to end twice without a halt the prose loop would
+          have avoided</td></tr>
+  <tr><td>Sharing code or config with the skill-pack</td>
+      <td>a judgement about the plan format has to change in both repos in the same week, twice</td></tr>
+</table>
+
+<h2 id="actors">Actors</h2>
+
+<table>
+  <tr><th>Actor</th><th>Wants</th><th>May authorise</th></tr>
+  <tr><td>Maintainer</td>
+      <td>a plan built to completion without watching every step, and a clear stop when it cannot be</td>
+      <td>everything — starts the run, answers a paused session, resolves a blocked plan entry,
+          accepts a halt</td></tr>
+  <tr><td>Provider agent</td>
+      <td>one step's work, in one session, with a prompt and a worktree</td>
+      <td>writing code and tests in its own tree, and committing there; asking a question when it is
+          blocked; never merging, never ticking the plan, never deciding the next step</td></tr>
+  <tr><td>Watchdog</td>
+      <td>to see the whole run and stop it going somewhere wrong</td>
+      <td>three tiers, and the top one is empty: it may <strong>veto</strong> unilaterally (halt,
+          warn); it may <strong>remedy</strong> with consent (fix the environment, restart a step,
+          retry differently); it may <strong>never approve</strong> — not a step, not a landing, not
+          a tick, not even with your consent</td></tr>
+</table>
+
+<p>The watchdog's third row is the load-bearing one. Consent can authorise an <em>action</em>; it
+cannot substitute for <em>evidence</em>, and a person clicking yes on a watchdog's summary of a step
+is strictly worse evidence than the driver's own check of git.</p>
+
+<h2 id="stories">User stories</h2>
+
+<h4>Maintainer</h4>
+
+<h3>Run every remaining phase of a plan</h3>
+<p>As the <strong>maintainer</strong>, I want to point the driver at a <code>todo.md</code> and
+have every unticked phase planned, implemented, reviewed and merged in order, so that I do not
+supervise each step myself.</p>
+<p><em>Given</em> a plan with phases 3–6 unticked and a clean primary tree, <em>when</em> I run
+<code>r-loop docs/x/todo.md</code>, <em>then</em> phases 3, 4, 5 and 6 are each built and merged in
+that order, each as one commit carrying its own ticks, and the run reports which phases landed.</p>
+
+<h3>Resume a run that stopped</h3>
+<p>As the <strong>maintainer</strong>, I want a stopped run to pick up at the step it stopped at,
+so that a halt costs one step rather than one phase.</p>
+<p><em>Given</em> a run whose implement step for phase 4 failed, <em>when</em> I run
+<code>r-loop resume</code>, <em>then</em> the driver re-runs phase 4's implement step against the
+plan the planning step already wrote, and does not re-plan the phase.</p>
+
+<h3>See where a run is</h3>
+<p>As the <strong>maintainer</strong>, I want the run's shape on screen without opening a session,
+so that I can tell a working run from a stuck one at a glance.</p>
+<p><em>Given</em> a run in progress, <em>when</em> I look at the TUI, <em>then</em> it shows every
+phase and its state, the live step with its provider and elapsed time, any open question, and any
+warning the watchdog has raised; <em>and</em> <code>r-loop status --plain</code> prints the same
+facts as lines for a script.</p>
+
+<h3>Choose the agent for each step</h3>
+<p>As the <strong>maintainer</strong>, I want planning, implementation and review each to name their
+own provider, model and effort, so that I can plan deeply and implement cheaply without one setting
+governing both.</p>
+<p><em>Given</em> <code>steps.plan.provider: claude</code> and
+<code>steps.implement.provider: codex</code>, <em>when</em> a phase runs, <em>then</em> the
+planning session is started with <code>--kind claude</code> and the implement session with
+<code>--kind codex</code>, and the run banner prints both resolved rows.</p>
+
+<h3>Try a different provider for one run</h3>
+<p>As the <strong>maintainer</strong>, I want to override a step's provider on the command line, so
+that trying one does not mean editing the project config and putting it back.</p>
+<p><em>Given</em> a config naming <code>claude</code> for review, <em>when</em> I run
+<code>r-loop docs/x/todo.md --provider review=codex</code>, <em>then</em> review sessions start as
+codex and the banner names the override and the file value it replaced.</p>
+
+<h3>Be told when a run halts</h3>
+<p>As the <strong>maintainer</strong>, I want a command of my own choosing run when the loop halts
+or finishes, so that a run that stops at 3am is not discovered in the morning.</p>
+<p><em>Given</em> <code>notify.onHalt</code> set to a shell command, <em>when</em> the run halts,
+<em>then</em> that command runs with the run summary in its environment, and a non-zero exit from
+it is logged and changes nothing about the run's own outcome.</p>
+
+<h3>Answer an agent's question without leaving the loop</h3>
+<p>As the <strong>maintainer</strong>, I want an agent's question to arrive where I am watching the
+run, so that being blocked costs a keystroke rather than a hunt through workspaces.</p>
+<p><em>Given</em> an implement session that cannot proceed without knowing which module owns a
+type, <em>when</em> it asks, <em>then</em> the question appears in the TUI with its options, the
+step enters <code>waiting-input</code> rather than counting as stalled, its backstop timer pauses,
+<em>and</em> my answer returns to the session that asked.</p>
+
+<h3>Close a blocking plan decision at startup</h3>
+<p>As the <strong>maintainer</strong>, I want the plan's unresolved decisions put to me before the
+first phase runs, so that a run does not start and then stop on something only I can settle.</p>
+<p><em>Given</em> a todo with an open <code>## Resolve first</code> entry blocking a phase in the
+run list, <em>when</em> I start the driver, <em>then</em> the TUI presents that entry with its
+recommendation, and on my answer writes the <code>Resolved:</code> stamp into the plan before phase
+one is scheduled.</p>
+
+<h3>Pre-authorise the blockers worth fixing automatically</h3>
+<p>As the <strong>maintainer</strong>, I want to say once which classes of blocker may be fixed
+without asking me, so that an unattended run is not stopped by a missing dependency.</p>
+<p><em>Given</em> <code>watchdog.allow: [deps, ports]</code>, <em>when</em> a step fails because a
+package was never fetched, <em>then</em> the fix runs without a prompt and is recorded verbatim in
+the run report; <em>and</em> a remedy outside that list still asks me first.</p>
+
+<h3>Stop a run without losing work</h3>
+<p>As the <strong>maintainer</strong>, I want to stop the loop while leaving sessions and worktrees
+in place, so that I can inspect what a step was doing.</p>
+<p><em>Given</em> a live implement session, <em>when</em> I run <code>r-loop abort</code>,
+<em>then</em> the driver stops scheduling, leaves the session and its worktree standing, names
+both, and <code>r-loop resume</code> still knows which step was live.</p>
+
+<h3>Override the prompts for this project</h3>
+<p>As the <strong>maintainer</strong>, I want this project's review prompt to differ from the
+shipped one, so that a repo with its own rubric does not have to fork the driver.</p>
+<p><em>Given</em> <code>.r-loop/prompts/review.md</code> in the repo, <em>when</em> a review
+step runs, <em>then</em> that file is rendered instead of the shipped one, and the banner names
+which file it used.</p>
+
+<h3>Add a provider the driver has never seen</h3>
+<p>As the <strong>maintainer</strong>, I want to run a step on an agent the driver does not ship
+support for, so that adopting a new one is a config edit.</p>
+<p><em>Given</em> a <code>providers.pdev</code> block naming a herdr <code>kind</code>, the model
+and effort flags, the completion signal and a <code>fanout</code> capability, <em>when</em> a step
+names <code>provider: pdev</code>, <em>then</em> the session starts on that agent and no driver
+code mentions it.</p>
+
+<h3>Add a step to every phase</h3>
+<p>As the <strong>maintainer</strong>, I want to add a step to each phase — a security pass, a docs
+update — without changing the driver, so that the pipeline fits this project rather than the one it
+shipped for.</p>
+<p><em>Given</em> <code>.r-loop/config.yaml</code> listing a step <code>docs</code> after
+<code>review</code>, with its own prompt, provider row and the shipped evidence check
+<code>diff</code>, <em>when</em> a phase runs, <em>then</em> a <code>docs</code> session opens after
+the review, is judged by the same two-signal rule as every other step, and the banner lists the
+phase's pipeline as <code>plan → implement → review → docs → land</code>.</p>
+
+<h4>Provider agent</h4>
+
+<h3>Report a step's outcome so the driver can act</h3>
+<p>As a <strong>provider agent</strong>, I want one documented way to say how my step ended, so that
+the driver never has to read my terminal to find out.</p>
+<p><em>Given</em> a step prompt carrying a sentinel path, <em>when</em> I finish or halt,
+<em>then</em> I write the outcome to that path as my last action, and the driver reads it rather
+than my output.</p>
+
+<h3>Ask the person a question</h3>
+<p>As a <strong>provider agent</strong>, I want one way to ask when the plan does not tell me
+something I need, so that guessing is never the cheapest option available to me.</p>
+<p><em>Given</em> the driver's <code>ask_user</code> tool in my session, <em>when</em> I call it
+with a question and its options, <em>then</em> the call blocks until an answer comes back, and I am
+not penalised for the wait.</p>
+
+<h3>Fan out reviewers using my own mechanism</h3>
+<p>As a <strong>provider agent</strong>, I want the reviewer list expanded into whatever parallel
+mechanism I actually have, so that one prompt works on every agent.</p>
+<p><em>Given</em> a review prompt containing <code>{{agent:logic}}</code> and
+<code>{{agent:tests}}</code>, <em>when</em> it is rendered for my provider, <em>then</em> those
+expand to my own parallel-agent call, or — when I have none — to a sequential list that the run
+report names as a degradation.</p>
+
+<h4>Watchdog</h4>
+
+<h3>Halt a step that has gone the wrong way</h3>
+<p>As the <strong>watchdog</strong>, I want to stop a running step the moment it stops doing what
+its phase asked for, so that a wrong path costs minutes rather than its full four hours.</p>
+<p><em>Given</em> an implement session whose output shows it redesigning a subsystem the phase
+never mentioned, <em>when</em> I confirm against git that the diff agrees with what I read,
+<em>then</em> the step is stopped, its session is left standing, the run halts, and my reason is
+recorded in the run report.</p>
+
+<h3>Fix what is blocking a step</h3>
+<p>As the <strong>watchdog</strong>, I want to repair the mundane thing stopping a step and start
+it again, so that a missing dependency does not cost a person a halt.</p>
+<p><em>Given</em> a step failing because a toolchain is absent, <em>when</em> the remedy class is
+pre-authorised — or I ask and am told yes — <em>then</em> the exact command I proposed is run and
+recorded verbatim, the step restarts in a fresh session, and nothing about the plan or the code has
+been touched.</p>
+
+<h3>Answer from the whole run's context</h3>
+<p>As the <strong>watchdog</strong>, I want the first look at an agent's question, so that anything
+the plan already answers does not reach a person at all.</p>
+<p><em>Given</em> a question whose answer is in the spec, the tech-design or an earlier phase,
+<em>when</em> it arrives, <em>then</em> I answer it with a <code>file:line</code> citation and the
+answer is logged and shown in the TUI; <em>and</em> when I cannot cite an answer, it escalates to
+the maintainer unanswered.</p>
+
+<h2 id="v1">The v1 line</h2>
+
+<p>v1 ships eighteen of the nineteen: everything that makes a run survivable, everything that keeps
+a person out of it unnecessarily, and all three watchdog capabilities — because a watchdog that can
+see but not act is the version that produces warnings nobody can do anything with. What waits is
+everything that widens the loop rather than closing it.</p>
+
+<table>
+  <tr><th>Ships in v1</th><th>Deferred</th></tr>
+  <tr><td><em>Run every remaining phase of a plan</em> · <em>Resume a run that stopped</em> · <em>See where a run is</em> · <em>Stop a run without losing work</em></td>
+      <td><em>Add a provider the driver has never seen</em> — the block is read and validated in v1, but only the two shipped kinds are exercised</td></tr>
+  <tr><td><em>Choose the agent for each step</em> · <em>Try a different provider for one run</em> · <em>Override the prompts for this project</em> · <em>Add a step to every phase</em></td>
+      <td>Concurrent phases: a phase is the scheduling unit from day one, so waves are a scheduler change rather than a rewrite (<a href="#adr-11">ADR-11</a>)</td></tr>
+  <tr><td><em>Be told when a run halts</em> · <em>Answer an agent's question without leaving the loop</em> · <em>Close a blocking plan decision at startup</em> · <em>Pre-authorise the blockers worth fixing automatically</em></td>
+      <td>Any source other than <code>todo.md</code> (<a href="#adr-21">ADR-21</a>)</td></tr>
+  <tr><td><em>Report a step's outcome so the driver can act</em> · <em>Ask the person a question</em> · <em>Fan out reviewers using my own mechanism</em></td>
+      <td>Drift-watching — the watchdog noticing that one phase contradicts another. Same machinery, but it produces nothing on most phases, and "watched and found nothing" cannot be told from "watched badly" until there are rows</td></tr>
+  <tr><td><em>Halt a step that has gone the wrong way</em> · <em>Fix what is blocking a step</em> · <em>Answer from the whole run's context</em></td>
+      <td></td></tr>
+</table>
+
+<p>The line falls there because everything deferred assumes the loop already works. Waves need a
+serial loop that finishes; a second source needs the phase contract proven; a third-party provider
+needs the adapter shape settled by the two that exist; and drift-watching needs enough completed
+runs to tell a quiet watchdog from a blind one. Shipping any of them first would be widening a loop
+nobody has run to the end.</p>
+
+<p>Adding a step ships in v1 even though it widens the pipeline, because it costs almost nothing once
+the three shipped steps are themselves entries in a list rather than three hard-wired calls — and
+that list is what keeps the loop from being edited every time a project wants one more pass
+(<a href="#adr-45">ADR-45</a>).</p>
+</section>
+
+<section id="p2">
+<h2 class="part" id="p2-h"><span class="pnum">Part 2</span> Domain</h2>
+<p class="lede">The driver owns a run, its steps, the sessions they run in, and now the traffic that flows back — questions, signals, remedies. Everything about the work itself is produced elsewhere and only read: a step is asked to produce an artifact, and the repository is asked whether it did. Making a question an explicit state is what lets the rest of it be strict — silence now means a session that has gone quiet without asking for anything, which is a narrow and genuinely suspicious thing.</p>
+
+<h2 id="model">Domain model</h2>
+
+<p>Two vocabularies meet here and are easy to confuse, so they are separated once and used
+consistently everywhere below. The <strong>todo</strong> is the phased plan file
+<code>/r:spec-design</code> writes — <code>docs/&lt;topic&gt;/todo.md</code>, a sequence of
+<code>### Phase N</code> blocks. The <strong>phase plan</strong> is
+<code>.task-plans/&lt;slug&gt;.md</code>, written by one phase's planning step and consumed by its
+implement step. The driver reads the first and never writes it except to tick; it causes the second
+to be written and never writes it either.</p>
+
+<table>
+  <tr><th>Entity</th><th>What it is</th><th>Ours or a copy</th><th>Identified across systems by</th></tr>
+  <tr><td><code>Run</code></td><td>One invocation of the driver over one todo</td><td>ours</td><td>run id, and the repo's git common directory</td></tr>
+  <tr><td><code>Step</code></td><td>One unit of work inside a phase, of one <code>StepKind</code> — by default plan, implement or review</td><td>ours</td><td><code>(run id, phase number, step kind)</code></td></tr>
+  <tr><td><code>StepKind</code></td><td>A named step in the phase pipeline: its prompt, its config row and the evidence check that judges it</td><td>ours</td><td>its name in the <code>pipeline</code> list of <code>.r-loop/config.yaml</code></td></tr>
+  <tr><td><code>Session</code></td><td>A herdr workspace with one agent live in its root pane</td><td>ours</td><td>herdr workspace id and agent name</td></tr>
+  <tr><td><code>Provider</code></td><td>A named agent the driver can start, and how to start it</td><td>ours</td><td>its name in <code>providers.*</code>, and the herdr <code>kind</code> it maps to</td></tr>
+  <tr><td><code>StepPrompt</code></td><td>A rendered prompt — a template plus this step's variables and its fan-out expansion</td><td>ours</td><td>template path plus the step it was rendered for</td></tr>
+  <tr><td><code>RunState</code></td><td>The on-disk record of what the run has done, in <code>.r-loop/</code></td><td>ours</td><td>run id</td></tr>
+  <tr><td><code>Landing</code></td><td>The record of one phase merged: the gate result, the merge commit, the ticks</td><td>ours</td><td>merge commit sha</td></tr>
+  <tr><td><code>LoopConfig</code></td><td>The resolved settings for this run — per step, plus the provider blocks</td><td>ours</td><td>the file it was read from, and the run id it was resolved for</td></tr>
+  <tr><td><code>Question</code></td><td>Something a session asked and the answer it received, with who answered it</td><td>ours</td><td>the step that asked, plus a sequence number</td></tr>
+  <tr><td><code>Signal</code></td><td>A warning or a halt call — from a deterministic driver check or from the watchdog</td><td>ours</td><td>the step it is about, plus a sequence number</td></tr>
+  <tr><td><code>Remedy</code></td><td>A proposed repair: its class, the exact command, how it was authorised, what it returned</td><td>ours</td><td>the signal that prompted it</td></tr>
+  <tr><td><code>Phase</code></td><td>A <code>### Phase N</code> block with its <code>Files:</code>, <code>Risk:</code> and <code>Done when:</code></td><td><strong>copy</strong> — owned by the todo, written by <code>/r:spec-design</code>; r-loop parses the format itself (<a href="#adr-43">ADR-43</a>)</td><td>phase number within its todo</td></tr>
+  <tr><td><code>PhasePlan</code></td><td>The phase plan at <code>.task-plans/&lt;slug&gt;.md</code></td><td><strong>copy</strong> — written by the planning step, read by the implement step</td><td>its path, which travels with the branch</td></tr>
+  <tr><td><code>Verdict</code></td><td>What the review step reported about the diff</td><td><strong>copy</strong> — written by the review session</td><td>the step that produced it</td></tr>
+</table>
+
+<figure class="svg-figure">
+<svg viewBox="0 0 880 470" role="img" aria-label="Entity relationships: eleven entities the driver owns, and three it only reads">
+  <defs>
+    <marker id="er-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#87867F"/>
+    </marker>
+  </defs>
+
+  <g>
+    <rect x="30" y="40" width="166" height="58" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="42" y="60" class="lbl-hd">Run</text><text x="42" y="78" class="lbl-sm">run id · repo</text>
+    <rect x="248" y="40" width="166" height="58" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="260" y="60" class="lbl-hd">Provider</text><text x="260" y="78" class="lbl-sm">name · herdr kind</text>
+    <rect x="466" y="40" width="166" height="58" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="478" y="60" class="lbl-hd">RunState</text><text x="478" y="78" class="lbl-sm">.r-loop/</text>
+    <rect x="684" y="40" width="166" height="58" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="696" y="60" class="lbl-hd">LoopConfig</text><text x="696" y="78" class="lbl-sm">per step · providers</text>
+  </g>
+
+  <g>
+    <rect x="30" y="130" width="166" height="58" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="42" y="150" class="lbl-hd">Step</text><text x="42" y="168" class="lbl-sm">phase no · kind</text>
+    <rect x="248" y="130" width="166" height="58" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="260" y="150" class="lbl-hd">Session</text><text x="260" y="168" class="lbl-sm">workspace · agent</text>
+    <rect x="466" y="130" width="166" height="58" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="478" y="150" class="lbl-hd">StepPrompt</text><text x="478" y="168" class="lbl-sm">template · rendered</text>
+    <rect x="684" y="130" width="166" height="58" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="696" y="150" class="lbl-hd">Landing</text><text x="696" y="168" class="lbl-sm">merge commit sha</text>
+  </g>
+
+  <rect x="20" y="216" width="640" height="90" rx="6" class="g-fill" stroke="#D97757" stroke-dasharray="5 4"/>
+  <text x="34" y="233" class="lbl-sm">signals between a session and the driver</text>
+  <g>
+    <rect x="40" y="240" width="166" height="56" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="52" y="260" class="lbl-hd">Question</text><text x="52" y="278" class="lbl-sm">asked · answered by</text>
+    <rect x="248" y="240" width="166" height="56" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="260" y="260" class="lbl-hd">Signal</text><text x="260" y="278" class="lbl-sm">warn | halt · source</text>
+    <rect x="456" y="240" width="166" height="56" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="468" y="260" class="lbl-hd">Remedy</text><text x="468" y="278" class="lbl-sm">class · command</text>
+  </g>
+
+  <rect x="20" y="322" width="840" height="120" rx="6" class="g-fill" stroke="#D1CFC5" stroke-dasharray="5 4"/>
+  <text x="34" y="340" class="lbl-sm">read by the driver · written by someone else</text>
+  <g>
+    <rect x="40" y="350" width="180" height="58" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="52" y="370" class="lbl-hd">Phase</text><text x="52" y="388" class="lbl-sm">Files · Risk · Done when</text>
+    <rect x="250" y="350" width="180" height="58" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="262" y="370" class="lbl-hd">PhasePlan</text><text x="262" y="388" class="lbl-sm">.task-plans/&lt;slug&gt;.md</text>
+    <rect x="460" y="350" width="180" height="58" rx="4" class="s-fill" stroke="#D1CFC5"/>
+    <text x="472" y="370" class="lbl-hd">Verdict</text><text x="472" y="388" class="lbl-sm">what review reported</text>
+  </g>
+
+  <polyline points="113,40 113,26 549,26 549,36" class="stroke2" fill="none" marker-end="url(#er-a)"/>
+  <text x="318" y="22" class="lbl-sm">1:1</text>
+  <line x1="113" y1="98" x2="113" y2="124" class="stroke2" marker-end="url(#er-a)"/>
+  <text x="121" y="118" class="lbl-sm">1:n</text>
+  <line x1="196" y1="159" x2="242" y2="159" class="stroke2" marker-end="url(#er-a)"/>
+  <text x="199" y="150" class="lbl-sm">1:1</text>
+  <line x1="331" y1="130" x2="331" y2="104" class="stroke2" marker-end="url(#er-a)"/>
+  <text x="339" y="122" class="lbl-sm">n:1</text>
+  <line x1="113" y1="188" x2="113" y2="234" class="stroke2" marker-end="url(#er-a)"/>
+  <text x="121" y="210" class="lbl-sm">1:n</text>
+  <polyline points="767,188 767,314 130,314 130,346" class="stroke2" fill="none" marker-end="url(#er-a)"/>
+  <text x="420" y="310" class="lbl-sm">1:1</text>
+  <line x1="220" y1="379" x2="246" y2="379" class="stroke2" marker-end="url(#er-a)"/>
+</svg>
+<figcaption>Notice the two dashed groups. The lower one is produced by an agent session or by
+<code>/r:spec-design</code> and only read. The clay one is the new traffic in both directions — a
+session asking, the driver and the watchdog signalling — and it is the only place anything flows
+back <em>into</em> the loop.</figcaption>
+</figure>
+
+<h2 id="lifecycles">Lifecycles</h2>
+
+<p>Three things move through states, and two of a <code>Step</code>'s are deliberately
+<strong>not</strong> terminal. <code>waiting-input</code> is a session that has asked something and
+is waiting for an answer — its backstop timer is paused, because a step must never be killed for
+asking. <code>stalled</code> is what is left once questions are explicit: a session that has gone
+quiet with no signal at all, which is a much narrower and more suspicious thing than it used to
+be.</p>
+
+<figure class="svg-figure">
+<svg viewBox="0 0 880 380" role="img" aria-label="Lifecycles of Step, Phase and Run">
+  <defs>
+    <marker id="lc-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#87867F"/>
+    </marker>
+    <marker id="lc-c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#D97757"/>
+    </marker>
+  </defs>
+
+  <text x="20" y="26" class="lbl-sm">Step</text>
+  <g>
+    <rect x="20" y="70" width="96" height="34" rx="17" class="s-fill" stroke="#D1CFC5"/><text x="40" y="92" class="lbl">queued</text>
+    <rect x="150" y="70" width="102" height="34" rx="17" class="s-fill" stroke="#D1CFC5"/><text x="168" y="92" class="lbl">spawned</text>
+    <rect x="286" y="70" width="98" height="34" rx="17" class="s-fill" stroke="#D1CFC5"/><text x="304" y="92" class="lbl">running</text>
+    <rect x="456" y="14" width="72" height="34" rx="17" class="s-fill" stroke="#788C5D" stroke-width="2.5"/><text x="481" y="36" class="lbl">ok</text>
+    <rect x="456" y="64" width="86" height="34" rx="17" class="s-fill" stroke="#87867F" stroke-width="2.5"/><text x="474" y="86" class="lbl">failed</text>
+    <rect x="456" y="114" width="96" height="34" rx="17" class="s-fill" stroke="#D97757"/><text x="474" y="136" class="lbl">stalled</text>
+    <rect x="456" y="164" width="140" height="34" rx="17" class="s-fill" stroke="#D97757"/><text x="470" y="186" class="lbl">waiting-input</text>
+  </g>
+  <line x1="116" y1="87" x2="144" y2="87" class="stroke2" marker-end="url(#lc-a)"/>
+  <line x1="252" y1="87" x2="280" y2="87" class="stroke2" marker-end="url(#lc-a)"/>
+  <polyline points="384,80 424,80 424,31 450,31" class="stroke2" fill="none" marker-end="url(#lc-a)"/>
+  <line x1="384" y1="87" x2="450" y2="83" class="stroke2" marker-end="url(#lc-a)"/>
+  <polyline points="384,94 424,94 424,131 450,131" class="stroke2" fill="none" marker-end="url(#lc-a)"/>
+  <polyline points="384,100 410,100 410,181 450,181" class="clay" fill="none" marker-end="url(#lc-c)"/>
+  <text x="600" y="36" class="lbl-sm">terminal</text>
+  <text x="548" y="86" class="lbl-sm">terminal — incl. a watchdog halt</text>
+  <text x="558" y="136" class="lbl-sm">quiet, no signal at all</text>
+  <text x="602" y="186" class="lbl-sm">asked something · timer paused</text>
+  <polyline points="524,198 524,222 335,222 335,108" class="clay" fill="none" marker-end="url(#lc-c)"/>
+  <text x="348" y="218" class="lbl-sm">answered — by the watchdog or by you</text>
+
+  <text x="20" y="262" class="lbl-sm">Phase</text>
+  <g>
+    <rect x="20" y="276" width="100" height="34" rx="17" class="s-fill" stroke="#D1CFC5"/><text x="36" y="298" class="lbl">unticked</text>
+    <rect x="156" y="276" width="92" height="34" rx="17" class="s-fill" stroke="#D1CFC5"/><text x="172" y="298" class="lbl">planned</text>
+    <rect x="284" y="276" width="126" height="34" rx="17" class="s-fill" stroke="#D1CFC5"/><text x="300" y="298" class="lbl">implemented</text>
+    <rect x="446" y="276" width="106" height="34" rx="17" class="s-fill" stroke="#D1CFC5"/><text x="462" y="298" class="lbl">reviewed</text>
+    <rect x="588" y="276" width="92" height="34" rx="17" class="s-fill" stroke="#788C5D" stroke-width="2.5"/><text x="604" y="298" class="lbl">landed</text>
+  </g>
+  <line x1="120" y1="293" x2="150" y2="293" class="stroke2" marker-end="url(#lc-a)"/>
+  <line x1="248" y1="293" x2="278" y2="293" class="stroke2" marker-end="url(#lc-a)"/>
+  <line x1="410" y1="293" x2="440" y2="293" class="stroke2" marker-end="url(#lc-a)"/>
+  <line x1="552" y1="293" x2="582" y2="293" class="stroke2" marker-end="url(#lc-a)"/>
+  <text x="694" y="298" class="lbl-sm">irreversible</text>
+
+  <text x="20" y="350" class="lbl-sm">Run</text>
+  <g>
+    <rect x="80" y="336" width="92" height="30" rx="15" class="s-fill" stroke="#D1CFC5"/><text x="96" y="356" class="lbl">created</text>
+    <rect x="208" y="336" width="92" height="30" rx="15" class="s-fill" stroke="#D1CFC5"/><text x="224" y="356" class="lbl">running</text>
+    <rect x="336" y="336" width="90" height="30" rx="15" class="s-fill" stroke="#87867F" stroke-width="2.5"/><text x="352" y="356" class="lbl">halted</text>
+    <rect x="462" y="336" width="98" height="30" rx="15" class="s-fill" stroke="#788C5D" stroke-width="2.5"/><text x="476" y="356" class="lbl">finished</text>
+  </g>
+  <line x1="172" y1="351" x2="202" y2="351" class="stroke2" marker-end="url(#lc-a)"/>
+  <line x1="300" y1="351" x2="330" y2="351" class="stroke2" marker-end="url(#lc-a)"/>
+  <line x1="426" y1="351" x2="456" y2="351" class="stroke2" marker-end="url(#lc-a)"/>
+</svg>
+<figcaption>Notice that both clay paths go backwards into <code>running</code>. Making a question an
+explicit state is what shrinks <code>stalled</code> to its honest meaning — a session that has gone
+quiet without asking for anything, which is now genuinely worth investigating.</figcaption>
+</figure>
+
+<h2 id="invariants">Invariants</h2>
+
+<p><strong>Two signals, never one.</strong> When a step session writes its sentinel, if the
+evidence that step owes is not present in git or on disk, the driver records the step as
+<code>failed</code>, per step; on violation the run halts naming the step and the missing evidence,
+and nothing is merged. The evidence differs by kind: a planning step owes a phase plan file with a
+<code>status:</code> header, an implement step owes a non-empty diff on the phase branch, a review
+step owes a verdict record. <em>Source: the pack's own fan-out rule — a sentinel can be written by
+a run that then failed to commit. Configurable: no.</em></p>
+
+<p><strong>A merge is never made on an unproven phase.</strong> When a phase's review step reports
+<code>ok</code>, if the phase's <code>Done when:</code> command does not exit 0 in the primary tree
+within its timeout, the driver performs no merge and no tick, per phase; on violation the run halts
+with the command's output. A phase whose block carries no <code>Done when:</code> line is a named
+skip recorded in the run report, never a silent pass. <em>Source: 33 recorded
+<code>/r:task-review</code> runs returned <code>build: "n/a"</code>, 31 of them over trees carrying
+42k added lines. Configurable: no.</em></p>
+
+<p><strong>One live session per run.</strong> When the driver is asked to spawn a step, if a
+session for this run is already live, it refuses and exits non-zero, per run; on violation nothing
+is spawned and the existing session is named. <em>Source: the serial design — two sessions in one
+run would write the same worktree. Configurable: no in v1; the cap becomes
+<code>steps.fanout.maxUnits</code> when waves land.</em></p>
+
+<p><strong>Code and ticks land as one commit.</strong> When a phase lands, if the merge commit does
+not carry both the phase's code and its ticked checkboxes, the driver refuses the landing, per
+phase; on violation it halts before touching the todo. <em>Source: "built" and "ticked" must revert
+together. Configurable: no.</em></p>
+
+<p><strong>The watchdog never approves.</strong> When the watchdog emits a signal, if that signal
+would move the run toward proceeding — a step marked ok, a landing approved, a checkbox ticked, a
+halt lifted — the driver rejects it and records the attempt, per signal; on violation the run halts
+and the rejected signal is in the run report. A veto and a remedy are the only two shapes it can
+emit. <em>Source: an approval wrongly given lets bad work land, while a veto wrongly given costs a
+resume; this asymmetry is what lets a model near the loop at all. Configurable: no.</em></p>
+
+<p><strong>A remedy is authorised before it runs, and recorded verbatim after.</strong> When the
+watchdog proposes a remedy, if its class is not in <code>watchdog.allow</code> and the maintainer
+has not answered yes, no command runs, per remedy; on violation nothing is executed and the refusal
+is recorded. The exact command as proposed — not a summary of it — is what is authorised and what
+is written to the run report. <em>Source: the watchdog can never approve its own action, so the
+allow-list lives in the driver. Configurable: the allow-list, yes; the rule, no.</em></p>
+
+<p><strong>A question never expires.</strong> When a step enters <code>waiting-input</code>, its
+backstop timer is paused for as long as the question is open, per step; on violation — that is, if
+a step in that state is ever killed by a timer — the run halts rather than discarding the question.
+<em>Source: a step killed for asking teaches every future step to guess instead. Configurable:
+no.</em></p>
+
+<p><strong>A degraded fan-out is named.</strong> When a prompt containing
+<code>{{agent:…}}</code> is rendered for a provider whose block declares
+<code>fanout: none</code>, the expansion becomes a sequential list and the degradation is written
+to the run report and the step's log line, per step; on violation — that is, if the report cannot
+be written — the step is not spawned. <em>Source: a review that silently collapses to one reader
+reads exactly like a review that ran. Configurable: no.</em></p>
+
+<h2 id="flows">Key flows</h2>
+
+<p>Five flows, three of which end badly. The first is drawn because it contains the branch the
+other four are variations of.</p>
+
+<figure class="svg-figure">
+<svg viewBox="0 0 880 540" role="img" aria-label="One phase, with the question path and the watchdog halt">
+  <defs>
+    <marker id="sq-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#87867F"/>
+    </marker>
+    <marker id="sq-c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#D97757"/>
+    </marker>
+  </defs>
+
+  <g>
+    <rect x="14" y="16" width="104" height="30" rx="4" class="g-fill" stroke="#D1CFC5"/><text x="28" y="36" class="lbl">maintainer</text>
+    <rect x="176" y="16" width="112" height="30" rx="4" class="g-fill" stroke="#D1CFC5"/><text x="196" y="36" class="lbl">r-loop TUI</text>
+    <rect x="352" y="16" width="102" height="30" rx="4" class="g-fill" stroke="#D97757" stroke-width="2"/><text x="368" y="36" class="lbl">watchdog</text>
+    <rect x="518" y="16" width="130" height="30" rx="4" class="g-fill" stroke="#D1CFC5"/><text x="532" y="36" class="lbl">agent session</text>
+    <rect x="726" y="16" width="86" height="30" rx="4" class="g-fill" stroke="#D1CFC5"/><text x="752" y="36" class="lbl">git</text>
+  </g>
+  <line x1="66" y1="46" x2="66" y2="524" class="stroke" stroke-dasharray="4 4"/>
+  <line x1="232" y1="46" x2="232" y2="524" class="stroke" stroke-dasharray="4 4"/>
+  <line x1="403" y1="46" x2="403" y2="524" class="stroke" stroke-dasharray="4 4"/>
+  <line x1="583" y1="46" x2="583" y2="524" class="stroke" stroke-dasharray="4 4"/>
+  <line x1="769" y1="46" x2="769" y2="524" class="stroke" stroke-dasharray="4 4"/>
+
+  <line x1="66" y1="76" x2="226" y2="76" class="stroke2" marker-end="url(#sq-a)"/>
+  <text x="74" y="70" class="lbl-sm">r-loop todo.md</text>
+
+  <line x1="232" y1="108" x2="763" y2="108" class="stroke2" marker-end="url(#sq-a)"/>
+  <text x="240" y="102" class="lbl-sm">worktree · Resolve first · config</text>
+
+  <line x1="232" y1="140" x2="577" y2="140" class="stroke2" marker-end="url(#sq-a)"/>
+  <text x="240" y="134" class="lbl-sm">herdr: workspace create · agent start --kind · agent prompt</text>
+
+  <line x1="583" y1="172" x2="763" y2="172" class="stroke2" marker-end="url(#sq-a)"/>
+  <text x="591" y="166" class="lbl-sm">writes the plan / the code / the fixes</text>
+
+  <line x1="577" y1="206" x2="238" y2="206" class="clay" marker-end="url(#sq-c)"/>
+  <text x="300" y="200" class="lbl-sm">ask_user (MCP) — step enters waiting-input</text>
+
+  <line x1="232" y1="236" x2="397" y2="236" class="clay" marker-end="url(#sq-c)"/>
+  <text x="240" y="230" class="lbl-sm">question forwarded</text>
+
+  <line x1="403" y1="268" x2="763" y2="268" class="stroke2" marker-end="url(#sq-a)"/>
+  <text x="411" y="262" class="lbl-sm">reads plan · spec · earlier phases, looking for a citation</text>
+
+  <polyline points="403,300 320,300 320,330 577,330" class="clay" fill="none" marker-end="url(#sq-c)"/>
+  <text x="330" y="294" class="lbl-sm">cited answer — logged, shown, returned</text>
+  <line x1="397" y1="300" x2="72" y2="300" class="clay" stroke-dasharray="5 3" marker-end="url(#sq-c)"/>
+  <text x="80" y="294" class="lbl-sm">no citation → escalates to you</text>
+
+  <line x1="577" y1="366" x2="409" y2="366" class="stroke2" marker-end="url(#sq-a)"/>
+  <text x="418" y="360" class="lbl-sm">herdr agent read — live output</text>
+  <line x1="403" y1="398" x2="763" y2="398" class="stroke2" marker-end="url(#sq-a)"/>
+  <text x="411" y="392" class="lbl-sm">confirm against the diff — never halt on narration</text>
+  <polyline points="403,430 300,430 300,458 577,458" class="clay" fill="none" marker-end="url(#sq-c)"/>
+  <text x="308" y="424" class="lbl-sm">halt signal → the driver stops the step</text>
+
+  <line x1="232" y1="492" x2="763" y2="492" class="stroke2" marker-end="url(#sq-a)"/>
+  <text x="240" y="486" class="lbl-sm">Done when: · merge --no-ff · tick · commit</text>
+  <line x1="226" y1="518" x2="72" y2="518" class="stroke2" marker-end="url(#sq-a)"/>
+  <text x="82" y="512" class="lbl-sm">landed, or notify.onHalt / onWarn</text>
+</svg>
+<figcaption>Notice that the watchdog never touches git or the session directly to change anything —
+it reads both, and everything it wants done goes back through the driver as a signal. That is the
+veto-and-remedy boundary drawn as a picture: no clay arrow reaches the session except through the
+r-loop lane.</figcaption>
+</figure>
+
+<h4>A step fails</h4>
+<p>The session writes a failure sentinel, or writes an ok sentinel with no evidence behind it.
+The driver records the step <code>failed</code>, halts the run, leaves the worktree and the
+session in place, runs <code>notify.onHalt</code>, and prints the <code>r-loop resume</code> that
+picks up at that step. No later phase is attempted — a phase built on a failed one leaves the plan
+half applied with nothing recording which half.</p>
+
+<h4>A step asks a question</h4>
+<p>The session calls <code>ask_user</code>. The step enters <code>waiting-input</code>, its backstop
+pauses, and the question goes to the watchdog first. If the watchdog can answer it from the spec,
+the tech-design or an earlier phase, it answers with a <code>file:line</code> citation; the answer
+is logged, shown in the TUI, and returned to the session, which resumes. If it cannot cite an
+answer, the question escalates to the TUI unanswered and waits for the maintainer — for as long as
+that takes.</p>
+
+<h4>A step stalls</h4>
+<p>herdr reports the agent <code>blocked</code> or <code>idle</code>, no sentinel exists, and no
+question is open. That combination is much narrower than it was before questions became explicit,
+and it is genuinely suspicious: a session that has gone quiet without asking for anything. The
+driver stops scheduling and names the workspace, leaving the session live — it is both the evidence
+and the place to intervene.</p>
+
+<h4>The watchdog stops a step</h4>
+<p>Reading the running session's output, the watchdog sees the implementer redesigning a subsystem
+the phase never mentions. It confirms against git that the diff agrees with what it read — session
+output is narration, and a halt is not called on narration alone. It then emits a halt signal: the
+step is stopped, its session is left standing, the run halts, <code>notify.onHalt</code> fires, and
+its reason is written to the run report. A wrong call here costs one <code>r-loop resume</code>,
+which is the whole reason it is allowed to make the call at all.</p>
+
+<h4>A blocker is fixed and the step restarts</h4>
+<p>A step fails because a toolchain is missing. The watchdog diagnoses it and proposes an exact
+command. If the remedy's class is in <code>watchdog.allow</code>, the driver authorises it
+immediately; otherwise the question goes to the TUI. On yes, the watchdog runs the command it
+proposed, the driver records it verbatim, and the step restarts in a fresh session — on the same
+prompt, or with an addendum naming what was learned, so the retry differs from the repeat. Nothing
+about the plan or the code has been touched.</p>
+
+<h4>The driver dies mid-run</h4>
+<p>The machine reboots, or the terminal is closed. <code>RunState</code> is in
+<code>.r-loop/</code> inside the repository, so it survives both. <code>r-loop resume</code> reads
+the last recorded step and re-runs it; a phase whose planning step completed is not re-planned.
+The one case it refuses is a worktree holding changes no step recorded — that tree is neither safe
+to build on nor safe to discard, and the run stops for a person.</p>
+
+<h4>A provider cannot fan out</h4>
+<p>A review step is configured to a provider whose block declares <code>fanout: none</code>. The
+rendered prompt lists the reviewers sequentially instead, the step runs, and the run report carries
+the degradation against that phase. The phase still lands if its gate passes — the review happened,
+narrower than intended, and the report is what says so.</p>
+</section>
+
+<section id="p3">
+<h2 class="part" id="p3-h"><span class="pnum">Part 3</span> Architectural characteristics</h2>
+<p class="lede">Three things are being bought, and each has a number: no loop approval made by a model, two independent signals before a step counts as done, and five places the driver grows without its loop being edited. The first is phrased by direction rather than by actor, and that phrasing is what lets a watchdog exist at all — it may push the run toward stopping, never toward proceeding. What is being spent is speed, unattended completion, tokens, and the review depth the pack's own pipelines measure.</p>
+
+<h2 id="driving">Driving characteristics</h2>
+
+<table>
+  <tr><th>Characteristic</th><th>Target</th><th>How we would know</th><th>What it costs us</th></tr>
+  <tr class="driving">
+    <td>Determinism of approval</td>
+    <td><strong>0</strong> of the five loop decisions — spawn, stall, verdict, land, tick — can be
+        made by a model in the direction of <em>proceeding</em>; exactly <strong>1</strong>,
+        stopping, can be made in the <em>halting</em> direction</td>
+    <td>the test suite asserts each decision against a fixture; a signal that would move the run
+        forward is rejected by the driver and the rejection is recorded</td>
+    <td>rules out reading a session's own summary, which is the cheapest source of every one of
+        those answers, and forces an evidence predicate per step kind</td></tr>
+  <tr class="driving">
+    <td>Evidence over autonomy</td>
+    <td>a step completes on <strong>2</strong> independent signals — its sentinel <em>and</em> the
+        artifact it owes; a run pauses rather than guesses</td>
+    <td>for each step kind, a test where the sentinel says ok and the artifact is absent asserts
+        that the driver halts</td>
+    <td>a run stops for a person where a more trusting loop would continue, so finishing unattended
+        is given up (see below)</td></tr>
+  <tr class="driving">
+    <td>Extensibility</td>
+    <td>at <strong>5</strong> seams the loop is not edited: a provider is <strong>1</strong> config
+        block and <strong>0</strong> lines of Go; a step kind is <strong>1</strong> prompt and
+        <strong>1</strong> config entry when a shipped evidence check fits; a deterministic check,
+        a plan source or a session host is <strong>1</strong> new package and <strong>0</strong>
+        edits to the core</td>
+    <td><code>grep -Ei 'claude|codex|opencode'</code> over the Go code returns only the shipped
+        defaults and tests; a build-time test fails if the core imports any adapter; each seam has
+        one test that adds a fake without touching the core</td>
+    <td>gives up every Claude-Code-specific mechanism the pack has — the <code>Workflow</code>
+        tool, the bundled agents, the typed handoffs (<a href="#adr-4">ADR-4</a>) — and pays for a
+        port and a type mapping at every border of the core (<a href="#adr-46">ADR-46</a>)</td></tr>
+</table>
+
+<p><strong>Why extensibility and not only portability.</strong> A provider was the first seam and
+the one this row was first written for. The other four are the same promise made to the rest of the
+design: the step list, the anomaly checks, where phases come from and what hosts a session are all
+things a project will want to change, and each one that needs an edit to the loop is an edit to the
+one place <em>determinism of approval</em> lives. Of the five, sources and hosts have one
+implementation each in v1, so their seam is a port shaped by that one caller rather than a general
+interface (<a href="#adr-47">ADR-47</a>).</p>
+
+<p><strong>Why the first row is phrased by direction rather than by actor.</strong> A watchdog with
+the whole run in view is the only thing that can catch an implementation going somewhere wrong, and
+excluding models from the loop outright would exclude it. The asymmetry is what makes it safe:
+a model wrong about an <em>approval</em> lets bad work land and nothing downstream re-reads it,
+while a model wrong about a <em>veto</em> costs one <code>r-loop resume</code>. So the
+characteristic constrains the direction a model may push, not whether one is present.</p>
+
+<h2 id="supporting">Supporting</h2>
+
+<table>
+  <tr><th>Characteristic</th><th>Target</th><th>How we would know</th><th>What it costs us</th></tr>
+  <tr><td>Resumability</td>
+      <td>a resume re-runs at most 1 step, and survives a reboot</td>
+      <td>kill the driver mid-step, reboot, resume, and assert the completed steps are not repeated</td>
+      <td>state has to live in the repository rather than in a temp directory
+          (<a href="#adr-17">ADR-17</a>)</td></tr>
+  <tr><td>Observability</td>
+      <td>the run's whole shape is on one screen, and every step is a herdr workspace a person can
+          open, take over or answer</td>
+      <td>during any live step, the TUI shows its phase, provider and elapsed time, and
+          <code>herdr workspace list</code> names its workspace</td>
+      <td>an interactive session never exits and yields no status, so completion must be reported
+          rather than observed</td></tr>
+  <tr><td>Unattended reach</td>
+      <td>the 4 remedy classes and any question the plan already answers resolve without a person</td>
+      <td>count the halts per run that needed a human against those that did not</td>
+      <td>a pre-authorised remedy can do something you would have refused this once, and a cited
+          answer reaches an implementer without you seeing the question</td></tr>
+  <tr><td>Independence from the skill-pack</td>
+      <td>0 files from the skill-pack read at run time; the <code>todo.md</code> format is the only
+          contract between them</td>
+      <td>the test suite and a <code>--dry-run</code> pass on a machine with no
+          <code>~/.claude</code> and no script interpreter</td>
+      <td>the rules for <code>## Resolve first</code> and milestones exist in two languages and two
+          repos, and can drift (<a href="#adr-43">ADR-43</a>)</td></tr>
+  <tr><td>Legibility of cost</td>
+      <td>the run banner prints the resolved provider, model and effort for every step in the
+          pipeline, and the file each came from</td>
+      <td>read the banner of any run</td>
+      <td>one more thing to keep true when the config reader changes</td></tr>
+</table>
+
+<h2 id="not-optimising">What we are not optimising for</h2>
+
+<ul>
+  <li><strong>Throughput.</strong> Phases run one at a time in v1, and a phase's steps are
+      strictly sequential. Concurrency exists in the pack already and is a scheduler change here,
+      not a design one.</li>
+  <li><strong>Unattended completion.</strong> Still not a goal: the watchdog and the ask channel
+      move the number of halts that need a person, but every ambiguity neither can settle still
+      resolves to a pause, and a pause still needs one.</li>
+  <li><strong>Token cost.</strong> Three sessions per phase re-read context that a single session
+      would hold, the land gate deliberately builds a second time, and the watchdog is alive for the
+      whole run rather than for one step.</li>
+  <li><strong>Review depth matching the pack's Workflows.</strong> One step does not reproduce a
+      fan-out of fifteen measured tracks. Running each provider's own native reviewer
+      (<a href="#adr-23">ADR-23</a>) buys part of it back; it does not buy all of it, and pretending
+      otherwise would be the one claim this document must not make (<a href="#adr-4">ADR-4</a>).</li>
+</ul>
+</section>
+
+<section id="p4">
+<h2 class="part" id="p4-h"><span class="pnum">Part 4</span> Logical components</h2>
+<p class="lede">Thirteen components, each owning at most one thing, and only one of them decides anything. Two exist so the driver stands on its own and grows without edits: one reads the plan format itself, one turns the phase pipeline into a list. Four exist to keep a single boundary enforceable in code rather than asked for in a prompt: where a signal that would move the run forward is rejected, and where the remedy allow-list lives. Nothing here owns the phase, the plan or the verdict, because a component that wrote one would be competing with the tool or the agent that already does.</p>
+
+<h2 id="cut">The component cut</h2>
+
+<table>
+  <tr><th>Component</th><th>What it does</th><th>Owns</th><th>Used by</th><th>Forced by</th></tr>
+  <tr><td><code>RunLoop</code></td>
+      <td>Walks the phases in order and the steps within a phase; decides what happens after each</td>
+      <td><code>Run</code> · <code>Step</code></td>
+      <td>the maintainer, through the CLI</td>
+      <td><em>Run every remaining phase of a plan</em></td></tr>
+  <tr><td><code>PlanReader</code></td>
+      <td>Parses the todo — phases, <code>Files:</code>, <code>Done when:</code>, the
+          <code>## Resolve first</code> entries and what each blocks, the milestones and whether each
+          is complete — and makes the two edits the driver ever makes to it: a tick and a
+          <code>Resolved:</code> stamp</td>
+      <td>nothing — <code>Phase</code> is a copy</td>
+      <td><code>RunLoop</code> · <code>LandGate</code></td>
+      <td><em>Run every remaining phase of a plan</em>; <em>Close a blocking plan decision at
+          startup</em>; Independence from the skill-pack</td></tr>
+  <tr><td><code>StepKinds</code></td>
+      <td>Holds the phase pipeline: each step kind's prompt, config row and evidence check, in
+          order, and the shipped checks a new kind may reuse</td>
+      <td><code>StepKind</code></td>
+      <td><code>RunLoop</code> · <code>PromptRenderer</code></td>
+      <td>Extensibility; <em>Add a step to every phase</em></td></tr>
+  <tr><td><code>SessionManager</code></td>
+      <td>Opens a workspace, starts the agent, delivers the prompt, watches the agent's state</td>
+      <td><code>Session</code></td>
+      <td><code>RunLoop</code></td>
+      <td>Observability; <em>See where a run is</em></td></tr>
+  <tr><td><code>ProviderRegistry</code></td>
+      <td>Resolves a step's provider to a herdr kind, its flags, its completion signal and its
+          fan-out capability</td>
+      <td><code>Provider</code></td>
+      <td><code>SessionManager</code> · <code>PromptRenderer</code></td>
+      <td>Extensibility; <em>Add a provider the driver has never seen</em></td></tr>
+  <tr><td><code>PromptRenderer</code></td>
+      <td>Renders a step template with this step's variables, expanding the fan-out for the
+          resolved provider</td>
+      <td><code>StepPrompt</code></td>
+      <td><code>RunLoop</code></td>
+      <td><em>Fan out reviewers using my own mechanism</em>; <em>Override the prompts for this
+          project</em></td></tr>
+  <tr><td><code>LandGate</code></td>
+      <td>Runs the phase's <code>Done when:</code>, merges, ticks, commits, and checks the
+          milestone boundary</td>
+      <td><code>Landing</code></td>
+      <td><code>RunLoop</code></td>
+      <td>Determinism; the <em>merge is never made on an unproven phase</em> invariant</td></tr>
+  <tr><td><code>StateStore</code></td>
+      <td>Records every step transition and reads it back for a resume</td>
+      <td><code>RunState</code></td>
+      <td><code>RunLoop</code> · <code>LandGate</code></td>
+      <td>Resumability; <em>Resume a run that stopped</em></td></tr>
+  <tr><td><code>AskServer</code></td>
+      <td>Serves the MCP surfaces: <code>ask_user</code> to every session, and the watchdog's
+          signal and remedy tools to the watchdog alone</td>
+      <td><code>Question</code></td>
+      <td>step sessions · the watchdog</td>
+      <td><em>Ask the person a question</em>; <em>Answer an agent's question without leaving the
+          loop</em></td></tr>
+  <tr><td><code>Watch</code></td>
+      <td>Runs the registered deterministic anomaly checks, receives the watchdog's signals, rejects anything
+          that would move the run forward, and routes warnings and halts</td>
+      <td><code>Signal</code></td>
+      <td><code>RunLoop</code> · <code>Ui</code></td>
+      <td>Determinism of approval; <em>Halt a step that has gone the wrong way</em></td></tr>
+  <tr><td><code>Remedies</code></td>
+      <td>Checks a proposed remedy against the allow-list or asks, records the exact command, and
+          restarts or retries the step afterwards</td>
+      <td><code>Remedy</code></td>
+      <td><code>Watch</code></td>
+      <td><em>Fix what is blocking a step</em>; <em>Pre-authorise the blockers worth fixing
+          automatically</em></td></tr>
+  <tr><td><code>Ui</code></td>
+      <td>Renders the run — phases, the live step, open questions, warnings — and takes the
+          maintainer's answers. <code>--plain</code> writes the same event stream as lines</td>
+      <td>nothing</td>
+      <td>the maintainer</td>
+      <td>Observability; <em>See where a run is</em></td></tr>
+  <tr><td><code>ConfigReader</code></td>
+      <td>Resolves settings key by key from <code>.r-loop/config.yaml</code>, the machine's
+          <code>~/.config/r-loop/</code> and the defaults built into the binary, naming every
+          substitution</td>
+      <td><code>LoopConfig</code></td>
+      <td><code>RunLoop</code> · <code>ProviderRegistry</code></td>
+      <td><em>Choose the agent for each step</em>; <em>Try a different provider for one run</em></td></tr>
+</table>
+
+<p><code>Phase</code>, <code>PhasePlan</code> and <code>Verdict</code> appear in no
+<code>Owns</code> cell, which is the point: they are produced outside the driver, and a component
+that wrote one would be a component competing with <code>/r:spec-design</code> or with an agent
+session.</p>
+
+<p><strong>Thirteen components is a lot, and two things make it defensible rather than sprawl.</strong>
+Each owns at most one thing, so there is never a question about where a fact lives —
+<code>Ui</code> owns nothing because rendering is a view over what <code>StateStore</code>,
+<code>AskServer</code> and <code>Watch</code> already hold, and <code>PlanReader</code> owns nothing
+because the todo belongs to whoever wrote it. And the
+four newest exist to keep one boundary enforceable in code: <code>Watch</code> is where a signal
+that would move the run forward is rejected, and <code>Remedies</code> is where the allow-list
+lives. Folding either into <code>RunLoop</code> would put the check and the thing it checks in the
+same component.</p>
+
+<h2 id="component-diagram">Component diagram</h2>
+
+<figure class="svg-figure">
+<svg viewBox="0 0 880 500" role="img" aria-label="Thirteen components and what calls what">
+  <defs>
+    <marker id="cd-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#87867F"/>
+    </marker>
+    <marker id="cd-c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#D97757"/>
+    </marker>
+  </defs>
+
+  <g>
+    <rect x="30" y="30" width="176" height="62" rx="5" class="s-fill" stroke="#D1CFC5"/>
+    <text x="44" y="54" class="lbl-hd">ConfigReader</text><text x="44" y="76" class="lbl-sm">owns LoopConfig</text>
+    <rect x="350" y="30" width="188" height="62" rx="5" class="s-fill" stroke="#D97757" stroke-width="2"/>
+    <text x="366" y="54" class="lbl-hd">RunLoop</text><text x="366" y="76" class="lbl-sm">owns Run · Step</text>
+    <rect x="674" y="30" width="176" height="62" rx="5" class="s-fill" stroke="#D1CFC5"/>
+    <text x="688" y="54" class="lbl-hd">StateStore</text><text x="688" y="76" class="lbl-sm">owns RunState</text>
+  </g>
+
+  <g>
+    <rect x="30" y="168" width="176" height="74" rx="5" class="s-fill" stroke="#D1CFC5"/>
+    <text x="44" y="192" class="lbl-hd">PromptRenderer</text><text x="44" y="212" class="lbl-sm">owns StepPrompt</text>
+    <text x="44" y="230" class="lbl-sm">expands {{agent:…}}</text>
+    <rect x="240" y="168" width="176" height="74" rx="5" class="s-fill" stroke="#D1CFC5"/>
+    <text x="254" y="192" class="lbl-hd">SessionManager</text><text x="254" y="212" class="lbl-sm">owns Session</text>
+    <text x="254" y="230" class="lbl-sm">spawn · watch · stop</text>
+    <rect x="450" y="168" width="176" height="74" rx="5" class="s-fill" stroke="#D1CFC5"/>
+    <text x="464" y="192" class="lbl-hd">LandGate</text><text x="464" y="212" class="lbl-sm">owns Landing</text>
+    <text x="464" y="230" class="lbl-sm">Done when · merge · tick</text>
+    <rect x="660" y="168" width="190" height="74" rx="5" class="s-fill" stroke="#D1CFC5"/>
+    <text x="674" y="192" class="lbl-hd">Ui</text><text x="674" y="212" class="lbl-sm">owns nothing</text>
+    <text x="674" y="230" class="lbl-sm">TUI · --plain</text>
+  </g>
+
+  <g>
+    <rect x="240" y="300" width="176" height="74" rx="5" class="s-fill" stroke="#D97757" stroke-width="2"/>
+    <text x="254" y="324" class="lbl-hd">Watch</text><text x="254" y="344" class="lbl-sm">owns Signal</text>
+    <text x="254" y="362" class="lbl-sm">rejects any approval</text>
+    <rect x="450" y="300" width="176" height="74" rx="5" class="s-fill" stroke="#D97757" stroke-width="2"/>
+    <text x="464" y="324" class="lbl-hd">Remedies</text><text x="464" y="344" class="lbl-sm">owns Remedy</text>
+    <text x="464" y="362" class="lbl-sm">allow-list · records</text>
+    <rect x="660" y="300" width="190" height="74" rx="5" class="s-fill" stroke="#D97757" stroke-width="2"/>
+    <text x="674" y="324" class="lbl-hd">AskServer</text><text x="674" y="344" class="lbl-sm">owns Question</text>
+    <text x="674" y="362" class="lbl-sm">two MCP surfaces</text>
+  </g>
+
+  <g>
+    <rect x="30" y="406" width="176" height="46" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="44" y="434" class="lbl-hd">ProviderRegistry</text>
+    <rect x="240" y="410" width="176" height="50" rx="5" class="s-fill" stroke="#D1CFC5"/>
+    <text x="254" y="432" class="lbl-hd">StepKinds</text><text x="254" y="450" class="lbl-sm">owns StepKind · pipeline</text>
+    <rect x="660" y="406" width="190" height="46" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="674" y="434" class="lbl-hd">PlanReader</text>
+  </g>
+
+  <line x1="344" y1="61" x2="212" y2="61" class="stroke2" marker-end="url(#cd-a)"/>
+  <line x1="544" y1="61" x2="668" y2="61" class="stroke2" marker-end="url(#cd-a)"/>
+  <polyline points="400,92 400,140 118,140 118,162" class="stroke2" fill="none" marker-end="url(#cd-a)"/>
+  <line x1="440" y1="92" x2="440" y2="162" class="stroke2" marker-end="url(#cd-a)"/>
+  <polyline points="490,92 490,140 538,140 538,162" class="stroke2" fill="none" marker-end="url(#cd-a)"/>
+  <polyline points="520,92 520,128 755,128 755,162" class="stroke2" fill="none" marker-end="url(#cd-a)"/>
+  <polyline points="328,242 328,300" class="clay" fill="none" marker-end="url(#cd-c)"/>
+  <polyline points="328,374 328,392 440,392 440,98" class="clay" fill="none" marker-end="url(#cd-c)"/>
+  <text x="340" y="388" class="lbl-sm">halt — the only signal that reaches RunLoop</text>
+  <line x1="416" y1="337" x2="444" y2="337" class="clay" marker-end="url(#cd-c)"/>
+  <line x1="626" y1="337" x2="654" y2="337" class="clay" stroke-dasharray="4 3" marker-end="url(#cd-c)"/>
+  <polyline points="755,300 755,248" class="clay" fill="none" marker-end="url(#cd-c)"/>
+  <polyline points="118,242 118,400" class="stroke2" fill="none" marker-end="url(#cd-a)"/>
+  <polyline points="206,429 224,429 224,270 234,270" class="stroke2" fill="none" marker-end="url(#cd-a)"/>
+  <polyline points="530,92 530,110 866,110 866,429 856,429" class="stroke2" fill="none" marker-end="url(#cd-a)"/>
+  <polyline points="560,242 560,280 640,280 640,420 654,420" class="stroke2" fill="none" marker-end="url(#cd-a)"/>
+  <polyline points="360,30 360,14 14,14 14,484 328,484 328,466" class="stroke2" fill="none" marker-end="url(#cd-a)"/>
+</svg>
+<figcaption>Notice that <code>PlanReader</code> is reached from exactly two places —
+<code>RunLoop</code>, which reads it, and <code>LandGate</code>, which ticks through it — and that the
+clay path from <code>Watch</code> up into <code>RunLoop</code> carries exactly one thing — a halt. Everything else the watchdog can produce terminates in
+<code>Remedies</code> or in the <code>Ui</code>, which is the veto-and-remedy boundary expressed as
+wiring rather than as an instruction in a prompt.</figcaption>
+</figure>
+</section>
+
+<section id="p5">
+<h2 class="part" id="p5-h"><span class="pnum">Part 5</span> Architectural style</h2>
+<p class="lede">One control process sequences the work; every unit of real work runs in a separate process it starts, watches and never links against. It is also a small server, which is the one thing the pattern does not give you — workers need a way back in, and confining that to two named MCP surfaces is what keeps the first characteristic checkable. Inside the binary the code is hexagonal: a core that holds the loop and its rules and imports nothing from herdr, git, MCP or the terminal, and adapters around it behind small ports. One self-contained binary in a herdr pane, no daemon, nothing split into a service, nothing read from the skill-pack.</p>
+
+<h2 id="style">The style</h2>
+
+<p><strong>A supervisor over out-of-process workers.</strong> One control process owns the
+sequence and the state; every unit of real work runs in a separate process the supervisor starts,
+observes and never links against. The phase is a pipeline inside that supervisor, and the stages
+hand off through the filesystem rather than through memory.</p>
+
+<p>The supervisor is also a small <strong>server</strong>, which is the one thing that does not
+follow from the pattern. Workers need a way back in — to ask a question, and for the watchdog, to
+signal — so the driver exposes two MCP surfaces: <code>ask_user</code> to every session, and the
+signal and remedy tools to the watchdog alone. Scoping them separately is not a detail: an ordinary
+step session that could emit a halt signal would be a worker vetoing its own supervisor.</p>
+
+<p><strong>Inside the binary, a hexagonal core</strong> (<a href="#adr-46">ADR-46</a>). The loop,
+the step and phase state machines, the two-signal rule, the rejection of forward-moving signals and
+the remedy allow-list live in a core that imports no adapter. Everything that touches the outside
+world is an adapter behind a port the core defines: the plan file, the session host, git, the run
+state on disk, the config file, the prompts, the MCP server, the face (TUI or <code>--plain</code>)
+and the notify hooks. The core is tested with fakes for every port and no real herdr, git or
+terminal. A port is shaped by what the core needs from its one adapter today, not by a guess at the
+second (<a href="#adr-47">ADR-47</a>).</p>
+
+<figure class="svg-figure">
+<svg viewBox="0 0 880 400" role="img" aria-label="The hexagonal core with its ports and the adapters behind them">
+  <defs>
+    <marker id="hx-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#87867F"/>
+    </marker>
+  </defs>
+  <polygon points="300,60 580,60 660,200 580,340 300,340 220,200" class="s-fill" stroke="#D97757" stroke-width="2"/>
+  <text x="400" y="110" class="lbl-hd">core</text>
+  <text x="300" y="140" class="lbl-sm">RunLoop · StepKinds · Watch</text>
+  <text x="300" y="160" class="lbl-sm">Remedies · step and phase states</text>
+  <text x="300" y="180" class="lbl-sm">two-signal rule · evidence checks</text>
+  <text x="300" y="200" class="lbl-sm">imports no adapter</text>
+  <text x="300" y="250" class="lbl-sm">ports: PlanSource · SessionHost</text>
+  <text x="300" y="270" class="lbl-sm">Repo · Store · Config · Prompts</text>
+  <text x="300" y="290" class="lbl-sm">AskChannel · Face · Notifier</text>
+
+  <g>
+    <rect x="20" y="40" width="180" height="44" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="32" y="67" class="lbl">todo.md reader</text>
+    <rect x="20" y="104" width="180" height="44" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="32" y="131" class="lbl">herdr client</text>
+    <rect x="20" y="168" width="180" height="44" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="32" y="195" class="lbl">git</text>
+    <rect x="20" y="232" width="180" height="44" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="32" y="259" class="lbl">.r-loop/ files</text>
+    <rect x="20" y="296" width="180" height="44" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="32" y="323" class="lbl">YAML config</text>
+  </g>
+  <g>
+    <rect x="680" y="40" width="180" height="44" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="692" y="67" class="lbl">prompts, embedded</text>
+    <rect x="680" y="104" width="180" height="44" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="692" y="131" class="lbl">MCP server</text>
+    <rect x="680" y="168" width="180" height="44" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="692" y="195" class="lbl">Bubble Tea TUI</text>
+    <rect x="680" y="232" width="180" height="44" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="692" y="259" class="lbl">--plain lines</text>
+    <rect x="680" y="296" width="180" height="44" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="692" y="323" class="lbl">notify hooks</text>
+  </g>
+  <line x1="200" y1="62" x2="286" y2="80" class="stroke2" marker-end="url(#hx-a)"/>
+  <line x1="200" y1="126" x2="252" y2="140" class="stroke2" marker-end="url(#hx-a)"/>
+  <line x1="200" y1="190" x2="226" y2="194" class="stroke2" marker-end="url(#hx-a)"/>
+  <line x1="200" y1="254" x2="248" y2="250" class="stroke2" marker-end="url(#hx-a)"/>
+  <line x1="200" y1="318" x2="282" y2="318" class="stroke2" marker-end="url(#hx-a)"/>
+  <line x1="680" y1="62" x2="594" y2="80" class="stroke2" marker-end="url(#hx-a)"/>
+  <line x1="680" y1="126" x2="628" y2="140" class="stroke2" marker-end="url(#hx-a)"/>
+  <line x1="680" y1="190" x2="654" y2="194" class="stroke2" marker-end="url(#hx-a)"/>
+  <line x1="680" y1="254" x2="632" y2="250" class="stroke2" marker-end="url(#hx-a)"/>
+  <line x1="680" y1="318" x2="598" y2="318" class="stroke2" marker-end="url(#hx-a)"/>
+  <text x="220" y="380" class="lbl-sm">every arrow points inward: an adapter depends on the core, never the reverse</text>
+</svg>
+<figcaption>Notice that nothing vendor-shaped is inside the hexagon. A new host, a new plan source
+or a new face is a new box on the outside; the core changes only when a port has to grow, and that
+change is visible as an edit to one small type.</figcaption>
+</figure>
+
+<p>Against the three driving characteristics:</p>
+
+<ul>
+  <li><strong>Determinism</strong> — the supervisor is the only thing that branches, and it is code.
+      A worker returns an artifact and a sentinel; it never returns a decision.</li>
+  <li><strong>Evidence over autonomy</strong> — an out-of-process worker cannot hand back a typed
+      object, so the hand-off is necessarily something the supervisor can verify independently.
+      The constraint that looks like a limitation is what makes the two-signal rule natural rather
+      than bolted on.</li>
+  <li><strong>Extensibility</strong> — a worker is a process with a prompt, which is the largest
+      interface every candidate agent already implements, and MCP is the same argument for the
+      channel back. Inside the binary, the hexagon is what makes the other four seams cheap: a step
+      kind and a check register with the core, and a source or a host is an adapter behind a port
+      the core already has.</li>
+</ul>
+
+<h3>The styles rejected</h3>
+
+<ul>
+  <li><strong>In-process orchestration</strong> — what the pack does today with
+      <code>Workflow</code> scripts. Ruled out by <em>portability across agents</em>: the mechanism
+      exists only inside one vendor's CLI (<a href="#adr-4">ADR-4</a>).</li>
+  <li><strong>Embedding an agent SDK as a library</strong> — ruled out by <em>determinism</em>, and
+      by cost: it puts the loop back inside a model's context, and the subscription rules make
+      non-interactive API-billed runs a separate pool.</li>
+  <li><strong>A daemon with an HTTP API and a dashboard</strong> — ruled out by proportionality.
+      One maintainer on one machine, and herdr already renders every session.</li>
+  <li><strong>A headless driver with an attachable client</strong> — the shape that would let a run
+      survive any terminal. Ruled out by proportionality again: the driver runs in a herdr pane,
+      which already survives the window closing, and splitting it would buy an IPC boundary and a
+      daemon lifecycle for that one property (<a href="#adr-30">ADR-30</a>).</li>
+</ul>
+
+<h2 id="topology">Topology</h2>
+
+<p><strong>One binary, in a herdr pane.</strong> The driver renders the TUI on the left and opens
+the watchdog beside it with <code>herdr pane split</code>; every step session gets its own workspace
+as before. It runs for the length of the run and exits with it, creating no daemon: the sessions
+belong to herdr's server, which is running anyway, and the worktrees belong to git. A run started in
+a plain terminal instead dies with that terminal — the pane is what makes it survivable, and that is
+a documented instruction rather than something the driver enforces.</p>
+
+<p><strong>Self-contained.</strong> The binary carries its own default config and prompts and
+parses the plan file itself; it reads nothing from the skill-pack and needs no script interpreter
+(<a href="#adr-43">ADR-43</a>). The one thing the two share is the <code>todo.md</code> format that
+<code>/r:spec-design</code> writes. In a project it owns one directory, <code>.r-loop/</code>, whose
+committed half is the project's config and prompt overrides and whose ignored half is run state and
+worktrees (<a href="#adr-49">ADR-49</a>).</p>
+
+<p>Three things outside the process survive it, and that is deliberate — each is what a resume
+reads: <code>.r-loop/</code> in the repository, the phase branches and worktrees, and the herdr
+workspaces. Nothing is split into a service, because nothing here has a different scaling profile,
+a different release cadence or a different blast radius; it is one sequence over one repository.</p>
+
+<h2 id="talk">How components talk</h2>
+
+<table>
+  <tr><th>Pair</th><th>How</th><th>Why</th></tr>
+  <tr><td><code>RunLoop</code> → every other component</td><td>synchronous, in-process</td>
+      <td>one sequence; nothing here is concurrent in v1</td></tr>
+  <tr><td><code>SessionManager</code> → herdr</td><td>synchronous CLI calls over herdr's socket API</td>
+      <td>errors arrive as JSON with a code the caller branches on, which is the determinism rule
+          applied to the one external dependency that reports state</td></tr>
+  <tr><td><code>SessionManager</code> → an agent</td><td>asynchronous — spawn, then poll state and
+          the filesystem</td>
+      <td>an interactive agent never exits and yields no status; this is the reason the two-signal
+          rule exists at all</td></tr>
+  <tr><td>step → step</td><td>asynchronous, through disk only — the phase plan, the branch, the
+          sentinel</td>
+      <td>separate processes with no shared memory, by construction</td></tr>
+  <tr><td>a session → <code>AskServer</code></td><td>MCP, synchronous from the caller's view</td>
+      <td>the call blocks until answered, which is what makes <code>waiting-input</code> a real
+          state rather than a guess about silence</td></tr>
+  <tr><td>watchdog → <code>AskServer</code></td><td>MCP, on a separate tool surface</td>
+      <td>signals and remedies must not be reachable from a step session</td></tr>
+  <tr><td>watchdog → a running session</td><td><code>herdr agent read</code> — read-only</td>
+      <td>a wrong path is visible in the output long before it reaches the diff; the watchdog can
+          read a session but never write to one</td></tr>
+  <tr><td><code>PlanReader</code> → the todo</td><td>synchronous file read; two narrow writes</td>
+      <td>a tick and a <code>Resolved:</code> stamp are the only edits, each rewriting nothing else
+          byte for byte, so a diff of the todo after a run shows exactly what the driver did</td></tr>
+  <tr><td><code>LandGate</code> → git</td><td>synchronous, exit codes</td>
+      <td>the irreversible operation is the one that must not be inferred</td></tr>
+</table>
+
+<p>Nothing is transactional across a boundary except the landing, and that is why it is one commit:
+the merge, the ticks and the phase's own bookkeeping either all exist or none do.</p>
+
+<figure class="svg-figure">
+<svg viewBox="0 0 880 370" role="img" aria-label="What is inside the driver, what is outside, and what crosses">
+  <defs>
+    <marker id="cx-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#87867F"/>
+    </marker>
+    <marker id="cx-c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#D97757"/>
+    </marker>
+  </defs>
+
+  <rect x="24" y="26" width="320" height="320" rx="8" class="s-fill" stroke="#D97757" stroke-width="2"/>
+  <text x="40" y="50" class="lbl-sm">inside — the r-loop process</text>
+  <g>
+    <rect x="44" y="64" width="280" height="56" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="58" y="88" class="lbl-hd">r-loop</text><text x="58" y="108" class="lbl-sm">13 components · one sequence</text>
+    <rect x="44" y="134" width="280" height="56" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="58" y="158" class="lbl-hd">MCP surfaces</text><text x="58" y="178" class="lbl-sm">ask_user · watchdog-only tools</text>
+    <rect x="44" y="204" width="280" height="56" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="58" y="228" class="lbl-hd">.r-loop/</text><text x="58" y="248" class="lbl-sm">run state · signals · remedies</text>
+    <rect x="44" y="274" width="280" height="56" rx="5" class="g-fill" stroke="#D1CFC5"/>
+    <text x="58" y="298" class="lbl-hd">prompts · defaults</text><text x="58" y="318" class="lbl-sm">embedded; overridden in .r-loop/</text>
+  </g>
+
+  <rect x="420" y="26" width="438" height="320" rx="8" fill="none" stroke="#D1CFC5" stroke-dasharray="6 4"/>
+  <text x="436" y="50" class="lbl-sm">outside — started, read, never implemented here</text>
+  <g>
+    <rect x="440" y="64" width="400" height="50" rx="5" class="s-fill" stroke="#D1CFC5"/>
+    <text x="454" y="86" class="lbl-hd">herdr server</text><text x="454" y="104" class="lbl-sm">panes · workspaces · agent detection · agent read</text>
+    <rect x="440" y="128" width="400" height="50" rx="5" class="s-fill" stroke="#D1CFC5"/>
+    <text x="454" y="150" class="lbl-hd">step sessions</text><text x="454" y="168" class="lbl-sm">claude · codex · anything herdr can start</text>
+    <rect x="440" y="192" width="400" height="50" rx="5" class="s-fill" stroke="#D97757" stroke-width="2"/>
+    <text x="454" y="214" class="lbl-hd">watchdog session</text><text x="454" y="232" class="lbl-sm">one pane, alive for the run</text>
+    <rect x="440" y="256" width="400" height="50" rx="5" class="s-fill" stroke="#D1CFC5"/>
+    <text x="454" y="278" class="lbl-hd">git repository</text><text x="454" y="296" class="lbl-sm">base · phase branches · worktrees</text>
+    <rect x="440" y="316" width="400" height="30" rx="5" class="s-fill" stroke="#D1CFC5"/>
+    <text x="454" y="336" class="lbl-sm">todo.md · .task-plans/ · native reviewers</text>
+  </g>
+
+  <line x1="346" y1="80" x2="434" y2="80" class="stroke2" marker-end="url(#cx-a)"/>
+  <text x="350" y="72" class="lbl-sm">spawn</text>
+  <line x1="346" y1="150" x2="434" y2="150" class="stroke2" marker-end="url(#cx-a)"/>
+  <text x="350" y="142" class="lbl-sm">prompt</text>
+  <line x1="434" y1="164" x2="346" y2="164" class="clay" marker-end="url(#cx-c)"/>
+  <text x="350" y="180" class="lbl-sm">ask_user</text>
+  <line x1="434" y1="216" x2="346" y2="216" class="clay" marker-end="url(#cx-c)"/>
+  <text x="350" y="208" class="lbl-sm">signals</text>
+  <line x1="346" y1="230" x2="434" y2="230" class="stroke2" marker-end="url(#cx-a)"/>
+  <text x="350" y="246" class="lbl-sm">context</text>
+  <line x1="346" y1="280" x2="434" y2="280" class="stroke2" marker-end="url(#cx-a)"/>
+  <text x="350" y="272" class="lbl-sm">exit codes</text>
+</svg>
+<figcaption>Notice the two clay arrows — they point <em>inward</em>, and they are the only ones in
+the document that do. Adding a way back into the loop is the whole of what rounds of design added
+here, and confining it to two named surfaces is what keeps the first driving characteristic
+checkable.</figcaption>
+</figure>
+</section>
+
+<section id="p6">
+<h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
+<p class="lede">Fifty-two decisions, each with the alternative that was live at the time; two are superseded and kept in place, and five are amended by the move to a repository of its own. Five carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running each provider's own reviewer, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; and the three-tier rule that lets a watchdog veto and remedy but never approve. The last ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those.</p>
+
+<div id="adr-index">
+
+<div class="adr">
+<h3 id="adr-1">ADR-1 — The loop runs as a terminal CLI, outside every agent session</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <em>Determinism</em> (Part 3) asks that no loop decision be made
+by a model. A loop hosted inside an agent session is executed by that model by construction, and
+the harness caps a single blocking call at 600 s — shorter than one implement step.</p>
+<p><span class="f">Decision</span> The driver is a binary run from a shell pane; it starts sessions
+and outlives none of them.</p>
+<p><span class="f">Alternatives</span> A skill that launches a detached driver — rejected, the
+orchestrating session then sits idle and a crashed driver is reported by nobody. Hardening the
+in-session prose loop — rejected, the context still grows per phase and the loop is still text a
+model follows.</p>
+<p><span class="f">Consequences</span> The loop becomes testable and stoppable, and gains nothing
+from Claude Code's permissions, hooks or trust model — which it must therefore arrange itself for
+the sessions it opens. A second entry point exists beside <code>/r:plan-run</code>.</p>
+<p><span class="f">Revisit when</span> a single blocking harness call can exceed one implement
+step's duration.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-2">ADR-2 — One session per step, not one per phase</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> Long agent sessions degrade as context fills; the pack's own
+fan-out gives a whole phase to one session. <em>Choose the agent for each step</em> (Part 1) also
+requires a session-level boundary, because a provider is chosen when a session starts.</p>
+<p><span class="f">Decision</span> Plan, implement and review each get their own fresh session.</p>
+<p><span class="f">Alternatives</span> One session per phase, as <code>fanout.sh</code> runs today
+— rejected, it offers no place to select a provider per step and carries one context across all
+three.</p>
+<p><span class="f">Consequences</span> Every hand-off must go through disk, which is what makes the
+two-signal rule implementable; and three sessions re-read context that one would have held.</p>
+<p><span class="f">Revisit when</span> the per-step context re-read measurably exceeds the cost of
+the degradation it avoids.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-3">ADR-3 — The driver is an alternative to <code>/r:plan-run</code>, not a replacement</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <code>/r:plan-run</code> works, is measured, and owns the
+concurrent path. Replacing it would put an unproven loop in front of the only one that has finished
+a plan.</p>
+<p><span class="f">Decision</span> Nothing existing is migrated or edited; the driver is a new
+front door.</p>
+<p><span class="f">Alternatives</span> Replace <code>--herdr</code> and reduce
+<code>fanout.sh</code> to the driver's spawn layer — rejected by the maintainer, who asked that
+existing skills keep working.</p>
+<p><span class="f">Consequences</span> Two loop encodings exist, which the pack elsewhere treats as
+a lockstep tax; here they are deliberately not kept in lockstep, because they are different designs
+rather than two copies of one.</p>
+<p><span class="f">Revisit when</span> the driver has run a full plan end to end twice without a
+halt the prose loop would have avoided.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-4">ADR-4 — No Claude Code Workflows: the driver owns every step prompt</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <em>Portability across agents</em> is a driving characteristic.
+Both pipelines the pack orchestrates are <code>Workflow</code> scripts, and that tool exists only
+inside Claude Code, so any step built on one can never run on Codex, opencode or an agent that does
+not exist yet.</p>
+<p><span class="f">Decision</span> The driver ships its own prompt per step and calls no
+<code>Workflow</code> script and no bundled agent.</p>
+<p><span class="f">Alternatives</span> Keep both Workflows and make only the planning step
+provider-agnostic — rejected: it leaves the two most expensive steps locked to one vendor, which is
+the lock-in the project exists to remove. A one-argument edit to
+<code>task-run-implement.workflow.js</code> so the planning half could stop early — rejected for
+the same reason once the goal was stated.</p>
+<p><span class="f">Consequences</span> <strong>This is the decision that costs the most.</strong>
+The driver gives up the explorer fan-out, the UI/UX design phase, the Codex plan review with its two
+triage lanes, the domain-sliced implementers, and <code>/r:task-review</code>'s roughly fifteen
+tracks with their recorded verdicts — including the measurements those tracks produce
+(<code>code-quality</code> 944 confirmed against 391 dismissed; <code>end-verify</code> 74 against
+1). A single prompt per step does not reproduce them, and this document does not claim it does.
+Running each provider's own native reviewer (<a href="#adr-23">ADR-23</a>) buys part of it back —
+those are real tools rather than prose imitations of one — but only part. What it buys is that
+every step can run on any agent.</p>
+<p><span class="f">Revisit when</span> the review step's fixes per run falls below what
+<code>/r:task-review</code> records for the same repository.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-5">ADR-5 — Fan-out is templated in the prompt and expanded per provider</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <a href="#adr-4">ADR-4</a> removes the pack's fan-out, and a
+review by one reader is materially narrower. Providers do have their own parallel mechanisms, but
+no two share an API.</p>
+<p><span class="f">Decision</span> Prompts carry <code>{{agent:&lt;name&gt;}}</code>;
+<code>PromptRenderer</code> expands it into the resolved provider's own mechanism.</p>
+<p><span class="f">Alternatives</span> One agent per step doing the whole job — rejected, the review
+becomes a single reader on every provider. The driver spawning N sessions per step and joining them
+— rejected for v1, it needs a join protocol per step and rebuilds what
+<code>fanout.sh</code> already does.</p>
+<p><span class="f">Consequences</span> Some review breadth survives the loss of the Workflows, and
+every provider must now declare a fan-out capability — which creates the failure
+<a href="#adr-8">ADR-8</a> exists to make visible.</p>
+<p><span class="f">Revisit when</span> two providers in use both declare
+<code>fanout: none</code>.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-6">ADR-6 — A provider is a config block, not driver code</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <em>Portability across agents</em> sets the target at one config
+block and zero driver lines. herdr already supports 23 agent kinds, so the driver cannot ship a
+branch per agent and stay honest about the claim.</p>
+<p><span class="f">Decision</span> <code>providers.&lt;name&gt;</code> declares the herdr kind, the
+model and effort flag shapes, the completion signal and the fan-out capability. The driver reads it
+and names nothing.</p>
+<p><span class="f">Alternatives</span> A small shipped adapter file per provider — rejected: it can
+carry real logic rather than strings, but adopting an agent then means editing the pack instead of
+the project's own config.</p>
+<p><span class="f">Consequences</span> Adding an agent is a config edit, and a wrong block fails at
+spawn time rather than at load time — so the registry must validate what it can and say which field
+it could not.</p>
+<p><span class="f">Revisit when</span> a provider needs behaviour that cannot be expressed as flags
+and a signal.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-7">ADR-7 — Prompts ship with the pack and are overridden per project</h3>
+<p><span class="f">Status</span> superseded in part by <a href="#adr-43">ADR-43</a> and <a href="#adr-49">ADR-49</a> — the shipped prompts are embedded in the binary rather than living in the pack, and the override is <code>.r-loop/prompts/&lt;name&gt;.md</code>; the decision to ship defaults and let a project override them stands</p>
+<p><span class="f">Context</span> <em>Override the prompts for this project</em> (Part 1): a repo
+with its own review rubric should not fork the pack to get it.</p>
+<p><span class="f">Decision</span> Templates live in the pack; a file of the same name under the
+project's <code>.config/loop-prompts/</code> replaces it, and the banner names which was used.</p>
+<p><span class="f">Alternatives</span> Shipped only, edited in the repo — rejected, it makes any
+per-project rubric a fork.</p>
+<p><span class="f">Consequences</span> Two places to look when a run behaves oddly, which the
+banner is there to collapse to one.</p>
+<p><span class="f">Revisit when</span> more than half of the projects using the driver override the
+same template — that is a shipped prompt that is wrong.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-8">ADR-8 — <code>fanout: none</code> is a named degradation, never a silent one</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> A review that collapses to one reader produces a report that looks
+exactly like a review that fanned out. The pack has the same failure recorded elsewhere: a blocked
+track written into findings reads as 100% precision.</p>
+<p><span class="f">Decision</span> A provider declaring <code>fanout: none</code> gets the reviewer
+list sequentially, and the degradation is written to the step log and the run report.</p>
+<p><span class="f">Alternatives</span> Silently render the sequential form — rejected, it is
+indistinguishable from the full one. This was decided rather than discussed; the alternative is
+named because it is the behaviour every other design here would have produced by default.</p>
+<p><span class="f">Consequences</span> The run report gains a field that is usually empty, and a
+phase can land with a review the report describes as narrower than intended.</p>
+<p><span class="f">Revisit when</span> the report's degradation field is never read.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-9">ADR-9 — Landing runs in driver code, never in a session</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> The merge is the irreversible step, and <em>determinism</em> puts
+exactly those decisions in code.</p>
+<p><span class="f">Decision</span> <code>LandGate</code> runs the gate command, merges, ticks and
+commits directly.</p>
+<p><span class="f">Alternatives</span> A fourth session running <code>/r:plan-run</code>'s finish
+prose — rejected, it hands the one unrecoverable operation to a model and costs a session per
+phase.</p>
+<p><span class="f">Consequences</span> A merge conflict halts the run for a person, and ticking
+needs a script rather than an instruction.</p>
+<p><span class="f">Revisit when</span> conflicts at the land step become common enough to want a
+resolving agent.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-10">ADR-10 — The land gate re-runs the phase's <code>Done when:</code></h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> The review step already built once, in its own tree. But a review
+step's build is not reliably a build: 33 recorded <code>/r:task-review</code> runs returned
+<code>build: "n/a"</code>, 31 of them over Go worktrees carrying 42k added lines reviewed without a
+single compile.</p>
+<p><span class="f">Decision</span> Before merging, the phase's own <code>Done when:</code> command
+runs in the primary tree and must exit 0.</p>
+<p><span class="f">Alternatives</span> Trust the review's own green — rejected on the measurement
+above; <code>"n/a"</code> is not green and the gate that reads only "red" is vacuous exactly where
+it matters.</p>
+<p><span class="f">Consequences</span> One extra full build per phase — the most expensive step in
+the loop on a multi-module project — and a phase with no <code>Done when:</code> line becomes a
+named skip that the report has to carry.</p>
+<p><span class="f">Revisit when</span> a phase's gate build exceeds half the phase's total wall
+time.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-11">ADR-11 — Serial phases in v1, with the phase as the scheduling unit</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> Concurrency already exists and is proven in
+<code>/r:plan-run --herdr</code>; the loop itself is what is unproven.</p>
+<p><span class="f">Decision</span> v1 runs phases one at a time, and the phase is the unit the
+scheduler works in, so waves are a later scheduler change rather than a redesign.</p>
+<p><span class="f">Alternatives</span> Build waves in v1 by calling <code>check_todo.py
+--slice</code> and <code>footprint-warn.py</code> — rejected for v1: it also requires
+<code>--no-merge</code> detached worktrees and an ordered land pass, roughly doubling the work, all
+of which already runs in <code>/r:plan-run</code>. Never support waves — rejected, it would make
+the split between the two tools permanent.</p>
+<p><span class="f">Consequences</span> Building a plan in parallel today means using
+<code>/r:plan-run --herdr</code>; the driver stays the serial, deterministic one.</p>
+<p><span class="f">Revisit when</span> a plan with six or more independent leaves has been run
+twice serially.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-12">ADR-12 — No verifier agent: the plan already states what a verifier would derive</h3>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-43">ADR-43</a> — when waves come, <code>PlanReader</code> computes the concurrency verdict from the same fields in Go; the pack's scripts are not called</p>
+<p><span class="f">Context</span> <code>/r:issues-fix</code> spends a parallel fan-out — one
+read-only agent per backlog item — deriving where a fix lands and how deep it cuts, and uses those
+to group items and partition them into waves. A <code>todo.md</code> phase already carries
+<code>Files:</code>, <code>Risk:</code> and <code>Done when:</code>, written by
+<code>/r:spec-design</code>.</p>
+<p><span class="f">Decision</span> The driver derives nothing. Where it needs a concurrency verdict
+it calls <code>check_todo.py --slice</code> and <code>footprint-warn.py</code>, which are code.</p>
+<p><span class="f">Alternatives</span> Port the <code>issues-fix</code> verifier so the driver could
+also run a backlog — rejected: it re-derives fields the plan states, and puts a model back in a
+decision <em>determinism</em> removes.</p>
+<p><span class="f">Consequences</span> The driver is bound to sources that carry those three fields
+— which is <a href="#adr-21">ADR-21</a> — and gets waves cheaply when they come.</p>
+<p><span class="f">Revisit when</span> a source without <code>Files:</code> lines has to be
+supported.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-13">ADR-13 — A failed step halts the run; there is no automatic retry</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> A phase is written to build on what the previous one produced.
+Building phase 5 on a failed phase 4 leaves the plan half applied with nothing recording which
+half.</p>
+<p><span class="f">Decision</span> The run stops, keeps every worktree and session, and prints the
+resume command.</p>
+<p><span class="f">Alternatives</span> One fresh-session retry before halting — rejected: it
+absorbs a flaky build, but a deterministic failure then pays for two sessions and the second reads
+a ledger the first wrote.</p>
+<p><span class="f">Consequences</span> Every failure needs a person, including flaky ones — the
+direct price of <em>evidence over autonomy</em>.</p>
+<p><span class="f">Revisit when</span> the same step fails and succeeds on an unchanged tree more
+than once.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-14">ADR-14 — A stalled step is left standing, not killed and re-run</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> A session that goes quiet may be waiting for a person, and the
+open session is both the evidence of what went wrong and the place to intervene. Since
+<a href="#adr-28">ADR-28</a> a question is an explicit state, so <code>stalled</code> now means
+something narrower and more suspicious: quiet, and not asking.</p>
+<p><span class="f">Decision</span> The loop pauses, names the workspace, and leaves the session
+live.</p>
+<p><span class="f">Alternatives</span> Kill and re-run the step in a fresh session N times, as
+ralphex does — rejected: a session waiting on a legitimate question is destroyed along with the
+question, and a genuine stall burns N sessions before stopping.</p>
+<p><span class="f">Consequences</span> An unattended run stops until a person appears, and
+workspaces accumulate until they are cleaned up.</p>
+<p><span class="f">Revisit when</span> stalls that are not questions outnumber stalls that are.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-15">ADR-15 — A stall is detected from herdr's agent state, with a timer as backstop</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> herdr reports an agent as <code>idle</code>,
+<code>blocked</code>, <code>working</code> or <code>done</code> within seconds. A timer reports
+nothing until it expires.</p>
+<p><span class="f">Decision</span> <code>SessionManager</code> watches the agent state and treats
+<code>blocked</code> or <code>idle</code> with no sentinel as a stall; per-step timers exist only
+for the case where herdr reports nothing at all.</p>
+<p><span class="f">Alternatives</span> Timer only — rejected on asymmetry: a false stall costs one
+glance and a "keep going", while a timer-only design costs hours on a question asked at 3am.</p>
+<p><span class="f">Consequences</span> The driver inherits herdr's detection quality, so a long
+silent build may read as idle and pause a run that was fine. Since <a href="#adr-29">ADR-29</a> this
+mechanism no longer carries questions — a step in <code>waiting-input</code> is never treated as
+stalled and its timer is paused — so what remains is the narrow case it is actually good at.</p>
+<p><span class="f">Revisit when</span> false stalls exceed real ones.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-16">ADR-16 — A resume restarts the stopped step, except over an unclaimed tree</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> Resumability is a supporting characteristic with a target of at
+most one re-run step. But a worktree holding changes no step recorded is neither safe to build on
+nor safe to discard.</p>
+<p><span class="f">Decision</span> <code>resume</code> re-runs the last recorded step and skips
+everything before it; a tree with unrecorded changes stops for a person instead.</p>
+<p><span class="f">Alternatives</span> Restart the whole phase from planning — rejected, it
+discards a completed planning step and any implement work under it.</p>
+<p><span class="f">Consequences</span> The state store must record a transition before the action
+it describes, not after, or a crash between them is indistinguishable from an unclaimed tree.</p>
+<p><span class="f">Revisit when</span> unclaimed-tree stops become the most common halt.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-17">ADR-17 — Run state lives in <code>.r-loop/</code> in the repository</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <code>fanout.sh</code> keys its state to a temp directory, which
+is correct for units that live minutes. A driver run can span days and a reboot, and resumability
+is a stated characteristic.</p>
+<p><span class="f">Decision</span> State is written to <code>.r-loop/</code> inside the repository,
+gitignored.</p>
+<p><span class="f">Alternatives</span> <code>$TMPDIR</code> keyed on the git common directory —
+rejected once the span was considered: a reboot mid-run loses the resume point and the phase
+restarts from planning.</p>
+<p><span class="f">Consequences</span> Every project the driver touches gains an ignored directory,
+and the state is readable by the maintainer — which was not true of the temp form.</p>
+<p><span class="f">Revisit when</span> a run needs to be resumed from a different checkout of the
+same repository.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-18">ADR-18 — An open <code>## Resolve first</code> entry refuses the run</h3>
+<p><span class="f">Status</span> <strong>superseded by <a href="#adr-42">ADR-42</a></strong> — kept
+here because deleting it would destroy the record of why refusing was right while it was right</p>
+<p><span class="f">Context</span> <code>/r:spec-design</code> writes a <code>## Resolve first</code>
+section for decisions only a person can close, and <code>resolve_scope.py</code> already decides
+what is open and what it blocks — failing closed in four separate ways.</p>
+<p><span class="f">Decision</span> The driver runs that script before the first phase and refuses
+to start while anything open blocks a phase in the run list, naming the entry and pointing at
+<code>/r:plan-unblock</code>.</p>
+<p><span class="f">Alternatives</span> An inline gate that offers to resolve it, as
+<code>/r:plan-run</code>'s Step 1 does — rejected: it is the one place a person must answer, which
+is precisely what the driver is built not to contain.</p>
+<p><span class="f">Consequences</span> Resolving is a separate command before the loop will run,
+and the driver keeps zero interactive prompts of its own — which was the whole argument, and which
+stopped being true the moment the driver grew a TUI and an ask channel.</p>
+<p><span class="f">Revisit when</span> the driver gains an input surface. <em>It did — see
+<a href="#adr-42">ADR-42</a>.</em></p>
+</div>
+
+<div class="adr">
+<h3 id="adr-19">ADR-19 — Milestone reports ship in v1</h3>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-43">ADR-43</a> — <code>PlanReader</code> decides milestone scope and completion itself, by the same rules as the pack's <code>milestone_scope.py</code></p>
+<p><span class="f">Context</span> <code>milestone_scope.py</code> already decides which phases a
+<code>## Milestone N</code> holds and whether it is complete, so the boundary check is code the
+driver can call.</p>
+<p><span class="f">Decision</span> After a landing, the driver asks whether a milestone closed and,
+if so, runs one more session to write the report — in the primary tree, after the merge, as its own
+commit.</p>
+<p><span class="f">Alternatives</span> Defer to v2 — rejected: a plan carrying milestones would
+silently produce no reports, and nothing would say so.</p>
+<p><span class="f">Consequences</span> A fourth session kind exists in v1, and a report that cannot
+be written is a named skip rather than a halt — the milestone's code is already merged.</p>
+<p><span class="f">Revisit when</span> milestone reports go unread.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-20">ADR-20 — Per-step settings live in <code>steps.loop</code>, with a per-run override</h3>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-49">ADR-49</a> — the rows live under <code>steps</code> in <code>.r-loop/config.yaml</code>, and the key-by-key resolution is r-loop's own, not the pack's reader</p>
+<p><span class="f">Context</span> The pack already resolves settings key by key from the project
+file, the pack defaults and a built-in row, naming every substitution. A second mechanism would be
+a second place to look.</p>
+<p><span class="f">Decision</span> <code>steps.loop.&lt;step&gt;</code> carries provider, model,
+effort and timeout; <code>--provider &lt;step&gt;=&lt;name&gt;</code> overrides one step for one
+run, and the banner prints what was resolved and what it replaced.</p>
+<p><span class="f">Alternatives</span> Command-line flags only, as ralphex does — rejected, they are
+retyped every run and recorded nowhere.</p>
+<p><span class="f">Consequences</span> A flag can contradict the file, which is why the banner is
+part of the decision rather than a nicety.</p>
+<p><span class="f">Revisit when</span> a step needs a setting that is not provider, model, effort
+or timeout.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-21">ADR-21 — <code>todo.md</code> is the only source in v1</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> The land gate and the future wave computation both read
+<code>Done when:</code> and <code>Files:</code> off the phase block
+(<a href="#adr-12">ADR-12</a>).</p>
+<p><span class="f">Decision</span> v1 accepts a phased plan file and nothing else.</p>
+<p><span class="f">Alternatives</span> Also accept a single phase or a free-text task — rejected for
+v1: there is no <code>Done when:</code> to gate the landing on, so the gate would become
+conditional in exactly the place it must not be.</p>
+<p><span class="f">Consequences</span> A backlog still goes through <code>/r:issues-fix</code>, and
+a one-off task through <code>/r:task-quick</code> or <code>/r:task-run</code>.</p>
+<p><span class="f">Revisit when</span> a backlog run is wanted without <code>/r:issues-fix</code>.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-22">ADR-22 — Completion hooks are one shell command each, and never fail the run</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <em>Be told when a run halts</em> (Part 1). ralphex ships
+Telegram, email, Slack, webhook and script notifiers; each is an integration to maintain, and the
+maintainer already has a terminal manager that can be scripted.</p>
+<p><span class="f">Decision</span> <code>notify.onHalt</code> and <code>notify.onDone</code> are
+single shell commands run with the run summary in the environment. A non-zero exit is logged and
+changes nothing.</p>
+<p><span class="f">Alternatives</span> No notification at all, with the terminal as the only
+view — rejected, a run that halts at 3am is otherwise found in the morning. Hook points named in
+this document but unimplemented in v1 — rejected, the cost of the shell form is one config key.</p>
+<p><span class="f">Consequences</span> Any transport is reachable, and none is supported; a broken
+hook is invisible except in the log.</p>
+<p><span class="f">Revisit when</span> the same hook command is written in three projects — that is
+a transport worth shipping.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-23">ADR-23 — The review step runs each provider's native reviewer</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <a href="#adr-4">ADR-4</a> gave up the pack's measured review
+tracks. Both shipped providers have a real reviewer of their own: <code>codex review
+--uncommitted|--base</code> runs non-interactively, and Claude Code's <code>/code-review</code>
+carries effort levels and <code>--fix</code>. The pack's own rule is a real tool or a named skip,
+never a prose imitation.</p>
+<p><span class="f">Decision</span> <code>providers.*.review</code> declares how to invoke that
+provider's reviewer; the driver's own prompt owns only what happens to the findings.</p>
+<p><span class="f">Alternatives</span> Always open a session and tell the agent to invoke its own
+reviewer inside it — rejected, it pays for a session where codex runs headless. Keep the driver's
+review prompt with the native reviewer as an extra pass — rejected, it gives up most of the
+gain.</p>
+<p><span class="f">Consequences</span> One step has two shapes — a subprocess and a session — and a
+subprocess review has no workspace to watch while it runs. It stays a Step under the two-signal
+rule either way.</p>
+<p><span class="f">Revisit when</span> a provider's native reviewer stops taking a scope.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-24">ADR-24 — The review step is always two halves: find, then fix</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> The native reviewers are not symmetric — <code>codex review</code>
+only reports, while <code>/code-review --fix</code> can also apply.</p>
+<p><span class="f">Decision</span> Find and fix are separate halves on every provider: the native
+reviewer produces findings, then a session verifies and applies them.</p>
+<p><span class="f">Alternatives</span> Collapse them where the provider can do both — rejected: two
+step shapes, and a fix behaviour that differs by provider is what makes one run impossible to
+compare with another.</p>
+<p><span class="f">Consequences</span> On claude the run pays for a session that <code>--fix</code>
+could have folded in. In exchange there is one place where findings can be verified before anything
+is changed — the pack measures roughly a third of <code>code-quality</code> findings as dismissed at
+triage.</p>
+<p><span class="f">Revisit when</span> the fix half applies everything the find half reports, twice
+running.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-25">ADR-25 — The fix half runs on the <code>implement</code> provider row</h3>
+<p><span class="f">Status</span> accepted · keys renamed by <a href="#adr-49">ADR-49</a></p>
+<p><span class="f">Context</span> The fix half writes code that the implement step wrote. The pack's
+one-writer rule is that the model which wrote a change is the model that patches it.</p>
+<p><span class="f">Decision</span> <code>steps.review</code> governs the find half only; the
+fix half resolves from <code>steps.implement</code>.</p>
+<p><span class="f">Alternatives</span> A fourth configurable row for the fixer — rejected, it adds a
+setting and produces a fixer that never read the review's own reasoning. The review row governing
+both — rejected, it puts a second writer on code the implementer owns.</p>
+<p><span class="f">Consequences</span> Changing the implementer silently changes the fixer, which is
+intended and must be said in the banner.</p>
+<p><span class="f">Revisit when</span> a fixer needs to run deeper than the implementer it
+patches.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-26">ADR-26 — The driver is a Go TUI, with <code>--plain</code> beside it</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> A run has several things live at once — phases, a step, a
+question, a warning — and a stream of lines renders none of them as a shape. The original language
+question was left open in the first draft; bash 3.2 (the macOS system shell, with no associative
+arrays) would have made the state layer awkward.</p>
+<p><span class="f">Decision</span> One Go binary rendering a TUI, with <code>--plain</code>
+streaming the same event stream as lines.</p>
+<p><span class="f">Alternatives</span> bash plus python3, matching the pack's existing scripts —
+rejected once a TUI was wanted. TUI only, with no plain mode — rejected, the driver could then not
+be run from a script, a cron, or a pane with no TTY.</p>
+<p><span class="f">Consequences</span> Two render paths over one event stream, and the repository
+gains a compiled artifact for the first time (<a href="#adr-31">ADR-31</a>).</p>
+<p><span class="f">Revisit when</span> the two render paths disagree about what happened.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-27">ADR-27 — Bubble Tea and Lip Gloss render it</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> The TUI is mostly a streaming event log with a few live regions,
+which is the shape an Elm-style loop handles well.</p>
+<p><span class="f">Decision</span> Bubble Tea for the loop, Lip Gloss for layout.</p>
+<p><span class="f">Alternatives</span> tview/tcell — rejected: less ceremony for tables, but less
+idiomatic for a streaming log and a smaller pool of examples.</p>
+<p><span class="f">Consequences</span> Every event has to be routed through one model, which is the
+cost of the framework and also what keeps <code>--plain</code> honest — both faces consume the same
+messages.</p>
+<p><span class="f">Revisit when</span> the model file becomes the largest in the driver.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-28">ADR-28 — Agents ask through an MCP server the driver exposes</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> An agent that cannot ask will guess, and a guess reaches the code.
+Before this, a blocked session could only be detected as silence.</p>
+<p><span class="f">Decision</span> The driver serves an <code>ask_user</code> tool; every step
+session is started pointed at it.</p>
+<p><span class="f">Alternatives</span> A small CLI the agent shells to — rejected as the primary
+channel: it works on any agent with a shell, but it is a convention the prompt has to teach rather
+than a tool the agent discovers. Both — rejected for v1, two implementations of one channel.</p>
+<p><span class="f">Consequences</span> MCP is to the tool channel what herdr's <code>--kind</code> is
+to the session channel — one contract every candidate provider already speaks. An agent without MCP
+is excluded, which <a href="#adr-40">ADR-40</a> handles.</p>
+<p><span class="f">Revisit when</span> a provider worth using has no MCP support.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-29">ADR-29 — An open question is its own state, exempt from the backstop</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> A step that has asked something is not stalled and not working. If
+its timer keeps running, a question asked at 3am kills the step that asked it.</p>
+<p><span class="f">Decision</span> <code>waiting-input</code> is a distinct state and pauses the
+step's backstop for as long as the question is open.</p>
+<p><span class="f">Alternatives</span> Let it count against the timer — rejected: a step killed for
+asking teaches every future step to guess instead, which is the behaviour
+<a href="#adr-28">ADR-28</a> exists to remove.</p>
+<p><span class="f">Consequences</span> A question nobody answers holds the run indefinitely, by
+design. It also narrows <code>stalled</code> to its honest meaning, which makes
+<a href="#adr-15">ADR-15</a>'s detection more useful rather than less.</p>
+<p><span class="f">Revisit when</span> runs are found holding on questions nobody intended to
+answer.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-30">ADR-30 — One process in a herdr pane, not a daemon plus a client</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> A TUI process is the run, so closing its terminal would end it. The
+driver is already spawning herdr workspaces, and herdr panes survive the window closing.</p>
+<p><span class="f">Decision</span> Run it in a herdr pane; it stays one process.</p>
+<p><span class="f">Alternatives</span> A headless driver with <code>r-loop attach</code> — rejected:
+it would let a run survive any terminal, at the cost of an IPC boundary and a daemon lifecycle for
+that single property.</p>
+<p><span class="f">Consequences</span> A run started in a plain terminal dies with it. That is a
+documented instruction, not something the driver enforces.</p>
+<p><span class="f">Revisit when</span> runs are routinely started outside herdr.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-31">ADR-31 — <code>install.sh</code> builds the binary; Go becomes a prerequisite</h3>
+<p><span class="f">Status</span> superseded by <a href="#adr-44">ADR-44</a> — the driver left the pack, so there is no <code>install.sh</code> to build it</p>
+<p><span class="f">Context</span> The pack publishes by copying files and tracks no build artefacts —
+<code>validate.sh</code> fails the repository for one. A compiled TUI has to come from somewhere.</p>
+<p><span class="f">Decision</span> <code>install.sh</code> runs <code>go build</code>, and
+<code>check-prereqs.sh</code> requires a Go toolchain.</p>
+<p><span class="f">Alternatives</span> A separate repository released with goreleaser and installed
+by brew — rejected, the driver would then live apart from the prompts and config it reads.
+Committing the binary — rejected, it is a tracked build artefact.</p>
+<p><span class="f">Consequences</span> Every install needs Go, and <code>install.sh</code> gains its
+first build step. One source of truth, and nothing to release.</p>
+<p><span class="f">Revisit when</span> the driver is wanted on a machine with no toolchain.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-32">ADR-32 — The watchdog may veto unilaterally, remedy with consent, and never approve</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> A watchdog with the whole run in view is the only thing that can
+catch an implementation going somewhere wrong — every other context in the design is one phase wide.
+But <em>determinism of approval</em> (Part 3) is the characteristic everything else rests on.</p>
+<p><span class="f">Decision</span> Three tiers. <strong>Veto</strong> — halt and warn — is
+unilateral. <strong>Remedy</strong> — fix the environment, restart a step, retry with an addendum,
+retry on another provider — requires consent. <strong>Approve</strong> — a step marked done, a
+landing, a tick — is never permitted, with or without consent.</p>
+<p><span class="f">Alternatives</span> Veto only, with no remedies — rejected in the round after it
+was decided: a watchdog that can see a missing dependency and not fix it produces warnings nobody
+can act on. No watchdog at all — rejected, nothing else can see across phases.</p>
+<p><span class="f">Consequences</span> The asymmetry is what makes this safe: a model wrong about an
+approval lets bad work land and nothing downstream re-reads it, while a model wrong about a veto
+costs one <code>r-loop resume</code>. The third tier stays absolute even under consent, because a
+person clicking yes on a watchdog's summary is worse evidence than the driver's own check of git.
+Enforcement lives in <code>Watch</code>, not in the watchdog's prompt.</p>
+<p><span class="f">Revisit when</span> a rejected signal turns out to have been right more than
+once.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-33">ADR-33 — Mechanical anomalies are driver checks; the watchdog covers judgement</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> Many anomalies are decidable from git and the run state: files
+changed outside the phase's <code>Files:</code>, a step running far longer than that step took on
+earlier phases, a diff far beyond earlier phases' size, the plan or a checkbox touched mid-step, a
+test file modified that the step did not create.</p>
+<p><span class="f">Decision</span> Those are deterministic checks in <code>Watch</code>. The watchdog
+covers only what needs reading: the change is solving a different problem than the phase asked for,
+the session is going in circles, implement has started redesigning, review's fixes are undoing
+implement's work, the phase's premise looks wrong now the code exists.</p>
+<p><span class="f">Alternatives</span> Let the watchdog find everything — rejected, it is paying a
+model to re-implement <code>git status</code>, unreliably.</p>
+<p><span class="f">Consequences</span> Both sources emit the same <code>Signal</code>, so the
+routing and the rejection rule are written once.</p>
+<p><span class="f">Revisit when</span> a watchdog finding turns out to have been mechanically
+decidable all along.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-34">ADR-34 — The watchdog reads live session output, and confirms against git before halting</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> A wrong path is visible in a session's output long before it
+reaches the diff, and <code>herdr agent read</code> is the only access to it. But session output is
+the agent's own narration, which this design otherwise refuses to act on.</p>
+<p><span class="f">Decision</span> It reads live output as a trigger, and must confirm against git
+before emitting a halt.</p>
+<p><span class="f">Alternatives</span> Disk and git only — rejected: cheaper and strictly
+evidence-based, but it sees a wrong turn only once the files change, which is most of the way
+through the step.</p>
+<p><span class="f">Consequences</span> This is also why the pane is load-bearing rather than
+decorative: a trajectory is not reconstructible from disk, so an agent spawned per event could not
+do this job.</p>
+<p><span class="f">Revisit when</span> halts are called that the diff did not support.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-35">ADR-35 — A watchdog halt is immediate and stops the current step</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> The case this exists for is a wrong path running for four hours,
+usually overnight.</p>
+<p><span class="f">Decision</span> The halt takes effect at once: the running step's session is
+stopped and left standing, and the run halts.</p>
+<p><span class="f">Alternatives</span> Propose and have the TUI confirm — rejected, at 3am nobody
+confirms and the wrong path runs to completion anyway. Stop only the schedule and let the live step
+finish — rejected, a wrong implementation keeps writing for another half hour.</p>
+<p><span class="f">Consequences</span> The driver needs a way to stop a running session, which is a
+new herdr interaction. A jumpy watchdog interrupts good runs, so every halt it calls is recorded
+with its reason and the threshold is tuned from those rows.</p>
+<p><span class="f">Revisit when</span> recorded halts are more often wrong than right.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-36">ADR-36 — Two severities: warn and halt</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> If every observation stops the run it is unusable; if none does it
+is decoration.</p>
+<p><span class="f">Decision</span> A <strong>warning</strong> is report-only — a banner in the TUI
+and <code>notify.onWarn</code>, run continues. A <strong>halt</strong> stops the step and the run.</p>
+<p><span class="f">Alternatives</span> One severity — rejected at both ends for the reason
+above.</p>
+<p><span class="f">Consequences</span> Where the threshold sits is the whole design of the feature,
+and it lives in the watchdog's prompt, which is the part of this that will need the most tuning.</p>
+<p><span class="f">Revisit when</span> warnings are ignored, or halts are resented.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-37">ADR-37 — Consent for a remedy is an allow-list in config, empty by default</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> If every dependency install needs a keystroke, an unattended run
+still stops for a person — which is the cost remedies exist to remove.</p>
+<p><span class="f">Decision</span> <code>watchdog.allow</code> pre-authorises classes of remedy;
+anything outside it asks. It starts empty, so a fresh install asks for everything.</p>
+<p><span class="f">Alternatives</span> Always ask — rejected, most of the gain is lost. Ask once per
+class per run — rejected, consent granted in one context is silently reused in another with no
+record of what was agreed.</p>
+<p><span class="f">Consequences</span> A pre-authorised class can do something you would have
+refused this once, which is why every remedy is recorded verbatim whether it was asked or not.</p>
+<p><span class="f">Revisit when</span> a recorded remedy is one you would have refused.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-38">ADR-38 — The watchdog proposes the command, the driver authorises, the watchdog runs it</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> Environment repair is open-ended — a missing toolchain, a held
+port, a stale container, a lock from a dead process — and the allow-list must not be something the
+watchdog can consult on its own behalf.</p>
+<p><span class="f">Decision</span> The watchdog proposes an exact command;
+<code>Remedies</code> checks it against <code>watchdog.allow</code> or asks the maintainer; on yes
+the watchdog runs it, and the driver records the command verbatim.</p>
+<p><span class="f">Alternatives</span> The driver executes every remedy itself — rejected: it types
+and records each one cleanly, but limits remedies to those someone pre-implemented, which is far too
+narrow for environment repair.</p>
+<p><span class="f">Consequences</span> The authorised command and the executed command could differ,
+which is why the record is the command as proposed and the report is the place that would show it.
+The watchdog can never approve its own action, because the list lives in the driver.</p>
+<p><span class="f">Revisit when</span> a recorded command does not match what was run.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-39">ADR-39 — A question reaches the watchdog first, escalating when it cannot cite an answer</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> Most questions an implementer asks are already answered in the
+spec, the tech-design or an earlier phase. The watchdog is the only context that holds all
+three.</p>
+<p><span class="f">Decision</span> Questions route to the watchdog; it may answer only with a
+<code>file:line</code> citation, and anything it would have to invent escalates to the maintainer
+unanswered.</p>
+<p><span class="f">Alternatives</span> The maintainer first, with the watchdog advising — rejected,
+the run then stops for a person on every question, which is the cost this removes.</p>
+<p><span class="f">Consequences</span> A wrong citation reaches an implementer without the
+maintainer seeing the question. Every answer is logged and shown in the TUI, which is the only thing
+standing against that.</p>
+<p><span class="f">Revisit when</span> a cited answer turns out to have been wrong.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-40">ADR-40 — <code>ask: none</code> is a named degradation</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <a href="#adr-28">ADR-28</a> excludes an agent that cannot host an
+MCP server. Its steps can still run — they just cannot ask.</p>
+<p><span class="f">Decision</span> A provider declares <code>ask: none</code>; its steps run with no
+ask channel and the run report names it, exactly as <a href="#adr-8">ADR-8</a> does for
+fan-out.</p>
+<p><span class="f">Alternatives</span> Refuse such a provider — rejected, it would make a capable
+agent unusable over a channel most steps never use.</p>
+<p><span class="f">Consequences</span> A step on such a provider guesses where it would have asked,
+and the report is what says so.</p>
+<p><span class="f">Revisit when</span> a provider in regular use declares it.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-41">ADR-41 — Drift-watching is deferred to v2</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> The watchdog's context would also let it notice that one phase
+contradicts another, or that the plan's <code>Files:</code> no longer describe where code lands.
+Same machinery, no extra cost to switch on.</p>
+<p><span class="f">Decision</span> Not in v1.</p>
+<p><span class="f">Alternatives</span> Ship it with the rest — rejected: it produces nothing on most
+phases, and "watched and found nothing" cannot be told from "watched badly" until there are enough
+completed runs to compare.</p>
+<p><span class="f">Consequences</span> The v1 watchdog is reactive — it answers, halts and repairs.
+Noticing things nobody asked about waits for evidence that it can.</p>
+<p><span class="f">Revisit when</span> ten plans have been run end to end.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-42">ADR-42 — An open <code>## Resolve first</code> entry is asked in the TUI</h3>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-18">ADR-18</a> · amended by <a href="#adr-43">ADR-43</a> — <code>PlanReader</code> decides what is open and what it blocks, by the same fail-closed rules as the pack's <code>resolve_scope.py</code></p>
+<p><span class="f">Context</span> <a href="#adr-18">ADR-18</a> made an open entry refuse the run, on
+the grounds that the driver had no input surface and a gate needing a person did not belong in it.
+The TUI and the ask channel removed that ground.</p>
+<p><span class="f">Decision</span> <code>resolve_scope.py</code> still decides what is open and what
+it blocks; the TUI presents each blocking entry with its recommendation and writes the
+<code>Resolved:</code> stamp into the plan on the maintainer's answer, before phase one is
+scheduled.</p>
+<p><span class="f">Alternatives</span> Keep refusing and point at <code>/r:plan-unblock</code> —
+rejected: it is two commands to start a plan, for a reason that no longer holds.</p>
+<p><span class="f">Consequences</span> The driver writes to the plan file in exactly one place,
+which is the same file the landing ticks. Only a person can close an entry — the watchdog may not,
+since closing one is an approval.</p>
+<p><span class="f">Revisit when</span> the stamp written here disagrees with what
+<code>/r:plan-unblock</code> would have written.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-43">ADR-43 — r-loop is a self-contained repository that parses the plan format itself</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <em>Extensibility</em> (Part 3) and the goal that it runs on its own.
+A provider-agnostic driver that cannot start without one vendor's plugin installed is not
+provider-agnostic. Before the move it read its config through the pack's
+<code>lib/read-config.py</code> and asked <code>resolve_scope.py</code> and
+<code>milestone_scope.py</code> about the plan.</p>
+<p><span class="f">Decision</span> r-loop lives in its own repository and owns its config, its
+prompts and its provider blocks. <code>PlanReader</code> parses <code>todo.md</code> in Go, including
+<code>## Resolve first</code> and <code>## Milestone N</code>, with the same fail-closed rules the
+pack's scripts use.</p>
+<p><span class="f">Alternatives</span> Own config and prompts, but keep the two plan judgements as
+shell-outs to the pack's scripts — rejected: the driver then cannot start without a Claude Code
+plugin present. Stay coupled as the design stood, config and prompts included — rejected: every new
+config key becomes a change in two repos, and the pack ships prompts for a product it does not
+contain.</p>
+<p><span class="f">Consequences</span> <code>go build</code> is all it needs, and the stack loses its script
+interpreter. The <code>todo.md</code> format becomes a contract between two repositories that no single
+suite tests, and the Resolve-first and milestone rules exist twice — in the pack's scripts and in Go
+here — and can drift. The pack's CLAUDE.md names that contract so a format change there is flagged.</p>
+<p><span class="f">Revisit when</span> a plan that <code>/r:plan-run</code> accepts is refused or
+misread by r-loop, or the reverse.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-44">ADR-44 — Installed with <code>go install</code>; Go is the only prerequisite</h3>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-31">ADR-31</a></p>
+<p><span class="f">Context</span> <a href="#adr-43">ADR-43</a> removed the pack's installer from the
+path, and a compiled TUI still has to reach the machine.</p>
+<p><span class="f">Decision</span> <code>go install ./cmd/r-loop</code> from a checkout. The module
+is named <code>r-loop</code>, with no host in the path.</p>
+<p><span class="f">Alternatives</span> goreleaser with a brew tap from day one — rejected: a release
+pipeline and a tap repository before a single plan has run end to end. A module path of
+<code>github.com/mirum8/r-loop</code> — rejected by the maintainer.</p>
+<p><span class="f">Consequences</span> One command and a toolchain. <code>go install &lt;url&gt;@latest</code>
+does not work until the module is renamed to a host path, and a machine without Go has no way in.</p>
+<p><span class="f">Revisit when</span> r-loop is wanted on a machine with no Go toolchain, or is
+installed by someone other than the maintainer.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-45">ADR-45 — A step kind is a prompt, a config row and an evidence check</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <em>Add a step to every phase</em> (Part 1) and
+<em>extensibility</em>. With plan, implement and review hard-wired, every extra pass a project
+wants is an edit to <code>RunLoop</code>, which is where <em>determinism of approval</em> lives.</p>
+<p><span class="f">Decision</span> The phase pipeline is an ordered list in config. Each entry names
+a prompt, a provider row and one of the shipped evidence checks — plan file exists, non-empty diff,
+findings file exists, verdict clean, report exists. A new kind that fits a shipped check is config
+only; a new check is Go. The three shipped steps are entries in the same list.</p>
+<p><span class="f">Alternatives</span> Every step kind is a Go package — rejected: a project cannot
+add a step without changing and rebuilding the driver, which makes the seam a maintainer-only one.</p>
+<p><span class="f">Consequences</span> A project can add a pass without a build, and the two-signal
+rule still holds, because a kind with no evidence check cannot be declared. The config schema grows
+a pipeline list and a check enum, and the loop gains one indirection. The review step's two halves
+(<a href="#adr-24">ADR-24</a>) stay one entry with two sessions, not two entries.</p>
+<p><span class="f">Revisit when</span> a project needs a check that none of the shipped ones
+covers, twice.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-46">ADR-46 — Inside the binary: a hexagonal core, with ports and adapters</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <em>Extensibility</em> counts five seams, and the maintainer asked
+for a clear structure that stays that way. The rules that make <em>determinism of approval</em> true
+are the ones most worth being able to test without herdr, git or a terminal.</p>
+<p><span class="f">Decision</span> A core holds the loop, the state machines, the evidence checks and
+the signal and remedy rules, and imports no adapter. herdr, git, the plan file, the run state, the
+config, the prompts, MCP, the TUI, <code>--plain</code> and the notify hooks are adapters behind
+ports the core defines.</p>
+<p><span class="f">Alternatives</span> One package per component, calling each other directly —
+rejected: nothing then stops the loop from importing the herdr client, so the borders rest on
+discipline rather than on the build.</p>
+<p><span class="f">Consequences</span> The core is tested with fakes for every port, and a build-time
+test can fail the build if the core imports an adapter. It costs more files and a type mapping at
+each border.</p>
+<p><span class="f">Revisit when</span> a port changes every time its adapter does — that port is in
+the wrong place.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-47">ADR-47 — Plan sources and session hosts: a port shaped by one adapter, widened when a second arrives</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> Both are seams under <em>extensibility</em>, but v1 has exactly one
+of each — <code>todo.md</code> and herdr. herdr gives agent state, live output and pane splits,
+and three features rest on them: stall detection (<a href="#adr-15">ADR-15</a>), the watchdog's
+reading (<a href="#adr-34">ADR-34</a>) and the watchdog pane.</p>
+<p><span class="f">Decision</span> <code>PlanSource</code> and <code>SessionHost</code> are ports
+shaped by what the core needs from today's adapter, each with a test fake. No capability flags and
+no imagined second implementation.</p>
+<p><span class="f">Alternatives</span> General interfaces from day one, where a host declares agent
+state, output reads and splits, and a missing one degrades by name — rejected: an interface designed
+against no real second case, and three named degradations nobody can exercise yet.</p>
+<p><span class="f">Consequences</span> Adding tmux or a backlog source means widening a port from
+real callers — about an afternoon — rather than filling in an interface designed in advance.</p>
+<p><span class="f">Revisit when</span> a second host or source is actually wanted.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-48">ADR-48 — A unit with no <code>Done when:</code> lands with a named skip, from any source</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> <a href="#adr-10">ADR-10</a> gates every landing on the phase's own
+command, and a <code>todo.md</code> phase without one is already a named skip.
+<a href="#adr-21">ADR-21</a> deferred other sources because they may carry no such field at all.</p>
+<p><span class="f">Decision</span> The same rule for every source: no <code>Done when:</code> means
+the gate is skipped, the skip is written to the run report, and the unit lands on its review.</p>
+<p><span class="f">Alternatives</span> Refuse any source whose units lack the field — rejected: a
+backlog source is unusable until it grows a gate field.</p>
+<p><span class="f">Consequences</span> A whole source can land every unit ungated, and only the
+report says so.</p>
+<p><span class="f">Revisit when</span> a unit lands ungated and breaks the build of the next one.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-49">ADR-49 — Everything r-loop keeps in a project lives in one <code>.r-loop/</code> directory</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> With the pack gone, the project config, the prompt overrides, the
+run state and the worktrees all need a home in each project that uses the driver.</p>
+<p><span class="f">Decision</span> <code>.r-loop/config.yaml</code> and <code>.r-loop/prompts/</code>
+are committed; <code>.r-loop/runs/</code> and <code>.r-loop/wt/</code> are excluded through
+<code>info/exclude</code>. Provider blocks a person uses in every project live in
+<code>~/.config/r-loop/providers/&lt;name&gt;.yaml</code>.</p>
+<p><span class="f">Alternatives</span> <code>r-loop.yaml</code> at the root, prompts beside it and
+state in <code>.r-loop/</code> — rejected: three top-level paths in every project instead of one.</p>
+<p><span class="f">Consequences</span> One directory with two kinds of content — shared and local —
+which has to be explained once. The exclusion is written to <code>info/exclude</code>, never to
+<code>.gitignore</code>, so the project's own ignore file is not edited.</p>
+<p><span class="f">Revisit when</span> someone commits run state by mistake.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-50">ADR-50 — The config is YAML, block style only</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> The file is edited by hand, and the pack's own config, which the
+maintainer already reads daily, is block-style YAML.</p>
+<p><span class="f">Decision</span> <code>.r-loop/config.yaml</code> is read with yaml.v3 at the node
+level; any flow-style node, such as <code>{ a: b }</code> or <code>[a, b]</code>, is rejected with a
+note naming the line.</p>
+<p><span class="f">Alternatives</span> Full YAML — rejected by the maintainer. TOML — rejected: strict,
+but different from every other config file the maintainer keeps. JSON — rejected: no comments in a
+file people edit by hand.</p>
+<p><span class="f">Consequences</span> One way to write each key, so two projects' configs diff
+cleanly. Lists such as <code>watchdog.allow</code> are written one item per line.</p>
+<p><span class="f">Revisit when</span> a real config needs a structure block style cannot say.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-51">ADR-51 — Phase plans stay in <code>.task-plans/</code>, the skill-pack's folder</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> Each phase's planning step writes a phase plan that the implement
+step reads. The skill-pack's <code>/r:task-run</code> already writes and reads plans in
+<code>.task-plans/&lt;slug&gt;.md</code>.</p>
+<p><span class="f">Decision</span> r-loop writes its phase plans to the same folder, committed on the
+phase branch.</p>
+<p><span class="f">Alternatives</span> <code>.r-loop/plans/</code> — first chosen, then rejected by
+the maintainer, because <code>/r:task-run</code> would not see the plans. <code>docs/&lt;topic&gt;/phases/</code>
+— rejected: plan files mixed with the human-written spec docs.</p>
+<p><span class="f">Consequences</span> Either loop can pick up a plan the other wrote. This is a
+second shared path between the two repositories, beside the <code>todo.md</code> format
+(<a href="#adr-43">ADR-43</a>).</p>
+<p><span class="f">Revisit when</span> a plan written by one loop is misread by the other.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-52">ADR-52 — Extensibility replaces portability as the third driving characteristic</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> Portability across agents was one seam — the provider. Moving to
+its own repository, the maintainer asked for an architecture that stays easy to extend, and named
+four more: step kinds, deterministic checks, plan sources and session hosts.</p>
+<p><span class="f">Decision</span> The third driving characteristic is extensibility at five seams,
+each with a number (Part 3). Portability is its first seam.</p>
+<p><span class="f">Alternatives</span> Keep portability as the driving row and make the other seams
+supporting — rejected: a seam that is only supporting loses every trade against a simpler loop, and
+the maintainer wanted those trades to go the other way.</p>
+<p><span class="f">Consequences</span> The hexagon (<a href="#adr-46">ADR-46</a>) and the step-kind
+list (<a href="#adr-45">ADR-45</a>) follow from it. Each seam owes a test that proves its number, and
+a decision below Part 3 can now point at this row to justify an indirection.</p>
+<p><span class="f">Revisit when</span> a seam has had no second implementation after ten completed
+runs — it was bought and never used.</p>
+</div>
+
+</div>
+</section>
+
+<section id="p7">
+<h2 class="part" id="p7-h"><span class="pnum">Part 7</span> Technical details</h2>
+<p class="lede">Go renders it, herdr hosts the sessions, git holds the evidence, and MCP is the way back in. One block-style YAML file per project carries everything tunable — the phase pipeline, the per-step rows, the providers, the watchdog's allow-list and the notification hooks — over defaults built into the binary. The prompts are the product here, as they are in the skill-pack, and the watchdog's is the one carrying the most judgement. The binary needs nothing but Go to build and nothing from the skill-pack to run.</p>
+
+<h2 id="tech">Technologies</h2>
+
+<table>
+  <tr><th>Technology</th><th>Version</th><th>What it's for</th><th>Why / ADR</th></tr>
+  <tr><td>herdr</td><td>0.9.0</td>
+      <td>Hosts every step session: workspace, pane, agent start, agent state, prompt delivery</td>
+      <td>the only component that can start 23 different agents behind one interface</td></tr>
+  <tr><td>git</td><td>2.50.1</td>
+      <td>Phase branches, detached worktrees, the merge, and the evidence every step is checked
+          against</td>
+      <td><a href="#adr-9">ADR-9</a></td></tr>
+  <tr><td>Go</td><td>1.25.14</td>
+      <td>The driver itself, installed with <code>go install</code></td>
+      <td><a href="#adr-44">ADR-44</a></td></tr>
+  <tr><td>Bubble Tea · Lip Gloss</td><td>v1.3.10 · v1.1.0</td>
+      <td>The TUI loop and its layout</td>
+      <td><a href="#adr-27">ADR-27</a></td></tr>
+  <tr><td>MCP Go SDK</td><td>v1.8.0</td>
+      <td>The channel back into the driver: <code>ask_user</code> for every session, signals and
+          remedies for the watchdog</td>
+      <td><a href="#adr-28">ADR-28</a></td></tr>
+  <tr><td>yaml.v3</td><td>v3.0.1</td>
+      <td>Reads <code>.r-loop/config.yaml</code> at the node level, so a flow-style node can be
+          refused by line</td>
+      <td><a href="#adr-50">ADR-50</a></td></tr>
+  <tr><td>Claude Code</td><td>2.1.274</td>
+      <td>One provider — herdr kind <code>claude</code></td>
+      <td>the pack's existing agent, and the reference implementation of the adapter</td></tr>
+  <tr><td>Codex CLI</td><td>0.154.0</td>
+      <td>One provider — herdr kind <code>codex</code>; its <code>codex review</code> is the
+          non-interactive native reviewer</td>
+      <td>a second vendor is what proves <a href="#adr-6">ADR-6</a> rather than asserting it</td></tr>
+</table>
+
+<p>The two native reviewers are not symmetric, which <a href="#adr-23">ADR-23</a> and
+<a href="#adr-24">ADR-24</a> exist to absorb: <code>codex review</code> takes
+<code>--uncommitted</code> or <code>--base &lt;branch&gt;</code> and runs headless, reporting only;
+Claude Code's <code>/code-review</code> is a skill that needs a session, and carries effort levels
+and a <code>--fix</code> this design deliberately does not use.</p>
+
+<p><strong>What this rules out later.</strong> A self-contained Go binary shares no code with the
+skill-pack, so any rule both tools need — what a <code>## Resolve first</code> entry blocks, when a
+milestone is complete — is written twice (<a href="#adr-43">ADR-43</a>). And herdr's agent
+detection is what <a href="#adr-15">ADR-15</a> rests on: a provider herdr cannot detect can still be
+started, but its steps fall back to the backstop timer, and the driver cannot tell that apart from a
+very slow step.</p>
+
+<p><code>opencode</code> and the other twenty kinds herdr lists are candidate providers, not
+dependencies; no version is claimed for any of them here because none was verified. A provider is
+confirmed at adoption, by its block spawning a session that reaches an interactive prompt.</p>
+
+<h2 id="api">API</h2>
+
+<p>The surface is a CLI, one config file and a folder of prompt overrides. There is no authentication — it is a local tool run
+by the person who owns the repository. Every command is <strong>safe to re-run</strong>: a second
+<code>r-loop</code> against a live run refuses rather than starting a second one, and
+<code>resume</code> on a finished run is a no-op that says so. Errors are an exit code plus one
+named reason on stderr; there is nothing paginated.</p>
+
+<table>
+  <tr><th>Command</th><th>Purpose</th><th>Input</th><th>Output</th></tr>
+  <tr><td><code>r-loop &lt;todo&gt;</code></td><td>Run every unticked phase in order</td>
+      <td>path to the plan; <code>--from N</code>, <code>--phases n,n</code>,
+          <code>--provider &lt;step&gt;=&lt;name&gt;</code>, <code>--no-watchdog</code>,
+          <code>--plain</code>, <code>--dry-run</code></td>
+      <td>the TUI, or with <code>--plain</code> a banner naming the resolved rows, one line per step
+          transition, and a final report</td></tr>
+  <tr><td><code>r-loop status</code></td><td>Where the current run is</td><td><code>--plain</code></td>
+      <td>phase, step, provider, workspace, time live, open questions, warnings</td></tr>
+  <tr><td><code>r-loop resume</code></td><td>Pick up a stopped run at its last step</td><td>—</td>
+      <td>as the run command, from the resumed step</td></tr>
+  <tr><td><code>r-loop abort</code></td><td>Stop scheduling, leave everything standing</td><td>—</td>
+      <td>the workspace and worktree left behind, named</td></tr>
+</table>
+
+<pre><code># &lt;project&gt;/.r-loop/config.yaml — committed; block style only (ADR-50).
+# Every key is optional: a missing one resolves from ~/.config/r-loop/, then from the
+# defaults built into the binary, and the banner names where each value came from.
+pipeline:                     # the phase's steps, in order (ADR-45)
+  - plan
+  - implement
+  - review
+
+steps:
+  plan:
+    prompt: plan              # .r-loop/prompts/plan.md, else the embedded default
+    check: plan-file          # plan-file | diff | findings | verdict | report
+    provider: claude
+    model: opus
+    effort: high
+    timeout: 1h
+  implement:
+    prompt: implement
+    check: diff
+    provider: codex
+    model: gpt-5.6-sol
+    effort: medium
+    timeout: 4h
+  review:
+    prompt: review
+    check: verdict            # the find half runs on this row;
+    provider: claude          # the fix half runs on implement's row (ADR-25)
+    model: sonnet
+    effort: high
+    timeout: 2h
+
+providers:                    # claude and codex ship built in; a block here adds or overrides one
+  codex:
+    kind: codex               # the herdr --kind value
+    modelFlag: "-c model={model}"
+    effortFlag: "-c model_reasoning_effort={effort}"
+    doneSignal: sentinel
+    fanout: native            # native | sequential | none
+    ask: mcp                  # mcp | none
+    review: "cmd:codex review --base {base}"
+
+watchdog:
+  provider: claude
+  model: sonnet
+  allow:                      # deps | ports | containers | locks | restart | retry | provider
+    - deps                    # empty or absent = ask about everything
+    - ports
+
+notify:
+  onHalt: ""                  # one shell command; run summary in the environment
+  onWarn: ""
+  onDone: ""
+</code></pre>
+
+<p>Adding a step is a pipeline entry and a <code>steps</code> row with its own prompt — a
+<code>docs</code> pass after the review, judged by <code>check: diff</code>, needs no Go. A provider
+used in every project can live in <code>~/.config/r-loop/providers/&lt;name&gt;.yaml</code> instead
+of in each project's file.</p>
+
+<p><strong>The MCP surfaces.</strong> Every step session gets one tool:
+<code>ask_user(question, options?) → answer</code>, which blocks. The watchdog session gets that one
+plus its own, offered to no other session:
+<code>signal(kind: warn|halt, step, reason, evidence)</code>,
+<code>propose_remedy(class, command, why) → authorised|refused</code>,
+<code>restart_step(step, addendum?, provider?)</code>, and
+<code>answer_question(id, answer, citation)</code>. A signal whose effect would move the run forward
+is rejected by <code>Watch</code> and the rejection is recorded — the tool surface is narrow by
+design, but the enforcement is not the surface.</p>
+
+<p>Prompts are embedded in the binary — <code>plan</code>, <code>implement</code>,
+<code>review</code>, <code>fix</code>, <code>milestone</code> and <code>watchdog</code> — each
+replaceable by a file of the same name under <code>.r-loop/prompts/</code>. A template receives the phase block, the plan
+path, the branch, the sentinel path and the acceptance criteria, and may contain
+<code>{{agent:&lt;name&gt;}}</code>, which the renderer expands for the resolved provider.</p>
+
+<p>Run state is <code>.r-loop/runs/</code>, ignored by git: one directory per run holding the resolved
+config, one record per step transition, the sentinel paths, the step logs, and — appended as they
+happen — every question with its answer and who gave it, every signal with its source and reason,
+and every remedy with the command as proposed. Those three are what the run report is assembled
+from, and the only way a watchdog's threshold can be tuned from rows rather than argued.</p>
+
+<table>
+  <tr><th>Exit code</th><th>Means</th></tr>
+  <tr><td><code>0</code></td><td>every phase in the run list landed</td></tr>
+  <tr><td><code>1</code></td><td>a step failed, or a land gate refused — the run halted and can be resumed</td></tr>
+  <tr><td><code>2</code></td><td>usage, git state, or a config the reader rejected</td></tr>
+  <tr><td><code>3</code></td><td>a step stalled and no person answered within its backstop — never an open question, which has no timer</td></tr>
+  <tr><td><code>5</code></td><td>the watchdog called a halt; its reason is in the run report</td></tr>
+  <tr><td><code>4</code></td><td>preflight refused — herdr unreachable, an unclean tree, or an open <code>## Resolve first</code> entry</td></tr>
+  <tr><td><code>127</code></td><td>a required binary is missing</td></tr>
+</table>
+
+<h2 id="rollout">Rollout</h2>
+
+<p>r-loop is a new repository, but the skill-pack is touched, so this section stays — short.</p>
+
+<ul>
+  <li><strong>Expand.</strong> The repository <code>r-loop</code> holds this document, the visual
+      identity (<code>DESIGN.md</code>) and, later, the code. The skill-pack loses the same files and
+      gains one note in its CLAUDE.md naming the <code>todo.md</code> format and
+      <code>.task-plans/</code> as a contract with a second tool (<a href="#adr-43">ADR-43</a>,
+      <a href="#adr-51">ADR-51</a>). No skill, workflow or script in the pack changes
+      (<a href="#adr-3">ADR-3</a>).</li>
+  <li><strong>Migrate.</strong> Nothing is migrated. The two loops coexist and are chosen per run
+      by which command is typed.</li>
+  <li><strong>Contract.</strong> There is no contraction step in v1, and the criterion for
+      considering one is in <a href="#adr-3">ADR-3</a>'s revisit line.</li>
+  <li><strong>Rollback.</strong> Remove the binary, and <code>.r-loop/</code> from the projects that
+      ran it. The point of no return is per run rather than per install: once a phase has landed,
+      its merge commit is ordinary history and removing the tool does not remove the code. A remedy
+      the watchdog ran against the environment is not rolled back either — it is recorded, not
+      reversible.</li>
+</ul>
+</section>
+
+<section id="risks">
+<h2 class="part" id="risks-h"><span class="pnum">Closing</span> Risks, assumptions &amp; open questions</h2>
+<p class="lede">What could still be wrong, and what was decided without confirmation. The riskiest
+thing here is no longer a technology choice — it is that a watchdog and a cited answer are two
+places where a model's output reaches the work without a person reading it first, and both are
+accepted deliberately.</p>
+
+<h2 id="risk-table">Risks</h2>
+
+<table class="risks">
+  <tr><th>Risk</th><th>Likelihood</th><th>Impact</th><th>What we'd do</th><th>Revisit trigger</th></tr>
+  <tr><td>Review quality falls and nothing measures it</td><td>high</td><td>high</td>
+      <td>Accepted in <a href="#adr-4">ADR-4</a>. The driver's review has no equivalent of the
+          pack's track verdicts, so a narrower review reads exactly like a working one. Record
+          fixes per review run from the start, even crudely, so the comparison exists.</td>
+      <td>the first phase whose landed code needs a follow-up fix the review should have found</td></tr>
+  <tr><td>A provider's block is wrong and the failure appears at spawn</td><td>medium</td><td>medium</td>
+      <td>Validate every field the registry can check before the first spawn, and name the field it
+          could not.</td>
+      <td>two spawn-time failures traced to the same field</td></tr>
+  <tr><td>herdr's agent detection misreads a long silent step as idle</td><td>medium</td><td>medium</td>
+      <td>Accepted in <a href="#adr-15">ADR-15</a>; the cost is one glance. If it becomes noise,
+          require the state to hold for a configurable interval before it counts as a stall.</td>
+      <td>false stalls exceed real ones</td></tr>
+  <tr><td>A jumpy watchdog interrupts good runs</td><td>medium</td><td>medium</td>
+      <td>Accepted in <a href="#adr-35">ADR-35</a>: a wrong halt costs one resume. Every halt is
+          recorded with its reason, so the threshold is tuned from rows. If it becomes noise,
+          require two independent signals before a halt.</td>
+      <td>recorded halts are more often wrong than right</td></tr>
+  <tr><td>A cited answer is wrong and no one saw the question</td><td>medium</td><td>high</td>
+      <td>Accepted in <a href="#adr-39">ADR-39</a>. The citation requirement is the constraint; the
+          log and the TUI are the only visibility. If wrong answers appear, narrow what counts as a
+          citable source, or escalate anything touching a contract.</td>
+      <td>the first cited answer that turns out wrong</td></tr>
+  <tr><td>A pre-authorised remedy does something you would have refused</td><td>medium</td><td>medium</td>
+      <td>Accepted in <a href="#adr-37">ADR-37</a>: the list starts empty and every remedy is
+          recorded verbatim whether it was asked about or not.</td>
+      <td>a recorded remedy you would have refused</td></tr>
+  <tr><td>The skill-pack changes the <code>todo.md</code> format and r-loop misreads it</td><td>medium</td><td>high</td>
+      <td>Accepted in <a href="#adr-43">ADR-43</a>. <code>PlanReader</code> fails closed on anything
+          it cannot place, as the pack's scripts do; its suite keeps a real <code>todo.md</code> from
+          <code>/r:spec-design</code> as a fixture, refreshed when the pack's format moves; and the
+          pack's CLAUDE.md names the contract.</td>
+      <td>a plan that one loop accepts and the other refuses or reads differently</td></tr>
+  <tr><td>Two loops diverge and the pack has two answers to one question</td><td>medium</td><td>medium</td>
+      <td>Accepted in <a href="#adr-3">ADR-3</a>. They are different designs, not two copies, and
+          neither is kept in lockstep with the other.</td>
+      <td>a fix is applied to both in the same week</td></tr>
+  <tr><td>The watchdog's prompt is where the whole threshold lives</td><td>high</td><td>medium</td>
+      <td>Warn-versus-halt is a judgement no script makes, so this prompt carries more weight than
+          any other. Keep it under the same review as the pack's skills, and read the recorded
+          signals before changing it.</td>
+      <td>the first tuning pass that is argued rather than read from rows</td></tr>
+  <tr><td>A step's prompt drifts from what the provider actually does</td><td>medium</td><td>medium</td>
+      <td>The prompts are the whole product here, as they are for the rest of the pack. Keep them
+          under the same review as the skills.</td>
+      <td>a provider upgrade changes a step's behaviour with no prompt change</td></tr>
+  <tr><td>The land gate's extra build dominates the loop</td><td>low</td><td>medium</td>
+      <td>Accepted in <a href="#adr-10">ADR-10</a>; the alternative is trusting a build that
+          measurably did not run.</td>
+      <td>a phase's gate build exceeds half the phase's wall time</td></tr>
+</table>
+
+<h2 id="assumptions">Assumptions</h2>
+
+<table>
+  <tr><th>Assumption</th><th>Why</th><th>What breaks if wrong</th><th>How to confirm</th></tr>
+  <tr><td>Nothing in the skill-pack changes beyond moving these docs out and one CLAUDE.md note</td>
+      <td>the maintainer asked that existing skills keep working, and r-loop reads only the file
+          format</td>
+      <td>if the pack has to change to support r-loop, the contract is wider than a file format and
+          <a href="#adr-3">ADR-3</a>'s coexistence claim weakens</td>
+      <td>build v1 and see whether anything in the pack had to move</td></tr>
+  <tr><td>Evidence on disk always beats a session's own account</td>
+      <td>taken from the pack's fan-out rule, never questioned here</td>
+      <td>a step whose real output is not a file — a pure analysis step — would have no evidence to
+          check</td>
+      <td>the first step kind that produces no artifact</td></tr>
+  <tr><td>The six-month failure is "a step reported ok over a tree the next step did not
+          recognise"</td>
+      <td>the pre-mortem was offered twice and skipped; this is the failure the two-signal rule is
+          built against</td>
+      <td>if the real risk is provider-CLI drift instead, the defences are in the wrong place</td>
+      <td>one sentence from the maintainer</td></tr>
+  <tr><td>The CLI surface designed before the provider-agnostic turn still fits</td>
+      <td><code>--provider</code>, <code>--plain</code> and <code>--no-watchdog</code> were added;
+          nothing else in the surface names a vendor</td>
+      <td>a per-step flag beyond provider would mean re-cutting the surface</td>
+      <td>first run with two providers in one plan</td></tr>
+  <tr><td>Every provider worth using can host an MCP server</td>
+      <td>claude, codex and opencode all do; it was not checked beyond those</td>
+      <td>a provider with <code>ask: none</code> runs steps that guess where they would have
+          asked</td>
+      <td>the first adoption of a fourth provider</td></tr>
+  <tr><td>Reading a session's live output is enough to catch a wrong path early</td>
+      <td>a wrong turn is usually narrated before it is committed; this is the premise the pane
+          rests on</td>
+      <td>if wrong turns are silent, the watchdog only ever sees what the diff already shows, and
+          the pane's advantage over a spawned agent disappears</td>
+      <td>the first three halts — were they visible in the output before the diff?</td></tr>
+</table>
+
+<h2 id="open-questions">Open questions</h2>
+
+<p>None outstanding. The one this document carried — what the driver is written in — was closed
+in Go's favour (<a href="#adr-26">ADR-26</a>), which also settled the state layer and removed the
+risk that went with it.</p>
+</section>
+
+
+</main>
+</div>
+</body>
+</html>
