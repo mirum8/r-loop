@@ -193,3 +193,10 @@ func meets(a, b []int) bool {
 	}
 	return false
 }
+
+type ProviderArgs struct {
+	Kind   string
+	Args   []string
+	Ask    bool
+	Review string
+}

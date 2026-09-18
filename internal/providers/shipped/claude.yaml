@@ -1,0 +1,7 @@
+kind: claude
+modelFlag: "--model {model}"
+effortFlag: "--effort {effort}"
+askFlag: "--mcp-config {mcpConfig}"
+doneSignal: sentinel
+ask: mcp
+review: "/code-review"
