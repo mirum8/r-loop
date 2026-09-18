@@ -173,7 +173,7 @@ func TestReviewSplitsStartsThenPromptsAndReusesPanesWithFreshAgentsInRound2(t *t
 		t.Fatalf("calls =\n%s", strings.Join(got, "\n"))
 	}
 	rounds := r.events("review-round")
-	if len(rounds) != 2 || !reflect.DeepEqual(rounds[1].Fields, map[string]string{"step": "implement", "round": "2", "tree": "tree-start"}) {
+	if len(rounds) != 2 || !reflect.DeepEqual(rounds[1].Fields, map[string]string{"step": "implement", "round": "2", "tree": "tree-start", "attempt": "1"}) {
 		t.Fatalf("review-round events = %+v", rounds)
 	}
 	clean := r.events("review-clean")

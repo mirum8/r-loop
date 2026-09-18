@@ -131,8 +131,15 @@ func ParseArgs(args []string) (Options, error) {
 }
 
 func Main(args []string, env Env) int {
-	if len(args) > 0 && args[0] == "status" {
-		return Status(args[1:], env)
+	if len(args) > 0 {
+		switch args[0] {
+		case "status":
+			return Status(args[1:], env)
+		case "resume":
+			return Resume(args[1:], env)
+		case "abort":
+			return Abort(args[1:], env)
+		}
 	}
 	opts, err := ParseArgs(args)
 	if err != nil {
@@ -144,21 +151,29 @@ func Main(args []string, env Env) int {
 		err = Preflight(w)
 	}
 	if err != nil {
-		code := 2
-		var e *ExitError
-		if errors.As(err, &e) {
-			code = e.Code
-		}
-		fmt.Fprintf(env.Stderr, "r-loop: %s\n", strings.ReplaceAll(err.Error(), "\n", " "))
-		return code
+		return fail(env, err)
 	}
 	if opts.DryRun {
 		return 0
 	}
-	code := w.Loop.Run(context.Background(), core.RunOptions{From: opts.From, Phases: opts.Phases})
+	return w.Execute(core.RunOptions{From: opts.From, Phases: opts.Phases})
+}
+
+func fail(env Env, err error) int {
+	code := 2
+	var e *ExitError
+	if errors.As(err, &e) {
+		code = e.Code
+	}
+	fmt.Fprintf(env.Stderr, "r-loop: %s\n", strings.ReplaceAll(err.Error(), "\n", " "))
+	return code
+}
+
+func (w *Wiring) Execute(opts core.RunOptions) int {
+	code := w.Loop.Run(context.Background(), opts)
 	w.Face.Close()
 	if err := w.Store.ClearCurrent(); err != nil {
-		fmt.Fprintf(env.Stderr, "r-loop: clear current: %v\n", err)
+		fmt.Fprintf(w.Env.Stderr, "r-loop: clear current: %v\n", err)
 	}
 	return code
 }

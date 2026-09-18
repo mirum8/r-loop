@@ -281,6 +281,14 @@ func (s *Store) MarkAbort(runID string) error {
 	return os.WriteFile(filepath.Join(s.Dir(runID), "abort"), nil, 0o644)
 }
 
+func (s *Store) ClearAbort(runID string) error {
+	err := os.Remove(filepath.Join(s.Dir(runID), "abort"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 func (s *Store) Aborted(runID string) bool {
 	_, err := os.Stat(filepath.Join(s.Dir(runID), "abort"))
 	return err == nil

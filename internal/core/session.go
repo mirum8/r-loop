@@ -38,6 +38,9 @@ type StepRef struct {
 	InPrimary                              bool
 	Worktree, Branch, Base, RunDir, AskURL string
 	Vars                                   map[string]any
+	ReviewFrom                             int
+	PrevRoundTree                          string
+	KeepUncommitted                        bool
 }
 
 type Session struct {
@@ -150,6 +153,9 @@ func (m *SessionManager) start(s *Session, stepDir string) error {
 	ref := s.Ref
 	if _, err := m.Host.Start(s.Pane, s.Agent, args.Kind, args.Args); err != nil {
 		return err
+	}
+	if ref.ReviewFrom > 0 {
+		return nil
 	}
 	vars := make(map[string]any, len(ref.Vars)+2)
 	for k, v := range ref.Vars {
@@ -364,7 +370,7 @@ func (m *SessionManager) evidence(s *Session) EvidenceContext {
 
 func (m *SessionManager) Finish(s *Session, out Outcome) Outcome {
 	key := s.Ref.Key
-	if out.State == StepOK && !s.Ref.InPrimary {
+	if out.State == StepOK && !s.Ref.InPrimary && !s.Ref.KeepUncommitted {
 		if _, err := m.Repo.CommitAll(s.Dir, fmt.Sprintf("r-loop: phase %d %s", key.Phase, key.Kind)); err != nil {
 			out.State, out.Reason = StepFailed, "commit: "+err.Error()
 		}

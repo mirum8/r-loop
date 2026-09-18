@@ -54,6 +54,7 @@ type RunOptions struct {
 	From   int
 	Phases []int
 	Resume bool
+	Replan bool
 }
 
 type RunLoop struct {
@@ -137,7 +138,7 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 			continue
 		}
 		delete(l.pending, ph.Number)
-		step, out, aborted := l.runPhase(ctx, ph, prior, base)
+		step, out, aborted := l.runPhase(ctx, ph, prior, base, opts.Replan)
 		if aborted {
 			return 1
 		}
@@ -208,18 +209,29 @@ func latestAttempt(st RunState, run string, phase int, kind string) (int, StepSt
 	return attempt, state
 }
 
-func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base string) (string, Outcome, bool) {
+func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base string, replan bool) (string, Outcome, bool) {
 	n := ph.Number
 	l.emit(Event{Kind: "phase-start", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "title": ph.Title}})
 	last := &Session{Dir: filepath.Join(l.Sessions.Repo.Root(), fmt.Sprintf(".r-loop/wt/phase-%d", n))}
 	l.watcher().BeforePhase(ctx, ph)
+	stopped := l.stoppedKind(prior, n)
+	replan = replan && stopped != "" && stopped != "plan" && slices.ContainsFunc(l.Kinds, func(k StepKind) bool { return k.Name == "plan" })
 	for _, kind := range l.Kinds {
 		attempt, state := latestAttempt(prior, l.RunID, n, kind.Name)
-		if state == StepOK {
+		rerunPlan := replan && kind.Name == "plan"
+		if state == StepOK && !rerunPlan {
 			l.advance(n, kind.Name)
 			continue
 		}
-		ref, out, aborted := l.runAttempts(ctx, l.ref(ph, kind, attempt+1, base))
+		ref := l.ref(ph, kind, attempt+1, base)
+		switch {
+		case rerunPlan:
+			ref.Vars["Addendum"] = blockReason(prior, n)
+			ref.KeepUncommitted = true
+		case !replan && attempt > 0:
+			ref.ReviewFrom, ref.PrevRoundTree = recordedRound(prior, n, kind.Name, attempt)
+		}
+		ref, out, aborted := l.runAttempts(ctx, ref)
 		if out.Session != nil {
 			last = out.Session
 		}
@@ -253,6 +265,44 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	l.emit(Event{Kind: "phase-state", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "state": string(PhaseLanded)}})
 	l.emit(Event{Kind: "landed", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "merge": landing.MergeSHA, "gateSkipped": strconv.FormatBool(landing.GateSkipped)}})
 	return "", Outcome{State: StepOK}, false
+}
+
+func (l *RunLoop) stoppedKind(prior RunState, phase int) string {
+	for _, kind := range l.Kinds {
+		if attempt, state := latestAttempt(prior, l.RunID, phase, kind.Name); attempt > 0 && state != StepOK {
+			return kind.Name
+		}
+	}
+	return ""
+}
+
+func blockReason(prior RunState, phase int) string {
+	reason := ""
+	for _, e := range prior.Events {
+		if e.Kind == "step" && e.Phase == phase && e.Fields["state"] == string(StepFailed) {
+			reason = e.Fields["reason"]
+		}
+	}
+	return reason
+}
+
+func recordedRound(prior RunState, phase int, kind string, attempt int) (int, string) {
+	round := 0
+	trees := map[int]string{}
+	for _, e := range prior.Events {
+		if e.Kind != "review-round" || e.Phase != phase || e.Step != kind {
+			continue
+		}
+		n, _ := strconv.Atoi(e.Fields["round"])
+		trees[n] = e.Fields["tree"]
+		if e.Fields["attempt"] == strconv.Itoa(attempt) {
+			round = n
+		}
+	}
+	if round == 0 {
+		return 0, ""
+	}
+	return round, trees[round-1]
 }
 
 func (l *RunLoop) runAttempts(ctx context.Context, ref StepRef) (StepRef, Outcome, bool) {

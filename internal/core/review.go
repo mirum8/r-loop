@@ -41,13 +41,23 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 	}
 	var reviewers []*Session
 	rd := reviewRound{rounds: row.Rounds}
-	for rd.n = 1; rd.n <= row.Rounds; rd.n++ {
+	start := min(max(ref.ReviewFrom, 1), row.Rounds)
+	if start > 1 {
+		rd.prevTree = ref.PrevRoundTree
+		for n := 1; n < start; n++ {
+			for _, rv := range row.Reviewers {
+				rd.prior = append(rd.prior, filepath.Join(stepDir(worker), fmt.Sprintf("%s-findings-%s-r%d.json", ref.Key.Kind, rv.Provider, n)))
+			}
+			rd.verdicts = append(rd.verdicts, filepath.Join(stepDir(worker), fmt.Sprintf("%s-verdict-r%d.json", ref.Key.Kind, n)))
+		}
+	}
+	for rd.n = start; rd.n <= row.Rounds; rd.n++ {
 		tree, err := sm.Repo.Snapshot(worker.Dir)
 		if err != nil {
 			return sm.fail(worker, "snapshot: "+err.Error())
 		}
 		rd.tree = tree
-		if err := h.event(worker, "review-round", map[string]string{"round": strconv.Itoa(rd.n), "tree": tree}); err != nil {
+		if err := h.event(worker, "review-round", map[string]string{"round": strconv.Itoa(rd.n), "tree": tree, "attempt": strconv.Itoa(ref.Key.Attempt)}); err != nil {
 			return sm.fail(worker, "record: "+err.Error())
 		}
 		var out Outcome

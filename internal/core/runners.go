@@ -12,8 +12,14 @@ func (r singleRunner) Run(ctx context.Context, ref StepRef, obs Observer) Outcom
 	if err != nil {
 		return r.sm.Finish(s, Outcome{State: StepFailed, Reason: err.Error(), Session: s})
 	}
-	out := r.sm.Wait(ctx, s, obs)
 	row := ref.Kind.Row
+	var out Outcome
+	if ref.ReviewFrom > 0 {
+		obs.Started(s)
+		out = Outcome{State: StepOK, Session: s}
+	} else {
+		out = r.sm.Wait(ctx, s, obs)
+	}
 	if out.State == StepOK && len(row.Reviewers) > 0 && row.Rounds > 0 && r.review != nil {
 		out = r.review(ctx, ref, s, obs)
 	}

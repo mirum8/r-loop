@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -18,21 +19,9 @@ import (
 
 func Preflight(w *Wiring) error {
 	opts, env, cfg := w.Opts, w.Env, w.Config
-	if !opts.DryRun {
-		if _, err := exec.LookPath(env.Herdr); err != nil {
-			return exit(127, "herdr binary %s not found", env.Herdr)
-		}
-	}
-	if err := w.validateProviders(); err != nil {
+	list, prompts, err := w.checks()
+	if err != nil {
 		return err
-	}
-	list, err := core.RunList(w.Plan, w.Todo, core.RunOptions{From: opts.From, Phases: opts.Phases})
-	if err != nil {
-		return exit(2, "%v", err)
-	}
-	prompts, err := w.promptSources()
-	if err != nil {
-		return exit(2, "%v", err)
 	}
 	if opts.DryRun {
 		w.banner(env.Stdout, prompts)
@@ -45,25 +34,17 @@ func Preflight(w *Wiring) error {
 	if err := w.Host.Reachable(); err != nil {
 		return exit(4, "herdr server unreachable: %v", err)
 	}
-	if id, pid, ok := w.Store.Current(); ok && alive(pid) {
-		return exit(4, "run %s is live in pid %d; use r-loop status, resume or abort", id, pid)
+	if id, pid, ok := w.Store.Current(); ok {
+		if alive(pid) {
+			return exit(4, "run %s is live in pid %d; use r-loop status, resume or abort", id, pid)
+		}
+		if err := w.Store.ClearCurrent(); err != nil {
+			return exit(2, "%v", err)
+		}
+		fmt.Fprintf(env.Stdout, "cleared run %s: pid %d is gone\n", id, pid)
 	}
-	dirty, err := w.Repo.Clean()
-	if err != nil {
-		return exit(2, "%v", err)
-	}
-	if len(dirty) > 0 {
-		return exit(4, "primary tree is not clean: %s", strings.Join(dirty, ", "))
-	}
-	numbers := make([]int, len(list))
-	for i, ph := range list {
-		numbers[i] = ph.Number
-	}
-	if blocking := w.Plan.Blocking(numbers); len(blocking) > 0 {
-		return exit(4, "## Resolve first entry %q blocks this run; resolve it with /r:plan-unblock %s", blocking[0].Name, opts.Todo)
-	}
-	if err := store.EnsureExcluded(w.Repo.Root()); err != nil {
-		return exit(2, "%v", err)
+	if err := w.ready(list); err != nil {
+		return err
 	}
 	resolved, err := yaml.Marshal(cfg)
 	if err != nil {
@@ -76,8 +57,62 @@ func Preflight(w *Wiring) error {
 	if err := w.Store.SetCurrent(id, env.PID); err != nil {
 		return exit(2, "%v", err)
 	}
+	if err := recordRunList(w.Store, id, list); err != nil {
+		return exit(2, "%v", err)
+	}
 	w.bind(id)
 	w.banner(env.Stdout, prompts)
+	return nil
+}
+
+func recordRunList(st *store.Store, id string, list []core.Phase) error {
+	numbers := make([]string, len(list))
+	for i, ph := range list {
+		numbers[i] = strconv.Itoa(ph.Number)
+	}
+	at := time.Now()
+	return st.Append(id, core.Record{Kind: core.RecordEvent, At: at, Event: &core.Event{At: at, Kind: "run-list", Fields: map[string]string{"phases": strings.Join(numbers, ",")}}})
+}
+
+func (w *Wiring) checks() ([]core.Phase, []string, error) {
+	opts, env := w.Opts, w.Env
+	if !opts.DryRun {
+		if _, err := exec.LookPath(env.Herdr); err != nil {
+			return nil, nil, exit(127, "herdr binary %s not found", env.Herdr)
+		}
+	}
+	if err := w.validateProviders(); err != nil {
+		return nil, nil, err
+	}
+	list, err := core.RunList(w.Plan, w.Todo, core.RunOptions{From: opts.From, Phases: opts.Phases})
+	if err != nil {
+		return nil, nil, exit(2, "%v", err)
+	}
+	prompts, err := w.promptSources()
+	if err != nil {
+		return nil, nil, exit(2, "%v", err)
+	}
+	return list, prompts, nil
+}
+
+func (w *Wiring) ready(list []core.Phase) error {
+	dirty, err := w.Repo.Clean()
+	if err != nil {
+		return exit(2, "%v", err)
+	}
+	if len(dirty) > 0 {
+		return exit(4, "primary tree is not clean: %s", strings.Join(dirty, ", "))
+	}
+	numbers := make([]int, len(list))
+	for i, ph := range list {
+		numbers[i] = ph.Number
+	}
+	if blocking := w.Plan.Blocking(numbers); len(blocking) > 0 {
+		return exit(4, "## Resolve first entry %q blocks this run; resolve it with /r:plan-unblock %s", blocking[0].Name, w.Opts.Todo)
+	}
+	if err := store.EnsureExcluded(w.Repo.Root()); err != nil {
+		return exit(2, "%v", err)
+	}
 	return nil
 }
 
