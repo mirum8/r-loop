@@ -282,6 +282,50 @@ func TestLandGatePassesOnlyBecauseItRunsAfterTheMerge(t *testing.T) {
 	}
 }
 
+func TestLandGateRecordsThePhasesDiffSize(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "one\ntwo\nthree\n")
+	writeFile(t, filepath.Join(e.worktree(1), "a.txt"), "uno\n")
+	if _, err := e.repo.CommitAll(".r-loop/wt/phase-1", "r-loop: phase 1 review"); err != nil {
+		t.Fatal(err)
+	}
+
+	landing, err := e.gate().Land(context.Background(), phaseOne(""))
+
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if landing.Added != 4 || landing.Deleted != 1 {
+		t.Errorf("landing size = +%d -%d, want +4 -1", landing.Added, landing.Deleted)
+	}
+	if got := e.store.landings(); len(got) != 1 || got[0] != landing {
+		t.Errorf("landings recorded = %+v", got)
+	}
+}
+
+type diffStatFails struct {
+	*gitrepo.Repo
+}
+
+func (r diffStatFails) DiffStat(dir, ref string) (int, int, error) {
+	return 0, 0, errors.New("numstat broke")
+}
+
+func TestLandGateRefusesToLandWhenTheDiffSizeCannotBeMeasured(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	head := e.head()
+	gate := e.gate()
+	gate.Repo = diffStatFails{e.repo}
+
+	_, err := gate.Land(context.Background(), phaseOne(""))
+
+	if err == nil || !strings.Contains(err.Error(), "numstat broke") {
+		t.Fatalf("Land err = %v", err)
+	}
+	e.assertUntouched(head)
+}
+
 func TestLandGateRedAbortsTheMergeWithTheTodoUntouched(t *testing.T) {
 	e := newLandEnv(t)
 	e.phaseWork(1, "feature.txt", "new\n")

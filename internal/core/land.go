@@ -57,6 +57,10 @@ func (g *LandGate) attempt(phase Phase) (Landing, string, error) {
 		return Landing{}, "", err
 	}
 	landing := Landing{Phase: n}
+	var err error
+	if landing.Added, landing.Deleted, err = g.Repo.DiffStat("", "HEAD"); err != nil {
+		return Landing{}, "", errors.Join(fmt.Errorf("diff size: %w", err), g.Repo.AbortMerge())
+	}
 	if strings.TrimSpace(phase.DoneWhen) == "" {
 		landing.GateSkipped = true
 		g.emit(Event{Kind: "gate-skipped", Phase: n, Step: "land", Fields: map[string]string{"phase": strconv.Itoa(n)}})

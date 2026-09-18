@@ -393,13 +393,13 @@ Contracts: `tech-design.md#milestone-7-the-watchdog`
 **Implements:** Halt a step that has gone the wrong way
 **Depends on:** Phase 24
 **Files:** `internal/core/checks.go` (new) · `internal/core/checks_test.go` (new)
-- [ ] five checks, each emitting `warn` with `Source: driver` and registered in `ShippedChecks(overtimeFactor, diffFactor float64)`: `files-outside-plan`, `step-overtime`, `diff-oversize`, `plan-touched`, `foreign-test-edit`; each fires at most once per step attempt
-- [ ] `files-outside-plan`: `Repo.ChangedFiles(worktree, base)` — which includes uncommitted and untracked work — minus the phase's `Files:` paths (a directory entry covers its children; `.task-plans/` is always allowed) is non-empty → one warning listing up to ten paths
-- [ ] `step-overtime`: once two phases of this run have landed, a step running longer than `overtimeFactor` (config `watchdog.overtimeFactor`, default 2) times the longest same-kind step among them → one warning naming both durations
-- [ ] `diff-oversize`: once two phases have landed, `DiffStat(worktree, base)` added plus deleted beyond `diffFactor` (config `watchdog.diffFactor`, default 3) times the largest landed phase's → one warning naming both sizes
-- [ ] `plan-touched`: the todo, or a `.task-plans/` file other than this phase's own plan, appears in `ChangedFiles(worktree, base)` during a step → one warning naming the file
-- [ ] `foreign-test-edit`: a changed file matching `*_test.go`, `*.test.*`, `*_test.*` or `test/**` that existed at `base` and is not under a `Files:` path → one warning naming the file
-- [ ] `checks_test.go` proves each check firing and not firing over the fake repo and a store holding two landed phases with durations and sizes, an uncommitted edit caught by `files-outside-plan`, and the once-per-attempt rule
+- [x] five checks, each emitting `warn` with `Source: driver` and registered in `ShippedChecks(overtimeFactor, diffFactor float64)`: `files-outside-plan`, `step-overtime`, `diff-oversize`, `plan-touched`, `foreign-test-edit`; each fires at most once per step attempt
+- [x] `files-outside-plan`: `Repo.ChangedFiles(worktree, base)` — which includes uncommitted and untracked work — minus the phase's `Files:` paths (a directory entry covers its children; `.task-plans/` is always allowed) is non-empty → one warning listing up to ten paths
+- [x] `step-overtime`: once two phases of this run have landed, a step running longer than `overtimeFactor` (config `watchdog.overtimeFactor`, default 2) times the longest same-kind step among them → one warning naming both durations
+- [x] `diff-oversize`: once two phases have landed, `DiffStat(worktree, base)` added plus deleted beyond `diffFactor` (config `watchdog.diffFactor`, default 3) times the largest landed phase's → one warning naming both sizes
+- [x] `plan-touched`: the todo, or a `.task-plans/` file other than this phase's own plan, appears in `ChangedFiles(worktree, base)` during a step → one warning naming the file
+- [x] `foreign-test-edit`: a changed file matching `*_test.go`, `*.test.*`, `*_test.*` or `test/**` that existed at `base` and is not under a `Files:` path → one warning naming the file
+- [x] `checks_test.go` proves each check firing and not firing over the fake repo and a store holding two landed phases with durations and sizes, an uncommitted edit caught by `files-outside-plan`, and the once-per-attempt rule
 **Done when:** `go test ./internal/core/...` is green.
 
 ### Phase 26 — The watchdog's MCP surface

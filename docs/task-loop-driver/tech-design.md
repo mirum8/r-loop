@@ -64,13 +64,15 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   string; Options []string; Recommended string; AskedAt time.Time; Answer, AnsweredBy, Citation string; AnsweredAt
   time.Time}` · `Remedy{ID string; Step StepKey; Class, Command, Why, Consent string; ProposedAt,
   DecidedAt time.Time}` · `Landing{Phase int; MergeSHA string; GateSkipped bool; GateOutput
-  string}` · `Event{At time.Time; Kind string; Phase int; Step string; Fields
+  string; Added, Deleted int}` — the merge's diff size, measured by the land gate before the gate
+  runs; a failed measurement aborts the merge · `Event{At time.Time; Kind string; Phase int; Step string; Fields
   map[string]string}` — the one stream both faces render · `RunMeta{Todo string; ResolvedConfig
   []byte; Started time.Time}` · `Record{Kind string; At time.Time; Step *StepKey; State
   StepState; Run RunStatus; Reason string; Question *Question; Signal *Signal; Remedy *Remedy; Landing
   *Landing; Event *Event}` · `RunState{ID, Todo string; Started time.Time; Status RunStatus; Steps map[StepKey]StepState;
   LastStep *StepKey; Landed []Landing; Questions []Question; Signals []Signal; Remedies []Remedy;
-  Events []Event; Warnings []string}`.
+  Events []Event; Warnings []string; Spans map[StepKey]StepSpan}` · `StepSpan{Started, Ended
+  time.Time}` — a step's first `running` record (the moment `Watch.StepStarted` fires) to its `ok`/`failed` record, replayed from the step log.
 - **Ports** (interfaces in `internal/core`, each with a fake in `internal/core/fakes_test.go`):
   - `PlanSource`: `Read(path) (Plan, error)` · `Tick(path, phase int) error` · `Stamp(path,
     entryName, resolvedLine string) error`; `Plan{Path, Topic string; Phases []Phase; Milestones

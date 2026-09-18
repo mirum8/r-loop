@@ -171,6 +171,7 @@ func apply(st *core.RunState, order *[]core.StepKey, rec core.Record) error {
 			return errors.New("step record without a step")
 		}
 		st.Steps[*rec.Step] = rec.State
+		st.Span(*rec.Step, rec.State, rec.At)
 		*order = append(*order, *rec.Step)
 	case core.RecordRun:
 		st.Status = rec.Run

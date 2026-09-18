@@ -268,6 +268,7 @@ func (f *fakeStore) Load(runID string) (RunState, error) {
 		switch rec.Kind {
 		case RecordStep:
 			st.Steps[*rec.Step] = rec.State
+			st.Span(*rec.Step, rec.State, rec.At)
 			key := *rec.Step
 			st.LastStep = &key
 		case RecordRun:

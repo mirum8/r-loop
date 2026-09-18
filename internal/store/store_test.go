@@ -170,9 +170,44 @@ func TestLoadReplaysAMixedLog(t *testing.T) {
 		Signals:   []core.Signal{signal},
 		Remedies:  []core.Remedy{remedy},
 		Events:    []core.Event{event},
+		Spans:     map[core.StepKey]core.StepSpan{plan: {Ended: t0}, impl: {Started: t0}},
 	}
 	if !reflect.DeepEqual(st, want) {
 		t.Fatalf("Load =\n%+v\nwant\n%+v", st, want)
+	}
+}
+
+func TestLoadSpansAStepFromRunningToItsTerminalRecord(t *testing.T) {
+	s, _ := newStore(t)
+	id, _ := s.Create(core.RunMeta{Todo: "docs/todo.md", Started: t0})
+	done := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
+	failed := core.StepKey{Run: id, Phase: 2, Kind: "implement", Attempt: 1}
+	live := core.StepKey{Run: id, Phase: 3, Kind: "implement", Attempt: 1}
+	for _, rec := range []core.Record{
+		{Kind: core.RecordStep, At: t0, Step: &done, State: core.StepQueued},
+		{Kind: core.RecordStep, At: t0.Add(time.Minute), Step: &done, State: core.StepRunning},
+		{Kind: core.RecordStep, At: t0.Add(9 * time.Minute), Step: &done, State: core.StepOK},
+		{Kind: core.RecordStep, At: t0.Add(10 * time.Minute), Step: &failed, State: core.StepQueued},
+		{Kind: core.RecordStep, At: t0.Add(15 * time.Minute), Step: &failed, State: core.StepFailed},
+		{Kind: core.RecordStep, At: t0.Add(20 * time.Minute), Step: &live, State: core.StepRunning},
+	} {
+		if err := s.Append(id, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	st, err := s.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[core.StepKey]core.StepSpan{
+		done:   {Started: t0.Add(time.Minute), Ended: t0.Add(9 * time.Minute)},
+		failed: {Ended: t0.Add(15 * time.Minute)},
+		live:   {Started: t0.Add(20 * time.Minute)},
+	}
+	if !reflect.DeepEqual(st.Spans, want) {
+		t.Fatalf("Spans = %+v", st.Spans)
 	}
 }
 

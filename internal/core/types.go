@@ -100,6 +100,8 @@ type Landing struct {
 	MergeSHA    string
 	GateSkipped bool
 	GateOutput  string
+	Added       int
+	Deleted     int
 }
 
 type Event struct {
@@ -154,6 +156,25 @@ type RunState struct {
 	Remedies  []Remedy
 	Events    []Event
 	Warnings  []string
+	Spans     map[StepKey]StepSpan
+}
+
+type StepSpan struct {
+	Started, Ended time.Time
+}
+
+func (st *RunState) Span(key StepKey, state StepState, at time.Time) {
+	if st.Spans == nil {
+		st.Spans = map[StepKey]StepSpan{}
+	}
+	sp := st.Spans[key]
+	if state == StepRunning && sp.Started.IsZero() {
+		sp.Started = at
+	}
+	if state == StepOK || state == StepFailed {
+		sp.Ended = at
+	}
+	st.Spans[key] = sp
 }
 
 func (p Plan) Unticked() []int {
