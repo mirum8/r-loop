@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"r-loop/internal/app"
 )
 
 var version = "dev"
@@ -17,6 +19,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "r-loop %s\n", version)
 		return 0
 	}
-	fmt.Fprintln(stderr, "usage: r-loop <todo.md> [flags] | r-loop --version")
-	return 2
+	dir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(stderr, "r-loop: %v\n", err)
+		return 2
+	}
+	home, _ := os.UserHomeDir()
+	return app.Main(args, app.Env{Dir: dir, Home: home, Herdr: "herdr", Git: "git", PID: os.Getpid(), Stdout: stdout, Stderr: stderr})
 }

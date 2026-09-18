@@ -16,13 +16,13 @@ func TestVersionPrintsVersion(t *testing.T) {
 	}
 }
 
-func TestAnythingElseExitsTwoWithUsage(t *testing.T) {
-	for _, args := range [][]string{nil, {"todo.md"}, {"--help"}, {"--version", "x"}} {
+func TestBadUsageExitsTwoWithOneLine(t *testing.T) {
+	for _, args := range [][]string{nil, {"--help"}, {"--version", "x"}, {"no-such-todo.md", "--dry-run"}} {
 		var out, errOut bytes.Buffer
 
 		code := run(args, &out, &errOut)
 
-		if code != 2 || !strings.HasPrefix(errOut.String(), "usage: r-loop") {
+		if code != 2 || strings.Count(errOut.String(), "\n") != 1 {
 			t.Fatalf("args=%v code=%d stderr=%q", args, code, errOut.String())
 		}
 	}

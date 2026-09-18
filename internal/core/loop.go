@@ -98,7 +98,7 @@ func (nopLander) Land(ctx context.Context, phase Phase) (Landing, error) {
 
 func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 	l.runDir = l.Store.Dir(l.RunID)
-	list, err := l.runList(opts)
+	list, err := RunList(l.Plan, l.TodoPath, opts)
 	if err != nil {
 		return l.usage(err)
 	}
@@ -167,15 +167,15 @@ func (l *RunLoop) usage(err error) int {
 	return 2
 }
 
-func (l *RunLoop) runList(opts RunOptions) ([]Phase, error) {
-	unticked := l.Plan.Unticked()
+func RunList(plan Plan, todoPath string, opts RunOptions) ([]Phase, error) {
+	unticked := plan.Unticked()
 	for _, n := range opts.Phases {
 		if !slices.Contains(unticked, n) {
-			return nil, fmt.Errorf("phase %d is ticked or absent from %s", n, l.TodoPath)
+			return nil, fmt.Errorf("phase %d is ticked or absent from %s", n, todoPath)
 		}
 	}
 	var list []Phase
-	for _, ph := range l.Plan.Phases {
+	for _, ph := range plan.Phases {
 		n := ph.Number
 		switch {
 		case !slices.Contains(unticked, n):
