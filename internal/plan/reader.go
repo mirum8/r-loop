@@ -1,7 +1,6 @@
 package plan
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,6 +42,12 @@ func (Reader) Read(path string) (core.Plan, error) {
 	p := core.Plan{Path: path, Topic: filepath.Base(filepath.Dir(abs))}
 
 	lines := strings.SplitAfter(string(raw), "\n")
+	if found, spans := resolveFirst(lines); found {
+		p.ResolveFirst = []core.Entry{}
+		for _, s := range spans {
+			p.ResolveFirst = append(p.ResolveFirst, s.entry)
+		}
+	}
 	milestone := 0
 	var deps []dependsRef
 	seen := map[int]bool{}
@@ -164,12 +169,4 @@ func parseDepends(rest string) ([]int, error) {
 		return nil, fmt.Errorf("depends on names no phase: %q", rest)
 	}
 	return out, nil
-}
-
-func (Reader) Tick(path string, phase int) error {
-	return errors.New("tick: not implemented")
-}
-
-func (Reader) Stamp(path, entryName, resolvedLine string) error {
-	return errors.New("stamp: not implemented")
 }

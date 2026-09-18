@@ -169,3 +169,27 @@ func (p Plan) Unticked() []int {
 	sort.Ints(out)
 	return out
 }
+
+func (p Plan) Blocking(phases []int) []Entry {
+	var out []Entry
+	for _, e := range p.ResolveFirst {
+		if e.Ticked {
+			continue
+		}
+		if e.BlocksAll || meets(e.BlocksPhases, phases) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func meets(a, b []int) bool {
+	for _, x := range a {
+		for _, y := range b {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
+}
