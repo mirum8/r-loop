@@ -28,7 +28,9 @@ fails (ADR-62); a halt stops only the failed phase and the phases that depend on
 land gate gets a bounded fix round (ADR-64); an answer can come from any shell (ADR-67); and
 `--unattended` pre-authorises the routine remedies, bounds restarts, lets an unanswered question
 resolve to the asking agent's own recommendation, and restarts a step on its row's fallback
-provider (ADR-61, ADR-63, ADR-66). Every automatic decision opens the run report.
+provider (ADR-61, ADR-63, ADR-66). Every automatic decision opens the run report. Every session
+the driver starts — a step, a reviewer, a fallback, the gate fix, the watchdog — names its own
+provider, model and effort, and `--model` and `--effort` override one row for one run (ADR-68).
 
 ## Milestone 1 — Core, plan file, config and state
 
@@ -59,7 +61,7 @@ provider (ADR-61, ADR-63, ADR-66). Every automatic decision opens the run report
   Output, Resolved string; BlocksAll bool; BlocksPhases []int; Malformed []string}` ·
   `Signal{Seq int; Kind SignalKind; Source SignalSource; Step StepKey; Reason, Evidence string; At
   time.Time; Rejected bool; RejectReason string}` · `Question{ID string; Step StepKey; Text
-  string; Options []string; AskedAt time.Time; Answer, AnsweredBy, Citation string; AnsweredAt
+  string; Options []string; Recommended string; AskedAt time.Time; Answer, AnsweredBy, Citation string; AnsweredAt
   time.Time}` · `Remedy{ID string; Step StepKey; Class, Command, Why, Consent string; ProposedAt,
   DecidedAt time.Time}` · `Landing{Phase int; MergeSHA string; GateSkipped bool; GateOutput
   string}` · `Event{At time.Time; Kind string; Phase int; Step string; Fields
@@ -120,20 +122,27 @@ provider (ADR-61, ADR-63, ADR-66). Every automatic decision opens the run report
   malformed → the step is `failed` with reason `sentinel unreadable`.
 - **Config resolution** — every key resolves CLI override → `.r-loop/config.yaml` →
   `~/.config/r-loop/config.yaml` → the embedded defaults, with provenance `<file>:<key>`,
-  `flag:--provider` or `default`. Step row keys: `prompt, check, provider, model, effort,
-  timeout`, `fallback` (a provider name), plus the review half on any row: `reviewers`, `rounds`,
-  `reviewTimeout`. **A
-  reviewer entry is a scalar provider name (model and effort left to the provider, flag omitted,
-  banner prints `provider default`) or a block with `provider`, `model`, `effort`.** `rounds: 0`
+  `flag:--provider`, `flag:--model`, `flag:--effort` or `default`. Step row keys: `prompt, check,
+  provider, model, effort, timeout`, `fallback`, plus the review half on any row: `reviewers`,
+  `rounds`, `reviewTimeout`. **A reviewer entry and a `fallback` are each a scalar provider name
+  (model and effort left to the provider, flag omitted, banner prints `provider default`) or a
+  block with `provider`, `model`, `effort`.** `--provider`, `--model` and `--effort` each take
+  `<step>=<value>` and override only that row's own key, never its fallback or reviewers; a key
+  `land.fix` inherits from the implement row is the overridden value. `land.fix` is an optional block with `provider`, `model`, `effort`, all optional,
+  for the `gatefix` step: absent, the implement row's three; a missing key is the implement
+  row's unless the block names another provider, in which case it stays empty (that provider's
+  default). The reader resolves `land.fix` at load, so every later reader sees three plain
+  values. `watchdog.effort` sits beside `watchdog.provider` and `watchdog.model`. `rounds: 0`
   or an empty `reviewers` list means the step has no review half. Rows: `plan`, `implement`,
   `milestone`. Defaults: pipeline `[plan, implement]`; plan `claude/opus/high/1h/plan-file`,
   reviewers `[codex]`, `rounds 2`, `reviewTimeout 20m`; implement
   `codex/gpt-5.6-sol/medium/4h/diff`, reviewers `[claude]`, `rounds 3`, `reviewTimeout 45m`;
-  fallback plan `codex`, implement `claude` (provider defaults for model and effort); milestone
-  `claude/opus/medium/1h/report`, no review; `land.fixRounds 1`; `unattended.allow [deps, ports,
-  locks, restart, retry, provider]` and `unattended.questionTimeout 30m`, both applied only with
-  `--unattended`; `watchdog.maxRestarts 2`; `watchdog.provider claude`,
-  `watchdog.model sonnet`, `watchdog.allow []`, `watchdog.remedyWindow 10m`,
+  fallback plan `codex`, implement `claude` (scalars: provider defaults for model and effort);
+  milestone `claude/opus/medium/1h/report`, no review; `land.fixRounds 1`, `land.gateTimeout 30m`, no `land.fix`;
+  `unattended.allow [deps, ports, locks, restart, retry, provider]` and
+  `unattended.questionTimeout 30m`, both applied only with `--unattended`;
+  `watchdog.maxRestarts 2`; `watchdog.provider claude`, `watchdog.model sonnet`,
+  `watchdog.effort ""` (provider default), `watchdog.allow []`, `watchdog.remedyWindow 10m`,
   `watchdog.answerWindow 5m`, `watchdog.checkTimeout 10m`, `watchdog.stallGrace 2m`,
   `watchdog.overtimeFactor 2`, `watchdog.diffFactor 3`; `notify.onHalt/onWarn/onDone ""`. A
   flow-style YAML node is rejected naming the line; an unknown key is rejected naming the key and
@@ -152,7 +161,7 @@ provider (ADR-61, ADR-63, ADR-66). Every automatic decision opens the run report
   mcp_servers.r-loop.url={url}`, `review: /review`). `{mcpConfig}` is a per-agent file
   `{"mcpServers":{"r-loop":{"type":"http","url":"<url>"}}}`. The core sees a provider only as
   `ProviderArgs{Kind string; Args []string; Ask bool; Review string}`.
-- **Step kind** — `StepKind{Name, Prompt, Check string; Row StepRow}`; `StepRow{Provider, Model, Effort, Fallback string; Timeout time.Duration; Reviewers []Reviewer; Rounds int; ReviewTimeout time.Duration}`; `Reviewer{Provider, Model, Effort string}`. A row's `check ∈ {plan-file,
+- **Step kind** — `StepKind{Name, Prompt, Check string; Row StepRow}`; `StepRow{Provider, Model, Effort string; Fallback Fallback; Timeout time.Duration; Reviewers []Reviewer; Rounds int; ReviewTimeout time.Duration}`; `Reviewer{Provider, Model, Effort string}`, `Fallback{Provider, Model, Effort string}` and `GateFix{Provider, Model, Effort string}` — one type per role, the same three fields; an empty `Model` or `Effort` is the provider's default. A row's `check ∈ {plan-file,
   diff, report}` or one added with `RegisterCheck`; `findings` and `verdict` are the review
   half's own checks and are never named on a row. Evidence predicates take
   `EvidenceContext{Repo; Worktree, StartSHA, StartTree, PlanPath string; FindingsFiles []string;
@@ -252,8 +261,10 @@ provider (ADR-61, ADR-63, ADR-66). Every automatic decision opens the run report
   with a fresh author session. `--replan` re-runs the phase's `plan` step as a new attempt, with
   the failed step's reason as its addendum, before the step that failed.
 - **Gate fix** — a red gate with `land.fixRounds` left runs one `gatefix` step in the phase
-  worktree on the implement row, with `GateCommand` and `GateOutput`, `check: diff`, and the
-  implement row's reviewers for one round; its `ok` commits `r-loop: phase <N> gatefix`, and the
+  worktree on the config's resolved `land.fix` provider, model and effort (the implement row's
+  unless `land.fix` names its own), with `GateCommand` and `GateOutput`, `check: diff`, the
+  implement row's timeout and its reviewers for one round; the gate command itself runs under
+  `land.gateTimeout` (default 30m); its `ok` commits `r-loop: phase <N> gatefix`, and the
   landing starts again from the merge. A red gate with no fix round left blocks the phase.
 - **Land** — in the primary tree: `MergeNoFF(r-loop/phase-<N>)` (`--no-commit`) → the merged tree
   is on disk, uncommitted → `Run(root, DoneWhen, gate timeout)`; exit ≠ 0 → `AbortMerge()`, halt
@@ -266,13 +277,18 @@ provider (ADR-61, ADR-63, ADR-66). Every automatic decision opens the run report
   commit `docs(report): milestone <M>`; anything else → `report-skipped`, never a halt.
 - **Report** — `report.md` opens with `human touches: <n>` (every answer a person gave, every
   consent, every resume) and an **Automatic decisions** section: restarts with their remedy,
-  question timeouts with the answer the agent took, fallback providers, gate-fix rounds,
+  question timeouts with the answer the agent took, fallback restarts with the provider, model
+  and effort used, gate-fix rounds,
   round-limit warnings, nudges, and blocked and skipped phases.
 - **Banner** — one line per pipeline row and the milestone row, `<step> <provider> <model>
   <effort> <timeout> <check> ← <provenance>`; under a row with a review half, `review rounds <n>
   <reviewTimeout>` and one `reviewer <provider> <model|provider default> <effort|provider
-  default>` line per reviewer; `fallback <provider>` per row that has one; overrides with the value
-  replaced; prompt source per step; watchdog on/off; `mode: unattended` with the added allow-list
+  default>` line per reviewer and `fallback <provider> <model|provider default> <effort|provider
+  default>` per row that has one; `gatefix <provider> <model|provider default> <effort|provider
+  default>`; watchdog on/off with `<provider> <model> <effort|provider default>`. Every step,
+  reviewer, fallback, gatefix and watchdog line ends `← <provenance>`: one source when its
+  provider, model and effort share it, else `provider <src> model <src> effort <src>`. Overrides
+  with the value replaced; prompt source per step; `mode: unattended` with the added allow-list
   and the question timeout, or `mode: attended`.
 - **Plain lines / status / report / notify env** — as written in Phases 15–16: `HH:MM:SS phase
   <N> <kind> <state> <provider> <detail>` (during a review, `<detail>` is `review r<round>/<rounds>
@@ -374,7 +390,9 @@ provider (ADR-61, ADR-63, ADR-66). Every automatic decision opens the run report
   an authorised remedy for it (or an allow-listed restart class), and while the step has had fewer
   than `watchdog.maxRestarts` restarts; it queues a new attempt. With `--unattended`,
   `unattended.allow` is added to `watchdog.allow`, and an allow-listed `provider` restart may name
-  only the row's `fallback` — any other provider still asks.
+  only the row's `fallback` — any other provider still asks. A restart naming the fallback runs
+  the new attempt on the fallback's provider, model and effort; one naming any other provider
+  runs on that provider's defaults; neither carries the row's own model or effort.
 - **Citations** — `path:line`, the path relative to the repository root, existing in the
   **primary tree** and not under `.r-loop/`. The primary tree holds the spec, the tech design, the
   todo, the committed phase plans and every landed phase, and never the current phase's
