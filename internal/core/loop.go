@@ -26,7 +26,7 @@ type StepRunner interface {
 }
 
 type Watcher interface {
-	BeforePhase(ctx context.Context, ph Phase)
+	BeforePhase(ctx context.Context, ph Phase, base string) CheckOutcome
 	StepStarted(ref StepRef, s *Session)
 	StepEnded(ref StepRef, out Outcome)
 	Signals() <-chan Signal
@@ -41,7 +41,9 @@ type Restart struct {
 
 type nopWatcher struct{}
 
-func (nopWatcher) BeforePhase(ctx context.Context, ph Phase)             {}
+func (nopWatcher) BeforePhase(ctx context.Context, ph Phase, base string) CheckOutcome {
+	return CheckOutcome{}
+}
 func (nopWatcher) StepStarted(ref StepRef, s *Session)                   {}
 func (nopWatcher) StepEnded(ref StepRef, out Outcome)                    {}
 func (nopWatcher) Signals() <-chan Signal                                { return nil }
@@ -83,6 +85,7 @@ type RunLoop struct {
 	restarts map[string]int
 	open     map[*Session]int
 	asked    map[string]openAsk
+	warnings map[int]string
 }
 
 type openAsk struct {
@@ -219,7 +222,7 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	n := ph.Number
 	l.emit(Event{Kind: "phase-start", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "title": ph.Title}})
 	last := &Session{Dir: filepath.Join(l.Sessions.Repo.Root(), fmt.Sprintf(".r-loop/wt/phase-%d", n))}
-	l.watcher().BeforePhase(ctx, ph)
+	l.checkPhase(ctx, ph, base)
 	stopped := l.stoppedKind(prior, n)
 	replan = replan && stopped != "" && stopped != "plan" && slices.ContainsFunc(l.Kinds, func(k StepKind) bool { return k.Name == "plan" })
 	for _, kind := range l.Kinds {
@@ -271,6 +274,50 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	l.emit(Event{Kind: "phase-state", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "state": string(PhaseLanded)}})
 	l.emit(Event{Kind: "landed", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "merge": landing.MergeSHA, "gateSkipped": strconv.FormatBool(landing.GateSkipped)}})
 	return "", Outcome{State: StepOK}, false
+}
+
+func (l *RunLoop) checkPhase(ctx context.Context, ph Phase, base string) {
+	n := ph.Number
+	out := l.watcher().BeforePhase(ctx, ph, base)
+	var warnings []string
+	for drained := false; !drained; {
+		select {
+		case sig := <-l.watcher().Signals():
+			switch {
+			case sig.Kind == SignalWarn && sig.Step.Phase == n && sig.Step.Kind == "check":
+				warnings = append(warnings, sig.Reason)
+			case sig.Kind == SignalHalt:
+				sig.Reason = fmt.Sprintf("halt for phase-%d/%s after it ended: %s", sig.Step.Phase, sig.Step.Kind, sig.Reason)
+			}
+			l.warn(sig)
+		default:
+			drained = true
+		}
+	}
+	var lines []string
+	for _, w := range warnings {
+		lines = append(lines, "- "+w)
+	}
+	l.mu.Lock()
+	if l.warnings == nil {
+		l.warnings = map[int]string{}
+	}
+	l.warnings[n] = strings.Join(lines, "\n")
+	l.mu.Unlock()
+	if out.Kind == "" {
+		return
+	}
+	f := map[string]string{"phase": strconv.Itoa(n)}
+	if out.Reason != "" {
+		f["reason"] = out.Reason
+	}
+	if out.Kind == phaseCheckRan {
+		f["result"] = "no disagreement"
+		if len(warnings) > 0 {
+			f["result"] = strings.Join(warnings, "; ")
+		}
+	}
+	l.emit(Event{Kind: out.Kind, Phase: n, Fields: f})
 }
 
 func (l *RunLoop) stoppedKind(prior RunState, phase int) string {
@@ -387,6 +434,11 @@ func (l *RunLoop) ref(ph Phase, kind StepKind, attempt int, base string) StepRef
 		RunDir:   l.runDir,
 	}
 	ref.Vars = StepVars(ref, l.Plan, l.TodoPath, l.runDir)
+	if kind.Name == "plan" {
+		l.mu.Lock()
+		ref.Vars["PhaseWarnings"] = l.warnings[n]
+		l.mu.Unlock()
+	}
 	return ref
 }
 

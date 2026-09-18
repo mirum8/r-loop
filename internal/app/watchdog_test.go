@@ -205,6 +205,35 @@ func TestExecuteRegistersProposeRemedyAndRestartStepOnTheWatchdogSurface(t *test
 	}
 }
 
+func TestExecuteSendsThePhaseCheckToTheWatchdogBeforeThePlanStep(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	sim := newSim()
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, sim)
+	dog := &dogHost{}
+	w.Dog.Host = dog
+
+	if code := w.Execute(core.RunOptions{Phases: []int{1}}); code != 0 {
+		t.Fatalf("exit %d\n%s", code, f.out)
+	}
+
+	if pc := w.Watch.PhaseCheck; pc == nil || pc.Dog != w.Dog || pc.Timeout != 10*time.Minute {
+		t.Fatalf("phase check %+v", pc)
+	}
+	calls := dog.Calls()
+	check := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "Prompt rloop-watchdog check phase 1 ") })
+	plan := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "Prompt rloop-watchdog step started phase-1/plan") })
+	if check < 0 || plan < 0 || check > plan {
+		t.Errorf("check %d, plan %d in %q", check, plan, calls)
+	}
+	if got := stepEvents(f.load(w.Loop.RunID), "phase-check"); len(got) != 1 || got[0].Fields["result"] != "no disagreement" {
+		t.Errorf("phase-check events %+v", got)
+	}
+}
+
 func TestAWatchdogThatFailsToStartExits4NamingTheHerdrCode(t *testing.T) {
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
@@ -257,6 +286,9 @@ func TestNoWatchdogStartsNothingKeepsTheChecksAndRecordsWatchdogSkippedOnce(t *t
 	}
 	if got := stepEvents(f.load(w.Loop.RunID), "watchdog-skipped"); len(got) != 1 {
 		t.Errorf("watchdog-skipped events %+v", got)
+	}
+	if got := stepEvents(f.load(w.Loop.RunID), "phase-check-skipped"); len(got) != 1 || w.Watch.PhaseCheck != nil {
+		t.Errorf("phase-check-skipped events %+v, check %+v", got, w.Watch.PhaseCheck)
 	}
 	report, _ := os.ReadFile(filepath.Join(w.Store.Dir(w.Loop.RunID), "report.md"))
 	if strings.Count(string(report), "watchdog-skipped") != 1 {

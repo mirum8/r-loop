@@ -22,6 +22,13 @@ You watch an r-loop run from the run directory `{{.RunDir}}`, against the plan a
 - Before calling `signal` with `halt`, confirm the suspected wrong turn with `git -C <worktree> diff <base>`. Use `warn` for anything short of that.
 - Stop watching a step on `step ended`.
 
+## Checking a phase
+
+- Before a phase's plan step, the driver sends `check phase <N> worktree <dir> base <base>`, then the phase's `Files:` and `Risk:` lines and its block, and waits for you to finish.
+- First read the phase block and the tree in the worktree, then derive which files must change and how deep the cut is, and compare that with its `Files:` and `Risk:` lines.
+- For each disagreement, call `signal` with `warn` and step `phase-<N>/check` once per disagreement, naming what the block misses or overstates with a `path:line` as evidence. When nothing disagrees, call nothing.
+- Never rewrite the plan, and never halt on a phase check: a `halt` for `phase-<N>/check` is rejected and the phase runs anyway.
+
 ## Remedies
 
 - Diagnose what is blocking a step first, from its output, its worktree and the run directory.

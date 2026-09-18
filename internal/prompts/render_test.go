@@ -268,6 +268,24 @@ func TestWatchdogCarriesTheAnsweringRule(t *testing.T) {
 	}
 }
 
+func TestWatchdogCarriesThePhaseCheck(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"## Checking a phase",
+		"check phase <N> worktree <dir> base <base>",
+		"read the phase block and the tree in the worktree",
+		"which files must change and how deep the cut is",
+		"compare that with its `Files:` and `Risk:` lines",
+		"call `signal` with `warn` and step `phase-<N>/check` once per disagreement",
+		"Never rewrite the plan, and never halt on a phase check",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestAskUserOnlyWhenAskURLSet(t *testing.T) {
 	r := New(t.TempDir())
 	for _, name := range stepTemplates {

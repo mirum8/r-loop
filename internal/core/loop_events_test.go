@@ -22,8 +22,9 @@ type fakeWatcher struct {
 	routes   bool
 }
 
-func (w *fakeWatcher) BeforePhase(ctx context.Context, ph Phase) {
+func (w *fakeWatcher) BeforePhase(ctx context.Context, ph Phase, base string) CheckOutcome {
 	w.log.record("Watcher.BeforePhase %d", ph.Number)
+	return CheckOutcome{}
 }
 
 func (w *fakeWatcher) StepStarted(ref StepRef, s *Session) {

@@ -349,6 +349,7 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 		return exit(4, "watchdog did not start: %v", err)
 	}
 	w.Watch.Dog = w.Dog
+	w.Watch.PhaseCheck = &core.PhaseCheck{Dog: w.Dog, Repo: w.Loop.Sessions.Repo, Timeout: wd.CheckTimeout}
 	w.Router.Dog = w.Dog
 	w.Watch.Router = w.Router
 	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer})

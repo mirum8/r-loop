@@ -17,6 +17,7 @@ func Report(state RunState, plan Plan) string {
 	fmt.Fprintf(&b, "human touches: %d\n", human)
 	writeSection(&b, "Automatic decisions", decisions(state))
 	writeSection(&b, "Landed", landedLines(state))
+	writeSection(&b, "Phase checks", phaseCheckLines(state))
 	if state.Status == RunHalted {
 		b.WriteString("\n## Halt\n\n")
 		for _, l := range haltLines(state) {
@@ -98,6 +99,42 @@ func decisions(st RunState) []string {
 
 func skippedLine(ev Event) string {
 	return where(ev.Phase, "") + " skipped: depends on blocked phase " + ev.Fields["because"]
+}
+
+func phaseCheckLines(st RunState) []string {
+	var phases []int
+	result, outcome := map[int]string{}, map[int]string{}
+	for _, ev := range st.Events {
+		p := ev.Phase
+		switch ev.Kind {
+		case phaseCheckRan, phaseCheckTimeout, phaseCheckSkipped:
+			if _, seen := result[p]; !seen {
+				phases = append(phases, p)
+			}
+			result[p] = map[string]string{phaseCheckRan: ev.Fields["result"], phaseCheckTimeout: "timed out", phaseCheckSkipped: "skipped"}[ev.Kind]
+			outcome[p] = ""
+		case "landed":
+			outcome[p] = "landed"
+		case "phase-blocked":
+			outcome[p] = "failed"
+			if strings.HasPrefix(ev.Fields["reason"], "watchdog: ") {
+				outcome[p] = "halted"
+			}
+		case "aborted", "halt":
+			if p > 0 {
+				outcome[p] = "halted"
+			}
+		}
+	}
+	var out []string
+	for _, p := range phases {
+		line := fmt.Sprintf("phase %d phase check: %s", p, result[p])
+		if outcome[p] != "" {
+			line += " — " + outcome[p]
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 func landedLines(st RunState) []string {
@@ -241,7 +278,7 @@ func skipLines(st RunState) []string {
 			}
 			continue
 		}
-		if ev.Kind == "phase-skipped" || !strings.HasSuffix(ev.Kind, "-skipped") {
+		if ev.Kind == "phase-skipped" || ev.Kind == phaseCheckSkipped || !strings.HasSuffix(ev.Kind, "-skipped") {
 			continue
 		}
 		line := ev.Kind

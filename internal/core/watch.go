@@ -32,6 +32,8 @@ type Watch struct {
 	Dog    *Watchdog
 	Router *QuestionRouter
 
+	PhaseCheck *PhaseCheck
+
 	once     sync.Once
 	mu       sync.Mutex
 	signals  chan Signal
@@ -44,6 +46,7 @@ type Watch struct {
 	tickers  map[StepKey]*ticking
 	seq      int
 	halt     *Signal
+	checking int
 }
 
 type endedStep struct {
@@ -150,7 +153,21 @@ func (w *Watch) latest(phase int, kind string) (StepState, bool) {
 	return w.ended[*key].state, true
 }
 
-func (w *Watch) BeforePhase(ctx context.Context, ph Phase) {}
+func (w *Watch) BeforePhase(ctx context.Context, ph Phase, base string) CheckOutcome {
+	if w.PhaseCheck == nil {
+		return CheckOutcome{Kind: phaseCheckSkipped}
+	}
+	w.init()
+	w.mu.Lock()
+	w.checking = ph.Number
+	w.mu.Unlock()
+	defer func() {
+		w.mu.Lock()
+		w.checking = 0
+		w.mu.Unlock()
+	}()
+	return w.PhaseCheck.Run(ctx, ph, base)
+}
 
 func (w *Watch) Route(ctx context.Context, q Question) bool {
 	return w.Router != nil && w.Router.Route(ctx, q)
@@ -265,6 +282,9 @@ func (w *Watch) accept(sig Signal, check string, stop <-chan struct{}) (Signal, 
 	if w.Face != nil {
 		w.Face.Emit(Event{At: sig.At, Kind: "signal-rejected", Phase: sig.Step.Phase, Step: sig.Step.Kind, Fields: map[string]string{"source": string(sig.Source), "kind": string(sig.Kind), "reason": sig.RejectReason}})
 	}
+	if sig.RejectReason == phaseCheckHalt {
+		return sig, nil
+	}
 	fwd := Signal{Seq: sig.Seq, Kind: SignalWarn, Source: sig.Source, Step: sig.Step, Evidence: sig.Evidence, At: sig.At}
 	if live != nil {
 		fwd.Step = *live
@@ -309,6 +329,18 @@ func (w *Watch) forward(sig Signal, stop <-chan struct{}) {
 func (w *Watch) rejection(sig *Signal, runID string) string {
 	if sig.Kind != SignalWarn && sig.Kind != SignalHalt {
 		return fmt.Sprintf("kind %q is not warn or halt", sig.Kind)
+	}
+	w.mu.Lock()
+	checking := w.checking
+	w.mu.Unlock()
+	if checking != 0 {
+		switch {
+		case sig.Step.Phase != checking || sig.Step.Kind != "check":
+			return fmt.Sprintf("phase-%d/check is the only step during the phase check", checking)
+		case sig.Kind == SignalHalt:
+			return phaseCheckHalt
+		}
+		return ""
 	}
 	if st, err := w.Store.Load(runID); err == nil {
 		for _, l := range st.Landed {
