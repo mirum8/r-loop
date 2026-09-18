@@ -713,3 +713,40 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition never held")
 }
+
+func TestAWatchdogQuestionGoesStraightToTheFaceWithoutTouchingTheStep(t *testing.T) {
+	r := newEventsRig(t)
+	r.face.Answers = map[string]string{"q7": "yes"}
+	answered := make(chan string, 1)
+	r.ask.answered = func(id string) { answered <- id }
+	r.watcher.started = func(ref StepRef, s *Session) {
+		if ref.Key.Kind != "implement" {
+			return
+		}
+		r.ask.Asked <- Question{ID: "q7", Step: StepKey{Run: "run-1", Kind: "watchdog"}, Text: "run go mod download?"}
+		select {
+		case <-answered:
+		case <-time.After(5 * time.Second):
+			t.Error("the watchdog question was never answered")
+		}
+	}
+
+	code := r.run(RunOptions{Phases: []int{2}})
+
+	if code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{`q7 "yes" maintainer ""`}) {
+		t.Errorf("answers %v", got)
+	}
+	if got := r.calls("Watcher.Route "); len(got) != 0 {
+		t.Errorf("routed %v", got)
+	}
+	if got := r.stepStates("implement"); !reflect.DeepEqual(got, []string{"queued", "spawned", "running", "ok"}) {
+		t.Errorf("implement states %v", got)
+	}
+	st, _ := r.store.Load("run-1")
+	if len(st.Questions) != 1 || st.Questions[0].Answer != "yes" || st.Questions[0].AnsweredBy != "maintainer" {
+		t.Errorf("questions %+v", st.Questions)
+	}
+}

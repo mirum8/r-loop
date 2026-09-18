@@ -431,6 +431,12 @@ func (l *RunLoop) serveQuestions(ctx context.Context) {
 }
 
 func (l *RunLoop) question(ctx context.Context, q Question) {
+	if q.Step.Kind == "watchdog" {
+		l.recordQuestion(q)
+		l.emit(Event{Kind: "question", Step: q.Step.Kind, Fields: map[string]string{"id": q.ID, "text": q.Text}})
+		l.askFace(q)
+		return
+	}
 	s := l.askingSession(ctx, q.Step)
 	if s == nil {
 		return
@@ -440,25 +446,30 @@ func (l *RunLoop) question(ctx context.Context, q Question) {
 	}
 	l.recordQuestion(q)
 	l.emit(Event{Kind: "question", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"id": q.ID, "text": q.Text}})
-	if !l.watcher().Route(ctx, q) {
-		answer, err := l.Face.Ask(q)
-		if err != nil {
-			if !errors.Is(err, ErrNoInput) {
-				l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "ask " + q.ID + ": " + err.Error()}})
-			}
-			return
-		}
-		if err := l.Ask.Answer(q.ID, answer, "maintainer", ""); err != nil {
-			l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "answer " + q.ID + ": " + err.Error()}})
-			return
-		}
-		q.Answer, q.AnsweredBy, q.AnsweredAt = answer, "maintainer", time.Now()
-		l.recordQuestion(q)
-		l.emit(Event{Kind: "human", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": q.ID}})
+	if !l.watcher().Route(ctx, q) && !l.askFace(q) {
+		return
 	}
 	if l.openQuestion(s, -1) == 0 {
 		l.stepState(s, StepRunning)
 	}
+}
+
+func (l *RunLoop) askFace(q Question) bool {
+	answer, err := l.Face.Ask(q)
+	if err != nil {
+		if !errors.Is(err, ErrNoInput) {
+			l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "ask " + q.ID + ": " + err.Error()}})
+		}
+		return false
+	}
+	if err := l.Ask.Answer(q.ID, answer, "maintainer", ""); err != nil {
+		l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "answer " + q.ID + ": " + err.Error()}})
+		return false
+	}
+	q.Answer, q.AnsweredBy, q.AnsweredAt = answer, "maintainer", time.Now()
+	l.recordQuestion(q)
+	l.emit(Event{Kind: "human", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": q.ID}})
+	return true
 }
 
 func (l *RunLoop) openQuestion(s *Session, delta int) int {

@@ -1,11 +1,13 @@
 package askmcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -20,14 +22,21 @@ import (
 	"r-loop/internal/core"
 )
 
+const maxBody = 4 << 20
+
 type Server struct {
 	RunDir string
+	RunID  string
+	Store  core.Store
 	Seq    int
 
 	mu        sync.Mutex
 	ctx       context.Context
 	base      string
 	prefix    string
+	wdPath    string
+	wdURL     string
+	handlers  WatchdogHandlers
 	steps     map[string]core.StepKey
 	questions chan core.Question
 	pending   map[string]*pending
@@ -50,12 +59,12 @@ type askOutput struct {
 }
 
 func (s *Server) Serve(ctx context.Context) (string, error) {
-	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
+	token, err := s.token("token")
+	if err != nil {
 		return "", err
 	}
-	token := hex.EncodeToString(raw)
-	if err := os.WriteFile(filepath.Join(s.RunDir, "token"), []byte(token), 0o600); err != nil {
+	wdToken, err := s.token("wd-token")
+	if err != nil {
 		return "", err
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -66,21 +75,41 @@ func (s *Server) Serve(ctx context.Context) (string, error) {
 	s.ctx = ctx
 	s.prefix = "/mcp/" + token
 	s.base = "http://" + ln.Addr().String() + s.prefix
+	s.wdPath = "/mcp/watchdog/" + wdToken
+	s.wdURL = "http://" + ln.Addr().String() + s.wdPath
 	s.questions = make(chan core.Question)
 	s.pending = map[string]*pending{}
 	s.steps = map[string]core.StepKey{}
 	s.mu.Unlock()
 
-	mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+	watchdogServer := s.watchdogServer()
+	watchdogHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return watchdogServer }, nil)
+	stepHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		key, _ := s.stepKey(r.URL.Path)
 		return s.mcpServer(key)
 	}, nil)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == s.wdPath {
+			watchdogHandler.ServeHTTP(w, r)
+			return
+		}
 		if _, ok := s.stepKey(r.URL.Path); !ok {
 			http.NotFound(w, r)
 			return
 		}
-		mcpHandler.ServeHTTP(w, r)
+		if r.Method == http.MethodPost {
+			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+			if err != nil {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			if callsWatchdogTool(body) {
+				http.NotFound(w, r)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+		}
+		stepHandler.ServeHTTP(w, r)
 	})}
 	go srv.Serve(ln)
 	go func() {
@@ -92,6 +121,24 @@ func (s *Server) Serve(ctx context.Context) (string, error) {
 		}
 	}()
 	return s.base, nil
+}
+
+func (s *Server) token(name string) (string, error) {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(raw)
+	if err := os.WriteFile(filepath.Join(s.RunDir, name), []byte(token), 0o600); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func (s *Server) WatchdogURL() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.wdURL
 }
 
 func (s *Server) StepURL(key core.StepKey) string {
@@ -137,6 +184,11 @@ func (s *Server) stepKey(path string) (core.StepKey, bool) {
 
 func (s *Server) mcpServer(key core.StepKey) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "r-loop", Version: "1"}, nil)
+	s.addAskUser(srv, key)
+	return srv
+}
+
+func (s *Server) addAskUser(srv *mcp.Server, key core.StepKey) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "ask_user",
 		Description: "Ask the person running r-loop a question you cannot answer from the repository. Blocks until answered.",
@@ -144,7 +196,6 @@ func (s *Server) mcpServer(key core.StepKey) *mcp.Server {
 		answer, err := s.ask(ctx, key, in)
 		return nil, askOutput{Answer: answer}, err
 	})
-	return srv
 }
 
 func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput) (string, error) {
