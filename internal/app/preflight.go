@@ -162,7 +162,7 @@ func resolveFirst(src core.PlanSource, repo interface{ Commit(string) (string, e
 
 type role struct {
 	field, provider string
-	review          bool
+	review, ask     bool
 }
 
 func (w *Wiring) validateProviders() error {
@@ -184,7 +184,7 @@ func (w *Wiring) validateProviders() error {
 		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, review: true})
 	}
 	if !w.Opts.NoWatchdog {
-		roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider})
+		roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider, ask: true})
 	}
 	for _, r := range roles {
 		p, err := w.Registry.Resolve(r.provider)
@@ -193,6 +193,9 @@ func (w *Wiring) validateProviders() error {
 		}
 		if r.review && p.Review == "" {
 			return exit(2, "%s: provider %s has no review command", r.field, r.provider)
+		}
+		if r.ask && p.Ask != "mcp" {
+			return exit(2, "%s: provider %s has no MCP ask channel", r.field, r.provider)
 		}
 	}
 	return nil

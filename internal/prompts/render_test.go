@@ -27,6 +27,7 @@ func fullVars() map[string]any {
 		"Worktree":      "/wt/phase-7",
 		"Sentinel":      "/runs/r1/phase-7/plan-a1.sentinel",
 		"RunDir":        "/runs/r1",
+		"Allow":         []string{},
 		"AskURL":        "",
 		"PhaseWarnings": "",
 		"ReviewedKind":  "implement",
@@ -208,6 +209,26 @@ func TestWatchdogHasNoSentinelParagraph(t *testing.T) {
 	for _, want := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "never approve"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q", want)
+		}
+	}
+}
+
+func TestWatchdogCarriesTheStepWatchingRuleAndTheAllowList(t *testing.T) {
+	vars := fullVars()
+	vars["Allow"] = []string{"deps", "ports"}
+
+	text := render(t, New(t.TempDir()), "watchdog", vars)
+
+	for _, want := range []string{
+		"step started",
+		"herdr agent read <name> --source recent-unwrapped --lines 200",
+		"git -C <worktree> diff <base>",
+		"`warn` for anything short of that",
+		"step ended",
+		"Allow-listed, authorised without asking: `deps`, `ports`.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q:\n%s", want, text)
 		}
 	}
 }

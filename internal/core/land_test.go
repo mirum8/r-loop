@@ -592,6 +592,7 @@ func (h *reportHost) State(agent string) (core.AgentState, error)       { return
 func (h *reportHost) Read(agent string, lines int) (string, error)      { return "", nil }
 func (h *reportHost) Interrupt(agent string) error                      { return nil }
 func (h *reportHost) Close(workspaceID string) error                    { return nil }
+func (h *reportHost) ClosePane(pane string) error                       { return nil }
 func (h *reportHost) Split(pane, direction, cwd string) (string, error) { return "", nil }
 
 type reportPrompts struct {

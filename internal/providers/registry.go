@@ -142,7 +142,7 @@ func WriteMCPConfig(path, url string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 func ToCore(p Provider, model, effort, askURL, mcpConfigPath string) core.ProviderArgs {

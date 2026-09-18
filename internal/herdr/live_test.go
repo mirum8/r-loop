@@ -58,6 +58,17 @@ func TestLiveHerdr(t *testing.T) {
 		t.Fatalf("Split: %q, %v", pane, err)
 	}
 
+	extra, err := c.Split(ws.RootPane, "down", dir)
+	if err != nil {
+		t.Fatalf("Split: %v", err)
+	}
+	if err := c.ClosePane(extra); err != nil {
+		t.Fatalf("ClosePane: %v", err)
+	}
+	if err := c.ClosePane(extra); err == nil {
+		t.Fatal("ClosePane of a closed pane succeeded")
+	}
+
 	first := "rl-live-a-" + suffix
 	startTolerant(t, c, pane, first)
 	if err := c.Interrupt(first); err != nil {

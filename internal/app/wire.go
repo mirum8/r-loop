@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -75,6 +76,8 @@ type Wiring struct {
 	Gate     *core.LandGate
 	Loop     *core.RunLoop
 	Ask      *askmcp.Server
+	Watch    *core.Watch
+	Dog      *core.Watchdog
 }
 
 type overrides struct {
@@ -186,10 +189,15 @@ func (w *Wiring) Execute(opts core.RunOptions) int {
 	code := 2
 	if _, err := w.Ask.Serve(ctx); err != nil {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: ask server: %v\n", err)
+	} else if err := w.startWatchdog(ctx); err != nil {
+		code = fail(w.Env, err)
 	} else {
 		go w.pollAnswers(ctx)
 		w.startTUI()
 		code = w.Loop.Run(ctx, opts)
+	}
+	if err := w.Dog.Stop(); err != nil {
+		fmt.Fprintf(w.Env.Stderr, "r-loop: close watchdog: %v\n", err)
 	}
 	cancel()
 	w.Face.Close()
@@ -302,7 +310,43 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Ask:         w.Ask,
 		MaxRestarts: cfg.Watchdog.MaxRestarts,
 	}
+	w.Watch = &core.Watch{Store: w.Store, Face: w.Face, Checks: core.ShippedChecks(cfg.Watchdog.OvertimeFactor, cfg.Watchdog.DiffFactor), Repo: repo, Plan: pl}
+	w.Loop.Watcher = w.Watch
+	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: cfg.Watchdog.Allow}
+	if !opts.NoWatchdog {
+		w.Loop.RemedyWindow = cfg.Watchdog.RemedyWindow
+	}
 	return w, nil
+}
+
+func (w *Wiring) startWatchdog(ctx context.Context) error {
+	if w.Opts.NoWatchdog {
+		at := time.Now()
+		ev := core.Event{At: at, Kind: "watchdog-skipped"}
+		if err := w.Store.Append(w.Loop.RunID, core.Record{Kind: core.RecordEvent, At: at, Event: &ev}); err != nil {
+			return exit(2, "%v", err)
+		}
+		return nil
+	}
+	wd := w.Config.Watchdog
+	url := w.Ask.WatchdogURL()
+	mcpPath := filepath.Join(w.Dog.RunDir, "watchdog.mcp.json")
+	args, err := w.resolve(wd.Provider, wd.Model, wd.Effort, url, mcpPath)
+	if err != nil {
+		return exit(2, "watchdog.provider: %v", err)
+	}
+	if slices.ContainsFunc(args.Args, func(a string) bool { return strings.Contains(a, mcpPath) }) {
+		if err := providers.WriteMCPConfig(mcpPath, url); err != nil {
+			return exit(2, "%v", err)
+		}
+	}
+	w.Dog.Provider = args
+	if err := w.Dog.Start(ctx); err != nil {
+		return exit(4, "watchdog did not start: %v", err)
+	}
+	w.Watch.Dog = w.Dog
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle})
+	return nil
 }
 
 func (w *Wiring) startTUI() {
@@ -339,6 +383,7 @@ func (w *Wiring) bind(runID string) {
 	w.Plain.Report = filepath.Join(dir, "report.md")
 	w.Notify.Log = filepath.Join(dir, "notify.log")
 	w.Ask.RunDir, w.Ask.RunID = dir, runID
+	w.Dog.RunID, w.Dog.RunDir = runID, dir
 	if run, err := w.Store.Load(runID); err == nil {
 		w.Ask.Seq = len(run.Questions)
 	}

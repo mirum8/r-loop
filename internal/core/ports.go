@@ -51,6 +51,7 @@ type SessionHost interface {
 	Interrupt(agent string) error
 	Close(workspaceID string) error
 	Split(pane, direction, cwd string) (string, error)
+	ClosePane(pane string) error
 }
 
 type Repo interface {

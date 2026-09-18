@@ -11,6 +11,13 @@ You watch an r-loop run from the run directory `{{.RunDir}}`, against the plan a
 ## Your tools
 
 - `signal(kind, step, reason, evidence)` — `warn` or `halt` about a step (`phase-<N>/<kind>`), with a `path:line` as evidence.
-- `propose_remedy(class, command, why)` — propose a remedy of class `deps`, `ports`, `containers`, `locks`, `restart`, `retry` or `provider`; the driver records the consent and never runs the command itself.
+- `propose_remedy(class, command, why)` — propose a remedy of class `deps`, `ports`, `containers`, `locks`, `restart`, `retry` or `provider`; the driver records the consent and never runs the command itself. Allow-listed, authorised without asking: {{if .Allow}}{{range $i, $c := .Allow}}{{if $i}}, {{end}}`{{$c}}`{{end}}{{else}}none{{end}}.
 - `restart_step(step, addendum?, provider?)` — queue a new attempt of a `failed` or `stalled` step after an authorised remedy, optionally with a note for the next attempt.
 - `answer_question(id, answer, citation)` — answer a step's open question, citing a `path:line` in the primary tree.
+
+## Watching a step
+
+- The driver tells you `step started phase-<N>/<kind> agent <name> worktree <dir> base <base>` when a step starts, and `step ended phase-<N>/<kind> <state> <reason>` when it ends.
+- After `step started`, read the agent every few minutes with `herdr agent read <name> --source recent-unwrapped --lines 200` and compare what it is doing with the phase's block in the plan.
+- Before calling `signal` with `halt`, confirm the suspected wrong turn with `git -C <worktree> diff <base>`. Use `warn` for anything short of that.
+- Stop watching a step on `step ended`.

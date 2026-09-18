@@ -241,6 +241,15 @@ func TestCloseRunsWorkspaceCloseWithoutGroup(t *testing.T) {
 	assertArgv(t, argv(), []string{"workspace", "close", "w3A"})
 }
 
+func TestClosePaneRunsPaneClose(t *testing.T) {
+	c, argv := fake(t, `{"id":"cli:pane:close","result":{"type":"ok"}}`)
+
+	if err := c.ClosePane("w3A:p2"); err != nil {
+		t.Fatalf("ClosePane: %v", err)
+	}
+	assertArgv(t, argv(), []string{"pane", "close", "w3A:p2"})
+}
+
 func TestExitTwoIsUsageError(t *testing.T) {
 	c, _ := fakeExit(t, "", "error: unexpected argument '--bogus'", 2)
 

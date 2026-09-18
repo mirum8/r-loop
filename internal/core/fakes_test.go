@@ -106,6 +106,11 @@ func (f *fakeSessionHost) Close(workspaceID string) error {
 	return f.Err
 }
 
+func (f *fakeSessionHost) ClosePane(pane string) error {
+	f.record("SessionHost.ClosePane %s", pane)
+	return f.Err
+}
+
 func (f *fakeSessionHost) Split(pane, direction, cwd string) (string, error) {
 	f.record("SessionHost.Split %s %s %s", pane, direction, cwd)
 	f.next++

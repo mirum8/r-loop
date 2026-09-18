@@ -116,6 +116,7 @@ func (h *simHost) State(agent string) (core.AgentState, error)       { return co
 func (h *simHost) Read(agent string, lines int) (string, error)      { return "", nil }
 func (h *simHost) Interrupt(agent string) error                      { return nil }
 func (h *simHost) Close(workspaceID string) error                    { return nil }
+func (h *simHost) ClosePane(pane string) error                       { return nil }
 func (h *simHost) Split(pane, direction, cwd string) (string, error) { return pane + "-split", nil }
 
 func (h *simHost) promptedAgents() []string {
@@ -169,6 +170,8 @@ func newResumeFixture(t *testing.T, config string) *fixture {
 func (f *fixture) sim(w *Wiring, sim *simHost) *landRecorder {
 	w.Loop.Sessions.Host = sim
 	w.Loop.Sessions.Poll = 5 * time.Millisecond
+	w.Dog.Host = &dogHost{}
+	w.Loop.RemedyWindow = 0
 	lander := &landRecorder{st: w.Store}
 	w.Loop.Lander = lander
 	return lander

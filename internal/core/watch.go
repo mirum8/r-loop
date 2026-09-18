@@ -29,6 +29,7 @@ type Watch struct {
 	Poll   time.Duration
 	Repo   Repo
 	Plan   Plan
+	Dog    *Watchdog
 
 	once    sync.Once
 	mu      sync.Mutex
@@ -102,6 +103,17 @@ func (w *Watch) StepStarted(ref StepRef, s *Session) {
 	}
 	w.mu.Unlock()
 	go w.tick(ref, s, started, t)
+	if w.Dog != nil {
+		dir := ref.Worktree
+		agent := ""
+		if s != nil {
+			agent = s.Agent
+			if s.Dir != "" {
+				dir = s.Dir
+			}
+		}
+		w.Dog.Notify(fmt.Sprintf("step started phase-%d/%s agent %s worktree %s base %s", key.Phase, key.Kind, agent, dir, ref.Base), false, 0)
+	}
 }
 
 func (w *Watch) StepEnded(ref StepRef, out Outcome) {
@@ -117,6 +129,9 @@ func (w *Watch) StepEnded(ref StepRef, out Outcome) {
 	if t != nil {
 		close(t.stop)
 		<-t.done
+	}
+	if w.Dog != nil {
+		w.Dog.Notify(fmt.Sprintf("step ended phase-%d/%s %s %s", ref.Key.Phase, ref.Key.Kind, out.State, out.Reason), false, 0)
 	}
 }
 
@@ -140,6 +155,14 @@ func (w *Watch) tick(ref StepRef, s *Session, started time.Time, t *ticking) {
 			}
 		}
 	}
+}
+
+func (w *Watch) Handle(sig Signal) (bool, string) {
+	got, err := w.Accept(sig)
+	if err != nil {
+		return false, err.Error()
+	}
+	return !got.Rejected, got.RejectReason
 }
 
 func (w *Watch) Accept(sig Signal) (Signal, error) {

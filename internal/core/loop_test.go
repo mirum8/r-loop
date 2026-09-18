@@ -39,6 +39,7 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 	behaviour := h.behaviour[agent]
 	h.mu.Unlock()
 	switch behaviour {
+	case "hold":
 	case "fail":
 		writeFile(sentinel, `{"outcome":"failed","reason":"tests red","at":"2026-09-18T10:05:00Z"}`)
 	case "stall":
