@@ -59,6 +59,7 @@ type Outcome struct {
 	Reason  string
 	Session *Session
 	Stalled bool
+	Halted  bool
 }
 
 func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, error) {

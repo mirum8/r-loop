@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +25,31 @@ type StepRunner interface {
 	Run(ctx context.Context, ref StepRef, obs Observer) Outcome
 }
 
+type Watcher interface {
+	BeforePhase(ctx context.Context, ph Phase)
+	StepStarted(ref StepRef, s *Session)
+	StepEnded(ref StepRef, out Outcome)
+	Signals() <-chan Signal
+	Restarts() <-chan Restart
+	Route(ctx context.Context, q Question) (answered bool)
+}
+
+type Restart struct {
+	Step               StepKey
+	Addendum, Provider string
+}
+
+type nopWatcher struct{}
+
+func (nopWatcher) BeforePhase(ctx context.Context, ph Phase)             {}
+func (nopWatcher) StepStarted(ref StepRef, s *Session)                   {}
+func (nopWatcher) StepEnded(ref StepRef, out Outcome)                    {}
+func (nopWatcher) Signals() <-chan Signal                                { return nil }
+func (nopWatcher) Restarts() <-chan Restart                              { return nil }
+func (nopWatcher) Route(ctx context.Context, q Question) (answered bool) { return false }
+
+const invariantQuestion = "invariant: a question never kills a step"
+
 type RunOptions struct {
 	From   int
 	Phases []int
@@ -43,11 +69,25 @@ type RunLoop struct {
 	Runners  map[string]StepRunner
 	RunID    string
 
-	mu      sync.Mutex
-	runDir  string
-	live    *Session
-	pending map[int]bool
-	blocked []int
+	Watcher      Watcher
+	Ask          AskChannel
+	RemedyWindow time.Duration
+	MaxRestarts  int
+
+	mu       sync.Mutex
+	runDir   string
+	live     *Session
+	pending  map[int]bool
+	blocked  []int
+	restarts map[string]int
+	open     map[*Session]int
+}
+
+func (l *RunLoop) watcher() Watcher {
+	if l.Watcher == nil {
+		return nopWatcher{}
+	}
+	return l.Watcher
 }
 
 type nopLander struct{}
@@ -74,6 +114,17 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 		l.emit(Event{Kind: "human", Fields: map[string]string{"what": "resume"}})
 	}
 	l.pending = map[int]bool{}
+	l.restarts = map[string]int{}
+	for _, ev := range prior.Events {
+		if ev.Kind == "restart" {
+			l.restarts[ev.Fields["step"]]++
+		}
+	}
+	if l.Ask != nil {
+		qctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go l.serveQuestions(qctx)
+	}
 	for _, ph := range list {
 		if !landed(prior, ph.Number) {
 			l.pending[ph.Number] = true
@@ -161,14 +212,14 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	n := ph.Number
 	l.emit(Event{Kind: "phase-start", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "title": ph.Title}})
 	last := &Session{Dir: filepath.Join(l.Sessions.Repo.Root(), fmt.Sprintf(".r-loop/wt/phase-%d", n))}
+	l.watcher().BeforePhase(ctx, ph)
 	for _, kind := range l.Kinds {
 		attempt, state := latestAttempt(prior, l.RunID, n, kind.Name)
 		if state == StepOK {
 			l.advance(n, kind.Name)
 			continue
 		}
-		ref := l.ref(ph, kind, attempt+1, base)
-		out, aborted := l.runStep(ctx, ref)
+		ref, out, aborted := l.runAttempts(ctx, l.ref(ph, kind, attempt+1, base))
 		if out.Session != nil {
 			last = out.Session
 		}
@@ -198,6 +249,59 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	l.emit(Event{Kind: "phase-state", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "state": string(PhaseLanded)}})
 	l.emit(Event{Kind: "landed", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "merge": landing.MergeSHA, "gateSkipped": strconv.FormatBool(landing.GateSkipped)}})
 	return "", Outcome{State: StepOK}, false
+}
+
+func (l *RunLoop) runAttempts(ctx context.Context, ref StepRef) (StepRef, Outcome, bool) {
+	kind := ref.Kind
+	for {
+		out, aborted := l.runStep(ctx, ref)
+		if aborted || out.State == StepOK {
+			return ref, out, aborted
+		}
+		next, ok := l.awaitRestart(ctx, ref, kind, out)
+		if !ok {
+			return ref, out, false
+		}
+		ref = next
+	}
+}
+
+func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, out Outcome) (StepRef, bool) {
+	if l.RemedyWindow <= 0 || out.Halted {
+		return StepRef{}, false
+	}
+	key := ref.Key
+	step := fmt.Sprintf("phase-%d/%s", key.Phase, key.Kind)
+	timer := time.NewTimer(l.RemedyWindow)
+	defer timer.Stop()
+	for {
+		var rs Restart
+		select {
+		case <-ctx.Done():
+			return StepRef{}, false
+		case <-timer.C:
+			return StepRef{}, false
+		case rs = <-l.watcher().Restarts():
+		}
+		if rs.Step != key {
+			continue
+		}
+		if l.restarts[step] >= l.MaxRestarts {
+			l.emit(Event{Kind: "restart-refused", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "reason": fmt.Sprintf("restart limit %d reached", l.MaxRestarts)}})
+			return StepRef{}, false
+		}
+		l.restarts[step]++
+		if rs.Provider != "" {
+			kind.Row.Provider, kind.Row.Model, kind.Row.Effort = rs.Provider, "", ""
+			if fb := kind.Row.Fallback; fb.Provider == rs.Provider {
+				kind.Row.Model, kind.Row.Effort = fb.Model, fb.Effort
+			}
+		}
+		next := l.ref(ref.Phase, kind, key.Attempt+1, ref.Base)
+		next.Vars["Addendum"] = rs.Addendum
+		l.emit(Event{Kind: "restart", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "attempt": strconv.Itoa(next.Key.Attempt), "addendum": rs.Addendum, "provider": rs.Provider}})
+		return next, true
+	}
 }
 
 func (l *RunLoop) advance(phase int, kind string) {
@@ -252,7 +356,28 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 		select {
 		case out := <-done:
 			l.emitStep(ref, out.State, out.Reason, out.Session)
-			return out, false
+			return l.ended(ref, out)
+		case sig := <-l.watcher().Signals():
+			if sig.Kind != SignalHalt {
+				l.warn(sig)
+				continue
+			}
+			if !sameStep(sig.Step, key) {
+				sig.Reason = fmt.Sprintf("halt for phase-%d/%s after it ended: %s", sig.Step.Phase, sig.Step.Kind, sig.Reason)
+				l.warn(sig)
+				continue
+			}
+			if s := l.liveSession(); s != nil {
+				l.Sessions.Stop(s)
+			}
+			cancel()
+			out := <-done
+			out.State, out.Reason, out.Stalled, out.Halted = StepFailed, "watchdog: "+sig.Reason, false, true
+			if err := l.Store.Append(l.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepFailed, Reason: out.Reason}); err != nil {
+				out.Reason += "; record: " + err.Error()
+			}
+			l.emitStep(ref, out.State, out.Reason, out.Session)
+			return l.ended(ref, out)
 		case <-ticker.C:
 			if !l.Store.Aborted(l.RunID) {
 				continue
@@ -260,9 +385,124 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 			cancel()
 			out := <-done
 			l.emitStep(ref, out.State, out.Reason, out.Session)
+			l.watcher().StepEnded(ref, out)
 			l.abort(ref.Key.Phase, ref.Key.Kind)
 			return out, true
 		}
+	}
+}
+
+func (l *RunLoop) ended(ref StepRef, out Outcome) (Outcome, bool) {
+	l.watcher().StepEnded(ref, out)
+	if out.State != StepFailed || !strings.HasPrefix(out.Reason, "backstop") || out.Session == nil || !out.Session.OpenQuestion.Load() {
+		return out, false
+	}
+	l.setRun(RunHalted, invariantQuestion)
+	l.emit(Event{Kind: "halt", Phase: ref.Key.Phase, Step: ref.Key.Kind, Fields: map[string]string{"reason": invariantQuestion}})
+	l.fire(l.Hooks.OnHalt, "halted", ref.Key.Phase, ref.Key.Kind, invariantQuestion)
+	return out, true
+}
+
+func sameStep(a, b StepKey) bool {
+	return a.Phase == b.Phase && a.Kind == b.Kind && (a.Attempt == 0 || a.Attempt == b.Attempt)
+}
+
+func (l *RunLoop) warn(sig Signal) {
+	l.emit(Event{Kind: "warning", Phase: sig.Step.Phase, Step: sig.Step.Kind, Fields: map[string]string{"reason": sig.Reason, "source": string(sig.Source)}})
+	l.fire(l.Hooks.OnWarn, "warning", sig.Step.Phase, sig.Step.Kind, sig.Reason)
+}
+
+func (l *RunLoop) serveQuestions(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case q, ok := <-l.Ask.Questions():
+			if !ok {
+				return
+			}
+			go l.question(ctx, q)
+		}
+	}
+}
+
+func (l *RunLoop) question(ctx context.Context, q Question) {
+	s := l.askingSession(ctx, q.Step)
+	if s == nil {
+		return
+	}
+	if l.openQuestion(s, 1) == 1 {
+		l.stepState(s, StepWaitingInput)
+	}
+	l.recordQuestion(q)
+	l.emit(Event{Kind: "question", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"id": q.ID, "text": q.Text}})
+	if !l.watcher().Route(ctx, q) {
+		answer, err := l.Face.Ask(q)
+		if err != nil {
+			if !errors.Is(err, ErrNoInput) {
+				l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "ask " + q.ID + ": " + err.Error()}})
+			}
+			return
+		}
+		if err := l.Ask.Answer(q.ID, answer, "maintainer", ""); err != nil {
+			l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "answer " + q.ID + ": " + err.Error()}})
+			return
+		}
+		q.Answer, q.AnsweredBy, q.AnsweredAt = answer, "maintainer", time.Now()
+		l.recordQuestion(q)
+		l.emit(Event{Kind: "human", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": q.ID}})
+	}
+	if l.openQuestion(s, -1) == 0 {
+		l.stepState(s, StepRunning)
+	}
+}
+
+func (l *RunLoop) openQuestion(s *Session, delta int) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.open == nil {
+		l.open = map[*Session]int{}
+	}
+	l.open[s] += delta
+	n := l.open[s]
+	s.OpenQuestion.Store(n > 0)
+	if n == 0 {
+		delete(l.open, s)
+	}
+	return n
+}
+
+func (l *RunLoop) askingSession(ctx context.Context, key StepKey) *Session {
+	poll := l.Sessions.Poll
+	if poll <= 0 {
+		poll = defaultPoll
+	}
+	for {
+		if s := l.liveSession(); s != nil {
+			k := s.Ref.Key
+			if k.Run == key.Run && k.Phase == key.Phase && k.Attempt == key.Attempt && (key.Kind == k.Kind || strings.HasPrefix(key.Kind, k.Kind+"-rv-")) {
+				return s
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(poll):
+		}
+	}
+}
+
+func (l *RunLoop) stepState(s *Session, state StepState) {
+	key := s.Ref.Key
+	if err := l.Store.Append(l.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: state}); err != nil {
+		l.emit(Event{Kind: "warning", Fields: map[string]string{"reason": "store: " + err.Error()}})
+	}
+	l.emitStep(s.Ref, state, "", s)
+}
+
+func (l *RunLoop) recordQuestion(q Question) {
+	if err := l.Store.Append(l.RunID, Record{Kind: RecordQuestion, At: time.Now(), Question: &q}); err != nil {
+		l.emit(Event{Kind: "warning", Fields: map[string]string{"reason": "store: " + err.Error()}})
 	}
 }
 
@@ -285,6 +525,9 @@ func (l *RunLoop) block(ph Phase, step string, out Outcome) int {
 		delete(l.pending, d)
 		l.blocked = append(l.blocked, d)
 		l.emit(Event{Kind: "phase-skipped", Phase: d, Fields: map[string]string{"phase": strconv.Itoa(d), "because": strconv.Itoa(n)}})
+	}
+	if out.Halted {
+		return 5
 	}
 	if out.Stalled {
 		return 3
@@ -346,6 +589,7 @@ func (o *loopObserver) Started(s *Session) {
 	o.l.setLive(s)
 	o.l.emitStep(o.ref, StepSpawned, "", s)
 	o.l.emitStep(o.ref, StepRunning, "", s)
+	o.l.watcher().StepStarted(o.ref, s)
 }
 
 func (o *loopObserver) Stalled(s *Session) {
