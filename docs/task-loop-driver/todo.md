@@ -381,12 +381,12 @@ Contracts: `tech-design.md#milestone-7-the-watchdog`
 **Depends on:** Phase 13
 **Files:** `internal/core/watch.go` (new) · `internal/core/watch_test.go` (new)
 **Risk:** security
-- [ ] `core.Watch{Store Store; Face Face; Checks []Check; Now func() time.Time; Poll time.Duration}` implements the loop's `Watcher`; `Signals()` is the channel the loop reads; `Accept(sig Signal) (Signal, error)` is the single entry point for every signal, from a driver check or from the watchdog
-- [ ] `Accept` admits a signal only when `Kind` is `warn` or `halt` and `Step` names the live step or one that ended within the last `Poll`; any other kind, and any signal naming a step that is `ok`, landed or unknown, is appended with `Rejected: true` and `RejectReason` — an attempt is never dropped silently
-- [ ] a rejected signal from the watchdog source is forwarded as a `halt` whose reason is `watchdog signal rejected: <reason>`, so the loop halts with exit 5 and the rejection is in the report; a rejected signal from a driver check becomes a `warn` naming the check
-- [ ] an accepted `warn` is appended and forwarded; an accepted `halt` is appended and forwarded, and the loop stops the session at once — there is no confirmation step
-- [ ] `type Check interface{ Name() string; Run(ctx CheckContext) []Signal }` with `CheckContext{Step StepRef; Session *Session; Started, Now time.Time; Repo Repo; Store Store; Plan Plan}`; `StepStarted` begins a ticker that runs every registered check each `Poll` until `StepEnded`, passing each signal through `Accept`; a test adds a fake check without editing any other file
-- [ ] `watch_test.go` proves warn and halt forwarded, `kind: ok` and `kind: approve` rejected and recorded, a watchdog rejection turning into a halt, a signal for a landed phase rejected, and the fake check's warning arriving on a tick
+- [x] `core.Watch{Store Store; Face Face; Checks []Check; Now func() time.Time; Poll time.Duration}` implements the loop's `Watcher`; `Signals()` is the channel the loop reads; `Accept(sig Signal) (Signal, error)` is the single entry point for every signal, from a driver check or from the watchdog
+- [x] `Accept` admits a signal only when `Kind` is `warn` or `halt` and `Step` names the live step or one that ended within the last `Poll`; any other kind, and any signal naming a step that is `ok`, landed or unknown, is appended with `Rejected: true` and `RejectReason` — an attempt is never dropped silently
+- [x] a rejected signal from the watchdog source is forwarded as a `halt` whose reason is `watchdog signal rejected: <reason>`, so the loop halts with exit 5 and the rejection is in the report; a rejected signal from a driver check becomes a `warn` naming the check
+- [x] an accepted `warn` is appended and forwarded; an accepted `halt` is appended and forwarded, and the loop stops the session at once — there is no confirmation step
+- [x] `type Check interface{ Name() string; Run(ctx CheckContext) []Signal }` with `CheckContext{Step StepRef; Session *Session; Started, Now time.Time; Repo Repo; Store Store; Plan Plan}`; `StepStarted` begins a ticker that runs every registered check each `Poll` until `StepEnded`, passing each signal through `Accept`; a test adds a fake check without editing any other file
+- [x] `watch_test.go` proves warn and halt forwarded, `kind: ok` and `kind: approve` rejected and recorded, a watchdog rejection turning into a halt, a signal for a landed phase rejected, and the fake check's warning arriving on a tick
 **Done when:** `go test ./internal/core/...` is green.
 
 ### Phase 25 — Deterministic checks
