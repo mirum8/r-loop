@@ -31,15 +31,18 @@ type Watch struct {
 	Plan   Plan
 	Dog    *Watchdog
 
-	once    sync.Once
-	mu      sync.Mutex
-	signals chan Signal
-	runID   string
-	live    *StepKey
-	ended   map[StepKey]endedStep
-	tickers map[StepKey]*ticking
-	seq     int
-	halt    *Signal
+	once     sync.Once
+	mu       sync.Mutex
+	signals  chan Signal
+	restarts chan Restart
+	held     *StepKey
+	closed   chan struct{}
+	runID    string
+	live     *StepKey
+	ended    map[StepKey]endedStep
+	tickers  map[StepKey]*ticking
+	seq      int
+	halt     *Signal
 }
 
 type endedStep struct {
@@ -54,6 +57,7 @@ type ticking struct {
 func (w *Watch) init() {
 	w.once.Do(func() {
 		w.signals = make(chan Signal, 64)
+		w.restarts = make(chan Restart)
 		w.ended = map[StepKey]endedStep{}
 		w.tickers = map[StepKey]*ticking{}
 	})
@@ -78,7 +82,72 @@ func (w *Watch) Signals() <-chan Signal {
 	return w.signals
 }
 
-func (w *Watch) Restarts() <-chan Restart { return nil }
+func (w *Watch) Restarts() <-chan Restart {
+	w.init()
+	return w.restarts
+}
+
+func (w *Watch) Hold(key StepKey) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.held != nil && *w.held == key {
+		return
+	}
+	if w.closed != nil {
+		close(w.closed)
+	}
+	w.held, w.closed = &key, make(chan struct{})
+}
+
+func (w *Watch) Release(key StepKey) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.held != nil && *w.held == key {
+		close(w.closed)
+		w.held, w.closed = nil, nil
+	}
+}
+
+func (w *Watch) holding() (StepKey, bool) {
+	key, _, ok := w.hold()
+	return key, ok
+}
+
+func (w *Watch) hold() (StepKey, <-chan struct{}, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.held == nil {
+		return StepKey{}, nil, false
+	}
+	return *w.held, w.closed, true
+}
+
+func (w *Watch) target() (StepKey, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	switch {
+	case w.held != nil:
+		return *w.held, true
+	case w.live != nil:
+		return *w.live, true
+	}
+	return StepKey{}, false
+}
+
+func (w *Watch) latest(phase int, kind string) (StepState, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var key *StepKey
+	for k := range w.ended {
+		if k.Phase == phase && k.Kind == kind && (key == nil || k.Attempt > key.Attempt) {
+			key = &k
+		}
+	}
+	if key == nil {
+		return "", false
+	}
+	return w.ended[*key].state, true
+}
 
 func (w *Watch) BeforePhase(ctx context.Context, ph Phase) {}
 

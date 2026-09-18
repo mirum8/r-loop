@@ -233,6 +233,24 @@ func TestWatchdogCarriesTheStepWatchingRuleAndTheAllowList(t *testing.T) {
 	}
 }
 
+func TestWatchdogCarriesTheRemedyRule(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"## Remedies",
+		"Diagnose",
+		"propose the exact command with `propose_remedy`",
+		"run it only when the decision is `authorised`",
+		"then call `restart_step`",
+		"Never edit code, tests or the plan",
+		"never merge, push, or delete anything that holds work",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestAskUserOnlyWhenAskURLSet(t *testing.T) {
 	r := New(t.TempDir())
 	for _, name := range stepTemplates {

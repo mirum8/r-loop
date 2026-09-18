@@ -52,6 +52,10 @@ func where(phase int, step string) string {
 
 func decisions(st RunState) []string {
 	var out []string
+	commands := map[string]string{}
+	for _, r := range st.Remedies {
+		commands[r.ID] = r.Command
+	}
 	for _, ev := range st.Events {
 		f := ev.Fields
 		switch ev.Kind {
@@ -65,8 +69,11 @@ func decisions(st RunState) []string {
 			if f["addendum"] != "" {
 				line += " — " + f["addendum"]
 			}
-			if f["remedy"] != "" {
-				line += " (remedy: " + f["remedy"] + ")"
+			if remedy := f["remedy"]; remedy != "" {
+				if cmd, ok := commands[remedy]; ok {
+					remedy = cmd
+				}
+				line += " (remedy: " + remedy + ")"
 			}
 			out = append(out, line)
 		case "gate-fix":
@@ -186,12 +193,22 @@ func signalLines(st RunState) []string {
 
 func remedyLines(st RunState) []string {
 	var out []string
+	restarted := map[string]bool{}
+	for _, ev := range st.Events {
+		if ev.Kind == "restart" {
+			restarted[ev.Fields["remedy"]] = true
+		}
+	}
 	for _, r := range st.Remedies {
 		consent := r.Consent
 		if consent == "" {
 			consent = "pending"
 		}
-		out = append(out, fmt.Sprintf("%s: %s `%s` — %s", where(r.Step.Phase, r.Step.Kind), r.Class, r.Command, consent))
+		followed := "no restart"
+		if r.ID != "" && restarted[r.ID] {
+			followed = "restart followed"
+		}
+		out = append(out, fmt.Sprintf("%s: %s `%s` — %s; %s", where(r.Step.Phase, r.Step.Kind), r.Class, r.Command, consent, followed))
 	}
 	return out
 }

@@ -147,6 +147,57 @@ func TestExecuteStartsTheWatchdogAndAHaltThroughItsMCPSurfaceExits5(t *testing.T
 	}
 }
 
+func TestExecuteRegistersProposeRemedyAndRestartStepOnTheWatchdogSurface(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	sim := newSim()
+	sim.hang["rloop-p1-implement"] = true
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, sim)
+	dog := &dogHost{}
+	w.Dog.Host = dog
+	done := make(chan int, 1)
+	go func() { done <- w.Execute(core.RunOptions{Phases: []int{1}}) }()
+	for deadline := time.Now().Add(10 * time.Second); !dog.prompted("step started phase-1/implement"); {
+		if time.Now().After(deadline) {
+			t.Fatalf("implement never reported to the watchdog: %q", dog.Calls())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: w.Ask.WatchdogURL(), MaxRetries: -1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	call := func(name string, args map[string]any) map[string]any {
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, _ := res.StructuredContent.(map[string]any)
+		return out
+	}
+
+	proposed := call("propose_remedy", map[string]any{"class": "git", "command": "git reset --hard", "why": "dirty"})
+	restarted := call("restart_step", map[string]any{"step": "phase-1/implement", "addendum": "again"})
+	call("signal", map[string]any{"kind": "halt", "step": "phase-1/implement", "reason": "done here", "evidence": "docs/topic/todo.md:1"})
+
+	if proposed["decision"] != `refused: class "git" is not a remedy class` {
+		t.Errorf("propose_remedy %v", proposed)
+	}
+	if restarted["accepted"] != false || restarted["reason"] != "run halted" {
+		t.Errorf("restart_step %v", restarted)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("run never halted")
+	}
+}
+
 func TestAWatchdogThatFailsToStartExits4NamingTheHerdrCode(t *testing.T) {
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()

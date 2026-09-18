@@ -35,8 +35,8 @@ type Watcher interface {
 }
 
 type Restart struct {
-	Step               StepKey
-	Addendum, Provider string
+	Step                       StepKey
+	Addendum, Provider, Remedy string
 }
 
 type nopWatcher struct{}
@@ -332,6 +332,9 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 	}
 	key := ref.Key
 	step := fmt.Sprintf("phase-%d/%s", key.Phase, key.Kind)
+	if h, ok := l.watcher().(remedyHolder); ok {
+		defer h.Release(key)
+	}
 	timer := time.NewTimer(l.RemedyWindow)
 	defer timer.Stop()
 	for {
@@ -359,7 +362,7 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 		}
 		next := l.ref(ref.Phase, kind, key.Attempt+1, ref.Base)
 		next.Vars["Addendum"] = rs.Addendum
-		l.emit(Event{Kind: "restart", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "attempt": strconv.Itoa(next.Key.Attempt), "addendum": rs.Addendum, "provider": rs.Provider}})
+		l.emit(Event{Kind: "restart", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "attempt": strconv.Itoa(next.Key.Attempt), "addendum": rs.Addendum, "provider": rs.Provider, "remedy": rs.Remedy}})
 		return next, true
 	}
 }
@@ -452,10 +455,23 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 	}
 }
 
+type remedyHolder interface {
+	Hold(StepKey)
+	Release(StepKey)
+}
+
 func (l *RunLoop) ended(ref StepRef, out Outcome) (Outcome, bool) {
+	h, holds := l.watcher().(remedyHolder)
+	holds = holds && out.State != StepOK && !out.Halted && l.RemedyWindow > 0
+	if holds {
+		h.Hold(ref.Key)
+	}
 	l.watcher().StepEnded(ref, out)
 	if out.State != StepFailed || !strings.HasPrefix(out.Reason, "backstop") || out.Session == nil || !out.Session.OpenQuestion.Load() {
 		return out, false
+	}
+	if holds {
+		h.Release(ref.Key)
 	}
 	l.setRun(RunHalted, invariantQuestion)
 	l.emit(Event{Kind: "halt", Phase: ref.Key.Phase, Step: ref.Key.Kind, Fields: map[string]string{"reason": invariantQuestion}})

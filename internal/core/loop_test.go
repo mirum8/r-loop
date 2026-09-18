@@ -705,7 +705,7 @@ func TestReportCountsHumanTouchesAndListsAutomaticDecisions(t *testing.T) {
 		"## Landed\n\n- phase 2 abc gate skipped\n",
 		"## Questions\n\n- q1 phase 1 implement: which db? → sqlite (timeout, waited 0s)\n- q2 phase 1 implement: keep api? → yes (maintainer, waited 0s)\n",
 		"## Signals\n\n- warn from watchdog, phase 1 implement: drifting\n",
-		"## Remedies\n\n- phase 1 implement: lock `rm lock` — authorised\n",
+		"## Remedies\n\n- phase 1 implement: lock `rm lock` — authorised; no restart\n",
 		"## Findings\n\n- phase 1 implement r1 codex codex-r1-1 nil map: real P1 fixed true — x.go:3\n",
 		"## Skips\n\n- phase 2: gate-skipped\n",
 	} {
