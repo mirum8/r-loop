@@ -133,6 +133,8 @@ func (m Model) Apply(ev core.Event) Model {
 			}
 			m.settle(ev.Fields["id"], by)
 		}
+	case "question-answered":
+		m.settle(ev.Fields["id"], ev.Fields["by"]+"  "+ev.Fields["citation"])
 	case "finished":
 		m.end("finished")
 	case "halt":

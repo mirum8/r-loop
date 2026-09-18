@@ -114,7 +114,7 @@ type askRun struct {
 func startAskRun(t *testing.T, configure func(w *Wiring)) *askRun {
 	t.Helper()
 	f := newResumeFixture(t, askConfig)
-	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1", "--no-watchdog")
 	if err != nil {
 		t.Fatal(err)
 	}

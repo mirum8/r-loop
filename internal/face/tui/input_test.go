@@ -98,6 +98,17 @@ func TestAnAnswerLostToAFileAnswerIsNotShownAsTheAnswer(t *testing.T) {
 	}
 }
 
+func TestAWatchdogAnswerSettlesTheQuestionAndShowsItsCitation(t *testing.T) {
+	m, reply := ask(newModel(nil), question("q1", 2, "implement", "Which database?"))
+
+	m = m.Apply(core.Event{At: at(1), Kind: "question-answered", Phase: 2, Step: "implement", Fields: map[string]string{"id": "q1", "answer": "sqlite", "by": "watchdog", "citation": "docs/x/spec.html:12"}})
+
+	<-reply
+	if view := m.View(); strings.Contains(view, "Which database?") || !strings.Contains(view, "q1  answered by watchdog  docs/x/spec.html:12") {
+		t.Fatalf("view:\n%s", view)
+	}
+}
+
 func TestADraftDoesNotCarryOverToTheNextQuestion(t *testing.T) {
 	m, first := ask(newModel(nil), question("q1", 2, "plan", "Which database?"))
 	m, second := ask(m, question("q2", 3, "plan", "Which port?"))

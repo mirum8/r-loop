@@ -183,6 +183,7 @@ func TestExecuteRegistersProposeRemedyAndRestartStepOnTheWatchdogSurface(t *test
 
 	proposed := call("propose_remedy", map[string]any{"class": "git", "command": "git reset --hard", "why": "dirty"})
 	restarted := call("restart_step", map[string]any{"step": "phase-1/implement", "addendum": "again"})
+	answered := call("answer_question", map[string]any{"id": "q-none", "answer": "sqlite", "citation": "docs/topic/todo.md:1"})
 	call("signal", map[string]any{"kind": "halt", "step": "phase-1/implement", "reason": "done here", "evidence": "docs/topic/todo.md:1"})
 
 	if proposed["decision"] != `refused: class "git" is not a remedy class` {
@@ -190,6 +191,12 @@ func TestExecuteRegistersProposeRemedyAndRestartStepOnTheWatchdogSurface(t *test
 	}
 	if restarted["accepted"] != false || restarted["reason"] != "run halted" {
 		t.Errorf("restart_step %v", restarted)
+	}
+	if answered["accepted"] != false || answered["reason"] != "question q-none is not open" {
+		t.Errorf("answer_question %v", answered)
+	}
+	if w.Watch.Router != w.Router || w.Router.Dog != w.Dog || w.Router.AnswerWindow != 5*time.Minute {
+		t.Errorf("router %+v", w.Router)
 	}
 	select {
 	case <-done:
@@ -245,7 +252,7 @@ func TestNoWatchdogStartsNothingKeepsTheChecksAndRecordsWatchdogSkippedOnce(t *t
 	if calls := dog.Calls(); len(calls) != 0 {
 		t.Errorf("watchdog touched: %q", calls)
 	}
-	if w.Loop.Watcher != w.Watch || len(w.Watch.Checks) != 5 || w.Watch.Dog != nil {
+	if w.Loop.Watcher != w.Watch || len(w.Watch.Checks) != 5 || w.Watch.Dog != nil || w.Watch.Route(context.Background(), core.Question{ID: "q1"}) {
 		t.Errorf("watch %+v", w.Watch)
 	}
 	if got := stepEvents(f.load(w.Loop.RunID), "watchdog-skipped"); len(got) != 1 {

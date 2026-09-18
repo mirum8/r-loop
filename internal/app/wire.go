@@ -79,6 +79,7 @@ type Wiring struct {
 	Watch    *core.Watch
 	Dog      *core.Watchdog
 	Remedies *core.Remedies
+	Router   *core.QuestionRouter
 }
 
 type overrides struct {
@@ -315,6 +316,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	w.Loop.Watcher = w.Watch
 	w.Remedies = &core.Remedies{Allow: cfg.Watchdog.Allow, Face: w.Face, Store: w.Store, Window: cfg.Watchdog.RemedyWindow, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts}
 	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: cfg.Watchdog.Allow}
+	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Repo: repo, AnswerWindow: cfg.Watchdog.AnswerWindow}
 	if !opts.NoWatchdog {
 		w.Loop.RemedyWindow = cfg.Watchdog.RemedyWindow
 	}
@@ -347,7 +349,9 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 		return exit(4, "watchdog did not start: %v", err)
 	}
 	w.Watch.Dog = w.Dog
-	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart})
+	w.Router.Dog = w.Dog
+	w.Watch.Router = w.Router
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer})
 	return nil
 }
 

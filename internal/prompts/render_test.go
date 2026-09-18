@@ -251,6 +251,23 @@ func TestWatchdogCarriesTheRemedyRule(t *testing.T) {
 	}
 }
 
+func TestWatchdogCarriesTheAnsweringRule(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"## Answering questions",
+		"question <id> from phase-<N>/<kind>: <text> options: <options>",
+		"answer only with a `path:line` citation",
+		"the spec file, the tech-design file, the todo, a committed phase plan or code a landed phase wrote",
+		"never the current phase's worktree and never anything under `.r-loop/`",
+		"call `answer_question` with an empty citation to escalate rather than guess",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestAskUserOnlyWhenAskURLSet(t *testing.T) {
 	r := New(t.TempDir())
 	for _, name := range stepTemplates {

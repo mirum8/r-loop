@@ -30,6 +30,7 @@ type Watch struct {
 	Repo   Repo
 	Plan   Plan
 	Dog    *Watchdog
+	Router *QuestionRouter
 
 	once     sync.Once
 	mu       sync.Mutex
@@ -151,7 +152,9 @@ func (w *Watch) latest(phase int, kind string) (StepState, bool) {
 
 func (w *Watch) BeforePhase(ctx context.Context, ph Phase) {}
 
-func (w *Watch) Route(ctx context.Context, q Question) bool { return false }
+func (w *Watch) Route(ctx context.Context, q Question) bool {
+	return w.Router != nil && w.Router.Route(ctx, q)
+}
 
 func (w *Watch) StepStarted(ref StepRef, s *Session) {
 	w.init()

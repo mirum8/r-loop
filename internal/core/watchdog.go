@@ -74,6 +74,12 @@ func (d *Watchdog) Notify(text string, wait bool, timeout time.Duration) error {
 	return err
 }
 
+func (d *Watchdog) live() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return !d.gone
+}
+
 func (d *Watchdog) Stop() error {
 	d.mu.Lock()
 	pane := d.pane

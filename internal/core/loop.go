@@ -521,6 +521,9 @@ func (l *RunLoop) question(ctx context.Context, q Question) {
 		}
 		return
 	}
+	if ctx.Err() != nil {
+		return
+	}
 	answer, err := l.Face.Ask(q)
 	if err != nil {
 		if !errors.Is(err, ErrNoInput) {
@@ -532,6 +535,10 @@ func (l *RunLoop) question(ctx context.Context, q Question) {
 }
 
 func (l *RunLoop) Answer(id, text, by string) error {
+	return l.Deliver(id, text, by, "")
+}
+
+func (l *RunLoop) Deliver(id, text, by, citation string) error {
 	defer os.Remove(filepath.Join(l.Store.Dir(l.RunID), "answers", id))
 	open, ok := l.claim(id)
 	if !ok {
@@ -543,13 +550,17 @@ func (l *RunLoop) Answer(id, text, by string) error {
 	if open.s != nil {
 		l.release(open.s)
 	}
-	q.Answer, q.AnsweredBy, q.AnsweredAt = text, by, time.Now()
+	q.Answer, q.AnsweredBy, q.Citation, q.AnsweredAt = text, by, citation, time.Now()
 	l.recordQuestion(q)
-	l.emit(Event{Kind: "human", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": id}})
+	if citation != "" {
+		l.emit(Event{Kind: "question-answered", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"id": id, "answer": text, "by": by, "citation": citation}})
+	} else {
+		l.emit(Event{Kind: "human", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": id}})
+	}
 	if w, ok := l.Face.(interface{ Withdraw(id string) }); ok {
 		w.Withdraw(id)
 	}
-	if err := l.Ask.Answer(id, text, by, ""); err != nil {
+	if err := l.Ask.Answer(id, text, by, citation); err != nil {
 		l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "answer " + id + ": " + err.Error()}})
 		return err
 	}
