@@ -164,7 +164,7 @@ section:target > h2 { color: var(--clay); }
       </ul></li>
     <li class="p"><a href="#p6">Part 6 · Decisions</a>
       <ul>
-        <li class="s"><a href="#adr-index">ADR-1 … ADR-67</a></li>
+        <li class="s"><a href="#adr-index">ADR-1 … ADR-68</a></li>
       </ul></li>
     <li class="p"><a href="#p7">Part 7 · Technical details</a>
       <ul>
@@ -335,20 +335,22 @@ warning the watchdog has raised; <em>and</em> <code>r-loop status --plain</code>
 facts as lines for a script.</p>
 
 <h3>Choose the agent for each step</h3>
-<p>As the <strong>maintainer</strong>, I want planning, implementation and review each to name their
-own provider, model and effort, so that I can plan deeply and implement cheaply without one setting
-governing both.</p>
+<p>As the <strong>maintainer</strong>, I want planning, implementation and review — and every other
+session the driver starts: a fallback, a gate fix, the watchdog — each to name their own provider,
+model and effort, so that I can plan deeply and implement cheaply without one setting governing
+both.</p>
 <p><em>Given</em> <code>steps.plan.provider: claude</code> and
 <code>steps.implement.provider: codex</code>, <em>when</em> a phase runs, <em>then</em> the
 planning session is started with <code>--kind claude</code> and the implement session with
 <code>--kind codex</code>, and the run banner prints both resolved rows.</p>
 
 <h3>Try a different provider for one run</h3>
-<p>As the <strong>maintainer</strong>, I want to override a step's provider on the command line, so
-that trying one does not mean editing the project config and putting it back.</p>
+<p>As the <strong>maintainer</strong>, I want to override a step's provider, model or effort on the
+command line, so that trying one does not mean editing the project config and putting it back.</p>
 <p><em>Given</em> a config naming <code>claude</code> for implement, <em>when</em> I run
-<code>r-loop docs/x/todo.md --provider implement=codex</code>, <em>then</em> implement sessions
-start as codex and the banner names the override and the file value it replaced.</p>
+<code>r-loop docs/x/todo.md --provider implement=codex --effort implement=high</code>, <em>then</em>
+implement sessions start as codex at high effort and the banner names each override and the file
+value it replaced.</p>
 
 <h3>Be told when a run halts</h3>
 <p>As the <strong>maintainer</strong>, I want a command of my own choosing run when the loop halts
@@ -719,7 +721,7 @@ a run that then failed to commit. Configurable: no.</em></p>
 
 <p><strong>A merge is never made on an unproven phase.</strong> When a phase's last step reports
 <code>ok</code>, if the phase's <code>Done when:</code> command does not exit 0 in the primary tree
-within its timeout, the driver performs no merge and no tick, per phase; on violation the run halts
+within its timeout (<code>land.gateTimeout</code>, default 30 minutes), the driver performs no merge and no tick, per phase; on violation the run halts
 with the command's output. A phase whose block carries no <code>Done when:</code> line is a named
 skip recorded in the run report, never a silent pass. <em>Source: 33 recorded
 <code>/r:task-review</code> runs returned <code>build: "n/a"</code>, 31 of them over trees carrying
@@ -1036,7 +1038,8 @@ characteristic constrains the direction a model may push, not whether one is pre
           repos, and can drift (<a href="#adr-43">ADR-43</a>)</td></tr>
   <tr><td>Legibility of cost</td>
       <td>the run banner prints the resolved provider, model and effort for every step in the
-          pipeline, and the file each came from</td>
+          pipeline, each reviewer, fallback and gate fix, and the watchdog, and the file each came
+          from</td>
       <td>read the banner of any run</td>
       <td>one more thing to keep true when the config reader changes</td></tr>
 </table>
@@ -1576,7 +1579,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Sixty-seven decisions, each with the alternative that was live at the time; seven are superseded and kept in place, and seventeen are amended by later ones. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the three-tier rule that lets a watchdog veto and remedy but never approve; and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, and the last seven, in round 21, make a run finish with nobody present.</p>
+<p class="lede">Sixty-eight decisions, each with the alternative that was live at the time; seven are superseded and kept in place, and nineteen are amended by later ones. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the three-tier rule that lets a watchdog veto and remedy but never approve; and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, and ADR-68 gives every session the driver starts its own model and effort.</p>
 
 <div id="adr-index">
 
@@ -1923,7 +1926,7 @@ be written is a named skip rather than a halt — the milestone's code is alread
 
 <div class="adr">
 <h3 id="adr-20">ADR-20 — Per-step settings live in <code>steps.loop</code>, with a per-run override</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-49">ADR-49</a> — the rows live under <code>steps</code> in <code>.r-loop/config.yaml</code>, and the key-by-key resolution is r-loop's own, not the pack's reader</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-49">ADR-49</a> — the rows live under <code>steps</code> in <code>.r-loop/config.yaml</code>, and the key-by-key resolution is r-loop's own, not the pack's reader · amended by <a href="#adr-68">ADR-68</a> — <code>--model</code> and <code>--effort</code> override one step the same way</p>
 <p><span class="f">Context</span> The pack already resolves settings key by key from the project
 file, the pack defaults and a built-in row, naming every substitution. A second mechanism would be
 a second place to look.</p>
@@ -2773,7 +2776,7 @@ a follow-up fix.</p>
 
 <div class="adr">
 <h3 id="adr-64">ADR-64 — A red land gate gets a bounded fix round before the phase is blocked</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-10">ADR-10</a></p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-10">ADR-10</a> · amended by <a href="#adr-68">ADR-68</a> — <code>land.fix</code> may name the gate-fix step's own provider, model and effort; absent, it is the implement row</p>
 <p><span class="f">Context</span> The gate re-runs a phase's <code>Done when:</code> over the merged
 tree (<a href="#adr-10">ADR-10</a>). When it fails, the cause is usually small — a test the phase
 broke elsewhere, a lint rule — and the output says what.</p>
@@ -2815,7 +2818,7 @@ it without saying so.</p>
 
 <div class="adr">
 <h3 id="adr-66">ADR-66 — A step row names a fallback provider</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-68">ADR-68</a> — <code>fallback</code> may be a block naming its own model and effort</p>
 <p><span class="f">Context</span> An overnight run's most ordinary failure is a provider's own:
 a usage limit, an expired login, an outage. The agent cannot write a sentinel, goes quiet, and the
 step fails through its nudge. The watchdog sees why in the pane, and a <code>provider</code> remedy
@@ -2851,6 +2854,38 @@ pane — rejected: the driver would not see the answer, so it could not record i
 the same trust as editing its code.</p>
 <p><span class="f">Revisit when</span> an answer is wanted from somewhere that cannot reach the
 machine's shell.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-68">ADR-68 — Every session the driver starts names its own model and effort</h3>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-20">ADR-20</a>,
+<a href="#adr-64">ADR-64</a> and <a href="#adr-66">ADR-66</a></p>
+<p><span class="f">Context</span> Steps and reviewers each carry provider, model and effort
+(<a href="#adr-20">ADR-20</a>, <a href="#adr-56">ADR-56</a>). Four sessions did not: a fallback
+ran on its provider's defaults, a gate fix inherited the implement row whole, the watchdog had a
+model and no effort, and the command line could swap a step's provider but not its model or
+effort. Each is a place a maintainer pays for depth they did not choose, or cannot buy depth they
+want. herdr passes everything after <code>--</code> to the agent, so each is a pair of flags the
+provider block already knows how to spell (<a href="#adr-6">ADR-6</a>).</p>
+<p><span class="f">Decision</span> <code>fallback</code> is a provider name or a block with
+<code>provider</code>, <code>model</code> and <code>effort</code>, the same shape as a reviewer
+entry; a key it leaves out is the provider's default. <code>land.fix</code> is an optional block
+with the same three keys for the <code>gatefix</code> step: absent, the step runs on the implement
+row; a key it leaves out comes from the implement row, unless it names a different provider, in
+which case that provider's defaults stand. <code>watchdog.effort</code> joins
+<code>watchdog.provider</code> and <code>watchdog.model</code>. <code>--model
+&lt;step&gt;=&lt;model&gt;</code> and <code>--effort &lt;step&gt;=&lt;effort&gt;</code> override one
+row for one run, beside <code>--provider</code>, and touch only that row's own provider, never its
+fallback. The banner prints every one of these with where it came from.</p>
+<p><span class="f">Alternatives</span> One global model and effort per provider — rejected: a
+provider used to plan and to review would run both at one depth, which is the coupling
+<a href="#adr-20">ADR-20</a> removed for steps. Inheriting the failed row's model on a fallback —
+rejected: a model name belongs to one provider and means nothing to another.</p>
+<p><span class="f">Consequences</span> Three more keys and two more flags to validate and to print.
+A row's <code>--model</code> override does not follow it onto its fallback, so a restart on the
+fallback runs at the fallback's own setting — which the report names.</p>
+<p><span class="f">Revisit when</span> a role needs a setting that is not provider, model or
+effort.</p>
 </div>
 
 </div>
@@ -2923,7 +2958,8 @@ named reason on stderr; there is nothing paginated.</p>
   <tr><th>Command</th><th>Purpose</th><th>Input</th><th>Output</th></tr>
   <tr><td><code>r-loop &lt;todo&gt;</code></td><td>Run every unticked phase in order</td>
       <td>path to the plan; <code>--from N</code>, <code>--phases n,n</code>,
-          <code>--provider &lt;step&gt;=&lt;name&gt;</code>, <code>--no-watchdog</code>,
+          <code>--provider &lt;step&gt;=&lt;name&gt;</code>, <code>--model &lt;step&gt;=&lt;model&gt;</code>,
+          <code>--effort &lt;step&gt;=&lt;effort&gt;</code>, <code>--no-watchdog</code>,
           <code>--unattended</code>,
           <code>--plain</code>, <code>--dry-run</code></td>
       <td>the TUI, or with <code>--plain</code> a banner naming the resolved rows, one line per step
@@ -2967,7 +3003,10 @@ steps:
     model: gpt-5.6-sol
     effort: medium
     timeout: 4h
-    fallback: claude
+    fallback:                 # a name, or a block like a reviewer entry (ADR-68)
+      provider: claude
+      model: sonnet
+      effort: high
     reviewers:
       - claude
     rounds: 3
@@ -2984,10 +3023,14 @@ providers:                    # claude and codex ship built in; a block here add
 
 land:
   fixRounds: 1                # a red Done when: gets this many gate-fix steps (ADR-64)
+  gateTimeout: 30m            # how long the Done when: command may run
+  fix:                        # the gatefix session; absent = the implement row (ADR-68)
+    effort: high
 
 watchdog:
   provider: claude
   model: sonnet
+  effort: medium
   maxRestarts: 2              # per step, in every mode (ADR-61)
   allow:                      # deps | ports | containers | locks | restart | retry | provider
     - deps                    # empty or absent = ask about everything
