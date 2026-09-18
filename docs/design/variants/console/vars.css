@@ -1,0 +1,18 @@
+:root {
+  --color-surface: #0b0f14;
+  --color-surface-raised: #141c24;
+  --color-on-surface: #c9d6e2;
+  --color-on-surface-dim: #7d8fa1;
+  --color-primary: #31c6d9;
+  --color-on-primary: #06161b;
+  --color-secondary: #f2b441;
+  --color-on-secondary: #1a1204;
+  --color-tertiary: #a98bf5;
+  --color-on-tertiary: #120a24;
+  --color-success: #5bd98a;
+  --color-warning: #f2b441;
+  --color-error: #f4736c;
+  --color-on-error: #1b0806;
+  --color-outline: #24323f;
+}
+

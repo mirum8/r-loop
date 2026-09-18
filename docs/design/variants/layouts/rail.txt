@@ -1,0 +1,15 @@
+┌─ r-loop ──────────────────────────────────────────────────────────── phase 4/12 · 1h14m ─┐
+│ PHASES                   │ PHASE 4 · implement                                           │
+│  1 scaffold       landed │ provider   codex · gpt-5.6-sol · medium                       │
+│  2 config reader  landed │ session    ws-p4-implement        elapsed 22m                 │
+│  3 state store    landed │ files      internal/loop/*.go internal/state/*.go             │
+│@ 4 session mgr     live  @│ done when  go test ./internal/loop/...                         │
+│  5 prompt render  queued │                                                               │
+│  6 land gate      queued │ WATCHDOG                                                      │
+│  7 ask server     queued │ 14:02 warn  diff 3.1x larger than phases 1-3                  │
+│  8 watch          queued │ 14:19 ok    remedy go mod download (allow: deps)              │
+│  9 remedies       queued │ 14:41 ok    answered: internal/loop owns it (adr-4:112)       │
+│ 10 ui             queued │                                                               │
+│──────────────────────────┴─────────────────────────────────────────────────              │
+│ ? phase 4 asks — which package owns SessionManager: loop or session?                     │
+└ enter answer   ^w watchdog   ^p pause   ^q quit ─────────────────────────────────────────┘

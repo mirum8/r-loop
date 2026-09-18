@@ -1,0 +1,15 @@
+:root {
+  --color-surface: #1c1917;
+  --color-surface-raised: #282320;
+  --color-on-surface: #ede7de;
+  --color-on-surface-dim: #a89a8b;
+  --color-primary: #d97757;
+  --color-on-primary: #1c1917;
+  --color-secondary: #d9a441;
+  --color-on-secondary: #1c1917;
+  --color-tertiary: #9bb075;
+  --color-error: #df6a52;
+  --color-on-error: #1c1917;
+  --color-outline: #3b342f;
+}
+

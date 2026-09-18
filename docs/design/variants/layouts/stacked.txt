@@ -1,0 +1,15 @@
+┌─ r-loop ──────────────────────────────────────────────────────────── phase 4/12 · 1h14m ─┐
+│ PHASE            STEP        PROVIDER            ELAPSED   STATE                         │
+│  1 scaffold      landed      claude/opus         06m       merged 3a91c2f                │
+│  2 config reader landed      codex/gpt-5.6-sol   14m       merged 88de410                │
+│  3 state store   landed      codex/gpt-5.6-sol   31m       merged c04f7b9                │
+│@ 4 session mgr   implement   codex/gpt-5.6-sol   22m       waiting-input   @               │
+│  5 prompt render plan        claude/opus         —         queued                        │
+│  6 land gate     —           —                   —         queued                        │
+│                                                                                          │
+│ LIVE  phase 4 · implement · ws-p4-implement                                              │
+│   files      internal/loop/*.go internal/state/*.go                                      │
+│   done when  go test ./internal/loop/...                                                 │
+│   watchdog   warn 14:02 · diff 3.1x larger than phases 1-3                               │
+│   ? which package owns SessionManager: internal/loop or internal/session?                │
+└ enter answer   ^w watchdog   ^p pause   ^q quit ─────────────────────────────────────────┘
