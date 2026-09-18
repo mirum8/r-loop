@@ -1,0 +1,5 @@
+#!/bin/sh
+printf '%s\0' "$@" > "$HERDR_ARGV"
+printf '%s' "$HERDR_STDOUT"
+printf '%s' "$HERDR_STDERR" >&2
+exit "${HERDR_EXIT:-0}"
