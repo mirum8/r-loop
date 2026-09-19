@@ -263,7 +263,7 @@ func (w *Watch) accept(sig Signal, check string, stop <-chan struct{}) (Signal, 
 	w.mu.Lock()
 	w.seq++
 	sig.Seq, sig.At = w.seq, w.now()
-	runID, live := w.runID, w.live
+	runID := w.runID
 	if sig.Step.Run != "" {
 		runID = sig.Step.Run
 	}
@@ -276,6 +276,9 @@ func (w *Watch) accept(sig Signal, check string, stop <-chan struct{}) (Signal, 
 		return sig, fmt.Errorf("record signal: %w", err)
 	}
 	if !sig.Rejected {
+		if sig.Kind == SignalHalt {
+			w.Release(sig.Step)
+		}
 		w.forward(sig, stop)
 		return sig, nil
 	}
@@ -286,15 +289,17 @@ func (w *Watch) accept(sig Signal, check string, stop <-chan struct{}) (Signal, 
 		return sig, nil
 	}
 	fwd := Signal{Seq: sig.Seq, Kind: SignalWarn, Source: sig.Source, Step: sig.Step, Evidence: sig.Evidence, At: sig.At}
-	if live != nil {
-		fwd.Step = *live
+	target, ok := w.target()
+	if ok {
+		fwd.Step = target
 	}
 	switch {
 	case sig.Source == SourceWatchdog:
 		fwd.Kind, fwd.Reason = SignalHalt, "watchdog signal rejected: "+sig.RejectReason
-		if w.holdHalt(fwd) {
+		if !ok && w.holdHalt(fwd) {
 			return sig, nil
 		}
+		w.Release(fwd.Step)
 	case check != "":
 		fwd.Reason = fmt.Sprintf("check %s signal rejected: %s", check, sig.RejectReason)
 	default:
@@ -329,6 +334,9 @@ func (w *Watch) forward(sig Signal, stop <-chan struct{}) {
 func (w *Watch) rejection(sig *Signal, runID string) string {
 	if sig.Kind != SignalWarn && sig.Kind != SignalHalt {
 		return fmt.Sprintf("kind %q is not warn or halt", sig.Kind)
+	}
+	if sig.Step.Phase <= 0 {
+		return fmt.Sprintf("step %q is not phase-<N>/<kind>", sig.Step.Kind)
 	}
 	w.mu.Lock()
 	checking := w.checking

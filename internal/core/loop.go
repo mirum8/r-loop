@@ -87,6 +87,7 @@ type RunLoop struct {
 	open     map[*Session]int
 	asked    map[string]openAsk
 	warnings map[int]string
+	halted   *Signal
 }
 
 type openAsk struct {
@@ -160,7 +161,10 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 			first, firstPhase, firstStep, firstReason = code, ph.Number, step, out.Reason
 		}
 	}
-	if len(l.blocked) == 0 {
+	if h := l.halted; h != nil && first != 5 {
+		first, firstPhase, firstStep, firstReason = 5, h.Step.Phase, h.Step.Kind, "watchdog: "+h.Reason
+	}
+	if len(l.blocked) == 0 && l.halted == nil {
 		l.setRun(RunFinished, "")
 		l.emit(Event{Kind: "finished"})
 		l.fire(l.Hooks.OnDone, "finished", 0, "", "")
@@ -285,10 +289,11 @@ func (l *RunLoop) checkPhase(ctx context.Context, ph Phase, base string) {
 		select {
 		case sig := <-l.watcher().Signals():
 			switch {
-			case sig.Kind == SignalWarn && sig.Step.Phase == n && sig.Step.Kind == "check":
-				warnings = append(warnings, sig.Reason)
 			case sig.Kind == SignalHalt:
-				sig.Reason = fmt.Sprintf("halt for phase-%d/%s after it ended: %s", sig.Step.Phase, sig.Step.Kind, sig.Reason)
+				l.haltEnded(sig)
+				continue
+			case sig.Step.Phase == n && sig.Step.Kind == "check":
+				warnings = append(warnings, sig.Reason)
 			}
 			l.warn(sig)
 		default:
@@ -366,7 +371,7 @@ func (l *RunLoop) runAttempts(ctx context.Context, ref StepRef) (StepRef, Outcom
 		if aborted || out.State == StepOK {
 			return ref, out, aborted
 		}
-		next, ok := l.awaitRestart(ctx, ref, kind, out)
+		next, ok := l.awaitRestart(ctx, ref, kind, &out)
 		if !ok {
 			return ref, out, false
 		}
@@ -374,7 +379,7 @@ func (l *RunLoop) runAttempts(ctx context.Context, ref StepRef) (StepRef, Outcom
 	}
 }
 
-func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, out Outcome) (StepRef, bool) {
+func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, out *Outcome) (StepRef, bool) {
 	if l.RemedyWindow <= 0 || out.Halted {
 		return StepRef{}, false
 	}
@@ -392,10 +397,18 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 			return StepRef{}, false
 		case <-timer.C:
 			return StepRef{}, false
+		case sig := <-l.watcher().Signals():
+			if l.haltsWindow(sig, key, out) {
+				return StepRef{}, false
+			}
+			continue
 		case rs = <-l.watcher().Restarts():
 		}
 		if rs.Step != key {
 			continue
+		}
+		if l.drainHalts(key, out) {
+			return StepRef{}, false
 		}
 		if l.restarts[step] >= l.MaxRestarts {
 			l.emit(Event{Kind: "restart-refused", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "reason": fmt.Sprintf("restart limit %d reached", l.MaxRestarts)}})
@@ -416,6 +429,49 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 		}
 		l.emit(Event{Kind: "restart", Phase: key.Phase, Step: key.Kind, Fields: f})
 		return next, true
+	}
+}
+
+func (l *RunLoop) haltsWindow(sig Signal, key StepKey, out *Outcome) bool {
+	switch {
+	case sig.Kind != SignalHalt:
+		l.warn(sig)
+	case sig.Step.Phase != key.Phase:
+		l.haltEnded(sig)
+	default:
+		out.State, out.Reason, out.Stalled, out.Halted = StepFailed, "watchdog: "+sig.Reason, false, true
+		return true
+	}
+	return false
+}
+
+func (l *RunLoop) drainHalts(key StepKey, out *Outcome) bool {
+	for {
+		select {
+		case sig := <-l.watcher().Signals():
+			if l.haltsWindow(sig, key, out) {
+				return true
+			}
+		default:
+			return false
+		}
+	}
+}
+
+func (l *RunLoop) haltEnded(sig Signal) {
+	reason := "watchdog: " + sig.Reason
+	l.emit(Event{Kind: "warning", Phase: sig.Step.Phase, Step: sig.Step.Kind, Fields: map[string]string{"reason": fmt.Sprintf("halt for phase-%d/%s after it ended: %s", sig.Step.Phase, sig.Step.Kind, sig.Reason), "source": string(sig.Source)}})
+	if l.halted == nil {
+		l.halted = &sig
+	}
+	if slices.Contains(l.blocked, sig.Step.Phase) {
+		return
+	}
+	for _, ph := range l.Plan.Phases {
+		if ph.Number == sig.Step.Phase {
+			delete(l.pending, ph.Number)
+			l.block(ph, sig.Step.Kind, Outcome{State: StepFailed, Reason: reason, Halted: true})
+		}
 	}
 }
 
@@ -482,19 +538,20 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 				l.warn(sig)
 				continue
 			}
-			if !sameStep(sig.Step, key) {
-				sig.Reason = fmt.Sprintf("halt for phase-%d/%s after it ended: %s", sig.Step.Phase, sig.Step.Kind, sig.Reason)
-				l.warn(sig)
+			if sig.Step.Phase != key.Phase {
+				l.haltEnded(sig)
 				continue
 			}
+			reason := "watchdog: " + sig.Reason
+			recErr := l.Store.Append(l.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepFailed, Reason: reason})
 			if s := l.liveSession(); s != nil {
 				l.Sessions.Stop(s)
 			}
 			cancel()
 			out := <-done
-			out.State, out.Reason, out.Stalled, out.Halted = StepFailed, "watchdog: "+sig.Reason, false, true
-			if err := l.Store.Append(l.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepFailed, Reason: out.Reason}); err != nil {
-				out.Reason += "; record: " + err.Error()
+			out.State, out.Reason, out.Stalled, out.Halted = StepFailed, reason, false, true
+			if recErr != nil {
+				out.Reason += "; record: " + recErr.Error()
 			}
 			l.emitStep(ref, out.State, out.Reason, out.Session)
 			return l.ended(ref, out)
@@ -502,11 +559,12 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 			if !l.Store.Aborted(l.RunID) {
 				continue
 			}
+			l.setRun(RunHalted, ReasonAborted)
 			cancel()
 			out := <-done
 			l.emitStep(ref, out.State, out.Reason, out.Session)
 			l.watcher().StepEnded(ref, out)
-			l.abort(ref.Key.Phase, ref.Key.Kind)
+			l.announceAbort(ref.Key.Phase, ref.Key.Kind)
 			return out, true
 		}
 	}
@@ -727,6 +785,10 @@ func (l *RunLoop) recordQuestion(q Question) {
 
 func (l *RunLoop) abort(phase int, step string) {
 	l.setRun(RunHalted, ReasonAborted)
+	l.announceAbort(phase, step)
+}
+
+func (l *RunLoop) announceAbort(phase int, step string) {
 	ws, wt := sessionPlace(l.liveSession())
 	l.emit(Event{Kind: "aborted", Phase: phase, Step: step, Fields: map[string]string{"workspace": ws, "worktree": wt}})
 }
@@ -824,13 +886,28 @@ func (o *loopObserver) Reviewing(s *Session, round int) {
 	o.l.emitRound(o.ref, StepRunning, "", s, round)
 }
 
+func (o *loopObserver) Fixing(s *Session, round int) {
+	o.l.emitHalf(o.ref, s, round, "fix")
+}
+
 func (l *RunLoop) emitStep(ref StepRef, state StepState, reason string, s *Session) {
 	l.emitRound(ref, state, reason, s, 0)
 }
 
 func (l *RunLoop) emitRound(ref StepRef, state StepState, reason string, s *Session, round int) {
 	ws, _ := sessionPlace(s)
-	ev := Event{At: time.Now(), Kind: "step", Phase: ref.Key.Phase, Step: ref.Key.Kind, Fields: stepFields(ref, state, reason, ws, round)}
+	l.emitFields(ref, stepFields(ref, state, reason, ws, round))
+}
+
+func (l *RunLoop) emitHalf(ref StepRef, s *Session, round int, half string) {
+	ws, _ := sessionPlace(s)
+	f := stepFields(ref, StepRunning, "", ws, round)
+	f["half"] = half
+	l.emitFields(ref, f)
+}
+
+func (l *RunLoop) emitFields(ref StepRef, f map[string]string) {
+	ev := Event{At: time.Now(), Kind: "step", Phase: ref.Key.Phase, Step: ref.Key.Kind, Fields: f}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := l.Store.Append(l.RunID, Record{Kind: RecordEvent, At: ev.At, Event: &ev}); err != nil {
@@ -854,7 +931,7 @@ func stepFields(ref StepRef, state StepState, reason, ws string, round int) map[
 		"workspace": ws,
 	}
 	if round > 0 {
-		f["round"] = strconv.Itoa(round)
+		f["round"], f["half"] = strconv.Itoa(round), "find"
 	}
 	return f
 }

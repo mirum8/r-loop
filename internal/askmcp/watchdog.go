@@ -3,6 +3,7 @@ package askmcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -15,9 +16,11 @@ import (
 
 const notAvailable = "not available"
 
+var errMalformedStep = errors.New("not phase-<N>/<kind>")
+
 type WatchdogHandlers struct {
 	Signal  func(core.Signal) (bool, string)
-	Propose func(class, command, why string) string
+	Propose func(class, command, why string) (string, string)
 	Restart func(step, addendum, provider string) (bool, string)
 	Answer  func(id, answer, citation string) (bool, string)
 }
@@ -54,6 +57,7 @@ type acceptedOutput struct {
 
 type decisionOutput struct {
 	Decision string `json:"decision"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true}
@@ -83,6 +87,9 @@ func (s *Server) watchdogServer() *mcp.Server {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
 		key, err := s.resolve(in.Step)
+		if errors.Is(err, errMalformedStep) {
+			key, err = core.StepKey{Run: s.RunID, Kind: in.Step}, nil
+		}
 		if err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -98,13 +105,14 @@ func (s *Server) watchdogServer() *mcp.Server {
 		Description: "Propose the exact command that would unblock the step, with its class and why. Run it only when the decision is authorised.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in proposeInput) (*mcp.CallToolResult, decisionOutput, error) {
 		if err := s.record("propose_remedy", "", map[string]string{"class": in.Class, "command": in.Command, "why": in.Why}); err != nil {
-			return nil, decisionOutput{Decision: "refused"}, nil
+			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
 		}
 		h := s.handlersNow().Propose
 		if h == nil {
-			return nil, decisionOutput{Decision: "refused"}, nil
+			return nil, decisionOutput{Decision: "refused", Reason: notAvailable}, nil
 		}
-		return nil, decisionOutput{Decision: h(in.Class, in.Command, in.Why)}, nil
+		decision, reason := h(in.Class, in.Command, in.Why)
+		return nil, decisionOutput{Decision: decision, Reason: reason}, nil
 	})
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "restart_step",
@@ -153,11 +161,11 @@ func (s *Server) record(tool, step string, fields map[string]string) error {
 func (s *Server) resolve(step string) (core.StepKey, error) {
 	m := stepName.FindStringSubmatch(step)
 	if m == nil {
-		return core.StepKey{}, fmt.Errorf("step %q is not phase-<N>/<kind>", step)
+		return core.StepKey{}, fmt.Errorf("step %q: %w", step, errMalformedStep)
 	}
 	phase, err := strconv.Atoi(m[1])
-	if err != nil {
-		return core.StepKey{}, fmt.Errorf("step %q is not phase-<N>/<kind>", step)
+	if err != nil || phase <= 0 {
+		return core.StepKey{}, fmt.Errorf("step %q: %w", step, errMalformedStep)
 	}
 	key := core.StepKey{Run: s.RunID, Phase: phase, Kind: m[2]}
 	if key.Kind == "check" || s.Store == nil {

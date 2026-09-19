@@ -143,18 +143,35 @@ func TestPhaseCheckStepMapsToAttemptZero(t *testing.T) {
 	}
 }
 
-func TestAMalformedStepIsNotAccepted(t *testing.T) {
+func TestAMalformedStepGoesThroughTheSignalHandlerAsAnUnknownStep(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
-	called := false
-	s.Handle(WatchdogHandlers{Signal: func(core.Signal) (bool, string) {
-		called = true
-		return true, ""
+	var got []core.Signal
+	s.Handle(WatchdogHandlers{Signal: func(sig core.Signal) (bool, string) {
+		got = append(got, sig)
+		return false, `step "phase3/implement" is not phase-<N>/<kind>`
 	}})
 
-	out := call(t, connect(t, s.WatchdogURL()), "signal", map[string]any{"kind": "warn", "step": "implement", "reason": "r", "evidence": "e"})
+	out := call(t, connect(t, s.WatchdogURL()), "signal", map[string]any{"kind": "halt", "step": "phase3/implement", "reason": "r", "evidence": "e"})
 
-	if out["accepted"] != false || !strings.Contains(out["reason"].(string), "phase-<N>/<kind>") || called {
-		t.Fatalf("out = %+v, called = %v", out, called)
+	if out["accepted"] != false || !strings.Contains(out["reason"].(string), "phase-<N>/<kind>") {
+		t.Fatalf("out = %+v", out)
+	}
+	want := core.Signal{Kind: core.SignalHalt, Source: core.SourceWatchdog, Step: core.StepKey{Run: "run-7", Kind: "phase3/implement"}, Reason: "r", Evidence: "e"}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("handler got %+v", got)
+	}
+}
+
+func TestAProposalRefusedWithAnExplanationKeepsTheDecisionExactAndCarriesTheReason(t *testing.T) {
+	s := serveWatchdog(t, &memStore{})
+	s.Handle(WatchdogHandlers{Propose: func(class, command, why string) (string, string) {
+		return "refused", "no step to remedy"
+	}})
+
+	out := call(t, connect(t, s.WatchdogURL()), "propose_remedy", map[string]any{"class": "deps", "command": "c", "why": "w"})
+
+	if out["decision"] != "refused" || out["reason"] != "no step to remedy" {
+		t.Fatalf("out = %+v", out)
 	}
 }
 
@@ -162,9 +179,9 @@ func TestEachToolDelegatesToItsHandler(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
 	var calls []string
 	s.Handle(WatchdogHandlers{
-		Propose: func(class, command, why string) string {
+		Propose: func(class, command, why string) (string, string) {
 			calls = append(calls, "propose "+class+"|"+command+"|"+why)
-			return "authorised"
+			return "authorised", ""
 		},
 		Restart: func(step, addendum, provider string) (bool, string) {
 			calls = append(calls, "restart "+step+"|"+addendum+"|"+provider)
@@ -220,9 +237,9 @@ func TestEveryCallIsRecordedBeforeItsHandlerRuns(t *testing.T) {
 	st := &memStore{}
 	s := serveWatchdog(t, st)
 	var seen []core.Record
-	s.Handle(WatchdogHandlers{Propose: func(class, command, why string) string {
+	s.Handle(WatchdogHandlers{Propose: func(class, command, why string) (string, string) {
 		seen = st.records()
-		return "refused"
+		return "refused", ""
 	}})
 	cs := connect(t, s.WatchdogURL())
 

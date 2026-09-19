@@ -251,14 +251,15 @@ func TestHaltSignalStopsTheSessionAndExits5(t *testing.T) {
 	if got := r.calls("SessionHost.Interrupt "); !reflect.DeepEqual(got, []string{"rloop-p1-implement"}) {
 		t.Errorf("interrupted %v", got)
 	}
-	var last Record
+	var failed Record
 	for _, rec := range r.store.Records["run-1"] {
-		if rec.Kind == RecordStep && rec.Step.Phase == 1 && rec.Step.Kind == "implement" {
-			last = rec
+		if rec.Kind == RecordStep && rec.Step.Phase == 1 && rec.Step.Kind == "implement" && rec.State == StepFailed {
+			failed = rec
+			break
 		}
 	}
-	if last.State != StepFailed || last.Reason != "watchdog: rewriting the spec" {
-		t.Errorf("last implement record %+v", last)
+	if failed.Reason != "watchdog: rewriting the spec" {
+		t.Errorf("first failed implement record %+v", failed)
 	}
 	blocked := r.events("phase-blocked")
 	if len(blocked) != 1 || blocked[0].Fields["phase"] != "1" || blocked[0].Fields["reason"] != "watchdog: rewriting the spec" {
@@ -575,8 +576,9 @@ func TestNopWatcherAnswersNothingAndEmitsNothing(t *testing.T) {
 	}
 }
 
-func TestAHaltForAnotherStepDoesNotStopTheLiveOne(t *testing.T) {
+func TestAHaltForAnEndedStepOfTheLivePhaseHaltsTheLiveStep(t *testing.T) {
 	r := newEventsRig(t)
+	r.host.behaviour["rloop-p2-implement"] = "hold"
 	r.watcher.started = func(ref StepRef, s *Session) {
 		if ref.Key.Kind == "implement" {
 			stale := StepKey{Run: "run-1", Phase: 2, Kind: "plan", Attempt: 1}
@@ -586,14 +588,14 @@ func TestAHaltForAnotherStepDoesNotStopTheLiveOne(t *testing.T) {
 
 	code := r.run(RunOptions{Phases: []int{2}})
 
-	if code != 0 {
-		t.Fatalf("exit %d, want 0", code)
+	if code != 5 {
+		t.Fatalf("exit %d, want 5", code)
 	}
-	if got := r.calls("SessionHost.Interrupt "); len(got) != 0 {
+	if got := r.calls("SessionHost.Interrupt "); !reflect.DeepEqual(got, []string{"rloop-p2-implement"}) {
 		t.Errorf("interrupted %v", got)
 	}
-	if w := r.events("warning"); len(w) != 1 || !strings.Contains(w[0].Fields["reason"], "late") {
-		t.Errorf("warnings %+v", w)
+	if blocked := r.events("phase-blocked"); len(blocked) != 1 || blocked[0].Fields["reason"] != "watchdog: late" {
+		t.Errorf("blocked %+v", blocked)
 	}
 }
 
@@ -838,5 +840,156 @@ func TestAnsweringAQuestionThatIsNotOpenIsAnError(t *testing.T) {
 	}
 	if got := r.calls("AskChannel.Answer "); len(got) != 0 {
 		t.Errorf("answered %v", got)
+	}
+}
+
+func TestAHaltInTheRemedyWindowBlocksThePhaseWithExit5AndRefusesThePendingRestart(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.RemedyWindow = time.Minute
+	r.watcher.signals = make(chan Signal, 1)
+	r.host.behaviour["rloop-p2-implement"] = "fail"
+	r.watcher.ended = func(ref StepRef, out Outcome) {
+		if out.State == StepFailed && ref.Key.Attempt == 1 {
+			r.watcher.signals <- Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: ref.Key, Reason: "wrong turn"}
+			r.watcher.restarts <- Restart{Step: ref.Key, Addendum: "again"}
+		}
+	}
+	start := time.Now()
+
+	code := r.run(RunOptions{Phases: []int{2}})
+
+	if code != 5 {
+		t.Fatalf("exit %d, want 5", code)
+	}
+	if time.Since(start) > 30*time.Second {
+		t.Errorf("waited out the remedy window")
+	}
+	if want := []string{"rloop-p2-plan", "rloop-p2-implement"}; !reflect.DeepEqual(r.agents(), want) {
+		t.Errorf("spawned %v, want %v", r.agents(), want)
+	}
+	if got := r.events("restart"); len(got) != 0 {
+		t.Errorf("restarts %+v", got)
+	}
+	blocked := r.events("phase-blocked")
+	if len(blocked) != 1 || blocked[0].Fields["phase"] != "2" || blocked[0].Fields["reason"] != "watchdog: wrong turn" {
+		t.Errorf("blocked %+v", blocked)
+	}
+}
+
+func TestAHaltForAStepThatEndedInAnEarlierPhaseExits5WithoutStoppingTheLiveStep(t *testing.T) {
+	failed := StepKey{Run: "run-1", Phase: 1, Kind: "implement", Attempt: 1}
+	halt := Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: failed, Reason: "wrong turn"}
+	for name, arm := range map[string]func(r *eventsRig){
+		"between phases": func(r *eventsRig) {
+			r.watcher.ended = func(ref StepRef, out Outcome) {
+				if ref.Key == failed {
+					r.watcher.signals <- halt
+				}
+			}
+		},
+		"during the next phase's step": func(r *eventsRig) {
+			r.watcher.started = func(ref StepRef, s *Session) {
+				if ref.Key.Phase == 2 && ref.Key.Kind == "implement" {
+					r.watcher.signals <- halt
+				}
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newEventsRig(t)
+			r.watcher.signals = make(chan Signal, 1)
+			r.host.behaviour["rloop-p1-implement"] = "fail"
+			arm(r)
+
+			code := r.run(RunOptions{})
+
+			if code != 5 {
+				t.Fatalf("exit %d, want 5", code)
+			}
+			if got := r.calls("SessionHost.Interrupt "); len(got) != 0 {
+				t.Errorf("interrupted %v", got)
+			}
+			if got := r.calls("Land "); !reflect.DeepEqual(got, []string{"2"}) {
+				t.Errorf("landed %v", got)
+			}
+			runs := r.runRecords()
+			if last := runs[len(runs)-1]; last.Run != RunHalted || last.Reason != "watchdog: wrong turn" {
+				t.Errorf("last run record %+v", last)
+			}
+		})
+	}
+}
+
+func TestAWatchdogHaltRecordsTheFailedStepBeforeStoppingTheSession(t *testing.T) {
+	r := newEventsRig(t)
+	r.host.behaviour["rloop-p1-implement"] = "hold"
+	probe := &interruptProbe{eventsHost: r.ehost, store: r.store, recorded: make(chan bool, 1)}
+	r.loop.Sessions.Host = probe
+	r.watcher.started = func(ref StepRef, s *Session) {
+		if ref.Key.Phase == 1 && ref.Key.Kind == "implement" {
+			r.watcher.signals <- Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: ref.Key, Reason: "rewriting the spec"}
+		}
+	}
+
+	if code := r.run(RunOptions{}); code != 5 {
+		t.Fatalf("exit %d, want 5", code)
+	}
+	if !<-probe.recorded {
+		t.Error("session stopped before the failed transition was appended")
+	}
+}
+
+type interruptProbe struct {
+	*eventsHost
+	store    *loopStore
+	recorded chan bool
+}
+
+func (h *interruptProbe) Interrupt(agent string) error {
+	h.store.mu.Lock()
+	found := false
+	for _, rec := range h.store.Records["run-1"] {
+		if rec.Kind == RecordStep && rec.State == StepFailed && strings.HasPrefix(rec.Reason, "watchdog: ") {
+			found = true
+		}
+	}
+	h.store.mu.Unlock()
+	h.recorded <- found
+	return h.eventsHost.Interrupt(agent)
+}
+
+type abortProbe struct {
+	store    *loopStore
+	recorded chan bool
+}
+
+func (a abortProbe) Run(ctx context.Context, ref StepRef, obs Observer) Outcome {
+	a.store.MarkAbort("run-1")
+	<-ctx.Done()
+	a.store.mu.Lock()
+	found := false
+	for _, rec := range a.store.Records["run-1"] {
+		if rec.Kind == RecordRun && rec.Run == RunHalted && rec.Reason == ReasonAborted {
+			found = true
+		}
+	}
+	a.store.mu.Unlock()
+	a.recorded <- found
+	return Outcome{State: StepFailed, Reason: "interrupted"}
+}
+
+func TestAnAbortMidStepRecordsTheHaltedRunBeforeCancellingTheStep(t *testing.T) {
+	r := newLoopRig(t)
+	probe := abortProbe{store: r.store, recorded: make(chan bool, 1)}
+	r.loop.Runners = map[string]StepRunner{"plan-file": probe}
+
+	if code := r.run(RunOptions{Phases: []int{2}}); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !<-probe.recorded {
+		t.Error("step cancelled before the aborted run was appended")
+	}
+	if got := r.events("aborted"); len(got) != 1 {
+		t.Errorf("aborted %+v", got)
 	}
 }

@@ -52,7 +52,7 @@ func TestAnAllowListedClassIsAuthorisedWithoutAskingTheFace(t *testing.T) {
 	w, key := failedImplement(t, store)
 	rem := newRemedies(w, store, face, "locks")
 
-	got := rem.Propose("locks", "rm -f .git/index.lock", "a stale git lock")
+	got, _ := rem.Propose("locks", "rm -f .git/index.lock", "a stale git lock")
 
 	if got != "authorised" {
 		t.Fatalf("decision %q", got)
@@ -72,12 +72,12 @@ func TestAnUnlistedClassIsAskedYesNoAndAYesIsAMaintainerConsent(t *testing.T) {
 	w, _ := failedImplement(t, store)
 	rem := newRemedies(w, store, face, "locks")
 
-	got := rem.Propose("deps", "go mod download", "module cache is empty")
+	got, _ := rem.Propose("deps", "go mod download", "module cache is empty")
 
 	if got != "authorised" {
 		t.Fatalf("decision %q", got)
 	}
-	if calls := face.Calls(); !reflect.DeepEqual(calls, []string{"Face.Ask remedy-1"}) {
+	if calls := asks(face); !reflect.DeepEqual(calls, []string{"Face.Ask remedy-1"}) {
 		t.Errorf("face calls %q", calls)
 	}
 	if recs := remedyRecords(store); len(recs) != 1 || recs[0].Consent != "maintainer" {
@@ -95,7 +95,7 @@ func TestAnUnlistedClassAnsweredNoOrWithNoInputIsRefused(t *testing.T) {
 			w, _ := failedImplement(t, store)
 			rem := newRemedies(w, store, face)
 
-			got := rem.Propose("ports", "kill $(lsof -ti :8080)", "port 8080 is taken")
+			got, _ := rem.Propose("ports", "kill $(lsof -ti :8080)", "port 8080 is taken")
 
 			if got != "refused" {
 				t.Fatalf("decision %q", got)
@@ -114,7 +114,7 @@ func TestAnUnansweredConsentIsRefusedAfterTheWindowAndWithdrawn(t *testing.T) {
 	rem := newRemedies(w, store, face)
 	rem.Window = 10 * time.Millisecond
 
-	got := rem.Propose("containers", "docker compose up -d db", "the db container is down")
+	got, _ := rem.Propose("containers", "docker compose up -d db", "the db container is down")
 
 	if got != "refused" {
 		t.Fatalf("decision %q", got)
@@ -141,10 +141,10 @@ func TestAnUnknownClassIsRefusedNamingItAndNothingIsRecorded(t *testing.T) {
 	w, _ := failedImplement(t, store)
 	rem := newRemedies(w, store, &fakeFace{}, "locks")
 
-	got := rem.Propose("git", "git reset --hard", "tree is dirty")
+	got, reason := rem.Propose("git", "git reset --hard", "tree is dirty")
 
-	if !strings.HasPrefix(got, "refused") || !strings.Contains(got, `"git"`) {
-		t.Errorf("decision %q", got)
+	if got != "refused" || !strings.Contains(reason, `"git"`) {
+		t.Errorf("decision %q reason %q", got, reason)
 	}
 	if recs := remedyRecords(store); len(recs) != 0 {
 		t.Errorf("records %+v", recs)
@@ -155,8 +155,8 @@ func TestAProposalWithNoHeldOrLiveStepIsRefused(t *testing.T) {
 	store := &fakeStore{}
 	rem := newRemedies(&Watch{Store: store}, store, &fakeFace{}, "locks")
 
-	if got := rem.Propose("locks", "rm .lock", "stale"); got != "refused: no step to remedy" {
-		t.Errorf("decision %q", got)
+	if got, reason := rem.Propose("locks", "rm .lock", "stale"); got != "refused" || reason != "no step to remedy" {
+		t.Errorf("decision %q reason %q", got, reason)
 	}
 }
 
@@ -240,7 +240,7 @@ func TestAZeroWindowRefusesAnUnlistedClassWithoutAsking(t *testing.T) {
 	rem := newRemedies(w, store, face)
 	rem.Window = 0
 
-	got := rem.Propose("deps", "go mod download", "cache empty")
+	got, _ := rem.Propose("deps", "go mod download", "cache empty")
 
 	if got != "refused" {
 		t.Errorf("decision %q", got)
@@ -393,7 +393,7 @@ func TestAnAuthorisedRestartRerunsTheStepAsANewAttemptWithTheAddendum(t *testing
 			}
 			time.Sleep(time.Millisecond)
 		}
-		decided <- rem.Propose("restart", "herdr pane close stuck", "froze")
+		decided <- decisionOf(rem.Propose("restart", "herdr pane close stuck", "froze"))
 		_, reason := rem.Restart("phase-2/implement", "use the fake", "")
 		decided <- reason
 	}()
@@ -427,4 +427,30 @@ func TestAnAuthorisedRestartRerunsTheStepAsANewAttemptWithTheAddendum(t *testing
 			t.Errorf("report missing %q:\n%s", line, rep)
 		}
 	}
+}
+
+func decisionOf(decision, _ string) string { return decision }
+
+func TestAConsentAnswerSettlesTheQuestionOnTheFaceNamingTheMaintainer(t *testing.T) {
+	store := &fakeStore{}
+	face := &fakeFace{Answers: map[string]string{"remedy-1": "no"}}
+	w, key := failedImplement(t, store)
+	rem := newRemedies(w, store, face)
+
+	rem.Propose("deps", "go mod download", "module cache is empty")
+
+	want := []Event{{At: remedyT0, Kind: "human", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"what": "answer", "id": "remedy-1", "by": "maintainer"}}}
+	if !reflect.DeepEqual(face.Events, want) {
+		t.Errorf("face events\n got %+v\nwant %+v", face.Events, want)
+	}
+}
+
+func asks(face *fakeFace) []string {
+	var out []string
+	for _, c := range face.Calls() {
+		if strings.HasPrefix(c, "Face.Ask ") {
+			out = append(out, c)
+		}
+	}
+	return out
 }

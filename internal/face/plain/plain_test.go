@@ -28,6 +28,24 @@ func TestStepEventLine(t *testing.T) {
 	}
 }
 
+func TestStepEventLineDuringAReviewNamesTheRoundAndHalf(t *testing.T) {
+	for half, want := range map[string]string{
+		"find": "14:03:09  phase 4  implement  running  codex  review r2/3 find\n",
+		"fix":  "14:03:09  phase 4  implement  running  codex  review r2/3 fix\n",
+	} {
+		var out bytes.Buffer
+		f := &Face{Out: &out}
+
+		f.Emit(core.Event{At: at, Kind: "step", Phase: 4, Step: "implement", Fields: map[string]string{
+			"state": "running", "provider": "codex", "round": "2", "rounds": "3", "half": half,
+		}})
+
+		if out.String() != want {
+			t.Errorf("got %q, want %q", out.String(), want)
+		}
+	}
+}
+
 func TestWarningLine(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}

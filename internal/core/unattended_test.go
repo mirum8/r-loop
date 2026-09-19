@@ -143,7 +143,7 @@ func TestAnAllowListedProviderRestartOnAnotherProviderStillAsks(t *testing.T) {
 			if !accepted && reason != "no authorised remedy" {
 				t.Errorf("reason %q", reason)
 			}
-			if calls := face.Calls(); !reflect.DeepEqual(calls, []string{"Face.Ask remedy-2"}) {
+			if calls := asks(face); !reflect.DeepEqual(calls, []string{"Face.Ask remedy-2"}) {
 				t.Errorf("face calls %q", calls)
 			}
 			recs := remedyRecords(store)
@@ -234,7 +234,31 @@ func TestAMaintainerApprovedProviderRemedyDoesNotAuthoriseAnotherProviderWithout
 	if ok || reason != "no authorised remedy" {
 		t.Errorf("restart %v %q", ok, reason)
 	}
-	if calls := face.Calls(); !reflect.DeepEqual(calls, []string{"Face.Ask remedy-1", "Face.Ask remedy-2"}) {
+	if calls := asks(face); !reflect.DeepEqual(calls, []string{"Face.Ask remedy-1", "Face.Ask remedy-2"}) {
 		t.Errorf("face calls %q", calls)
+	}
+}
+
+func TestAMaintainerApprovedProviderRemedyNamingTheProviderIsNotAskedAgain(t *testing.T) {
+	store := &fakeStore{}
+	face := &fakeFace{Answers: map[string]string{"remedy-1": "yes"}}
+	rem, w := fallbackRemedies(t, store, face)
+	rem.Propose("provider", "restart phase-2/implement on gemini", "codex usage limit reached")
+	got := make(chan Restart, 1)
+	go func() { got <- <-w.Restarts() }()
+
+	ok, reason := rem.Restart("phase-2/implement", "", "gemini")
+
+	if !ok || reason != "" {
+		t.Fatalf("restart %v %q", ok, reason)
+	}
+	if rs := <-got; rs.Provider != "gemini" || rs.Remedy != "remedy-1" {
+		t.Errorf("restart %+v", rs)
+	}
+	if calls := asks(face); !reflect.DeepEqual(calls, []string{"Face.Ask remedy-1"}) {
+		t.Errorf("face calls %q", calls)
+	}
+	if recs := remedyRecords(store); len(recs) != 1 {
+		t.Errorf("records %+v", recs)
 	}
 }

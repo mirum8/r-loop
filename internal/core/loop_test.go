@@ -333,7 +333,21 @@ func TestAReviewRoundIsARunningStepEventNamingTheRound(t *testing.T) {
 	(&loopObserver{l: r.loop, ref: ref}).Reviewing(&Session{Workspace: "ws-9"}, 2)
 
 	ev := r.events("step")[0]
-	if ev.Phase != 2 || ev.Step != "implement" || ev.Fields["state"] != "running" || ev.Fields["round"] != "2" || ev.Fields["rounds"] != "3" || ev.Fields["workspace"] != "ws-9" {
+	if ev.Phase != 2 || ev.Step != "implement" || ev.Fields["state"] != "running" || ev.Fields["round"] != "2" || ev.Fields["rounds"] != "3" || ev.Fields["workspace"] != "ws-9" || ev.Fields["half"] != "find" {
+		t.Errorf("event %+v", ev)
+	}
+}
+
+func TestAReviewRoundsFixHalfIsARunningStepEventNamingTheHalf(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.runDir = t.TempDir()
+	ref := StepRef{Key: StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}, Kind: r.loop.Kinds[1]}
+	ref.Kind.Row.Rounds = 3
+
+	(&loopObserver{l: r.loop, ref: ref}).Fixing(&Session{Workspace: "ws-9"}, 2)
+
+	ev := r.events("step")[0]
+	if ev.Fields["state"] != "running" || ev.Fields["round"] != "2" || ev.Fields["rounds"] != "3" || ev.Fields["half"] != "fix" {
 		t.Errorf("event %+v", ev)
 	}
 }

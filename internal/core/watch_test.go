@@ -331,3 +331,60 @@ func TestARejectedWatchdogSignalBetweenStepsHaltsTheNextStep(t *testing.T) {
 		t.Errorf("forwarded %+v", fwd)
 	}
 }
+
+func TestASignalForAMalformedStepIsRejectedAndHaltsTheRun(t *testing.T) {
+	store := &fakeStore{}
+	w := newWatch(store)
+	w.StepStarted(implementRef(2, 1), &Session{})
+	defer w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
+
+	got, err := w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Kind: "phase3/implement"}, Reason: "off the plan"})
+
+	want := `step "phase3/implement" is not phase-<N>/<kind>`
+	if err != nil || !got.Rejected || got.RejectReason != want {
+		t.Fatalf("accept %+v, %v", got, err)
+	}
+	if recs := recordedSignals(store); len(recs) != 1 || !recs[0].Rejected || recs[0].RejectReason != want {
+		t.Errorf("recorded %+v", recs)
+	}
+	fwd := receive(t, w)
+	if fwd.Kind != SignalHalt || fwd.Step != implementRef(2, 1).Key || fwd.Reason != "watchdog signal rejected: "+want {
+		t.Errorf("forwarded %+v", fwd)
+	}
+}
+
+func TestAnAcceptedHaltForTheHeldStepClosesItsRemedyWindow(t *testing.T) {
+	store := &fakeStore{}
+	w, key := failedImplement(t, store)
+	w.Poll = time.Hour
+	rem := newRemedies(w, store, &fakeFace{}, "restart")
+	go func() { <-w.Restarts() }()
+
+	if ok, reason := w.Handle(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: 2, Kind: "implement"}, Reason: "wrong turn"}); !ok {
+		t.Fatalf("halt rejected: %s", reason)
+	}
+	if fwd := receive(t, w); fwd.Kind != SignalHalt || fwd.Step != key {
+		t.Errorf("forwarded %+v", fwd)
+	}
+
+	if ok, reason := rem.Restart("phase-2/implement", "", ""); ok || reason != "run halted" {
+		t.Errorf("restart %v %q", ok, reason)
+	}
+}
+
+func TestARejectedWatchdogSignalDuringTheRemedyWindowHaltsTheHeldStep(t *testing.T) {
+	store := &fakeStore{}
+	w, key := failedImplement(t, store)
+	rem := newRemedies(w, store, &fakeFace{}, "restart")
+	go func() { <-w.Restarts() }()
+
+	w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Kind: "phase3/implement"}, Reason: "off the plan"})
+
+	fwd := receive(t, w)
+	if fwd.Kind != SignalHalt || fwd.Step != key || !strings.HasPrefix(fwd.Reason, "watchdog signal rejected: ") {
+		t.Errorf("forwarded %+v", fwd)
+	}
+	if ok, reason := rem.Restart("phase-2/implement", "", ""); ok || reason != "run halted" {
+		t.Errorf("restart %v %q", ok, reason)
+	}
+}

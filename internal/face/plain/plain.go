@@ -29,8 +29,12 @@ func (f *Face) Emit(ev core.Event) {
 	defer f.mu.Unlock()
 	switch ev.Kind {
 	case "step":
+		detail := ev.Fields["reason"]
+		if r := ev.Fields["round"]; r != "" {
+			detail = strings.TrimSpace(fmt.Sprintf("review r%s/%s %s", r, ev.Fields["rounds"], ev.Fields["half"]))
+		}
 		line := fmt.Sprintf("%s  phase %d  %s  %s  %s  %s", ev.At.Format("15:04:05"), ev.Phase, ev.Step,
-			ev.Fields["state"], ev.Fields["provider"], ev.Fields["reason"])
+			ev.Fields["state"], ev.Fields["provider"], detail)
 		fmt.Fprintln(f.Out, strings.TrimRight(line, " "))
 	case "warning", "error":
 		fmt.Fprintf(f.Out, "!  %s%s\n", where(ev.Phase, ev.Step), ev.Fields["reason"])

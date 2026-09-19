@@ -186,7 +186,7 @@ func TestExecuteRegistersProposeRemedyAndRestartStepOnTheWatchdogSurface(t *test
 	answered := call("answer_question", map[string]any{"id": "q-none", "answer": "sqlite", "citation": "docs/topic/todo.md:1"})
 	call("signal", map[string]any{"kind": "halt", "step": "phase-1/implement", "reason": "done here", "evidence": "docs/topic/todo.md:1"})
 
-	if proposed["decision"] != `refused: class "git" is not a remedy class` {
+	if proposed["decision"] != "refused" || proposed["reason"] != `class "git" is not a remedy class` {
 		t.Errorf("propose_remedy %v", proposed)
 	}
 	if restarted["accepted"] != false || restarted["reason"] != "run halted" {

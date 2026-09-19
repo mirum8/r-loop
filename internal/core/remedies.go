@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -13,6 +14,9 @@ const (
 	consentAllowList  = "allow-list"
 	consentMaintainer = "maintainer"
 	consentRefused    = "refused"
+
+	decisionAuthorised = "authorised"
+	decisionRefused    = "refused"
 )
 
 type Remedies struct {
@@ -35,22 +39,22 @@ func (r *Remedies) now() time.Time {
 	return r.Now()
 }
 
-func (r *Remedies) Propose(class, command, why string) string {
+func (r *Remedies) Propose(class, command, why string) (string, string) {
 	if !slices.Contains(remedyClasses, class) {
-		return fmt.Sprintf("refused: class %q is not a remedy class", class)
+		return decisionRefused, fmt.Sprintf("class %q is not a remedy class", class)
 	}
 	step, ok := r.Watch.target()
 	if !ok {
-		return "refused: no step to remedy"
+		return decisionRefused, "no step to remedy"
 	}
 	rem, err := r.decide(step, class, command, why, r.consent)
 	if err != nil {
-		return "refused: " + err.Error()
+		return decisionRefused, err.Error()
 	}
 	if rem.Consent == consentRefused {
-		return "refused"
+		return decisionRefused, ""
 	}
-	return "authorised"
+	return decisionAuthorised, ""
 }
 
 func (r *Remedies) decide(step StepKey, class, command, why string, consent func(Remedy) string) (Remedy, error) {
@@ -96,8 +100,9 @@ func (r *Remedies) ask(rem Remedy) string {
 		if a == "" {
 			return consentRefused
 		}
-		ev := Event{At: r.now(), Kind: "human", Phase: rem.Step.Phase, Step: rem.Step.Kind, Fields: map[string]string{"what": "consent"}}
+		ev := Event{At: r.now(), Kind: "human", Phase: rem.Step.Phase, Step: rem.Step.Kind, Fields: map[string]string{"what": "answer", "id": rem.ID, "by": consentMaintainer}}
 		r.Store.Append(rem.Step.Run, Record{Kind: RecordEvent, At: ev.At, Event: &ev})
+		r.Face.Emit(ev)
 		if a == "yes" {
 			return consentMaintainer
 		}
@@ -140,35 +145,35 @@ func (r *Remedies) Restart(step, addendum, provider string) (bool, string) {
 	if restarts >= r.MaxRestarts {
 		return false, fmt.Sprintf("restart limit %d reached", r.MaxRestarts)
 	}
-	fits := func(class string) bool {
+	fallback := provider == "" || provider == r.Fallbacks[kind].Provider
+	fits := func(rem Remedy) bool {
 		switch {
 		case provider != "":
-			return class == "provider"
-		case class == "restart":
+			return rem.Class == "provider" && (fallback || rem.Consent == consentMaintainer && slices.Contains(strings.Fields(rem.Command), provider))
+		case rem.Class == "restart":
 			return true
-		case class == "retry":
+		case rem.Class == "retry":
 			return addendum != ""
 		}
 		return false
 	}
 	remedy := ""
-	if provider != "" && provider != r.Fallbacks[kind].Provider {
+	for _, rem := range st.Remedies {
+		if rem.Step == key && rem.Consent != consentRefused && !spent[rem.ID] && fits(rem) {
+			remedy = rem.ID
+			break
+		}
+	}
+	if remedy == "" && fallback && slices.ContainsFunc(r.Allow, func(class string) bool { return fits(Remedy{Class: class}) }) {
+		remedy = consentAllowList
+	}
+	if remedy == "" && !fallback {
 		rem, err := r.decide(key, "provider", fmt.Sprintf("restart %s on %s", step, provider), provider+" is not the row's fallback", r.ask)
 		if err != nil {
 			return false, err.Error()
 		}
 		if rem.Consent == consentMaintainer {
 			remedy = rem.ID
-		}
-	} else {
-		for _, rem := range st.Remedies {
-			if rem.Step == key && rem.Consent != consentRefused && !spent[rem.ID] && fits(rem.Class) {
-				remedy = rem.ID
-				break
-			}
-		}
-		if remedy == "" && slices.ContainsFunc(r.Allow, fits) {
-			remedy = consentAllowList
 		}
 	}
 	if remedy == "" {
