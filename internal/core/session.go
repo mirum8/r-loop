@@ -49,6 +49,7 @@ type Session struct {
 	Workspace, Pane, Agent, Sentinel string
 	Reviewer                         string
 	OpenQuestion, Reviewing          atomic.Bool
+	owner                            *Session
 	fix                              *fixHalf
 }
 
@@ -131,26 +132,11 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 
 func (m *SessionManager) start(s *Session, stepDir string) error {
 	row := s.Ref.Kind.Row
-	args, err := m.Resolve(row.Provider, row.Model, row.Effort, "", "")
+	args, url, err := m.askArgs(s.Ref.Key, row.Provider, row.Model, row.Effort, filepath.Join(stepDir, s.Agent+".mcp.json"))
 	if err != nil {
 		return err
 	}
-	if !args.Ask {
-		if err := m.event(m.now(), s, Event{Kind: "ask-none", Fields: map[string]string{"provider": row.Provider}}); err != nil {
-			return err
-		}
-	} else if m.Ask != nil {
-		s.Ref.AskURL = m.Ask.StepURL(s.Ref.Key)
-		mcpPath := filepath.Join(stepDir, s.Agent+".mcp.json")
-		if args, err = m.Resolve(row.Provider, row.Model, row.Effort, s.Ref.AskURL, mcpPath); err != nil {
-			return err
-		}
-		if slices.ContainsFunc(args.Args, func(a string) bool { return strings.Contains(a, mcpPath) }) {
-			if err := writeMCPConfig(mcpPath, s.Ref.AskURL); err != nil {
-				return err
-			}
-		}
-	}
+	s.Ref.AskURL = url
 	ref := s.Ref
 	if _, err := m.Host.Start(s.Pane, s.Agent, args.Kind, args.Args); err != nil {
 		return err
@@ -256,7 +242,7 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 	if state == AgentGone {
 		return m.fail(s, "agent gone"), true
 	}
-	if s.OpenQuestion.Load() || s.Reviewing.Load() {
+	if s.OpenQuestion.Load() || s.Reviewing.Load() || (s.owner != nil && s.owner.OpenQuestion.Load()) {
 		return Outcome{}, false
 	}
 	w.elapsed += dt
@@ -292,13 +278,37 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 	w.stalled, w.quiet = true, 0
 	m.recordState(now, s, StepStalled)
 	w.obs.Stalled(s)
-	if err := m.Host.Prompt(s.Agent, nudge(grace), false, 0); err != nil {
+	if err := m.Host.Prompt(s.Agent, nudge(grace, s.Ref.AskURL != ""), false, 0); err != nil {
 		out := m.fail(s, "stalled: nudge not delivered: "+err.Error())
 		out.Stalled = true
 		return out, true
 	}
 	m.event(now, s, Event{Kind: "nudge"})
 	return Outcome{}, false
+}
+
+func (m *SessionManager) askArgs(key StepKey, provider, model, effort, mcpPath string) (ProviderArgs, string, error) {
+	args, err := m.Resolve(provider, model, effort, "", "")
+	if err != nil {
+		return args, "", err
+	}
+	if !args.Ask {
+		ev := Event{At: m.now(), Kind: "ask-none", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"provider": provider}}
+		return args, "", m.Store.Append(key.Run, Record{Kind: RecordEvent, At: ev.At, Event: &ev})
+	}
+	if m.Ask == nil {
+		return args, "", nil
+	}
+	url := m.Ask.StepURL(key)
+	if args, err = m.Resolve(provider, model, effort, url, mcpPath); err != nil {
+		return args, "", err
+	}
+	if slices.ContainsFunc(args.Args, func(a string) bool { return strings.Contains(a, mcpPath) }) {
+		if err := writeMCPConfig(mcpPath, url); err != nil {
+			return args, "", err
+		}
+	}
+	return args, url, nil
 }
 
 func (m *SessionManager) recordState(at time.Time, s *Session, state StepState) {
@@ -315,8 +325,12 @@ func writeMCPConfig(path, url string) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-func nudge(grace time.Duration) string {
-	return "r-loop: no sentinel and no activity for " + grace.String() + ". If your work is done, write the sentinel now. If you are blocked, call ask_user, or write a failed sentinel with the reason."
+func nudge(grace time.Duration, ask bool) string {
+	blocked := "If you are blocked, write a failed sentinel with the reason."
+	if ask {
+		blocked = "If you are blocked, call ask_user, or write a failed sentinel with the reason."
+	}
+	return "r-loop: no sentinel and no activity for " + grace.String() + ". If your work is done, write the sentinel now. " + blocked
 }
 
 func (m *SessionManager) judge(s *Session, sentinel Sentinel, sErr error) Outcome {

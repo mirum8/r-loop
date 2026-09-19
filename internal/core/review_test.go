@@ -532,3 +532,132 @@ func TestReviewFindPersistenceFailureFailsTheStep(t *testing.T) {
 		t.Fatalf("outcome = %+v", out)
 	}
 }
+
+func askingReviewResolve(r *reviewRig) func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
+	return func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
+		r.resolved = append(r.resolved, []string{provider, askURL, mcpConfigPath})
+		var args []string
+		if mcpConfigPath != "" {
+			args = []string{"--mcp-config", mcpConfigPath}
+		}
+		return ProviderArgs{Kind: provider, Args: args, Review: "/" + provider + "-review", Ask: true}, nil
+	}
+}
+
+func TestReviewerIsStartedWithItsOwnAskURLAndMCPConfig(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
+	r.sm.Resolve = askingReviewResolve(r)
+	path := filepath.Join(r.runDir, "phase-3", "implement-rv-claude-a1.mcp.json")
+	host := &configCheckingHost{scriptedHost: r.host, path: path}
+	r.sm.Host = host
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	url := "http://127.0.0.1:7000/mcp/tok/run-1/3/implement-rv-claude/1"
+	if got := r.count("AskChannel.StepURL run-1/3/implement-rv-claude/1"); got != 1 {
+		t.Fatalf("calls =\n%s", strings.Join(r.shared.Calls(), "\n"))
+	}
+	if r.reviews[0]["AskURL"] != url {
+		t.Fatalf("AskURL = %v", r.reviews[0]["AskURL"])
+	}
+	if !host.present {
+		t.Fatal("the mcp config was not there when the reviewer started")
+	}
+	if got := r.count("SessionHost.Start pane-2 rloop-p3-implement-rv-claude-r1 claude [--mcp-config " + path + "]"); got != 1 {
+		t.Fatalf("calls =\n%s", strings.Join(r.shared.Calls(), "\n"))
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"mcpServers":{"r-loop":{"type":"http","url":"` + url + `"}}}`; string(data) != want {
+		t.Fatalf("mcp config = %s", data)
+	}
+}
+
+func TestAnAskNoneReviewerRecordsAskNoneOnceNamingTheReviewer(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
+	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
+		findings := 0
+		if vars["Round"] == 1 {
+			findings = 1
+		}
+		writeReview(t, vars, "ok", findings)
+	}
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("codex-r1-1", "real", "P1", true, ""))
+	}
+
+	out := r.run()
+
+	if out.State != StepOK || len(r.reviews) != 2 {
+		t.Fatalf("outcome = %+v, reviews = %d", out, len(r.reviews))
+	}
+	var rv []Event
+	for _, e := range r.events("ask-none") {
+		if e.Step != "implement" {
+			rv = append(rv, e)
+		}
+	}
+	if len(rv) != 1 || rv[0].Step != "implement-rv-codex" || rv[0].Phase != 3 || rv[0].Fields["provider"] != "codex" {
+		t.Fatalf("ask-none events = %+v", r.events("ask-none"))
+	}
+	if _, ok := r.reviews[0]["AskURL"]; ok || r.count("AskChannel.StepURL") != 0 {
+		t.Fatalf("AskURL = %v", r.reviews[0]["AskURL"])
+	}
+}
+
+func TestReviewerWithoutAskUserIsNotNudgedToCallIt(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.sm.Host = &stateHost{scriptedHost: r.host, states: map[string]AgentState{"rloop-p3-implement-rv-claude-r1": AgentIdle}}
+
+	r.run()
+
+	nudges := r.callsFrom(`SessionHost.Prompt rloop-p3-implement-rv-claude-r1 "r-loop: no sentinel`)
+	if len(nudges) != 1 || strings.Contains(nudges[0], "ask_user") {
+		t.Fatalf("nudges = %q", nudges)
+	}
+}
+
+func TestReviewerWithAskUserIsNudgedToCallIt(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
+	r.sm.Resolve = askingReviewResolve(r)
+	r.sm.Host = &stateHost{scriptedHost: r.host, states: map[string]AgentState{"rloop-p3-implement-rv-claude-r1": AgentIdle}}
+
+	r.run()
+
+	nudges := r.callsFrom(`SessionHost.Prompt rloop-p3-implement-rv-claude-r1 "r-loop: no sentinel`)
+	if len(nudges) != 1 || !strings.Contains(nudges[0], "ask_user") {
+		t.Fatalf("nudges = %q", nudges)
+	}
+}
+
+func TestReviewerClockHoldsWhileTheStepHasAnOpenQuestion(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.worker.Ref.Kind.Row.ReviewTimeout = 5 * time.Minute
+	r.worker.OpenQuestion.Store(true)
+	r.host.script = func(n int) AgentState {
+		if n == 20 {
+			writeReview(t, r.reviews[0], "ok", 0)
+		}
+		return AgentIdle
+	}
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if n := len(r.callsFrom(`SessionHost.Prompt rloop-p3-implement-rv-codex-r1 "r-loop: no sentinel`)); n != 0 {
+		t.Fatalf("nudges = %d", n)
+	}
+}

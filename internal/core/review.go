@@ -29,15 +29,17 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 	sm := h.Sessions
 	row := ref.Kind.Row
 	args := make([]ProviderArgs, len(row.Reviewers))
+	urls := make([]string, len(row.Reviewers))
 	for i, rv := range row.Reviewers {
-		a, err := sm.Resolve(rv.Provider, rv.Model, rv.Effort, "", "")
+		key := reviewerKey(ref.Key, rv.Provider)
+		a, url, err := sm.askArgs(key, rv.Provider, rv.Model, rv.Effort, filepath.Join(stepDir(worker), fmt.Sprintf("%s-a%d.mcp.json", key.Kind, key.Attempt)))
 		if err != nil {
 			return sm.fail(worker, "reviewer "+rv.Provider+": "+err.Error())
 		}
 		if a.Review == "" {
 			return sm.fail(worker, "reviewer "+rv.Provider+" declares no native reviewer")
 		}
-		args[i] = a
+		args[i], urls[i] = a, url
 	}
 	var reviewers []*Session
 	rd := reviewRound{rounds: row.Rounds}
@@ -62,7 +64,7 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 		}
 		obs.Reviewing(worker, rd.n)
 		var out Outcome
-		if reviewers, out = h.open(worker, row.Reviewers, args, reviewers, rd); out.State == StepFailed {
+		if reviewers, out = h.open(worker, row.Reviewers, args, urls, reviewers, rd); out.State == StepFailed {
 			return out
 		}
 		worker.Reviewing.Store(true)
@@ -159,11 +161,11 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, reviewers []*Sessi
 	return fixed, Outcome{}
 }
 
-func (h ReviewHalf) open(worker *Session, rows []Reviewer, args []ProviderArgs, prev []*Session, rd reviewRound) ([]*Session, Outcome) {
+func (h ReviewHalf) open(worker *Session, rows []Reviewer, args []ProviderArgs, urls []string, prev []*Session, rd reviewRound) ([]*Session, Outcome) {
 	sm := h.Sessions
 	sessions := make([]*Session, len(rows))
 	for i, rv := range rows {
-		sessions[i] = h.reviewer(worker, rv, args[i], rd)
+		sessions[i] = h.reviewer(worker, rv, args[i], urls[i], rd)
 		if prev != nil {
 			sessions[i].Pane = prev[i].Pane
 			sm.Host.Interrupt(prev[i].Agent)
@@ -199,7 +201,12 @@ func (h ReviewHalf) open(worker *Session, rows []Reviewer, args []ProviderArgs, 
 	return sessions, Outcome{}
 }
 
-func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, args ProviderArgs, rd reviewRound) *Session {
+func reviewerKey(key StepKey, provider string) StepKey {
+	key.Kind += "-rv-" + provider
+	return key
+}
+
+func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, args ProviderArgs, url string, rd reviewRound) *Session {
 	key := worker.Ref.Key
 	dir := stepDir(worker)
 	base := fmt.Sprintf("%s-rv-%s-r%d", key.Kind, rv.Provider, rd.n)
@@ -215,6 +222,11 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, args ProviderArgs, rd
 		Agent:     agentName(fmt.Sprintf("rloop-p%d-%s-rv-%s", key.Phase, key.Kind, rv.Provider), agentSuffix(rd.n, key.Attempt)),
 		Sentinel:  filepath.Join(dir, fmt.Sprintf("%s-a%d.sentinel", base, key.Attempt)),
 		Reviewer:  rv.Provider,
+		owner:     worker,
+	}
+	delete(vars, "AskURL")
+	if url != "" {
+		vars["AskURL"] = url
 	}
 	vars["Sentinel"] = s.Sentinel
 	vars["ReviewedKind"] = key.Kind
@@ -231,6 +243,7 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, args ProviderArgs, rd
 		Phase:    worker.Ref.Phase,
 		Worktree: worker.Ref.Worktree,
 		RunDir:   worker.Ref.RunDir,
+		AskURL:   url,
 		Vars:     vars,
 	}
 	return s

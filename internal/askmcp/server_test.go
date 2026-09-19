@@ -159,7 +159,7 @@ func TestAWrongTokenOrUnknownPathIs404(t *testing.T) {
 	s, base, _ := serve(t)
 	good := s.StepURL(core.StepKey{Run: "run-7", Phase: 3, Kind: "plan", Attempt: 1})
 	wrong := strings.Replace(good, "/mcp/", "/mcp/0", 1)
-	for _, url := range []string{wrong, base, base + "/3/plan", base + "/x/plan/1", base + "/3/plan/one", base + "/3/plan/1/extra", base + "/999/bogus/1", base + "/3/plan/2"} {
+	for _, url := range []string{wrong, base, base + "/3/plan", base + "/x/plan/1", base + "/3/plan/one", base + "/3/plan/1/extra", base + "/999/bogus/1", base + "/3/plan/2", base + "/3/plan-rv-codex/1"} {
 		resp, err := http.Post(url, "application/json", strings.NewReader(`{}`))
 		if err != nil {
 			t.Fatal(err)

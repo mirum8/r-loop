@@ -518,6 +518,7 @@ const nudgeText = "r-loop: no sentinel and no activity for 2m0s. If your work is
 
 func TestIdleForTheGraceStallsAndNudgesOnceThenWorkingResumes(t *testing.T) {
 	r := newRig(t)
+	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
 	s := r.spawn(t, 1)
 	r.repo.TreeChanges = []string{"a.go"}
 	r.host.script = func(n int) AgentState {
