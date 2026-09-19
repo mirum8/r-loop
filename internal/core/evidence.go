@@ -67,7 +67,7 @@ func planFileCheck(ctx EvidenceContext) (bool, string) {
 		}
 	}
 	tests, _ := section(lines, "## Tests")
-	if len(listItems(tests)) == 0 {
+	if len(listItems(tests))+len(tableRows(tests)) == 0 {
 		return false, "## Tests is empty"
 	}
 	changed, missing := stepChanges(ctx)
@@ -167,6 +167,16 @@ func section(lines []string, heading string) ([]string, bool) {
 
 func listItems(lines []string) []string {
 	var out []string
+	for _, l := range lines {
+		if item, ok := listItem(l); ok {
+			out = append(out, strings.TrimSpace(item))
+		}
+	}
+	return out
+}
+
+func tableRows(lines []string) []string {
+	var out []string
 	inTable := false
 	for i, l := range lines {
 		switch {
@@ -174,15 +184,8 @@ func listItems(lines []string) []string {
 			inTable = false
 		case !inTable:
 			inTable = i+1 < len(lines) && tableSeparator(lines[i+1])
-			continue
-		case tableSeparator(l):
-			continue
-		default:
+		case !tableSeparator(l):
 			out = append(out, l)
-			continue
-		}
-		if item, ok := listItem(l); ok {
-			out = append(out, strings.TrimSpace(item))
 		}
 	}
 	return out

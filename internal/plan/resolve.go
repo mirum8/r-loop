@@ -15,6 +15,7 @@ var (
 	entryMarkerRe    = regexp.MustCompile(`^ ?[-*][ \t]+`)
 	boldRe           = regexp.MustCompile(`\*\*(.+?)\*\*`)
 	labelRe          = regexp.MustCompile(`\b([A-Z][A-Za-z]{2,}):`)
+	segmentStartRe   = regexp.MustCompile(`(^ ?[-*][ \t]+(\[[ xX]\][ \t]+)?|[.?!][ \t]+)$`)
 )
 
 var knownLabels = map[string]bool{
@@ -74,15 +75,18 @@ func parseEntry(lines []string) core.Entry {
 	}
 
 	marks := labelRe.FindAllStringSubmatchIndex(flat, -1)
-	first := len(marks)
-	for i, m := range marks {
-		if knownLabels[strings.ToLower(flat[m[2]:m[3]])] {
-			first = i
-			break
+	seenKnown := false
+	labels := marks[:0]
+	for _, m := range marks {
+		known := knownLabels[strings.ToLower(flat[m[2]:m[3]])]
+		seenKnown = seenKnown || known
+		if seenKnown || segmentStartRe.MatchString(flat[:m[0]]) {
+			labels = append(labels, m)
 		}
 	}
+	marks = labels
 	fields := map[string]string{}
-	for i := first; i < len(marks); i++ {
+	for i := range marks {
 		m := marks[i]
 		label := flat[m[2]:m[3]]
 		end := len(flat)

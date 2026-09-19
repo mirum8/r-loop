@@ -276,3 +276,57 @@ func TestFixtureHasNoResolveFirst(t *testing.T) {
 		t.Errorf("ResolveFirst = %+v", p.ResolveFirst)
 	}
 }
+
+func TestUnknownLabelBeforeAnyKnownLabelIsMalformed(t *testing.T) {
+	p := readEntries(t, `# Plan
+
+## Resolve first
+- [ ] **Informs** — does it?
+      Informs: Phase 2. Blocks: Phase 1. Timebox: an hour.
+
+`+phasesTail)
+
+	e := onlyEntry(t, p)
+	if e.Blocks != "Phase 1" || !reflect.DeepEqual(e.BlocksPhases, []int{1}) {
+		t.Errorf("Blocks = %q, BlocksPhases = %v", e.Blocks, e.BlocksPhases)
+	}
+	if !reflect.DeepEqual(e.Malformed, []string{"unknown label Informs:"}) {
+		t.Errorf("Malformed = %v", e.Malformed)
+	}
+}
+
+func TestOnlyAnUnknownLabelIsMalformed(t *testing.T) {
+	p := readEntries(t, `# Plan
+
+## Resolve first
+- [ ] **Informs** — does it?
+      Informs: Phase 2.
+
+`+phasesTail)
+
+	e := onlyEntry(t, p)
+	if !reflect.DeepEqual(e.Malformed, []string{"unknown label Informs:"}) {
+		t.Errorf("Malformed = %v", e.Malformed)
+	}
+	if !e.BlocksAll {
+		t.Errorf("BlocksAll = false, want true")
+	}
+}
+
+func TestColonInTheQuestionProseIsNotALabel(t *testing.T) {
+	p := readEntries(t, `# Plan
+
+## Resolve first
+- [ ] **Postgres versus Aurora** — which engine, Postgres: or Aurora?
+      Owner: platform. Blocks: Phase 1.
+
+`+phasesTail)
+
+	e := onlyEntry(t, p)
+	if e.Malformed != nil {
+		t.Errorf("Malformed = %v, want none", e.Malformed)
+	}
+	if e.Owner != "platform" || e.Blocks != "Phase 1" {
+		t.Errorf("Owner = %q, Blocks = %q", e.Owner, e.Blocks)
+	}
+}

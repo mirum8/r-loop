@@ -363,6 +363,14 @@ func TestPlanAssumptions(t *testing.T) {
 			[]string{"the file is UTF-8", "headings are ASCII"},
 		},
 		"no section": {"status: planned\n", nil},
+		"table rows are not assumptions": {
+			strings.Replace(goodPlan, "- headings are ASCII\n", "- headings are ASCII\n\n| Assumption | Why |\n|---|---|\n| ASCII only | tooling |\n", 1),
+			[]string{"the file is UTF-8", "headings are ASCII"},
+		},
+		"numbered items": {
+			strings.Replace(goodPlan, "- the file is UTF-8\n- headings are ASCII\n", "1. the file is UTF-8\n2) headings are ASCII\n", 1),
+			[]string{"the file is UTF-8", "headings are ASCII"},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := PlanAssumptions(planPath, fstest.MapFS{planPath: {Data: []byte(tc.plan)}})
