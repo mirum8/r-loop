@@ -308,7 +308,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   phase's last recorded step agent (`rloop-p<N>-<kind>[-a<attempt>]`); when it is `working` or
   `blocked` — a driver killed mid-step leaves it running — resume appends `Event{Kind:
   "stale-interrupted", Phase, Step, Fields{agent, state}}`, then `Interrupt`s it and prints
-  `interrupted previous session <agent>: still <state>`. The worktree is **claimed** when it is
+  `interrupted previous session <agent>: still <state>`. After the claim and before the re-run, every
+  step of a halted phase still in a non-terminal state is recorded `failed(interrupted: driver died)`
+  (a resume-only close from any non-terminal state; attempt+1 is the re-run). The worktree is **claimed** when it is
   clean, when `Snapshot(worktree)` equals the last `snapshot` (or `review-round`) event recorded
   for that step, or when that step never reached `ok` or `failed` and a `baseline` event exists
   for it — the changes are its own leftovers, and the new attempt reuses that baseline, so
@@ -357,7 +359,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   and the question timeout, or `mode: attended`.
 - **Plain lines / status / report / notify env** — as written in Phases 15–16: `HH:MM:SS phase
   <N> <kind> <state> <provider> <detail>` (during a review, `<detail>` is `review r<round>/<rounds>
-  <half>`, `<half>` `find` or `fix`); while an `answer <id>> ` prompt is open, each emitted line
+  <half>`, `<half>` `find` or `fix`); `HH:MM:SS phase <N> <kind> nudge` when a stalled step is nudged; a remedy asked with no
+  terminal prints `remedy-<n> refused — no terminal to consent from`, remedy ids being `remedy-<n>`); while an `answer <id>> ` prompt is open, each emitted line
   starts on a fresh line and the prompt is printed again after it; `r-loop status --plain` lines
   — `run <id> running (driver pid <pid> not alive — r-loop resume)` and no `live` line when
   `current` names this run with a dead pid, `phase <N> not in this run` for an unticked phase
@@ -417,7 +420,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Server** — MCP go-sdk streamable HTTP on `127.0.0.1:<free port>`, base `/mcp/<runToken>`
   (32 hex chars, stored mode 0600). A step URL is `<base>/<phase>/<kind>/<attempt>`, a reviewer's
   `<base>/<phase>/<kind>-rv-<provider>/<attempt>` — the path identifies the asking agent. Tool
-  `ask_user(question, options?, recommended?) → {answer}` blocks until answered; ids `q<seq>`.
+  `ask_user(question, options?, recommended?) → {answer}` blocks until answered; ids `q<seq>`; a repeated `ask_user` from the same step with the same text and options while that
+  question is open reuses its id and receives its answer — it is not recorded or escalated again.
   Every agent's MCP client is configured with a 24 h tool timeout (Milestone 2, Provider block), so
   a blocking call is never cut off by the client.
 - **waiting-input** — a question moves the step `running → waiting-input`, freezes its backstop,
