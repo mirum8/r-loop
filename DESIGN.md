@@ -93,6 +93,14 @@ banner above the key bar. It was picked against a stacked table and a three-pane
 keeps the whole plan visible while the detail pane carries the one phase that is live, which is the
 arrangement this identity's glance-first premise depends on.
 
+**What is built.** The layout the TUI actually draws is the one in the golden frames of Phase 22,
+`internal/face/tui/testdata/frame-120x40.golden` and `frame-70x30.golden`, and those frames are
+authoritative where this document or `docs/design/variants/layouts/rail.txt` differ: a header line,
+the phase rail beside the live-step panel with its warnings (stacked below 80 columns), a questions
+area, and a status line for a notice or a finished run. Not implemented: the bordered frame, the
+watchdog feed, the raised panel (modal) and the key bar drawn in `rail.txt`, and the ASCII box
+fallback under **Shapes**.
+
 ## Colors
 
 Two greys carry the whole interface. `surface` is a near-black with a trace of blue so that a
@@ -110,7 +118,8 @@ labels all use it, which is what leaves the two accent colours alone to mean som
   it.
 - **`tertiary`** — a desaturated sage. A phase that landed. It reads as settled rather than
   celebratory, because a landed phase is not news.
-- **`error`** — a warm red, used for a failed step and a watchdog halt.
+- **`error`** — a warm red, used for a failed step, a blocked phase, an error event and the halt
+  banner. A warning stays amber.
 
 `outline` is intentionally low-contrast against `surface`. Borders here are structure, not content;
 a border that competes with text is a border drawn too brightly, and the linter's contrast warning
@@ -123,7 +132,9 @@ the rules are narrow:
 
 - **Bold** marks exactly one thing: the phase currently being built. Not headers, not labels.
 - **Dim** is `on-surface-dim`'s job and is not additionally applied.
-- **Inverse** is reserved for the selected row, and pairs with `primary`.
+- **Inverse** is reserved for the selected row, and pairs with `primary`. Under `NO_COLOR`, the
+  monochrome fallback also uses inverse for the loud states — a blocked phase, an open question
+  and the halt banner — with bold for the live phase and dim for the quiet ones.
 - **Underline** is unused. It survives poorly across terminals and there is nothing here that needs
   a third emphasis.
 
@@ -163,7 +174,8 @@ monospace font that ships with a modern terminal.
 
 No heavy or double-line variants — they read as emphasis, and emphasis in this design is carried by
 colour alone. Where box-drawing glyphs are unavailable the fallback is ASCII `| - +`, which is
-noticeably worse and is why the document declares truecolor terminals as the target.
+noticeably worse and is why the document declares truecolor terminals as the target. That fallback
+is not implemented; the TUI draws only the `│` rail separator.
 
 ## Components
 

@@ -371,8 +371,9 @@ step enters <code>waiting-input</code> rather than counting as stalled, its back
 <p>As the <strong>maintainer</strong>, I want the plan's unresolved decisions put to me before the
 first phase runs, so that a run does not start and then stop on something only I can settle.</p>
 <p><em>Given</em> a todo with an open <code>## Resolve first</code> entry blocking a phase in the
-run list, <em>when</em> I start the driver, <em>then</em> the TUI presents that entry with its
-recommendation, and on my answer writes the <code>Resolved:</code> stamp into the plan before phase
+run list, <em>when</em> I start the driver, <em>then</em> the TUI presents that entry in full — the
+plan format carries no recommendation, so none is offered (<a href="#adr-42">ADR-42</a>, amended
+2026-09-19) — and on my answer writes the <code>Resolved:</code> stamp into the plan before phase
 one is scheduled.</p>
 
 <h3>Pre-authorise the blockers worth fixing automatically</h3>
@@ -715,7 +716,8 @@ quiet without asking for anything, which is now genuinely worth investigating.</
 evidence that step owes is not present in git or on disk, the driver records the step as
 <code>failed</code>, per step; on violation the run halts naming the step and the missing evidence,
 and nothing is merged. The evidence differs by kind: a planning step owes a phase plan file with a
-<code>status: planned</code> header and its four sections, and no change beyond it; an implement
+<code>status: planned</code> header and its four sections, written by that step,
+and no change beyond it; an implement
 step owes a change since it started; each review round owes a verdict for every finding. <em>Source: the pack's own fan-out rule — a sentinel can be written by
 a run that then failed to commit. Configurable: no.</em></p>
 
@@ -1750,7 +1752,10 @@ resolving agent.</p>
 
 <div class="adr">
 <h3 id="adr-10">ADR-10 — The land gate re-runs the phase's <code>Done when:</code></h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-64">ADR-64</a> — a red gate gets a bounded fix round before the phase is blocked</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-64">ADR-64</a> — a red gate gets a bounded fix round before the phase is blocked ·
+amended 2026-09-19 — the command run is the line's inline code spans joined with
+<code>&amp;&amp;</code>, or its whole text when it has none, after a real run handed the
+whole sentence, backticks included, to the shell</p>
 <p><span class="f">Context</span> The review step already built once, in its own tree. But a review
 step's build is not reliably a build: 33 recorded <code>/r:task-review</code> runs returned
 <code>build: "n/a"</code>, 31 of them over Go worktrees carrying 42k added lines reviewed without a
@@ -2061,7 +2066,10 @@ messages.</p>
 
 <div class="adr">
 <h3 id="adr-28">ADR-28 — Agents ask through an MCP server the driver exposes</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted ·
+amended 2026-09-19 — every reviewer session gets its own ask URL too, and a reviewer's
+clocks hold while its step has a question open, after reviewers were found started with no
+channel</p>
 <p><span class="f">Context</span> An agent that cannot ask will guess, and a guess reaches the code.
 Before this, a blocked session could only be detected as silence.</p>
 <p><span class="f">Decision</span> The driver serves an <code>ask_user</code> tool; every step
@@ -2181,7 +2189,10 @@ do this job.</p>
 
 <div class="adr">
 <h3 id="adr-35">ADR-35 — A watchdog halt is immediate and stops the current step</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted ·
+amended 2026-09-19 — the step's failure is recorded before its session is stopped,
+and a halt accepted for a step that has just ended blocks that step's phase and closes its
+remedy window, after such a halt was found reduced to a warning</p>
 <p><span class="f">Context</span> The case this exists for is a wrong path running for four hours,
 usually overnight.</p>
 <p><span class="f">Decision</span> The halt takes effect at once: the running step's session is
@@ -2226,7 +2237,10 @@ refused this once, which is why every remedy is recorded verbatim whether it was
 
 <div class="adr">
 <h3 id="adr-38">ADR-38 — The watchdog proposes the command, the driver authorises, the watchdog runs it</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted ·
+amended 2026-09-19 — <code>propose_remedy</code> answers the decision with its reason; the
+maintainer's answer counts as a human touch; and a <code>provider</code> remedy the maintainer
+authorised authorises the restart onto that provider without asking a second time</p>
 <p><span class="f">Context</span> Environment repair is open-ended — a missing toolchain, a held
 port, a stale container, a lock from a dead process — and the allow-list must not be something the
 watchdog can consult on its own behalf.</p>
@@ -2291,7 +2305,10 @@ Noticing things nobody asked about waits for evidence that it can.</p>
 
 <div class="adr">
 <h3 id="adr-42">ADR-42 — An open <code>## Resolve first</code> entry is asked in the TUI</h3>
-<p><span class="f">Status</span> accepted · supersedes <a href="#adr-18">ADR-18</a> · amended by <a href="#adr-43">ADR-43</a> — <code>PlanReader</code> decides what is open and what it blocks, by the same fail-closed rules as the pack's <code>resolve_scope.py</code></p>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-18">ADR-18</a> · amended by <a href="#adr-43">ADR-43</a> — <code>PlanReader</code> decides what is open and what it blocks, by the same fail-closed rules as the pack's <code>resolve_scope.py</code> ·
+amended 2026-09-19 — the plan format carries no recommendation, so the TUI shows the
+entry's full text and takes a free answer, shown as answered by the maintainer; an unknown
+<code>Word:</code> label anywhere in an entry is reported as malformed</p>
 <p><span class="f">Context</span> <a href="#adr-18">ADR-18</a> made an open entry refuse the run, on
 the grounds that the driver had no input surface and a gate needing a person did not belong in it.
 The TUI and the ask channel removed that ground.</p>
@@ -2738,7 +2755,9 @@ maintainer would have refused, or unattended runs still need a person more than 
 
 <div class="adr">
 <h3 id="adr-62">ADR-62 — A stalled step is nudged once, then fails</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-14">ADR-14</a></p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-14">ADR-14</a> ·
+amended 2026-09-19 — the nudge offers <code>ask_user</code> only to a session that has
+an ask channel</p>
 <p><span class="f">Context</span> <a href="#adr-14">ADR-14</a> left a stalled step standing and the
 run paused until a person came. Since questions became explicit (<a href="#adr-29">ADR-29</a>), a
 stall is an agent that went quiet without asking — most often one that finished and never wrote its
@@ -2846,7 +2865,10 @@ first.</p>
 
 <div class="adr">
 <h3 id="adr-67">ADR-67 — An answer can come from any shell</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted ·
+amended 2026-09-19 — the answer file is published by hard link, so a second
+<code>r-loop answer</code> for a question whose first answer is still waiting is refused, exit
+<code>2</code></p>
 <p><span class="f">Context</span> A question reaches the TUI, or stdin in <code>--plain</code>. A
 maintainer away from the pane — told by <code>notify.onWarn</code> on a phone — had no way to
 answer short of reaching that terminal.</p>
@@ -3065,15 +3087,18 @@ its row says, needs no Go. A provider
 used in every project can live in <code>~/.config/r-loop/providers/&lt;name&gt;.yaml</code> instead
 of in each project's file.</p>
 
-<p><strong>The MCP surfaces.</strong> Every step session gets one tool:
+<p><strong>The MCP surfaces.</strong> Every step session and every reviewer session gets one tool,
+each on its own URL:
 <code>ask_user(question, options?, recommended?) → answer</code>, which blocks. The watchdog session gets that one
 plus its own, offered to no other session:
 <code>signal(kind: warn|halt, step, reason, evidence)</code>,
-<code>propose_remedy(class, command, why) → authorised|refused</code>,
+<code>propose_remedy(class, command, why) → {decision: authorised|refused, reason}</code>,
 <code>restart_step(step, addendum?, provider?)</code>, and
 <code>answer_question(id, answer, citation)</code>. A signal whose effect would move the run forward
 is rejected by <code>Watch</code> and the rejection is recorded — the tool surface is narrow by
-design, but the enforcement is not the surface.</p>
+design, but the enforcement is not the surface. A <code>signal</code> whose step is not
+<code>phase-&lt;N&gt;/&lt;kind&gt;</code> goes through <code>Watch</code> too, is rejected, and
+halts the run.</p>
 
 <p>Prompts are embedded in the binary — <code>plan</code>, <code>implement</code>,
 <code>review</code>, <code>fix</code>, <code>milestone</code>, <code>gatefix</code> and
