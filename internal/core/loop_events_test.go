@@ -251,15 +251,14 @@ func TestHaltSignalStopsTheSessionAndExits5(t *testing.T) {
 	if got := r.calls("SessionHost.Interrupt "); !reflect.DeepEqual(got, []string{"rloop-p1-implement"}) {
 		t.Errorf("interrupted %v", got)
 	}
-	var failed Record
+	var failed []string
 	for _, rec := range r.store.Records["run-1"] {
 		if rec.Kind == RecordStep && rec.Step.Phase == 1 && rec.Step.Kind == "implement" && rec.State == StepFailed {
-			failed = rec
-			break
+			failed = append(failed, rec.Reason)
 		}
 	}
-	if failed.Reason != "watchdog: rewriting the spec" {
-		t.Errorf("first failed implement record %+v", failed)
+	if !reflect.DeepEqual(failed, []string{"watchdog: rewriting the spec"}) {
+		t.Errorf("failed implement records %q", failed)
 	}
 	blocked := r.events("phase-blocked")
 	if len(blocked) != 1 || blocked[0].Fields["phase"] != "1" || blocked[0].Fields["reason"] != "watchdog: rewriting the spec" {

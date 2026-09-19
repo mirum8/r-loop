@@ -387,7 +387,11 @@ func (m *SessionManager) evidence(s *Session) EvidenceContext {
 
 func (m *SessionManager) Finish(s *Session, out Outcome) Outcome {
 	key := s.Ref.Key
-	if out.State == StepOK && !s.Ref.InPrimary && !s.Ref.KeepUncommitted {
+	recorded, done := m.terminal(key)
+	if done {
+		out.State = recorded
+	}
+	if out.State == StepOK && !done && !s.Ref.InPrimary && !s.Ref.KeepUncommitted {
 		if _, err := m.Repo.CommitAll(s.Dir, fmt.Sprintf("r-loop: phase %d %s", key.Phase, key.Kind)); err != nil {
 			out.State, out.Reason = StepFailed, "commit: "+err.Error()
 		}
@@ -397,10 +401,22 @@ func (m *SessionManager) Finish(s *Session, out Outcome) Outcome {
 			out.Reason += "; snapshot: " + err.Error()
 		}
 	}
+	if done {
+		return out
+	}
 	if err := m.record(key, out.State, out.Reason); err != nil {
 		out.State, out.Reason = StepFailed, "record: "+err.Error()
 	}
 	return out
+}
+
+func (m *SessionManager) terminal(key StepKey) (StepState, bool) {
+	st, err := m.Store.Load(key.Run)
+	if err != nil {
+		return "", false
+	}
+	state := st.Steps[key]
+	return state, state == StepOK || state == StepFailed
 }
 
 func (m *SessionManager) snapshot(s *Session) error {

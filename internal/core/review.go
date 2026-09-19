@@ -130,6 +130,9 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, reviewers []*Sessi
 	if err := os.Remove(verdictPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, sm.fail(worker, "fix: "+err.Error())
 	}
+	if f, ok := obs.(interface{ Fixing(*Session, int) }); ok {
+		f.Fixing(worker, rd.n)
+	}
 	text, _, err := sm.Prompts.Render("fix", vars)
 	if err == nil {
 		err = sm.Host.Prompt(worker.Agent, text, false, 0)

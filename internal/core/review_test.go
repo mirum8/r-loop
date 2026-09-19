@@ -661,3 +661,44 @@ func TestReviewerClockHoldsWhileTheStepHasAnOpenQuestion(t *testing.T) {
 		t.Fatalf("nudges = %d", n)
 	}
 }
+
+type fixObserver struct {
+	recObserver
+	log *[]string
+}
+
+func (o *fixObserver) Reviewing(s *Session, round int) {
+	*o.log = append(*o.log, fmt.Sprintf("reviewing r%d", round))
+}
+
+func (o *fixObserver) Fixing(s *Session, round int) {
+	*o.log = append(*o.log, fmt.Sprintf("fixing r%d %s", round, s.Agent))
+}
+
+func TestARoundWithFindingsReportsTheFixHalfToTheObserverBeforeTheFixPrompt(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	var log []string
+	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
+		findings := 0
+		if vars["Round"] == 1 {
+			findings = 1
+		}
+		writeReview(t, vars, "ok", findings)
+	}
+	r.onFix = func(vars map[string]any) {
+		log = append(log, fmt.Sprintf("fix prompt r%d", vars["Round"]))
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("claude-r1-1", "real", "P1", true, ""))
+	}
+
+	out := ReviewHalf{Sessions: r.sm, Store: r.store}.Run(context.Background(), r.worker.Ref, r.worker, &fixObserver{log: &log})
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	want := []string{"reviewing r1", "fixing r1 " + r.worker.Agent, "fix prompt r1", "reviewing r2"}
+	if !reflect.DeepEqual(log, want) {
+		t.Fatalf("log %v, want %v", log, want)
+	}
+}

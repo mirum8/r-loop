@@ -751,3 +751,24 @@ func TestTheMCPConfigIsReadableOnlyByItsOwner(t *testing.T) {
 		t.Fatalf("mode = %v", info.Mode().Perm())
 	}
 }
+
+func TestFinishRecordsNothingForAStepWhoseFailureIsAlreadyRecorded(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	key := s.Ref.Key
+	if err := r.store.Append(key.Run, Record{Kind: RecordStep, Step: &key, State: StepFailed, Reason: "watchdog: rewriting the spec"}); err != nil {
+		t.Fatal(err)
+	}
+
+	r.sm.Finish(s, Outcome{State: StepFailed, Reason: "interrupted: context canceled", Session: s})
+
+	var failed []string
+	for _, rec := range r.store.Records[key.Run] {
+		if rec.Kind == RecordStep && *rec.Step == key && rec.State == StepFailed {
+			failed = append(failed, rec.Reason)
+		}
+	}
+	if !reflect.DeepEqual(failed, []string{"watchdog: rewriting the spec"}) {
+		t.Fatalf("failed records %q", failed)
+	}
+}
