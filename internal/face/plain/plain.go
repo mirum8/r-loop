@@ -41,6 +41,8 @@ func (f *Face) Emit(ev core.Event) {
 		line := fmt.Sprintf("%s  phase %d  %s  %s  %s  %s", ev.At.Format("15:04:05"), ev.Phase, ev.Step,
 			ev.Fields["state"], ev.Fields["provider"], detail)
 		fmt.Fprintln(f.Out, strings.TrimRight(line, " "))
+	case "nudge":
+		fmt.Fprintf(f.Out, "%s  phase %d  %s  nudge\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step)
 	case "warning", "error":
 		fmt.Fprintf(f.Out, "!  %s%s\n", where(ev.Phase, ev.Step), ev.Fields["reason"])
 	default:
@@ -70,6 +72,10 @@ func (f *Face) Ask(q core.Question) (string, error) {
 	}
 	f.print("%s", block)
 	if !f.TTY || f.In == nil {
+		if strings.HasPrefix(q.ID, "remedy-") {
+			f.print("%s refused — no terminal to consent from\n", q.ID)
+			return "", core.ErrNoInput
+		}
 		f.print("question %s stays open — answer from the TUI or resume later\n", q.ID)
 		return "", core.ErrNoInput
 	}

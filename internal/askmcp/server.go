@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,9 +44,10 @@ type Server struct {
 }
 
 type pending struct {
-	q        core.Question
-	answered bool
-	reply    chan string
+	q         core.Question
+	delivered bool
+	answered  bool
+	done      chan struct{}
 }
 
 type askInput struct {
@@ -167,7 +169,7 @@ func (s *Server) Answer(id, answer, by, citation string) error {
 	}
 	p.answered = true
 	p.q.Answer, p.q.AnsweredBy, p.q.Citation, p.q.AnsweredAt = answer, by, citation, time.Now()
-	p.reply <- answer
+	close(p.done)
 	return nil
 }
 
@@ -200,13 +202,18 @@ func (s *Server) addAskUser(srv *mcp.Server, key core.StepKey) {
 
 func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput) (string, error) {
 	s.mu.Lock()
+	p, serverCtx := s.open(key, in), s.ctx
+	if p != nil {
+		s.mu.Unlock()
+		return s.await(ctx, serverCtx, p)
+	}
 	s.Seq++
-	p := &pending{
-		q:     core.Question{ID: "q" + strconv.Itoa(s.Seq), Step: key, Text: in.Question, Options: in.Options, Recommended: in.Recommended, AskedAt: time.Now()},
-		reply: make(chan string, 1),
+	p = &pending{
+		q:    core.Question{ID: "q" + strconv.Itoa(s.Seq), Step: key, Text: in.Question, Options: in.Options, Recommended: in.Recommended, AskedAt: time.Now()},
+		done: make(chan struct{}),
 	}
 	s.pending[p.q.ID] = p
-	out, serverCtx := s.questions, s.ctx
+	out := s.questions
 	s.mu.Unlock()
 
 	select {
@@ -216,9 +223,27 @@ func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput) (string
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
+	s.mu.Lock()
+	p.delivered = true
+	s.mu.Unlock()
+	return s.await(ctx, serverCtx, p)
+}
+
+func (s *Server) open(key core.StepKey, in askInput) *pending {
+	for _, p := range s.pending {
+		if p.delivered && !p.answered && p.q.Step == key && p.q.Text == in.Question && slices.Equal(p.q.Options, in.Options) {
+			return p
+		}
+	}
+	return nil
+}
+
+func (s *Server) await(ctx, serverCtx context.Context, p *pending) (string, error) {
 	select {
-	case answer := <-p.reply:
-		return answer, nil
+	case <-p.done:
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return p.q.Answer, nil
 	case <-serverCtx.Done():
 		return "", errors.New("r-loop stopped before the question was answered")
 	case <-ctx.Done():

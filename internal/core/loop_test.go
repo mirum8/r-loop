@@ -891,3 +891,28 @@ func TestAGateFixReviewRoundIsARunningStepEventNamingTheRound(t *testing.T) {
 		t.Fatalf("event %+v", face.Events)
 	}
 }
+
+func TestTheFaceSeesTheNudgeAfterTheStall(t *testing.T) {
+	r := newLoopRig(t)
+	r.host.behaviour["rloop-p2-plan"] = "stall"
+
+	r.run(RunOptions{Phases: []int{2}})
+
+	nudges := r.events("nudge")
+	if len(nudges) != 1 || nudges[0].Phase != 2 || nudges[0].Step != "plan" {
+		t.Fatalf("nudge events %+v", nudges)
+	}
+	kinds := r.kinds()
+	if s, n := slices.Index(kinds, "stalled"), slices.Index(kinds, "nudge"); s < 0 || n < s {
+		t.Errorf("events %v", kinds)
+	}
+	stored := 0
+	for _, rec := range r.store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == "nudge" {
+			stored++
+		}
+	}
+	if stored != 1 {
+		t.Errorf("nudge recorded %d times", stored)
+	}
+}

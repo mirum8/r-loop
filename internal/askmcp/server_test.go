@@ -241,3 +241,58 @@ func TestAResumedServerContinuesTheRunsQuestionSequence(t *testing.T) {
 	}
 	<-done
 }
+
+func TestARepeatedAskFromTheSameStepReusesTheOpenQuestionAndGetsItsAnswer(t *testing.T) {
+	s, _, _ := serve(t)
+	key := core.StepKey{Run: "run-7", Phase: 3, Kind: "implement-rv-claude", Attempt: 1}
+	args := map[string]any{"question": "Which store?", "options": []string{"jsonl", "sqlite"}}
+	callCtx, hangUp := context.WithCancel(context.Background())
+	gone := make(chan error, 1)
+	go func() {
+		_, err := connect(t, s.StepURL(key)).CallTool(callCtx, &mcp.CallToolParams{Name: "ask_user", Arguments: args})
+		gone <- err
+	}()
+	if q := next(t, s); q.ID != "q1" {
+		t.Fatalf("id = %q", q.ID)
+	}
+	hangUp()
+	<-gone
+
+	again := ask(connect(t, s.StepURL(key)), args)
+
+	select {
+	case q := <-s.Questions():
+		s.Answer(q.ID, "", "person", "")
+		t.Fatalf("a second question was escalated: %s", q.ID)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := s.Answer("q1", "jsonl", "person", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := answerText(t, <-again); got != "jsonl" {
+		t.Fatalf("answer = %q", got)
+	}
+}
+
+func TestTheSameQuestionFromAnotherStepOrWithOtherOptionsIsNew(t *testing.T) {
+	s, _, _ := serve(t)
+	key := core.StepKey{Run: "run-7", Phase: 3, Kind: "implement", Attempt: 1}
+	other := core.StepKey{Run: "run-7", Phase: 3, Kind: "implement-rv-claude", Attempt: 1}
+	calls := []<-chan result{ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which store?", "options": []string{"jsonl", "sqlite"}})}
+	next(t, s)
+
+	calls = append(calls,
+		ask(connect(t, s.StepURL(other)), map[string]any{"question": "Which store?", "options": []string{"jsonl", "sqlite"}}),
+		ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which store?", "options": []string{"jsonl"}}))
+
+	ids := map[string]bool{next(t, s).ID: true, next(t, s).ID: true}
+	for _, id := range []string{"q1", "q2", "q3"} {
+		s.Answer(id, "jsonl", "person", "")
+	}
+	for _, c := range calls {
+		<-c
+	}
+	if !ids["q2"] || !ids["q3"] {
+		t.Fatalf("ids = %v", ids)
+	}
+}

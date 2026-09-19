@@ -371,17 +371,17 @@ func (l *RunLoop) runAttempts(ctx context.Context, ref StepRef) (StepRef, Outcom
 		if aborted || out.State == StepOK {
 			return ref, out, aborted
 		}
-		next, ok := l.awaitRestart(ctx, ref, kind, &out)
+		next, ok, aborted := l.awaitRestart(ctx, ref, kind, &out)
 		if !ok {
-			return ref, out, false
+			return ref, out, aborted
 		}
 		ref = next
 	}
 }
 
-func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, out *Outcome) (StepRef, bool) {
+func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, out *Outcome) (StepRef, bool, bool) {
 	if l.RemedyWindow <= 0 || out.Halted {
-		return StepRef{}, false
+		return StepRef{}, false, false
 	}
 	key := ref.Key
 	step := fmt.Sprintf("phase-%d/%s", key.Phase, key.Kind)
@@ -390,16 +390,24 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 	}
 	timer := time.NewTimer(l.RemedyWindow)
 	defer timer.Stop()
+	ticker := time.NewTicker(l.poll())
+	defer ticker.Stop()
 	for {
 		var rs Restart
 		select {
 		case <-ctx.Done():
-			return StepRef{}, false
+			return StepRef{}, false, false
 		case <-timer.C:
-			return StepRef{}, false
+			return StepRef{}, false, false
+		case <-ticker.C:
+			if l.Store.Aborted(l.RunID) {
+				l.abort(key.Phase, key.Kind)
+				return StepRef{}, false, true
+			}
+			continue
 		case sig := <-l.watcher().Signals():
 			if l.haltsWindow(sig, key, out) {
-				return StepRef{}, false
+				return StepRef{}, false, false
 			}
 			continue
 		case rs = <-l.watcher().Restarts():
@@ -408,11 +416,11 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 			continue
 		}
 		if l.drainHalts(key, out) {
-			return StepRef{}, false
+			return StepRef{}, false, false
 		}
 		if l.restarts[step] >= l.MaxRestarts {
 			l.emit(Event{Kind: "restart-refused", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "reason": fmt.Sprintf("restart limit %d reached", l.MaxRestarts)}})
-			return StepRef{}, false
+			return StepRef{}, false, false
 		}
 		l.restarts[step]++
 		if rs.Provider != "" {
@@ -428,8 +436,15 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 			f["model"], f["effort"] = kind.Row.Model, kind.Row.Effort
 		}
 		l.emit(Event{Kind: "restart", Phase: key.Phase, Step: key.Kind, Fields: f})
-		return next, true
+		return next, true, false
 	}
+}
+
+func (l *RunLoop) poll() time.Duration {
+	if l.Sessions.Poll <= 0 {
+		return defaultPoll
+	}
+	return l.Sessions.Poll
 }
 
 func (l *RunLoop) haltsWindow(sig Signal, key StepKey, out *Outcome) bool {
@@ -522,11 +537,7 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 	defer cancel()
 	done := make(chan Outcome, 1)
 	go func() { done <- runner.Run(stepCtx, ref, &loopObserver{l: l, ref: ref}) }()
-	poll := l.Sessions.Poll
-	if poll <= 0 {
-		poll = defaultPoll
-	}
-	ticker := time.NewTicker(poll)
+	ticker := time.NewTicker(l.poll())
 	defer ticker.Stop()
 	for {
 		select {
@@ -937,6 +948,10 @@ func (o *loopObserver) Stalled(s *Session) {
 	o.l.emit(Event{Kind: "stalled", Phase: o.ref.Key.Phase, Step: o.ref.Key.Kind, Fields: map[string]string{"workspace": s.Workspace, "worktree": s.Dir}})
 }
 
+func (o *loopObserver) Nudged(s *Session) {
+	o.l.show(Event{Kind: "nudge", Phase: o.ref.Key.Phase, Step: o.ref.Key.Kind})
+}
+
 func (o *loopObserver) Resumed(s *Session) {
 	o.l.emitStep(o.ref, StepRunning, "", s)
 }
@@ -1002,6 +1017,14 @@ func (l *RunLoop) emit(ev Event) {
 	if err := l.Store.Append(l.RunID, Record{Kind: RecordEvent, At: ev.At, Event: &ev}); err != nil {
 		l.Face.Emit(Event{At: ev.At, Kind: "warning", Fields: map[string]string{"reason": "store: " + err.Error()}})
 	}
+	l.Face.Emit(ev)
+	l.writeReport()
+}
+
+func (l *RunLoop) show(ev Event) {
+	ev.At = time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.Face.Emit(ev)
 	l.writeReport()
 }

@@ -57,6 +57,17 @@ func TestWarningLine(t *testing.T) {
 	}
 }
 
+func TestNudgeLineNamesTheStep(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	f.Emit(core.Event{At: at, Kind: "nudge", Phase: 4, Step: "implement"})
+
+	if want := "14:03:09  phase 4  implement  nudge\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
 func TestCloseNamesTheReport(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out, Report: "/repo/.r-loop/runs/r1/report.md"}
@@ -64,6 +75,21 @@ func TestCloseNamesTheReport(t *testing.T) {
 	f.Close()
 
 	if want := "report: /repo/.r-loop/runs/r1/report.md\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
+func TestARemedyAskedWithoutATerminalSaysItIsRefused(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out, In: strings.NewReader("1\n")}
+
+	answer, err := f.Ask(core.Question{ID: "remedy-1", Step: core.StepKey{Phase: 4, Kind: "implement"}, Text: "watchdog proposes (deps): go mod download — missing module", Options: []string{"yes", "no"}})
+
+	if !errors.Is(err, core.ErrNoInput) || answer != "" {
+		t.Fatalf("answer=%q err=%v", answer, err)
+	}
+	want := "?  remedy-1  phase 4 implement: watchdog proposes (deps): go mod download — missing module\n   1. yes\n   2. no\nremedy-1 refused — no terminal to consent from\n"
+	if out.String() != want {
 		t.Fatalf("got %q, want %q", out.String(), want)
 	}
 }

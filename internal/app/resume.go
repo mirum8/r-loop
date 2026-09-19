@@ -101,6 +101,9 @@ func (w *Wiring) resume(run core.RunState, replan bool) (core.RunOptions, error)
 		if err := w.claim(run, n); err != nil {
 			return core.RunOptions{}, err
 		}
+		if err := w.closeInterrupted(run, n); err != nil {
+			return core.RunOptions{}, err
+		}
 	}
 	if err := w.Store.ClearAbort(id); err != nil {
 		return core.RunOptions{}, exit(2, "%v", err)
@@ -188,6 +191,22 @@ func (w *Wiring) stopStale(run core.RunState, phase int) error {
 		return exit(4, "interrupt previous session %s: %v", agent, err)
 	}
 	fmt.Fprintf(w.Env.Stdout, "interrupted previous session %s: still %s\n", agent, state)
+	return nil
+}
+
+func (w *Wiring) closeInterrupted(run core.RunState, phase int) error {
+	var open []core.StepKey
+	for key, state := range run.Steps {
+		if key.Phase == phase && state != core.StepOK && state != core.StepFailed {
+			open = append(open, key)
+		}
+	}
+	slices.SortFunc(open, func(a, b core.StepKey) int { return strings.Compare(fmt.Sprint(a), fmt.Sprint(b)) })
+	for _, key := range open {
+		if err := w.Store.Append(run.ID, core.Record{Kind: core.RecordStep, At: time.Now(), Step: &key, State: core.StepFailed, Reason: "interrupted: driver died"}); err != nil {
+			return exit(2, "%v", err)
+		}
+	}
 	return nil
 }
 

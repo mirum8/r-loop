@@ -305,6 +305,9 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 		return out, true
 	}
 	m.event(now, s, Event{Kind: "nudge"})
+	if n, ok := w.obs.(interface{ Nudged(*Session) }); ok {
+		n.Nudged(s)
+	}
 	return Outcome{}, false
 }
 

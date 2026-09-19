@@ -1064,3 +1064,37 @@ func TestAnAbortMidStepRecordsTheHaltedRunBeforeCancellingTheStep(t *testing.T) 
 		t.Errorf("aborted %+v", got)
 	}
 }
+
+func TestAnAbortDuringTheRemedyWindowStopsTheRunAtOnce(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.RemedyWindow = 2 * time.Second
+	r.host.behaviour["rloop-p1-implement"] = "fail"
+	r.watcher.ended = func(ref StepRef, out Outcome) {
+		if out.State == StepFailed {
+			r.store.MarkAbort("run-1")
+		}
+	}
+
+	start := time.Now()
+	code := r.run(RunOptions{Phases: []int{1}})
+
+	if code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if waited := time.Since(start); waited >= time.Second {
+		t.Errorf("abort honoured after %s", waited)
+	}
+	runs := r.runRecords()
+	if last := runs[len(runs)-1]; last.Run != RunHalted || last.Reason != ReasonAborted {
+		t.Errorf("last run record %+v", last)
+	}
+	if got := r.events("aborted"); len(got) != 1 || got[0].Phase != 1 || got[0].Step != "implement" || got[0].Fields["workspace"] != "ws-2" {
+		t.Errorf("aborted %+v", got)
+	}
+	if got := r.events("phase-blocked"); len(got) != 0 {
+		t.Errorf("blocked %+v", got)
+	}
+	if got := r.calls("Notifier.Fire "); len(got) != 0 {
+		t.Errorf("hooks fired on abort: %v", got)
+	}
+}

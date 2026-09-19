@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -999,5 +1000,39 @@ func TestAResolveFirstAnswerGivenDuringResumeIsStoredInTheResumedRun(t *testing.
 	}
 	if rep := core.Report(f.load(id), w.Plan); !strings.Contains(rep, "- r1 resolve first: Pick the database → Postgres (maintainer)\n") {
 		t.Fatalf("report:\n%s", rep)
+	}
+}
+
+func TestResumeClosesTheAttemptTheKilledDriverLeftRunningBeforeTheRerun(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _ := f.seedKilledImplement()
+
+	code, _, err := f.resume(newSim())
+
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v\n%s", code, err, f.out)
+	}
+	a1 := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
+	if got := f.load(id).Steps[a1]; got != core.StepFailed {
+		t.Fatalf("attempt 1 is %s", got)
+	}
+	data, err := os.ReadFile(filepath.Join(store.New(f.root).Dir(id), "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trail []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var rec core.Record
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Kind == core.RecordStep && rec.Step.Phase == 1 && rec.Step.Kind == "implement" {
+			trail = append(trail, fmt.Sprintf("a%d %s %s", rec.Step.Attempt, rec.State, rec.Reason))
+		}
+	}
+	closed := slices.Index(trail, "a1 failed interrupted: driver died")
+	rerun := slices.Index(trail, "a2 queued ")
+	if closed < 0 || rerun < closed || slices.Contains(trail[closed+1:], "a1 running ") {
+		t.Fatalf("implement records %q", trail)
 	}
 }
