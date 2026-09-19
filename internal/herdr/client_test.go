@@ -103,7 +103,7 @@ func TestSplitCurrentPaneWhenPaneIsEmpty(t *testing.T) {
 }
 
 func TestStartRunsAgentStartWithArgsAfterDashes(t *testing.T) {
-	c, argv := fake(t, `{"id":"cli:agent:start","result":{"agent":{"agent":"claude","agent_status":"idle","name":"phase-3-implement","pane_id":"w3A:p2"},"argv":["claude","--model","haiku"],"type":"agent_started"}}`)
+	c, calls := scripted(t, chatScreen, chatScreen)
 
 	agent, err := c.Start("w3A:p2", "phase-3-implement", "claude", []string{"--model", "haiku"})
 
@@ -113,7 +113,10 @@ func TestStartRunsAgentStartWithArgsAfterDashes(t *testing.T) {
 	if agent != (core.Agent{Name: "phase-3-implement", Pane: "w3A:p2"}) {
 		t.Fatalf("agent %+v", agent)
 	}
-	assertArgv(t, argv(), []string{"agent", "start", "phase-3-implement", "--kind", "claude", "--pane", "w3A:p2", "--", "--model", "haiku"})
+	assertCalls(t, calls(), [][]string{
+		{"agent", "start", "phase-3-implement", "--kind", "claude", "--pane", "w3A:p2", "--", "--model", "haiku"},
+		{"agent", "read", "phase-3-implement", "--source", "visible"},
+	})
 }
 
 func TestStartReturnsAgentNotReadyWithoutRetry(t *testing.T) {
@@ -302,6 +305,7 @@ func busyThenStarted(t *testing.T, failures int) (Client, string) {
 	count := filepath.Join(dir, "count")
 	bin := filepath.Join(dir, "herdr")
 	script := "#!/bin/sh\n" +
+		"if [ \"$2\" = read ]; then exit 0; fi\n" +
 		"n=$(cat \"" + count + "\" 2>/dev/null || echo 0)\n" +
 		"n=$((n+1))\n" +
 		"echo $n > \"" + count + "\"\n" +
@@ -349,5 +353,83 @@ func TestStartGivesUpOnBusyPaneAfterBudget(t *testing.T) {
 	var herr Error
 	if !errors.As(err, &herr) || herr.Code != "agent_pane_busy" {
 		t.Fatalf("got %#v", err)
+	}
+}
+
+const (
+	trustScreen = "> You are in /repo/.r-loop/wt/phase-1\n\n  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt\n  injection.\n\n› 1. Yes, continue\n  2. No, quit\n\n  Press enter to continue\n"
+	chatScreen  = "╭──╮\n│ >_ OpenAI Codex (v0.155.0) │\n╰──╯\n\n› Ask Codex to do anything\n"
+)
+
+func scripted(t *testing.T, before, after string) (Client, func() [][]string) {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	entered := filepath.Join(dir, "entered")
+	for name, screen := range map[string]string{"before": before, "after": after} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(screen), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\0' \"$@\" >> \"" + log + "\"\n" +
+		"printf '\\n' >> \"" + log + "\"\n" +
+		"case \"$2\" in\n" +
+		"start) printf '%s' '{\"result\":{\"agent\":{\"name\":\"'\"$3\"'\",\"pane_id\":\"'\"$7\"'\",\"agent_status\":\"idle\"}}}' ;;\n" +
+		"send-keys) touch \"" + entered + "\"; printf '%s' '{\"result\":{\"type\":\"ok\"}}' ;;\n" +
+		"read) if [ -e \"" + entered + "\" ]; then cat \"" + filepath.Join(dir, "after") + "\"; else cat \"" + filepath.Join(dir, "before") + "\"; fi ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return Client{Bin: bin}, func() [][]string {
+		data, err := os.ReadFile(log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var calls [][]string
+		for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+			calls = append(calls, strings.Split(strings.TrimSuffix(line, "\x00"), "\x00"))
+		}
+		return calls
+	}
+}
+
+func assertCalls(t *testing.T, got, want [][]string) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("calls\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestStartAcceptsDirectoryTrustDialogBeforeReturning(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := scripted(t, trustScreen, chatScreen)
+
+	agent, err := c.Start("w4M:p2", "rloop-p1-plan-rv-codex-r1", "codex", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if agent != (core.Agent{Name: "rloop-p1-plan-rv-codex-r1", Pane: "w4M:p2"}) {
+		t.Fatalf("agent %+v", agent)
+	}
+	assertCalls(t, calls(), [][]string{
+		{"agent", "start", "rloop-p1-plan-rv-codex-r1", "--kind", "codex", "--pane", "w4M:p2", "--"},
+		{"agent", "read", "rloop-p1-plan-rv-codex-r1", "--source", "visible"},
+		{"agent", "send-keys", "rloop-p1-plan-rv-codex-r1", "enter"},
+		{"agent", "read", "rloop-p1-plan-rv-codex-r1", "--source", "visible"},
+	})
+}
+
+func TestStartFailsWhenTrustDialogDoesNotClear(t *testing.T) {
+	shrinkPaneBusyWait(t, 20*time.Millisecond)
+	c, _ := scripted(t, trustScreen, trustScreen)
+
+	_, err := c.Start("w4M:p2", "a1", "codex", nil)
+
+	if err == nil || !strings.Contains(err.Error(), "trust") {
+		t.Fatalf("got %v", err)
 	}
 }

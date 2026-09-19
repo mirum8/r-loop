@@ -153,7 +153,37 @@ func (c Client) Start(pane, name, kind string, args []string) (core.Agent, error
 		}
 		break
 	}
+	if err := c.acceptTrust(name); err != nil {
+		return core.Agent{}, err
+	}
 	return core.Agent{Name: out.Result.Agent.Name, Pane: out.Result.Agent.Pane}, nil
+}
+
+const trustQuestion = "Do you trust the contents of this directory?"
+
+func (c Client) acceptTrust(agent string) error {
+	asks := func() (bool, error) {
+		screen, err := c.exec("agent", "read", agent, "--source", "visible")
+		return strings.Contains(string(screen), trustQuestion), err
+	}
+	ask, err := asks()
+	if err != nil || !ask {
+		return err
+	}
+	var out struct{}
+	if err := c.call(&out, "agent", "send-keys", agent, "enter"); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(paneBusyBudget)
+	for {
+		if ask, err = asks(); err != nil || !ask {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("herdr: agent %s still asks to trust its directory", agent)
+		}
+		time.Sleep(paneBusyBackoff)
+	}
 }
 
 func (c Client) Prompt(agent, text string, wait bool, timeout time.Duration) error {
