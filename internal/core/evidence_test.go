@@ -151,6 +151,27 @@ func TestPlanFileCheckAcceptsNumberedAndStarAndPlusTestItems(t *testing.T) {
 	}
 }
 
+func TestPlanFileCheckAcceptsATestsTableWithDataRows(t *testing.T) {
+	table := "| Test | Covers |\n|---|:---:|\n| `TestHello/named` | a name |\n| `TestHello/empty` | no name |\n"
+	plan := strings.Replace(goodPlan, "- TestReadsPhases\n", table, 1)
+
+	ok, missing := runCheck(t, "plan-file", planCtx(plan, planPath))
+
+	if !ok {
+		t.Fatalf("missing = %q", missing)
+	}
+}
+
+func TestPlanFileCheckFailsOnATestsTableWithOnlyAHeader(t *testing.T) {
+	plan := strings.Replace(goodPlan, "- TestReadsPhases\n", "| Test | Covers |\n| --- | --- |\n", 1)
+
+	ok, missing := runCheck(t, "plan-file", planCtx(plan, planPath))
+
+	if ok || missing != "## Tests is empty" {
+		t.Fatalf("ok = %v, missing = %q", ok, missing)
+	}
+}
+
 func TestPlanFileCheckFailsOnATestsSectionOfProseOnly(t *testing.T) {
 	plan := strings.Replace(goodPlan, "- TestReadsPhases\n", "Write the tests in greet_test.go.\n\nVerify with `go test ./greet/...`, 2 of them.\n", 1)
 

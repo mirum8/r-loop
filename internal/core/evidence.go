@@ -167,12 +167,29 @@ func section(lines []string, heading string) ([]string, bool) {
 
 func listItems(lines []string) []string {
 	var out []string
-	for _, l := range lines {
+	inTable := false
+	for i, l := range lines {
+		switch {
+		case !strings.HasPrefix(l, "|"):
+			inTable = false
+		case !inTable:
+			inTable = i+1 < len(lines) && tableSeparator(lines[i+1])
+			continue
+		case tableSeparator(l):
+			continue
+		default:
+			out = append(out, l)
+			continue
+		}
 		if item, ok := listItem(l); ok {
 			out = append(out, strings.TrimSpace(item))
 		}
 	}
 	return out
+}
+
+func tableSeparator(l string) bool {
+	return strings.HasPrefix(l, "|") && strings.Contains(l, "-") && strings.Trim(l, "|-: ") == ""
 }
 
 func listItem(l string) (string, bool) {
