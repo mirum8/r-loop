@@ -492,6 +492,41 @@ func TestLandGateFixStepNotOKBlocksThePhase(t *testing.T) {
 	e.assertUntouched(head)
 }
 
+func TestLandGateRunsTheCodeSpanOfAMarkdownDoneWhen(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+
+	landing, err := e.gate().Land(context.Background(), phaseOne("`test -f feature.txt && echo ok  demo/greet` is green."))
+
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if landing.MergeSHA != e.head() || landing.GateSkipped {
+		t.Errorf("landing = %+v", landing)
+	}
+}
+
+func TestLandGateJoinsSeveralCodeSpansAndHandsThemToTheGateFix(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	var refs []core.StepRef
+	g := e.gate()
+	g.FixRounds = 1
+	g.Runner = fixingRunner(e, &refs)
+
+	landing, err := g.Land(context.Background(), phaseOne("`test -f feature.txt` is green and\n`test -f fix1.txt` finds the fix."))
+
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if len(refs) != 1 || refs[0].Vars["GateCommand"] != "test -f feature.txt && test -f fix1.txt" {
+		t.Fatalf("gate-fix refs = %+v", refs)
+	}
+	if landing.MergeSHA != e.head() {
+		t.Errorf("landing = %+v", landing)
+	}
+}
+
 func TestLandGateWithoutDoneWhenRecordsASkip(t *testing.T) {
 	e := newLandEnv(t)
 	e.phaseWork(1, "feature.txt", "new\n")

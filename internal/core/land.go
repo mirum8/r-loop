@@ -5,11 +5,27 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
+
+var codeSpanRe = regexp.MustCompile("`([^`]+)`")
+
+func gateCommand(doneWhen string) string {
+	var spans []string
+	for _, m := range codeSpanRe.FindAllStringSubmatch(doneWhen, -1) {
+		if c := strings.TrimSpace(m[1]); c != "" {
+			spans = append(spans, c)
+		}
+	}
+	if len(spans) == 0 {
+		return strings.TrimSpace(doneWhen)
+	}
+	return strings.Join(spans, " && ")
+}
 
 var (
 	ErrGate    = errors.New("gate failed")
@@ -33,7 +49,7 @@ func (g *LandGate) Land(ctx context.Context, phase Phase) (Landing, error) {
 	landing, output, err := g.attempt(phase)
 	for round := 1; errors.Is(err, ErrGate) && round <= g.FixRounds && g.Runner != nil; round++ {
 		g.emit(Event{Kind: "gate-fix", Phase: phase.Number, Step: "land", Fields: map[string]string{"phase": strconv.Itoa(phase.Number), "round": strconv.Itoa(round)}})
-		out := g.fix(ctx, phase, phase.DoneWhen, output)
+		out := g.fix(ctx, phase, gateCommand(phase.DoneWhen), output)
 		if out.State != StepOK {
 			return Landing{}, fmt.Errorf("%w: gate-fix round %d ended %s: %s", ErrGate, round, out.State, out.Reason)
 		}
@@ -61,13 +77,14 @@ func (g *LandGate) attempt(phase Phase) (Landing, string, error) {
 	if landing.Added, landing.Deleted, err = g.Repo.DiffStat("", "HEAD"); err != nil {
 		return Landing{}, "", errors.Join(fmt.Errorf("diff size: %w", err), g.Repo.AbortMerge())
 	}
-	if strings.TrimSpace(phase.DoneWhen) == "" {
+	command := gateCommand(phase.DoneWhen)
+	if command == "" {
 		landing.GateSkipped = true
 		g.emit(Event{Kind: "gate-skipped", Phase: n, Step: "land", Fields: map[string]string{"phase": strconv.Itoa(n)}})
 	} else {
-		code, output, err := g.Repo.Run("", phase.DoneWhen, g.GateTimeout)
+		code, output, err := g.Repo.Run("", command, g.GateTimeout)
 		if err == nil && code != 0 {
-			err = fmt.Errorf("%w: %s exited %d\n%s", ErrGate, phase.DoneWhen, code, output)
+			err = fmt.Errorf("%w: %s exited %d\n%s", ErrGate, command, code, output)
 		}
 		if err != nil {
 			return Landing{}, output, errors.Join(err, g.Repo.AbortMerge())
