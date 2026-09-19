@@ -163,3 +163,26 @@ func TestAZeroWindowSizeKeepsTheLastUsableWidth(t *testing.T) {
 		t.Fatalf("view:\n%s", next.(Model).View())
 	}
 }
+
+func TestErrorsAndHaltReasonsAreInTheErrorColourAndWarningsInAmber(t *testing.T) {
+	m := coloured(false)
+	m = m.Apply(core.Event{At: at(2), Kind: "warning", Fields: map[string]string{"reason": "round limit"}})
+	m = m.Apply(core.Event{At: at(3), Kind: "error", Fields: map[string]string{"reason": "bad flag"}})
+	m = m.Apply(core.Event{At: at(4), Kind: "halt", Fields: map[string]string{"reason": "invariant broken"}})
+
+	view := m.View()
+
+	amber := `\x1b\[38;2;224;16[34];88[0-9;]*m[^\x1b]*`
+	red := `\x1b\[38;2;224;115;10[56][0-9;]*m[^\x1b]*`
+	if !regexp.MustCompile(amber + `round limit`).MatchString(view) {
+		t.Errorf("warning is not amber: %q", view)
+	}
+	for _, reason := range []string{"bad flag", "invariant broken"} {
+		if !regexp.MustCompile(red + reason).MatchString(view) {
+			t.Errorf("%q is not in the error colour: %q", reason, view)
+		}
+		if regexp.MustCompile(amber + reason).MatchString(view) {
+			t.Errorf("%q is amber: %q", reason, view)
+		}
+	}
+}

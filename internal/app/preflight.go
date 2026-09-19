@@ -156,6 +156,7 @@ func resolveFirst(src core.PlanSource, repo interface{ Commit(string) (string, e
 		if _, err := repo.Commit("plan: resolve " + e.Name); err != nil {
 			return exit(2, "%v", err)
 		}
+		face.Emit(core.Event{At: now, Kind: "human", Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": q.ID, "by": "maintainer"}})
 	}
 	return nil
 }

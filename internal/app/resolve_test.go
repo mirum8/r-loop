@@ -37,10 +37,11 @@ type answeringFace struct {
 	s       *script
 	answers []string
 	asked   []core.Question
+	events  []core.Event
 }
 
-func (f *answeringFace) Emit(core.Event) {}
-func (f *answeringFace) Close()          {}
+func (f *answeringFace) Emit(ev core.Event) { f.events = append(f.events, ev) }
+func (f *answeringFace) Close()             {}
 func (f *answeringFace) Ask(q core.Question) (string, error) {
 	f.asked = append(f.asked, q)
 	if f.s != nil {
@@ -134,5 +135,20 @@ func TestPreflightInTUIModeResolvesABlockingEntryAndCommitsItBeforeTheRun(t *tes
 	}
 	if w.Loop.RunID == "" {
 		t.Fatal("no run created after resolving")
+	}
+}
+
+func TestAnAnsweredEntryIsReportedAsAnsweredByTheMaintainer(t *testing.T) {
+	face := &answeringFace{answers: []string{"Postgres"}}
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.Local)
+
+	err := resolveFirst(fakePlan{&script{}}, fakeRepo{&script{}}, face, "/repo/todo.md", []core.Entry{{Name: "Pick the database"}}, now)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []core.Event{{At: now, Kind: "human", Step: "resolve first", Fields: map[string]string{"what": "answer", "id": "r1", "by": "maintainer"}}}
+	if !reflect.DeepEqual(face.events, want) {
+		t.Fatalf("events %+v", face.events)
 	}
 }

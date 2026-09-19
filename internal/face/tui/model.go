@@ -69,12 +69,17 @@ type Open struct {
 	reply          chan string
 }
 
+type Warning struct {
+	Text  string
+	Error bool
+}
+
 type Model struct {
 	Header
 	Phases    []Row
 	Current   int
 	Live      *Step
-	Warnings  []string
+	Warnings  []Warning
 	Questions []Open
 	Draft     string
 	draftFor  string
@@ -210,7 +215,7 @@ func (m *Model) warn(ev core.Event) {
 		line += fmt.Sprintf("phase %d %s: ", ev.Phase, ev.Step)
 	}
 	line += ev.Fields["reason"]
-	m.Warnings = append(append([]string(nil), m.Warnings...), line)
+	m.Warnings = append(append([]Warning(nil), m.Warnings...), Warning{Text: line, Error: ev.Kind != "warning"})
 	if len(m.Warnings) > keptWarnings {
 		m.Warnings = m.Warnings[len(m.Warnings)-keptWarnings:]
 	}

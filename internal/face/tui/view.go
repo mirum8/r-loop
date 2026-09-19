@@ -125,7 +125,11 @@ func (m Model) panel(w int) []string {
 		add(th.Idle, "none")
 	}
 	for _, warning := range m.Warnings {
-		add(th.Warn, "!  "+warning)
+		if warning.Error {
+			add(th.Failed, "!  "+warning.Text)
+		} else {
+			add(th.Warn, "!  "+warning.Text)
+		}
 	}
 	return lines
 }

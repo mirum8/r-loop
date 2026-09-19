@@ -192,8 +192,8 @@ func TestOnlyTheLastFiveWarningsAreKept(t *testing.T) {
 
 	m := newModel(events)
 
-	if len(m.Warnings) != 5 || !strings.HasSuffix(m.Warnings[0], "w3") || !strings.HasSuffix(m.Warnings[4], "w7") {
-		t.Fatalf("warnings %q", m.Warnings)
+	if len(m.Warnings) != 5 || !strings.HasSuffix(m.Warnings[0].Text, "w3") || !strings.HasSuffix(m.Warnings[4].Text, "w7") {
+		t.Fatalf("warnings %+v", m.Warnings)
 	}
 }
 
@@ -335,7 +335,7 @@ func TestResumeReplaysHistoryButNotTheOldEnding(t *testing.T) {
 	m := replay(newModel(nil), history)
 
 	if len(m.Warnings) != 1 || m.Phases[0].State != core.PhaseLanded || m.Phases[1].State != core.PhasePlanned {
-		t.Fatalf("warnings %q phases %+v", m.Warnings, m.Phases)
+		t.Fatalf("warnings %+v phases %+v", m.Warnings, m.Phases)
 	}
 	if m.Status != "" || m.Live != nil || len(m.Questions) != 0 || m.Resume != "" {
 		t.Fatalf("stale ending: status %q live %+v questions %+v", m.Status, m.Live, m.Questions)
