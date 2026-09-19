@@ -4,6 +4,8 @@ Work in the worktree `{{.Worktree}}` (branch `{{.Branch}}`, cut from `{{.Base}}`
 
 {{.PhaseBlock}}
 
+A `Resolved first:` list under the phase records decisions the maintainer has already taken: follow each `Resolved:` line and never ask about it again.
+
 1. Read the plan at `{{.PlanPath}}` first. It is the contract for this step.
 2. Write the tests from its `## Tests` section before any production code, and see them fail for the right reason.
 3. Implement until those tests pass and the build is green.

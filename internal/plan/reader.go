@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -97,7 +98,22 @@ func (Reader) Read(path string) (core.Plan, error) {
 			return core.Plan{}, fmt.Errorf("%s line %d: depends on phase %d, which does not exist", path, d.line, d.phase)
 		}
 	}
+	for i, ph := range p.Phases {
+		if resolved := resolvedFor(p.ResolveFirst, ph.Number); resolved != "" {
+			p.Phases[i].Block = strings.TrimRight(ph.Block, "\n") + "\n\nResolved first:\n\n" + resolved
+		}
+	}
 	return p, nil
+}
+
+func resolvedFor(entries []core.Entry, phase int) string {
+	var b strings.Builder
+	for _, e := range entries {
+		if e.Ticked && (e.BlocksAll || slices.Contains(e.BlocksPhases, phase)) {
+			b.WriteString(e.Body + "\n")
+		}
+	}
+	return b.String()
 }
 
 func parsePhase(path string, number int, title string, block []string, headingLine int) (core.Phase, []dependsRef, error) {

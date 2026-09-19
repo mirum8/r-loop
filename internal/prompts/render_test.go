@@ -421,3 +421,13 @@ func TestWatchdogCarriesTheUnattendedProviderRule(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanAndImplementTreatResolvedFirstEntriesAsSettled(t *testing.T) {
+	r := New(t.TempDir())
+	for _, name := range []string{"plan", "implement"} {
+		text := render(t, r, name, fullVars())
+		if !strings.Contains(text, "A `Resolved first:` list under the phase records decisions the maintainer has already taken: follow each `Resolved:` line and never ask about it again.") {
+			t.Errorf("%s lacks the Resolved first rule:\n%s", name, text)
+		}
+	}
+}

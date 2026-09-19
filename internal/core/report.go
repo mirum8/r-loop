@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const ResolveFirstStep = "resolve first"
+
 func Report(state RunState, plan Plan) string {
 	var b strings.Builder
 	human := 0
@@ -200,6 +202,11 @@ func assumptions(b *strings.Builder, st RunState) {
 
 func questionLines(st RunState) []string {
 	var out []string
+	for _, ev := range st.Events {
+		if f := ev.Fields; ev.Kind == "human" && ev.Step == ResolveFirstStep && f["what"] == "answer" {
+			out = append(out, fmt.Sprintf("%s %s: %s → %s (%s)", f["id"], ResolveFirstStep, f["entry"], f["answer"], f["by"]))
+		}
+	}
 	for _, q := range st.Questions {
 		line := fmt.Sprintf("%s %s: %s", q.ID, where(q.Step.Phase, q.Step.Kind), q.Text)
 		if q.AnsweredBy == "" {

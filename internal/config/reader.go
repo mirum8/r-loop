@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -85,6 +86,13 @@ type LoopConfig struct {
 	Provenance map[string]string
 
 	overrides []appliedOverride
+	swaps     []fallbackSwap
+}
+
+type fallbackSwap struct {
+	step      string
+	to, old   Fallback
+	oldSource string
 }
 
 type appliedOverride struct {
@@ -539,6 +547,7 @@ func ParseOverride(key, arg string) (Override, error) {
 }
 
 func (cfg *LoopConfig) applyOverrides(overrides []Override) error {
+	configured := maps.Clone(cfg.Steps)
 	seen := map[Override]bool{}
 	for _, o := range overrides {
 		flag := "--" + o.Key
@@ -566,7 +575,12 @@ func (cfg *LoopConfig) applyOverrides(overrides []Override) error {
 		cfg.overrides = append(cfg.overrides, appliedOverride{o, *field, cfg.Provenance[path]})
 		*field = o.Value
 		if o.Key == "provider" && row.Fallback.Provider == o.Value {
-			return configError(fmt.Sprintf("%s %s=%s: the step's fallback names the same provider", flag, o.Step, o.Value))
+			orig := configured[o.Step]
+			fb := "steps." + o.Step + ".fallback"
+			swap := fallbackSwap{o.Step, Fallback{orig.Provider, orig.Model, orig.Effort}, row.Fallback, cfg.Provenance[fb]}
+			row.Fallback = swap.to
+			cfg.swaps = append(cfg.swaps, swap)
+			cfg.Provenance[fb] = "flag:" + flag
 		}
 		cfg.Steps[o.Step] = row
 		cfg.Provenance[path] = "flag:" + flag

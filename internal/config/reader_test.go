@@ -383,8 +383,88 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 	}
 }
 
-func TestProviderOverrideOntoFallbackRejected(t *testing.T) {
-	newDirs(t).loadErr(t, "fallback", Override{Key: "provider", Step: "implement", Value: "claude"})
+func TestProviderOverrideOntoFallbackSwapsTheFallback(t *testing.T) {
+	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "implement", Value: "claude"})
+
+	row := cfg.Steps["implement"]
+	if row.Provider != "claude" || row.Model != "gpt-5.6-sol" || row.Effort != "medium" {
+		t.Errorf("row = %s %s %s", row.Provider, row.Model, row.Effort)
+	}
+	if row.Fallback != (Fallback{Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium"}) {
+		t.Errorf("Fallback = %+v", row.Fallback)
+	}
+	if got := cfg.Provenance["steps.implement.fallback"]; got != "flag:--provider" {
+		t.Errorf("fallback provenance = %q", got)
+	}
+	if cfg.Steps["plan"].Fallback != (Fallback{Provider: "codex"}) {
+		t.Errorf("plan Fallback = %+v", cfg.Steps["plan"].Fallback)
+	}
+}
+
+func TestSwappedFallbackKeepsTheConfiguredModelAndEffortNotTheOverrides(t *testing.T) {
+	cfg := newDirs(t).load(t,
+		Override{Key: "model", Step: "implement", Value: "opus"},
+		Override{Key: "provider", Step: "implement", Value: "claude"},
+		Override{Key: "effort", Step: "implement", Value: "high"},
+	)
+
+	row := cfg.Steps["implement"]
+	if row.Provider != "claude" || row.Model != "opus" || row.Effort != "high" {
+		t.Errorf("row = %s %s %s", row.Provider, row.Model, row.Effort)
+	}
+	if row.Fallback != (Fallback{Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium"}) {
+		t.Errorf("Fallback = %+v", row.Fallback)
+	}
+}
+
+func TestPlanProviderOverrideOntoFallbackSwaps(t *testing.T) {
+	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "plan", Value: "codex"})
+
+	if cfg.Steps["plan"].Fallback != (Fallback{Provider: "claude", Model: "opus", Effort: "high"}) {
+		t.Errorf("Fallback = %+v", cfg.Steps["plan"].Fallback)
+	}
+}
+
+func TestBannerShowsTheSwappedFallbackWithProvenance(t *testing.T) {
+	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "implement", Value: "claude"})
+
+	banner := Banner(cfg)
+
+	for _, want := range []string{
+		"implement  claude  gpt-5.6-sol  medium  4h  diff  ← provider flag:--provider model default effort default\n",
+		"  fallback codex gpt-5.6-sol medium  ← flag:--provider\n",
+		"override: implement provider claude (flag) replaces codex (default)\n",
+		"override: steps.implement.fallback swapped to codex (--provider) replaces claude (default)\n",
+	} {
+		if !strings.Contains(banner, want) {
+			t.Errorf("%q missing from:\n%s", want, banner)
+		}
+	}
+}
+
+func TestProviderOverrideOntoAConfiguredFallbackSwapsItWithItsFileProvenance(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  implement:\n    fallback:\n      provider: claude\n      model: sonnet\n      effort: low\n")
+
+	cfg := d.load(t, Override{Key: "provider", Step: "implement", Value: "claude"})
+
+	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium"}) {
+		t.Errorf("Fallback = %+v", cfg.Steps["implement"].Fallback)
+	}
+	if !strings.Contains(Banner(cfg), "override: steps.implement.fallback swapped to codex (--provider) replaces claude sonnet low (.r-loop/config.yaml)\n") {
+		t.Errorf("banner:\n%s", Banner(cfg))
+	}
+}
+
+func TestProviderOverrideToTheRowsOwnProviderLeavesTheFallback(t *testing.T) {
+	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "implement", Value: "codex"})
+
+	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "claude"}) {
+		t.Errorf("Fallback = %+v", cfg.Steps["implement"].Fallback)
+	}
+	if cfg.Provenance["steps.implement.fallback"] != "default" || strings.Contains(Banner(cfg), "swapped") {
+		t.Errorf("fallback touched:\n%s", Banner(cfg))
+	}
 }
 
 func TestLandFixExplicitEmptyEffortIsProviderDefault(t *testing.T) {

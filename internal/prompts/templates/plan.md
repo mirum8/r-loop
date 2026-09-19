@@ -6,6 +6,8 @@ The phase:
 
 {{.PhaseBlock}}
 
+A `Resolved first:` list under the phase records decisions the maintainer has already taken: follow each `Resolved:` line and never ask about it again.
+
 Its open items:
 
 {{.Criteria}}

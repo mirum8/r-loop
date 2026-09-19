@@ -330,3 +330,41 @@ func TestColonInTheQuestionProseIsNotALabel(t *testing.T) {
 		t.Errorf("Owner = %q, Blocks = %q", e.Owner, e.Blocks)
 	}
 }
+
+func TestAPhaseBlockCarriesTheResolvedEntriesThatBlockedIt(t *testing.T) {
+	p := readEntries(t, `# Plan
+
+## Resolve first
+- [x] **Test style** — table-driven or not?
+      Owner: me. Blocks: Phase 2.
+      Resolved: 2026-09-19 — table-driven
+- [x] **Licence** — which?
+      Owner: me. Blocks: all.
+      Resolved: 2026-09-18 — MIT
+- [ ] **Naming** — open still
+      Owner: me. Blocks: Phase 2.
+- [x] **Logging** — which lib?
+      Owner: me. Blocks: Phase 3.
+      Resolved: 2026-09-18 — slog
+
+`+phasesTail)
+
+	want := "### Phase 2 — Two\n**Depends on:** Phase 1\n- [ ] b\n\n" +
+		"Resolved first:\n\n" +
+		"- [x] **Test style** — table-driven or not?\n      Owner: me. Blocks: Phase 2.\n      Resolved: 2026-09-19 — table-driven\n" +
+		"- [x] **Licence** — which?\n      Owner: me. Blocks: all.\n      Resolved: 2026-09-18 — MIT\n"
+	if got := p.Phases[1].Block; got != want {
+		t.Errorf("Block:\n%q\nwant\n%q", got, want)
+	}
+	if got := p.Phases[0].Block; !strings.HasSuffix(got, "Resolved first:\n\n- [x] **Licence** — which?\n      Owner: me. Blocks: all.\n      Resolved: 2026-09-18 — MIT\n") || strings.Contains(got, "Test style") {
+		t.Errorf("phase 1 Block:\n%s", got)
+	}
+}
+
+func TestAPhaseBlockWithNoResolvedEntryIsUnchanged(t *testing.T) {
+	p := readEntries(t, "# Plan\n\n## Resolve first\n- [ ] **Naming** — open\n      Owner: me. Blocks: Phase 2.\n\n"+phasesTail)
+
+	if got := p.Phases[1].Block; got != "### Phase 2 — Two\n**Depends on:** Phase 1\n- [ ] b\n\n" {
+		t.Errorf("Block = %q", got)
+	}
+}

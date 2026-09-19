@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -30,6 +31,11 @@ func Banner(cfg LoopConfig) string {
 	for _, o := range cfg.overrides {
 		fmt.Fprintf(&b, "override: %s %s %s (flag) replaces %s (%s)\n", o.Step, o.Key, o.Value, orDefault(o.old),
 			strings.TrimSuffix(o.oldSource, ":steps."+o.Step+"."+o.Key))
+	}
+	for _, sw := range cfg.swaps {
+		fmt.Fprintf(&b, "override: steps.%s.fallback swapped to %s (--provider) replaces %s (%s)\n", sw.step, sw.to.Provider,
+			strings.Join(slices.DeleteFunc([]string{sw.old.Provider, sw.old.Model, sw.old.Effort}, func(s string) bool { return s == "" }), " "),
+			strings.TrimSuffix(sw.oldSource, ":steps."+sw.step+".fallback"))
 	}
 	w := cfg.Watchdog
 	fmt.Fprintf(&b, "watchdog: %s %s %s allow [%s]  ← %s\n", w.Provider, orDefault(w.Model), orDefault(w.Effort),
