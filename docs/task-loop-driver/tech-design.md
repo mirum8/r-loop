@@ -56,7 +56,10 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Types** — `StepKey{Run string; Phase int; Kind string; Attempt int}` ·
   `Phase{Number int; Title string; Implements []string; DependsOn []int; Files []string; Risk
   string; Items []Item; DoneWhen string; Milestone int; Block string}` (`Block` is the raw
-  heading-to-next-heading text) · `Item{Text string; Done bool}` · `Milestone{Number int; Name
+  heading-to-next-heading text, followed — when any ticked `## Resolve first` entry's `Blocks:`
+  names that phase or all — by a blank line, `Resolved first:`, a blank line and the full text of
+  each such entry; the `plan` and `implement` prompts tell the agent to follow each `Resolved:`
+  line and never ask about it again) · `Item{Text string; Done bool}` · `Milestone{Number int; Name
   string; Phases []int}` · `Entry{Name, Body string; Ticked, HasBox bool; Owner, Blocks, Timebox,
   Output, Resolved string; BlocksAll bool; BlocksPhases []int; Malformed []string}` ·
   `Signal{Seq int; Kind SignalKind; Source SignalSource; Step StepKey; Reason, Evidence string; At
@@ -86,8 +89,10 @@ provider, model and effort, and `--model` and `--effort` override one row for on
     bool, timeout time.Duration) error` · `State(agent) (AgentState, error)` with `AgentState ∈
     {idle, working, blocked, done, unknown, gone}` · `Read(agent string, lines int) (string,
     error)` · `Interrupt(agent) error` · `Close(workspaceID) error` · `Split(pane, direction,
-    cwd string) (pane string, error)` (an empty `pane` splits the driver's own) ·
-    `ClosePane(pane) error` (closes one pane; used only for the watchdog's own, at the run's end).
+    cwd string) (pane string, error)` (an empty `pane` splits the pane herdr calls current) ·
+    `AgentPane(agent) (string, error)` (the pane the named agent runs in, `""` when herdr knows no
+    such agent) · `ClosePane(pane) error` (closes one pane; used only for the watchdog's own — a
+    stale one of the same run at its start, and its own at the run's end).
   - `Repo`: `Root() string` · `Clean() ([]string, error)` · `HeadBranch() (string, error)` ·
     `HeadSHA(dir) (string, error)` · `AddWorktree(dir, branch, base string) error` ·
     `RemoveWorktree(dir) error` · `Dirty(dir) ([]string, error)` · `CommitAll(dir, message)
@@ -113,7 +118,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   - `Prompts`: `Render(name string, vars map[string]any) (text, source string, err error)`.
   - `AskChannel`: `Serve(ctx) (baseURL string, err error)` · `StepURL(StepKey) string` ·
     `Questions() <-chan Question` · `Answer(id, answer, by, citation string) error`.
-  - `Face`: `Emit(Event)` · `Ask(Question) (string, error)` · `Close()`.
+  - `Face`: `Emit(Event)` · `Ask(Question) (string, error)` · `Close()`. Both faces also have
+    `Withdraw(id string)`, outside the port, which ends a waiting `Ask` for that id; the core calls
+    it through an interface assertion when an answer arrives elsewhere or a question is withdrawn.
   - `Notifier`: `Fire(hook string, env map[string]string)` (never returns an error to the loop; a
     non-zero exit is an `Event{Kind: "notify-failed"}`).
 - **Run directory** (`Store` adapter) — `.r-loop/runs/<runID>/` with `runID =
@@ -136,8 +143,14 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `rounds`, `reviewTimeout`. **A reviewer entry and a `fallback` are each a scalar provider name
   (model and effort left to the provider, flag omitted, banner prints `provider default`) or a
   block with `provider`, `model`, `effort`.** `--provider`, `--model` and `--effort` each take
-  `<step>=<value>` and override only that row's own key, never its fallback or reviewers; a key
-  `land.fix` inherits from the implement row is the overridden value. `land.fix` is an optional block with `provider`, `model`, `effort`, all optional,
+  `<step>=<value>` and override only that row's own key, never its reviewers; a key
+  `land.fix` inherits from the implement row is the overridden value. **A `--provider
+  <step>=<p>` naming that row's fallback provider swaps the fallback for the run** (spec ADR-66,
+  amended 2026-09-19): the fallback becomes the row's configured provider, model and effort — the
+  values before any flag — with provenance `flag:--provider`, and the banner adds `override:
+  steps.<step>.fallback swapped to <provider> (--provider) replaces <old provider model effort>
+  (<source>)`; `--model` and `--effort` never touch the fallback. A config file's `fallback` naming
+  its row's own provider is still rejected. `land.fix` is an optional block with `provider`, `model`, `effort`, all optional,
   for the `gatefix` step: absent, the implement row's three; a missing key is the implement
   row's unless the block names another provider, in which case it stays empty (that provider's
   default) and takes `land.fix.provider`'s provenance. The reader resolves `land.fix` at load, so every later reader sees three plain
@@ -167,8 +180,12 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   mcpConfigPath)` expands the templates and omits a flag whose template or value is empty.
   Shipped: `claude` (`--model {model}`, `--effort {effort}`, `--mcp-config {mcpConfig}`, `review: /code-review`) and
   `codex` (`-c model={model}`, `-c model_reasoning_effort={effort}`, `-c
-  mcp_servers.r-loop.url={url}`, `review: /review`). `{mcpConfig}` is a per-agent file
-  `{"mcpServers":{"r-loop":{"type":"http","url":"<url>"}}}`. The core sees a provider only as
+  mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.tool_timeout_sec=86400`, `review: /review`).
+  `{mcpConfig}` is a per-agent file
+  `{"mcpServers":{"r-loop":{"type":"http","url":"<url>","timeout":86400000}}}`. **Both carry a
+  fixed 24 h MCP tool timeout**: `ask_user` and `propose_remedy` block until a person answers,
+  which has no bound in an attended run, and an agent's MCP client must never time the call out
+  first (claude's default HTTP timeout is 60 s). The core sees a provider only as
   `ProviderArgs{Kind string; Args []string; Ask bool; Review string}`.
 - **Step kind** — `StepKind{Name, Prompt, Check string; Row StepRow}`; `StepRow{Provider, Model, Effort string; Fallback Fallback; Timeout time.Duration; Reviewers []Reviewer; Rounds int; ReviewTimeout time.Duration}`; `Reviewer{Provider, Model, Effort string}`, `Fallback{Provider, Model, Effort string}` and `GateFix{Provider, Model, Effort string}` — one type per role, the same three fields; an empty `Model` or `Effort` is the provider's default. A row's `check ∈ {plan-file,
   diff, report}` or one added with `RegisterCheck`; `findings` and `verdict` are the review
@@ -203,7 +220,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Two-signal rule** — `ok` only when the sentinel says `ok` **and** the evidence predicate
   passes **and** `HeadSHA(worktree)` still equals `StartSHA` (an agent commit is
   `failed(step committed before review)`); sentinel `failed` → `failed(<reason>)`; ok with
-  evidence missing → `failed(evidence missing: <what>)`; `blocked`/`idle` for
+  evidence missing → `failed(evidence missing: <what>)`; `blocked`/`idle`/`done` (herdr's `done`
+  is idle with output nobody has looked at, reported until a client focuses the pane, which r-loop
+  never does) for
   `watchdog.stallGrace` (default 2 min), no sentinel, no open question → `stalled`, and the
   driver sends one fixed nudge (below); `working` again → `running`; still quiet a further
   `stallGrace` after the nudge → `failed(stalled: no response to nudge)`; elapsed > timeout →
@@ -220,8 +239,10 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   primary tree's HEAD branch (`base`); slug `phase-<N>-<kebab title>` (≤ 60 chars); workspace label
   and author agent `rloop-p<N>-<kind>`, with `-a<attempt>` appended whenever `Attempt > 1`; reviewer
   agent `rloop-p<N>-<kind>-rv-<provider>-r<round>`, or `…-r<round>-a<attempt>` when `Attempt > 1`,
-  its prefix truncated so the name fits; milestone `rloop-p<N>-ms`; `rloop-watchdog` — all within
-  `[a-z][a-z0-9_-]{0,31}`. Findings `phase-<N>/<kind>-findings-<provider>-r<round>.json`; verdict
+  its prefix truncated so the name fits; milestone `rloop-p<N>-ms`; watchdog `rloop-wd-<runID>`
+  (`core.WatchdogName`: the run id lowercased, every character outside `[a-z0-9_-]` turned into
+  `-`, and a name longer than 32 cut to fit with a `-<8-hex fnv32a of the run id>` suffix), so a
+  run never touches another run's watchdog — all within `[a-z][a-z0-9_-]{0,31}`. Findings `phase-<N>/<kind>-findings-<provider>-r<round>.json`; verdict
   `phase-<N>/<kind>-verdict-r<round>.json`; milestone report
   `docs/<topic>/reports/milestone-<M>-<slug>.md`.
 - **Spawn** — `SessionManager{Host; Repo; Prompts; Store; Ask AskChannel; Resolve; Now; Poll,
@@ -283,11 +304,22 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   state, config `2`; missing binary `127`.
 - **Resume** — skips landed phases and `ok` steps, and re-runs the stopped step of **every**
   phase that halted, in phase order, as a new attempt on its own worktree; a phase blocked only
-  because of a dependency simply runs. The worktree is **claimed** when it is clean or when
-  `Snapshot(worktree)` equals the last `snapshot` event recorded for that step; anything else is
-  an unclaimed tree, exit `2`. A step whose author half had passed resumes at its recorded round
+  because of a dependency simply runs. Before claiming, resume asks herdr for the state of the
+  phase's last recorded step agent (`rloop-p<N>-<kind>[-a<attempt>]`); when it is `working` or
+  `blocked` — a driver killed mid-step leaves it running — resume appends `Event{Kind:
+  "stale-interrupted", Phase, Step, Fields{agent, state}}`, then `Interrupt`s it and prints
+  `interrupted previous session <agent>: still <state>`. The worktree is **claimed** when it is
+  clean, when `Snapshot(worktree)` equals the last `snapshot` (or `review-round`) event recorded
+  for that step, or when that step never reached `ok` or `failed` and a `baseline` event exists
+  for it — the changes are its own leftovers, and the new attempt reuses that baseline, so
+  evidence counts them (spec ADR-16, amended 2026-09-19); anything else — a tree under a terminal
+  step that differs from its snapshot, or under a step with no baseline — is an unclaimed tree,
+  exit `2`. A step whose author half had passed resumes at its recorded round
   with a fresh author session. `--replan` re-runs the phase's `plan` step as a new attempt, with
-  the failed step's reason as its addendum, before the step that failed.
+  the failed step's reason as its addendum, before the step that failed. `--no-watchdog` defaults
+  to the run's last choice: on when its last `watchdog-skipped`/`watchdog-start` event is
+  `watchdog-skipped`. A Resolve-first entry answered during resume is recorded in the resumed
+  run as it is at startup (Report, below).
 - **Gate fix** — a red gate with `land.fixRounds` left runs one `gatefix` step in the phase
   worktree on the config's resolved `land.fix` provider, model and effort (the implement row's
   unless `land.fix` names its own), with `GateCommand` and `GateOutput`, `check: diff`, the
@@ -306,10 +338,13 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `## Milestone M`, one `InPrimary` session on the `milestone` row writes the report; `ok` →
   commit `docs(report): milestone <M>`; anything else → `report-skipped`, never a halt.
 - **Report** — `report.md` opens with `human touches: <n>` (every answer a person gave, every
-  consent, every resume) and an **Automatic decisions** section: restarts with their remedy,
+  consent, every resume, every Resolve-first answer) and an **Automatic decisions** section: restarts with their remedy,
   question timeouts with the answer the agent took, fallback restarts with the provider, model
   and effort used, gate-fix rounds,
-  round-limit warnings, nudges, and blocked and skipped phases.
+  round-limit warnings, nudges, and blocked and skipped phases. A Resolve-first answer — at startup
+  or during resume — is an `Event{Kind: "human", Step: "resolve first", Fields{what: answer, id:
+  r<n>, entry, answer, by}}`, appended as soon as the run exists, and listed first under Questions
+  as `r<n> resolve first: <entry> → <answer> (<by>)`.
 - **Banner** — one line per pipeline row and the milestone row, `<step> <provider> <model>
   <effort> <timeout> <check> ← <provenance>`; under a row with a review half, `review rounds <n>
   <reviewTimeout>` and one `reviewer <provider> <model|provider default> <effort|provider
@@ -322,7 +357,11 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   and the question timeout, or `mode: attended`.
 - **Plain lines / status / report / notify env** — as written in Phases 15–16: `HH:MM:SS phase
   <N> <kind> <state> <provider> <detail>` (during a review, `<detail>` is `review r<round>/<rounds>
-  <half>`, `<half>` `find` or `fix`); `r-loop status --plain` lines; `report.md` rewritten on every
+  <half>`, `<half>` `find` or `fix`); while an `answer <id>> ` prompt is open, each emitted line
+  starts on a fresh line and the prompt is printed again after it; `r-loop status --plain` lines
+  — `run <id> running (driver pid <pid> not alive — r-loop resume)` and no `live` line when
+  `current` names this run with a dead pid, `phase <N> not in this run` for an unticked phase
+  outside the recorded run list; `r-loop answer` prints nothing on success; `report.md` rewritten on every
   transition; hook env `R_LOOP_RUN, R_LOOP_STATUS, R_LOOP_PHASE, R_LOOP_STEP, R_LOOP_REASON,
   R_LOOP_TODO, R_LOOP_REPORT`, with `R_LOOP_STATUS ∈ {halted, finished, warning, blocked}`,
   `sh -c`, 60 s.
@@ -379,6 +418,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   (32 hex chars, stored mode 0600). A step URL is `<base>/<phase>/<kind>/<attempt>`, a reviewer's
   `<base>/<phase>/<kind>-rv-<provider>/<attempt>` — the path identifies the asking agent. Tool
   `ask_user(question, options?, recommended?) → {answer}` blocks until answered; ids `q<seq>`.
+  Every agent's MCP client is configured with a 24 h tool timeout (Milestone 2, Provider block), so
+  a blocking call is never cut off by the client.
 - **waiting-input** — a question moves the step `running → waiting-input`, freezes its backstop,
   and is recorded; the answer returns it to `running`. A backstop firing in `waiting-input` halts
   with `invariant: a question never expires`. `ask: none` omits the flag and records `ask-none`.
@@ -388,6 +429,15 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   also arrive as `<RunDir>/answers/<id>`, written by `r-loop answer <id> <text>` from any shell —
   a temp file hard-linked into place, so a second answer while one is still waiting for that id is
   refused, exit `2`; the loop reads that directory each tick, and the first answer wins.
+- **Withdrawal** — when a step ends (`ok`, `failed`, `stalled`, a halt or an abort) its open
+  questions are withdrawn: each is recorded `AnsweredBy: withdrawn`, `Answer: step <state>`, the
+  face's `Withdraw(id)` is called, and the agent's pending call is released with `r-loop:
+  phase-<N>/<kind> has ended; this question is withdrawn.` A question that arrives for a step that
+  has already ended is withdrawn at once (`Answer: step ended`) and never moves the step to
+  `waiting-input`. An answer to a withdrawn question or an ended step's question is dropped with
+  `Event{Kind: "note", Fields{reason: "answer dropped: question <id> is not open"}}` — not
+  delivered, not a human touch, and never moving a step out of `ok` or `failed` (spec ADR-67,
+  amended 2026-09-19).
 - **Unattended timeout** — only with `--unattended`: a question still open
   `unattended.questionTimeout` after it reached the face is answered by the driver with `No
   answer within <t>. Proceed with your recommendation: <recommended>` — or, with none given, `…
@@ -409,6 +459,13 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 
 ## Milestone 7 — The watchdog
 
+- **Session** — agent `rloop-wd-<runID>` (`core.WatchdogName`, Milestone 2 names). `Start` first
+  asks `AgentPane` for that name; a stale watchdog of the same run (left by a killed driver) is
+  recorded as `Event{Kind: "watchdog-stale-closed", Fields{pane}}` and closed with `ClosePane`.
+  It then records `Event{Kind: "watchdog-start"}` and splits a pane to the right of the driver's
+  own pane — `HERDR_PANE_ID`, passed in as `Env.Pane` and `Watchdog.Pane`; with no driver pane it
+  opens its own workspace labelled with the watchdog name. `Stop` closes that workspace, or else
+  the pane. `--no-watchdog` records `Event{Kind: "watchdog-skipped"}` instead.
 - **Second MCP surface** — `<base>/watchdog/<wdToken>`; tools `signal(kind, step, reason,
   evidence) → {accepted, reason?}` · `propose_remedy(class, command, why) → {decision:
   authorised|refused, reason?}` ·

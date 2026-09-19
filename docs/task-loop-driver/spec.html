@@ -892,7 +892,7 @@ an <code>--unattended</code> one waits <code>unattended.questionTimeout</code> a
 agent to proceed with the option it recommended, recording that as an automatic decision.</p>
 
 <h4>A step stalls</h4>
-<p>herdr reports the agent <code>blocked</code> or <code>idle</code>, no sentinel exists, and no
+<p>herdr reports the agent <code>blocked</code>, <code>idle</code> or <code>done</code>, no sentinel exists, and no
 question is open. That combination is much narrower than it was before questions became explicit,
 and it is genuinely suspicious: a session that has gone quiet without asking for anything. The
 driver sends it one fixed nudge — write the sentinel if you are done, ask or fail if you are blocked
@@ -1384,7 +1384,9 @@ change is visible as an edit to one small type.</figcaption>
 <h2 id="topology">Topology</h2>
 
 <p><strong>One binary, in a herdr pane.</strong> The driver renders the TUI on the left and opens
-the watchdog beside it with <code>herdr pane split</code>; every step session gets its own workspace,
+the watchdog, <code>rloop-wd-&lt;runID&gt;</code>, beside it by splitting its own pane
+(<code>HERDR_PANE_ID</code>) with <code>herdr pane split</code> — or, started outside a herdr
+pane, in a workspace of its own that closes with the run; every step session gets its own workspace,
 and a step's reviewers open as panes inside it. It runs for the length of the run and exits with it, creating no daemon: the sessions
 belong to herdr's server, which is running anyway, and the worktrees belong to git. A run started in
 a plain terminal instead dies with that terminal — the pane is what makes it survivable, and that is
@@ -1406,7 +1408,7 @@ a documented instruction rather than something the driver enforces.</p>
   <rect x="34" y="40" width="404" height="36" rx="4" class="s-fill" stroke="#D1CFC5"/>
   <text x="48" y="63" class="lbl-hd">r-loop TUI</text><text x="150" y="63" class="lbl-sm">RunLoop · every decision</text>
   <rect x="452" y="40" width="394" height="36" rx="4" class="s-fill" stroke="#D97757" stroke-width="2"/>
-  <text x="466" y="63" class="lbl-hd">watchdog</text><text x="554" y="63" class="lbl-sm">rloop-watchdog · reads, never writes</text>
+  <text x="466" y="63" class="lbl-hd">watchdog</text><text x="554" y="63" class="lbl-sm">rloop-wd-&lt;runID&gt; · reads, never writes</text>
 
   <line x1="120" y1="86" x2="120" y2="104" class="stroke2" marker-end="url(#wg-a)"/>
   <rect x="20" y="106" width="840" height="36" rx="6" class="s-fill" stroke="#D97757" stroke-dasharray="5 4"/>
@@ -1581,7 +1583,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Sixty-eight decisions, each with the alternative that was live at the time; seven are superseded and kept in place, and nineteen are amended by later ones. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the three-tier rule that lets a watchdog veto and remedy but never approve; and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, and ADR-68 gives every session the driver starts its own model and effort.</p>
+<p class="lede">Sixty-eight decisions, each with the alternative that was live at the time; seven are superseded and kept in place, and twenty-six carry a later amendment. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the three-tier rule that lets a watchdog veto and remedy but never approve; and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, and ADR-68 gives every session the driver starts its own model and effort.</p>
 
 <div id="adr-index">
 
@@ -1845,7 +1847,10 @@ workspaces accumulate until they are cleaned up.</p>
 
 <div class="adr">
 <h3 id="adr-15">ADR-15 — A stall is detected from herdr's agent state, with a timer as backstop</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted ·
+amended 2026-09-19 — <code>done</code> counts as quiet too: herdr reports an idle agent whose
+output nobody has seen as <code>done</code> until a client focuses its pane, which r-loop never
+does, so a step that finished without its sentinel was never nudged</p>
 <p><span class="f">Context</span> herdr reports an agent as <code>idle</code>,
 <code>blocked</code>, <code>working</code> or <code>done</code> within seconds. A timer reports
 nothing until it expires.</p>
@@ -1863,7 +1868,14 @@ stalled and its timer is paused — so what remains is the narrow case it is act
 
 <div class="adr">
 <h3 id="adr-16">ADR-16 — A resume restarts the stopped step, except over an unclaimed tree</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-58">ADR-58</a> — a dirty tree matching the step's last recorded snapshot is claimed — and by <a href="#adr-60">ADR-60</a> — <code>--replan</code> re-runs the plan step first</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-58">ADR-58</a> — a dirty tree matching the step's last recorded snapshot is claimed — and by <a href="#adr-60">ADR-60</a> — <code>--replan</code> re-runs the plan step first ·
+amended 2026-09-19 — a dirty tree is also claimed when the phase's last recorded step never
+reached a terminal state and its baseline is recorded: the changes are that step's leftovers, and
+it re-runs as a new attempt on that baseline, so evidence counts them; a tree under a terminal
+step that differs from its snapshot, or under a step with no baseline, is still unclaimed. Before
+claiming, resume interrupts that step's agent if herdr still reports it working or blocked,
+recording <code>stale-interrupted</code> first — after a driver killed mid-step was found to leave
+both its agent running and its work unclaimable</p>
 <p><span class="f">Context</span> Resumability is a supporting characteristic with a target of at
 most one re-run step. But a worktree holding changes no step recorded is neither safe to build on
 nor safe to discard.</p>
@@ -2069,7 +2081,12 @@ messages.</p>
 <p><span class="f">Status</span> accepted ·
 amended 2026-09-19 — every reviewer session gets its own ask URL too, and a reviewer's
 clocks hold while its step has a question open, after reviewers were found started with no
-channel</p>
+channel ·
+amended 2026-09-19 — every agent's MCP client is started with a fixed 24 h tool timeout
+(codex <code>tool_timeout_sec=86400</code>, <code>"timeout": 86400000</code> in each
+<code>.mcp.json</code>), because <code>ask_user</code> and <code>propose_remedy</code> block until
+a person answers, which has no bound in an attended run, and claude's default of 60 s cut the call
+off first</p>
 <p><span class="f">Context</span> An agent that cannot ask will guess, and a guess reaches the code.
 Before this, a blocked session could only be detected as silence.</p>
 <p><span class="f">Decision</span> The driver serves an <code>ask_user</code> tool; every step
@@ -2308,7 +2325,11 @@ Noticing things nobody asked about waits for evidence that it can.</p>
 <p><span class="f">Status</span> accepted · supersedes <a href="#adr-18">ADR-18</a> · amended by <a href="#adr-43">ADR-43</a> — <code>PlanReader</code> decides what is open and what it blocks, by the same fail-closed rules as the pack's <code>resolve_scope.py</code> ·
 amended 2026-09-19 — the plan format carries no recommendation, so the TUI shows the
 entry's full text and takes a free answer, shown as answered by the maintainer; an unknown
-<code>Word:</code> label anywhere in an entry is reported as malformed</p>
+<code>Word:</code> label anywhere in an entry is reported as malformed ·
+amended 2026-09-19 — every resolved entry that blocks a phase is appended to that phase's block
+under <code>Resolved first:</code>, and the plan and implement prompts say to follow it and never
+ask again; an answer, at startup or on resume, is recorded in the run as a human touch and listed
+under Questions</p>
 <p><span class="f">Context</span> <a href="#adr-18">ADR-18</a> made an open entry refuse the run, on
 the grounds that the driver had no input surface and a gate needing a person did not belong in it.
 The TUI and the ask channel removed that ground.</p>
@@ -2844,7 +2865,12 @@ it without saying so.</p>
 
 <div class="adr">
 <h3 id="adr-66">ADR-66 — A step row names a fallback provider</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-68">ADR-68</a> — <code>fallback</code> may be a block naming its own model and effort</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-68">ADR-68</a> — <code>fallback</code> may be a block naming its own model and effort ·
+amended 2026-09-19 — a <code>--provider &lt;step&gt;=&lt;p&gt;</code> naming that row's fallback
+provider swaps the fallback for the run to the row's configured provider, model and effort (the
+values before any flag), shown on the banner with provenance <code>flag:--provider</code>, rather
+than exiting <code>2</code>; a config file fallback naming its row's own provider is still
+rejected</p>
 <p><span class="f">Context</span> An overnight run's most ordinary failure is a provider's own:
 a usage limit, an expired login, an outage. The agent cannot write a sentinel, goes quiet, and the
 step fails through its nudge. The watchdog sees why in the pane, and a <code>provider</code> remedy
@@ -2868,7 +2894,12 @@ first.</p>
 <p><span class="f">Status</span> accepted ·
 amended 2026-09-19 — the answer file is published by hard link, so a second
 <code>r-loop answer</code> for a question whose first answer is still waiting is refused, exit
-<code>2</code></p>
+<code>2</code> ·
+amended 2026-09-19 — when a step ends, its open questions are withdrawn: recorded as answered by
+<code>withdrawn</code>, taken off the face, and the agent's pending call released; a question
+arriving for an ended step is withdrawn at once, and an answer to a withdrawn or ended step's
+question is dropped with a note — never delivered, never a human touch, never moving a step out of
+<code>ok</code> or <code>failed</code> — after a late answer was found reviving a failed step</p>
 <p><span class="f">Context</span> A question reaches the TUI, or stdin in <code>--plain</code>. A
 maintainer away from the pane — told by <code>notify.onWarn</code> on a phone — had no way to
 answer short of reaching that terminal.</p>
@@ -2888,7 +2919,10 @@ machine's shell.</p>
 <div class="adr">
 <h3 id="adr-68">ADR-68 — Every session the driver starts names its own model and effort</h3>
 <p><span class="f">Status</span> accepted · amends <a href="#adr-20">ADR-20</a>,
-<a href="#adr-64">ADR-64</a> and <a href="#adr-66">ADR-66</a></p>
+<a href="#adr-64">ADR-64</a> and <a href="#adr-66">ADR-66</a> ·
+amended 2026-09-19 — <code>--provider</code> touches the fallback in one case: naming the
+fallback's own provider swaps the two (<a href="#adr-66">ADR-66</a>); <code>--model</code> and
+<code>--effort</code> still touch only the row's own keys</p>
 <p><span class="f">Context</span> Steps and reviewers each carry provider, model and effort
 (<a href="#adr-20">ADR-20</a>, <a href="#adr-56">ADR-56</a>). Four sessions did not: a fallback
 ran on its provider's defaults, a gate fix inherited the implement row whole, the watchdog had a
@@ -2994,9 +3028,12 @@ named reason on stderr; there is nothing paginated.</p>
       <td>the TUI, or with <code>--plain</code> a banner naming the resolved rows, one line per step
           transition and review round, and a final report</td></tr>
   <tr><td><code>r-loop status</code></td><td>Where the current run is</td><td><code>--plain</code></td>
-      <td>phase, step, provider, workspace, time live, open questions, warnings</td></tr>
+      <td>phase, step, provider, workspace, time live, open questions, warnings; a driver whose pid
+          is gone is named with <code>r-loop resume</code> and no live step, and a phase outside
+          the run as <code>not in this run</code></td></tr>
   <tr><td><code>r-loop resume</code></td><td>Pick up a stopped run at its last step</td><td><code>--replan</code> re-runs the phase's plan step first (<a href="#adr-60">ADR-60</a>);
-          <code>--unattended</code></td>
+          <code>--unattended</code>, <code>--no-watchdog</code> (default: the run's last choice),
+          <code>--plain</code></td>
       <td>as the run command, from the resumed step</td></tr>
   <tr><td><code>r-loop answer</code></td><td>Answer an open question from any shell</td>
       <td>the question id from <code>r-loop status</code>, and the answer text</td>
