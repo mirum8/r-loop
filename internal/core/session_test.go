@@ -165,6 +165,7 @@ func TestSpawnRecordsSpawnedBeforeOpenThenStartsPromptsAndRecordsRunning(t *test
 		"Repo.AddWorktree /repo/.r-loop/wt/phase-3 r-loop/phase-3 main",
 		"Repo.HeadSHA /repo/.r-loop/wt/phase-3",
 		"Repo.Snapshot /repo/.r-loop/wt/phase-3",
+		"Store.Append run-1 event",
 		"Store.Append run-1 step",
 		"SessionHost.Open /repo/.r-loop/wt/phase-3 rloop-p3-implement map[R_LOOP_PHASE:3 R_LOOP_RUN:run-1 R_LOOP_SENTINEL:" + sentinel + " R_LOOP_STEP:implement]",
 		"SessionHost.Start pane-1 rloop-p3-implement codex [-c model=gpt-5.6-sol]",

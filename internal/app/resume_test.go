@@ -96,7 +96,11 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 		m := findingsRe.FindStringSubmatch(text)
 		writeTo(m[1], `{"reviewer":"`+m[2]+`","findings":[]}`)
 	case fail:
-		writeTo(filepath.Join(spec.CWD, "wip.txt"), "half done by "+agent)
+		wip := "wip.txt"
+		if spec.Env["R_LOOP_STEP"] == "plan" {
+			wip = planRe.FindString(text)
+		}
+		writeTo(filepath.Join(spec.CWD, wip), "half done by "+agent)
 		writeTo(sentinel, `{"outcome":"failed","reason":"tests red","at":"2026-09-18T10:05:00Z"}`)
 		return nil
 	case spec.Env["R_LOOP_STEP"] == "plan":

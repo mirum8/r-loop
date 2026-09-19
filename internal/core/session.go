@@ -96,12 +96,12 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 	if s.StartSHA, err = m.Repo.HeadSHA(s.Dir); err != nil {
 		return s, fmt.Errorf("spawn: %w", err)
 	}
-	if s.StartTree, err = m.Repo.Snapshot(s.Dir); err != nil {
-		return s, fmt.Errorf("spawn: %w", err)
-	}
 	key := ref.Key
 	stepDir := filepath.Join(ref.RunDir, "phase-"+strconv.Itoa(key.Phase))
 	base := fmt.Sprintf("%s-a%d", key.Kind, key.Attempt)
+	if s.StartTree, err = m.baseline(s, base); err != nil {
+		return s, fmt.Errorf("spawn: %w", err)
+	}
 	s.Sentinel = filepath.Join(stepDir, base+".sentinel")
 	s.Agent = fmt.Sprintf("rloop-p%d-%s", key.Phase, key.Kind)
 	if key.Attempt > 1 {
@@ -396,6 +396,38 @@ func (m *SessionManager) snapshot(s *Session) error {
 	}
 	key := s.Ref.Key
 	return m.event(m.now(), s, Event{Kind: "snapshot", Fields: map[string]string{"step": fmt.Sprintf("%s-a%d", key.Kind, key.Attempt), "tree": tree}})
+}
+
+func (m *SessionManager) baseline(s *Session, step string) (string, error) {
+	key := s.Ref.Key
+	if key.Attempt > 1 {
+		st, err := m.Store.Load(key.Run)
+		if err != nil {
+			return "", err
+		}
+		prev := key
+		prev.Attempt--
+		if st.Steps[prev] != StepOK {
+			if tree := recordedBaseline(st, key); tree != "" {
+				return tree, nil
+			}
+		}
+	}
+	tree, err := m.Repo.Snapshot(s.Dir)
+	if err != nil {
+		return "", err
+	}
+	return tree, m.event(m.now(), s, Event{Kind: "baseline", Fields: map[string]string{"step": step, "tree": tree}})
+}
+
+func recordedBaseline(st RunState, key StepKey) string {
+	tree := ""
+	for _, e := range st.Events {
+		if e.Kind == "baseline" && e.Phase == key.Phase && e.Step == key.Kind {
+			tree = e.Fields["tree"]
+		}
+	}
+	return tree
 }
 
 func (m *SessionManager) Stop(s *Session) error {

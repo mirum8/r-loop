@@ -111,7 +111,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
     non-zero exit is an `Event{Kind: "notify-failed"}`).
 - **Run directory** (`Store` adapter) — `.r-loop/runs/<runID>/` with `runID =
   <yyyymmdd-HHMMSS>`; files: `config.resolved.yaml`, `events.jsonl` (step, run, landing and
-  display events, including `snapshot` and `review-round` events), `questions.jsonl`,
+  display events, including `baseline`, `snapshot` and `review-round` events), `questions.jsonl`,
   `signals.jsonl`, `remedies.jsonl`, `report.md`, and `phase-<N>/` holding sentinels, step logs,
   findings and verdicts, and `answers/`, where `r-loop answer` drops one file per answer. A question's answer is a second line for the same id; `Load` keeps the
   last. `.r-loop/runs/current` holds `<runID> <pid>`; `.r-loop/runs/<runID>/abort` is the abort
@@ -167,9 +167,11 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   diff, report}` or one added with `RegisterCheck`; `findings` and `verdict` are the review
   half's own checks and are never named on a row. Evidence predicates take
   `EvidenceContext{Repo; Worktree, StartSHA, StartTree, PlanPath string; FindingsFiles []string;
-  VerdictPath, RoundTree, ReportPath string; FS fs.FS}`. **`StartTree` is `Snapshot(worktree)`
-  taken at spawn, so every check measures the step's own change, never the phase base or an
-  earlier step's leftovers.**
+  VerdictPath, RoundTree, ReportPath string; FS fs.FS}`. **`StartTree` is the step's baseline:
+  `Snapshot(worktree)` taken when its first attempt spawns (ADR-58, amended 2026-09-19), so every
+  check measures the step's cumulative change across its attempts, never the phase base or an
+  earlier step's leftovers. A restart or a resume reuses the recorded baseline; an attempt after
+  the step's `ok` attempt takes a fresh one.**
 - **Shipped checks** — `plan-file`: the plan exists; one of its first five lines is `status:
   planned`; it carries the four headings `## Summary`, `## Changes`, `## Tests`, `## Assumptions`;
   `## Tests` holds at least one list item; and `TreeDiff(StartTree, Snapshot(worktree))` names no
@@ -213,7 +215,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `docs/<topic>/reports/milestone-<M>-<slug>.md`.
 - **Spawn** — `StepRef{Key StepKey; Kind StepKind; Phase Phase; InPrimary bool; Worktree,
   Branch, Base, RunDir, AskURL string; Vars map[string]any}`. Unless `InPrimary`, ensure the
-  worktree; record `StartSHA = HeadSHA(dir)` and `StartTree = Snapshot(dir)`; append `spawned`;
+  worktree; record `StartSHA = HeadSHA(dir)`; `StartTree` is the tree of the last `Event{Kind:
+  "baseline", Fields{step, tree}}` recorded for this phase and step kind when the previous attempt
+  did not end `ok`, else `Snapshot(dir)`, appended as that `baseline` event; append `spawned`;
   `Open` with `Env{R_LOOP_SENTINEL, R_LOOP_RUN, R_LOOP_PHASE, R_LOOP_STEP}`; `Start` in the root
   pane; render; `Prompt` without wait; append `running`. `InPrimary` spawns in `Repo.Root()` with
   no worktree and no review half (the milestone report). `Wait(ctx, s, Observer)` reports

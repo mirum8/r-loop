@@ -2632,7 +2632,10 @@ anything across five runs.</p>
 <div class="adr">
 <h3 id="adr-58">ADR-58 — A step's work is committed once, after its review</h3>
 <p><span class="f">Status</span> accepted · amends <a href="#adr-16">ADR-16</a> and the
-2026-09-18 choice that the driver commits a step's leftover files after every sentinel</p>
+2026-09-18 choice that the driver commits a step's leftover files after every sentinel ·
+amended 2026-09-19 — evidence is measured from the tree before the step's first attempt, after a
+resumed attempt that found its earlier attempt's complete plan on disk was failed for changing
+nothing</p>
 <p><span class="f">Context</span> The maintainer's rule: nothing is committed before review
 completion. Without commits the driver still needs to know where a round started — to prove a fix
 changed its file, that a reviewer changed nothing, and whose files a stopped run left behind.</p>
@@ -2649,8 +2652,12 @@ tell a step's leftovers from someone else's.</p>
 <p><span class="f">Consequences</span> One commit per step on the phase branch, and nothing
 unreviewed ever reaches it. A resume claims a dirty worktree that matches the last recorded snapshot
 and refuses anything else (<a href="#adr-16">ADR-16</a>). Evidence measures a step's own change
-from the snapshot taken when it started, so an attempt over a failed attempt's leftovers is judged
-only on what it did.</p>
+from the baseline — the snapshot taken before the step's first attempt, recorded in the run
+directory before that attempt spawns — so a re-run over its own earlier attempt's leftovers, by
+restart or by resume, is judged on the step's cumulative change, and complete work whose attempt
+failed passes on retry. A new attempt of a step that already ended <code>ok</code> (a
+<code>--replan</code>, a later gate fix) takes a fresh baseline, so committed work and another
+step's leftovers never count as its change.</p>
 <p><span class="f">Revisit when</span> a snapshot claim wrongly accepts or refuses a tree.</p>
 </div>
 
