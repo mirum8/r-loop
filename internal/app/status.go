@@ -54,7 +54,11 @@ func Status(args []string, env Env) int {
 	if env.Now != nil {
 		now = env.Now
 	}
-	for _, line := range StatusLines(run, pl, now()) {
+	deadPID := 0
+	if cur, pid, ok := st.Current(); ok && cur == id && !alive(pid) {
+		deadPID = pid
+	}
+	for _, line := range StatusLines(run, pl, now(), deadPID) {
 		fmt.Fprintln(env.Stdout, line)
 	}
 	return 0
@@ -96,10 +100,14 @@ func runOrder(id string) string {
 	return fmt.Sprintf("%s-%09d", base, n)
 }
 
-func StatusLines(run core.RunState, pl core.Plan, now time.Time) []string {
-	lines := []string{fmt.Sprintf("run %s %s", run.ID, run.Status)}
-	lines = append(lines, phaseLines(run, pl)...)
-	if l := liveLine(run, now); l != "" {
+func StatusLines(run core.RunState, pl core.Plan, now time.Time, deadPID int) []string {
+	head := fmt.Sprintf("run %s %s", run.ID, run.Status)
+	dead := deadPID != 0 && run.Status == core.RunRunning
+	if dead {
+		head += fmt.Sprintf(" (driver pid %d not alive — r-loop resume)", deadPID)
+	}
+	lines := append([]string{head}, phaseLines(run, pl)...)
+	if l := liveLine(run, now); l != "" && !dead {
 		lines = append(lines, l)
 	}
 	for _, q := range run.Questions {
@@ -121,9 +129,14 @@ func StatusLines(run core.RunState, pl core.Plan, now time.Time) []string {
 func phaseLines(run core.RunState, pl core.Plan) []string {
 	state := map[int]string{}
 	unticked := pl.Unticked()
+	listed := recordedRunList(run)
 	for _, ph := range pl.Phases {
 		state[ph.Number] = string(core.PhaseLanded)
-		if slices.Contains(unticked, ph.Number) {
+		switch {
+		case !slices.Contains(unticked, ph.Number):
+		case len(listed) > 0 && !slices.Contains(listed, ph.Number):
+			state[ph.Number] = "not in this run"
+		default:
 			state[ph.Number] = string(core.PhaseUnticked)
 		}
 	}

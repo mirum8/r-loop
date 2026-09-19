@@ -72,7 +72,7 @@ func TestACitedAnswerReachesTheSessionWithItsCitationLogged(t *testing.T) {
 	if !routeResult(t, routed) {
 		t.Fatal("Route returned false for an accepted answer")
 	}
-	want := `SessionHost.Prompt rloop-watchdog "question q1 from phase-3/implement: which db? options: sqlite, postgres" false 0s`
+	want := `SessionHost.Prompt rloop-wd-run-1 "question q1 from phase-3/implement: which db? options: sqlite, postgres" false 0s`
 	if got := r.host.Calls(); len(got) != 1 || got[0] != want {
 		t.Errorf("watchdog prompts %q", got)
 	}

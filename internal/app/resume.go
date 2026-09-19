@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"r-loop/internal/core"
 	"r-loop/internal/gitrepo"
@@ -30,8 +31,9 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 	replan := fs.Bool("replan", false, "")
 	plain := fs.Bool("plain", false, "")
 	unattended := fs.Bool("unattended", false, "")
+	noWatchdog := fs.Bool("no-watchdog", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
-		return nil, core.RunOptions{}, exit(2, "usage: r-loop resume [--replan] [--unattended]")
+		return nil, core.RunOptions{}, exit(2, "usage: r-loop resume [--replan] [--unattended] [--no-watchdog] [--plain]")
 	}
 	repo, err := gitrepo.Open(env.Dir)
 	if err != nil {
@@ -55,38 +57,56 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 	if run.Status == core.RunFinished {
 		return nil, core.RunOptions{}, exit(2, "nothing to resume: run %s finished", id)
 	}
-	w, err := Wire(Options{Todo: run.Todo, Plain: *plain, Unattended: *unattended}, env)
+	w, err := Wire(Options{Todo: run.Todo, Plain: *plain, Unattended: *unattended, NoWatchdog: *noWatchdog || skippedWatchdog(run)}, env)
 	if err != nil {
 		return nil, core.RunOptions{}, err
 	}
+	opts, err := w.resume(run, *replan)
+	if err != nil {
+		return nil, core.RunOptions{}, err
+	}
+	return w, opts, nil
+}
+
+func (w *Wiring) resume(run core.RunState, replan bool) (core.RunOptions, error) {
+	id, env := run.ID, w.Env
 	if recorded := recordedRunList(run); len(recorded) > 0 {
 		unticked := w.Plan.Unticked()
 		w.Opts.Phases = slices.DeleteFunc(recorded, func(n int) bool { return !slices.Contains(unticked, n) })
 		if len(w.Opts.Phases) == 0 {
-			return nil, core.RunOptions{}, exit(2, "nothing to resume: run %s landed every phase", id)
+			return core.RunOptions{}, exit(2, "nothing to resume: run %s landed every phase", id)
 		}
 	}
 	list, prompts, err := w.checks()
 	if err != nil {
-		return nil, core.RunOptions{}, err
+		return core.RunOptions{}, err
 	}
 	if err := w.Host.Reachable(); err != nil {
-		return nil, core.RunOptions{}, exit(4, "herdr server unreachable: %v", err)
+		return core.RunOptions{}, exit(4, "herdr server unreachable: %v", err)
 	}
-	if err := w.ready(list); err != nil {
-		return nil, core.RunOptions{}, err
+	answers, err := w.unblocked(list)
+	if err != nil {
+		return core.RunOptions{}, err
+	}
+	for _, ev := range answers {
+		if err := w.Store.Append(id, core.Record{Kind: core.RecordEvent, At: ev.At, Event: &ev}); err != nil {
+			return core.RunOptions{}, exit(2, "%v", err)
+		}
 	}
 	halted := haltedPhases(run, list)
 	for _, n := range halted {
+		if err := w.stopStale(run, n); err != nil {
+			return core.RunOptions{}, err
+		}
 		if err := w.claim(run, n); err != nil {
-			return nil, core.RunOptions{}, err
+			return core.RunOptions{}, err
 		}
 	}
 	if err := w.Store.ClearAbort(id); err != nil {
-		return nil, core.RunOptions{}, exit(2, "%v", err)
+		return core.RunOptions{}, exit(2, "%v", err)
 	}
 	if err := w.Store.SetCurrent(id, env.PID); err != nil {
-		return nil, core.RunOptions{}, exit(2, "%v", err)
+		return core.RunOptions{}, exit(2, "%v", err)
 	}
 	w.bind(id)
 	for _, n := range halted {
@@ -95,7 +115,7 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 		}
 	}
 	w.banner(env.Stdout, prompts)
-	return w, core.RunOptions{Phases: w.Opts.Phases, Resume: true, Replan: *replan}, nil
+	return core.RunOptions{Phases: w.Opts.Phases, Resume: true, Replan: replan}, nil
 }
 
 func recordedRunList(run core.RunState) []int {
@@ -111,6 +131,19 @@ func recordedRunList(run core.RunState) []int {
 		}
 	}
 	return phases
+}
+
+func skippedWatchdog(run core.RunState) bool {
+	skipped := false
+	for _, e := range run.Events {
+		switch e.Kind {
+		case "watchdog-skipped":
+			skipped = true
+		case "watchdog-start":
+			skipped = false
+		}
+	}
+	return skipped
 }
 
 func haltedPhases(run core.RunState, list []core.Phase) []int {
@@ -130,6 +163,34 @@ func haltedPhases(run core.RunState, list []core.Phase) []int {
 	return out
 }
 
+func (w *Wiring) stopStale(run core.RunState, phase int) error {
+	kind, attempt := lastStep(run, phase)
+	if kind == "" {
+		return nil
+	}
+	agent := fmt.Sprintf("rloop-p%d-%s", phase, kind)
+	if a, _ := strconv.Atoi(attempt); a > 1 {
+		agent += "-a" + attempt
+	}
+	state, err := w.Host.State(agent)
+	if err != nil {
+		return exit(4, "previous session %s: %v", agent, err)
+	}
+	if state != core.AgentWorking && state != core.AgentBlocked {
+		return nil
+	}
+	at := time.Now()
+	ev := core.Event{At: at, Kind: "stale-interrupted", Phase: phase, Step: kind, Fields: map[string]string{"agent": agent, "state": string(state)}}
+	if err := w.Store.Append(run.ID, core.Record{Kind: core.RecordEvent, At: at, Event: &ev}); err != nil {
+		return exit(2, "%v", err)
+	}
+	if err := w.Host.Interrupt(agent); err != nil {
+		return exit(4, "interrupt previous session %s: %v", agent, err)
+	}
+	fmt.Fprintf(w.Env.Stdout, "interrupted previous session %s: still %s\n", agent, state)
+	return nil
+}
+
 func (w *Wiring) claim(run core.RunState, phase int) error {
 	rel := fmt.Sprintf(".r-loop/wt/phase-%d", phase)
 	dir := filepath.Join(w.Repo.Root(), rel)
@@ -140,7 +201,7 @@ func (w *Wiring) claim(run core.RunState, phase int) error {
 	if err != nil {
 		return exit(2, "%s: %v", rel, err)
 	}
-	if len(dirty) == 0 {
+	if len(dirty) == 0 || leftoversOfRunningStep(run, phase) {
 		return nil
 	}
 	changed := dirty
@@ -159,13 +220,33 @@ func (w *Wiring) claim(run core.RunState, phase int) error {
 	return exit(2, "unclaimed changes in %s: %s; commit or discard them, then resume", rel, strings.Join(changed, ", "))
 }
 
-func recordedTree(run core.RunState, phase int) string {
+func leftoversOfRunningStep(run core.RunState, phase int) bool {
+	kind, attempt := lastStep(run, phase)
+	if kind == "" {
+		return false
+	}
+	for key, state := range run.Steps {
+		if key.Phase == phase && key.Kind == kind && strconv.Itoa(key.Attempt) == attempt && (state == core.StepOK || state == core.StepFailed) {
+			return false
+		}
+	}
+	return slices.ContainsFunc(run.Events, func(e core.Event) bool {
+		return e.Kind == "baseline" && e.Phase == phase && e.Step == kind
+	})
+}
+
+func lastStep(run core.RunState, phase int) (string, string) {
 	kind, attempt := "", ""
 	for _, e := range run.Events {
 		if e.Kind == "step" && e.Phase == phase {
 			kind, attempt = e.Step, e.Fields["attempt"]
 		}
 	}
+	return kind, attempt
+}
+
+func recordedTree(run core.RunState, phase int) string {
+	kind, attempt := lastStep(run, phase)
 	tree := ""
 	for _, e := range run.Events {
 		switch {

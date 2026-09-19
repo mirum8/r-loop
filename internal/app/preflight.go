@@ -45,7 +45,8 @@ func Preflight(w *Wiring) error {
 		}
 		fmt.Fprintf(env.Stdout, "cleared run %s: pid %d is gone\n", id, pid)
 	}
-	if err := w.ready(list); err != nil {
+	answers, err := w.unblocked(list)
+	if err != nil {
 		return err
 	}
 	resolved, err := yaml.Marshal(cfg)
@@ -61,6 +62,11 @@ func Preflight(w *Wiring) error {
 	}
 	if err := recordRunList(w.Store, id, list); err != nil {
 		return exit(2, "%v", err)
+	}
+	for _, ev := range answers {
+		if err := w.Store.Append(id, core.Record{Kind: core.RecordEvent, At: ev.At, Event: &ev}); err != nil {
+			return exit(2, "%v", err)
+		}
 	}
 	w.bind(id)
 	w.banner(env.Stdout, prompts)
@@ -97,33 +103,34 @@ func (w *Wiring) checks() ([]core.Phase, []string, error) {
 	return list, prompts, nil
 }
 
-func (w *Wiring) ready(list []core.Phase) error {
+func (w *Wiring) unblocked(list []core.Phase) ([]core.Event, error) {
 	dirty, err := w.Repo.Clean()
 	if err != nil {
-		return exit(2, "%v", err)
+		return nil, exit(2, "%v", err)
 	}
 	if len(dirty) > 0 {
-		return exit(4, "primary tree is not clean: %s", strings.Join(dirty, ", "))
+		return nil, exit(4, "primary tree is not clean: %s", strings.Join(dirty, ", "))
 	}
 	numbers := make([]int, len(list))
 	for i, ph := range list {
 		numbers[i] = ph.Number
 	}
+	var events []core.Event
 	if blocking := w.Plan.Blocking(numbers); len(blocking) > 0 {
 		if w.Face == core.Face(w.Plain) {
-			return exit(4, "## Resolve first entry %q blocks this run; resolve it with /r:plan-unblock %s", blocking[0].Name, w.Opts.Todo)
+			return nil, exit(4, "## Resolve first entry %q blocks this run; resolve it with /r:plan-unblock %s", blocking[0].Name, w.Opts.Todo)
 		}
-		if err := w.unblock(blocking); err != nil {
-			return err
+		if events, err = w.unblock(blocking); err != nil {
+			return nil, err
 		}
 	}
 	if err := store.EnsureExcluded(w.Repo.Root()); err != nil {
-		return exit(2, "%v", err)
+		return nil, exit(2, "%v", err)
 	}
-	return nil
+	return events, nil
 }
 
-func (w *Wiring) unblock(entries []core.Entry) error {
+func (w *Wiring) unblock(entries []core.Entry) ([]core.Event, error) {
 	if w.TUI != nil {
 		w.TUI.Start(tui.Header{Todo: w.Opts.Todo, Started: time.Now(), Watchdog: !w.Opts.NoWatchdog}, w.Plan.Phases, nil)
 		defer w.TUI.Stop()
@@ -132,33 +139,37 @@ func (w *Wiring) unblock(entries []core.Entry) error {
 	if w.Env.Now != nil {
 		now = w.Env.Now
 	}
-	if err := resolveFirst(plan.Reader{}, w.Repo, w.Face, w.Todo, entries, now()); err != nil {
-		return err
+	events, err := resolveFirst(plan.Reader{}, w.Repo, w.Face, w.Todo, entries, now())
+	if err != nil {
+		return nil, err
 	}
 	pl, err := plan.Reader{}.Read(w.Todo)
 	if err != nil {
-		return exit(2, "%v", err)
+		return nil, exit(2, "%v", err)
 	}
 	w.Plan, w.Loop.Plan, w.Gate.Boundary.Plan = pl, pl, pl
-	return nil
+	return events, nil
 }
 
-func resolveFirst(src core.PlanSource, repo interface{ Commit(string) (string, error) }, face core.Face, todo string, entries []core.Entry, now time.Time) error {
+func resolveFirst(src core.PlanSource, repo interface{ Commit(string) (string, error) }, face core.Face, todo string, entries []core.Entry, now time.Time) ([]core.Event, error) {
+	var events []core.Event
 	for i, e := range entries {
-		q := core.Question{ID: "r" + strconv.Itoa(i+1), Step: core.StepKey{Kind: "resolve first"}, Text: e.Name + "\n" + e.Body, AskedAt: now}
+		q := core.Question{ID: "r" + strconv.Itoa(i+1), Step: core.StepKey{Kind: core.ResolveFirstStep}, Text: e.Name + "\n" + e.Body, AskedAt: now}
 		answer, err := face.Ask(q)
 		if err != nil {
-			return exit(4, "## Resolve first entry %q was not answered: %v", e.Name, err)
+			return nil, exit(4, "## Resolve first entry %q was not answered: %v", e.Name, err)
 		}
 		if err := src.Stamp(todo, e.Name, now.Format("2006-01-02")+" — "+answer); err != nil {
-			return exit(2, "%v", err)
+			return nil, exit(2, "%v", err)
 		}
 		if _, err := repo.Commit("plan: resolve " + e.Name); err != nil {
-			return exit(2, "%v", err)
+			return nil, exit(2, "%v", err)
 		}
-		face.Emit(core.Event{At: now, Kind: "human", Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": q.ID, "by": "maintainer"}})
+		ev := core.Event{At: now, Kind: "human", Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": q.ID, "by": "maintainer", "entry": e.Name, "answer": answer}}
+		face.Emit(ev)
+		events = append(events, ev)
 	}
-	return nil
+	return events, nil
 }
 
 type role struct {

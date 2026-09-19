@@ -47,6 +47,7 @@ type SessionHost interface {
 	Start(pane, name, kind string, args []string) (Agent, error)
 	Prompt(agent, text string, wait bool, timeout time.Duration) error
 	State(agent string) (AgentState, error)
+	AgentPane(agent string) (string, error)
 	Read(agent string, lines int) (string, error)
 	Interrupt(agent string) error
 	Close(workspaceID string) error

@@ -575,7 +575,7 @@ func TestReviewerIsStartedWithItsOwnAskURLAndMCPConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"mcpServers":{"r-loop":{"type":"http","url":"` + url + `"}}}`; string(data) != want {
+	if want := `{"mcpServers":{"r-loop":{"timeout":86400000,"type":"http","url":"` + url + `"}}}`; string(data) != want {
 		t.Fatalf("mcp config = %s", data)
 	}
 }

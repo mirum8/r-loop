@@ -212,6 +212,19 @@ func (c Client) State(agent string) (core.AgentState, error) {
 	return core.AgentUnknown, nil
 }
 
+func (c Client) AgentPane(agent string) (string, error) {
+	var out agentResult
+	err := c.call(&out, "agent", "get", agent)
+	var herr Error
+	if errors.As(err, &herr) && strings.HasSuffix(herr.Code, "not_found") {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return out.Result.Agent.Pane, nil
+}
+
 func (c Client) Read(agent string, lines int) (string, error) {
 	data, err := c.exec("agent", "read", agent, "--source", "recent-unwrapped", "--lines", strconv.Itoa(lines))
 	return string(data), err

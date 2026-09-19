@@ -52,7 +52,7 @@ func TestShippedCodexBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Provider{Name: "codex", Kind: "codex", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
-		AskFlag: "-c mcp_servers.r-loop.url={url}", DoneSignal: "sentinel", Ask: "mcp", Review: "/review", Source: "shipped"}
+		AskFlag: "-c mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.tool_timeout_sec=86400", DoneSignal: "sentinel", Ask: "mcp", Review: "/review", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
 	}
@@ -206,9 +206,9 @@ func TestArgsOfShippedBlocks(t *testing.T) {
 		{"claude without model and effort", claude, "", "",
 			[]string{"--mcp-config", "/run/mcp.json"}},
 		{"codex with model and effort", codex, "gpt-5", "high",
-			[]string{"-c", "model=gpt-5", "-c", "model_reasoning_effort=high", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask"}},
+			[]string{"-c", "model=gpt-5", "-c", "model_reasoning_effort=high", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask", "-c", "mcp_servers.r-loop.tool_timeout_sec=86400"}},
 		{"codex without model and effort", codex, "", "",
-			[]string{"-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask"}},
+			[]string{"-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask", "-c", "mcp_servers.r-loop.tool_timeout_sec=86400"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -246,7 +246,7 @@ func TestWriteMCPConfig(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]any{"mcpServers": map[string]any{"r-loop": map[string]any{"type": "http", "url": "http://127.0.0.1:4711/ask/1/implement"}}}
+	want := map[string]any{"mcpServers": map[string]any{"r-loop": map[string]any{"type": "http", "url": "http://127.0.0.1:4711/ask/1/implement", "timeout": float64(86400000)}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %s", data)
 	}

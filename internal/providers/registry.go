@@ -20,6 +20,8 @@ var shipped embed.FS
 
 const shippedSource = "shipped"
 
+const mcpToolTimeoutMS = 24 * 60 * 60 * 1000
+
 type Provider struct {
 	Name, Kind, ModelFlag, EffortFlag, AskFlag, DoneSignal, Ask, Review, Source string
 }
@@ -137,7 +139,7 @@ func expand(tmpl string, values map[string]string) (string, bool) {
 
 func WriteMCPConfig(path, url string) error {
 	data, err := json.Marshal(map[string]any{
-		"mcpServers": map[string]any{"r-loop": map[string]string{"type": "http", "url": url}},
+		"mcpServers": map[string]any{"r-loop": map[string]any{"type": "http", "url": url, "timeout": mcpToolTimeoutMS}},
 	})
 	if err != nil {
 		return err

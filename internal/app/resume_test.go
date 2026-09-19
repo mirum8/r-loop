@@ -117,6 +117,7 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 }
 
 func (h *simHost) State(agent string) (core.AgentState, error)       { return core.AgentWorking, nil }
+func (h *simHost) AgentPane(agent string) (string, error)            { return "", nil }
 func (h *simHost) Read(agent string, lines int) (string, error)      { return "", nil }
 func (h *simHost) Interrupt(agent string) error                      { return nil }
 func (h *simHost) Close(workspaceID string) error                    { return nil }
@@ -168,6 +169,7 @@ func newResumeFixture(t *testing.T, config string) *fixture {
 	f.write(".r-loop/config.yaml", config)
 	f.commit()
 	f.env.PID = os.Getpid()
+	f.env.Pane = "driver-pane"
 	return f
 }
 
@@ -723,5 +725,279 @@ func TestClaimComparesAgainstTheStoppedStepsOwnTree(t *testing.T) {
 
 	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), "code.txt") {
 		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestResumeUsageNamesEveryFlag(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+
+	code := f.main("resume", "--bogus")
+
+	if code != 2 || !strings.Contains(f.err.String(), "usage: r-loop resume [--replan] [--unattended] [--no-watchdog] [--plain]") {
+		t.Fatalf("code=%d stderr=%q", code, f.err)
+	}
+}
+
+func TestResumeOfARunStartedWithoutAWatchdogStartsNone(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	first := newSim()
+	first.fail["rloop-p1-implement"] = true
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1", "--no-watchdog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, first)
+	if code := w.Execute(core.RunOptions{Phases: []int{1}}); code != 1 {
+		t.Fatalf("first run exit %d", code)
+	}
+	id := w.Loop.RunID
+
+	w, opts, err := PrepareResume(nil, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, newSim())
+	dog := &dogHost{}
+	w.Dog.Host = dog
+	code := w.Execute(opts)
+
+	if code != 0 {
+		t.Fatalf("resume exit %d\n%s", code, f.out)
+	}
+	if calls := dog.Calls(); len(calls) != 0 {
+		t.Errorf("watchdog touched: %q", calls)
+	}
+	if got := stepEvents(f.load(id), "watchdog-skipped"); len(got) != 2 {
+		t.Errorf("watchdog-skipped events %+v", got)
+	}
+}
+
+func TestResumeWithNoWatchdogSkipsTheWatchdogOfARunThatHadOne(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	first := newSim()
+	first.fail["rloop-p1-implement"] = true
+	id, _ := f.firstRun(first, "--phases", "1")
+
+	w, opts, err := PrepareResume([]string{"--no-watchdog"}, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, newSim())
+	dog := &dogHost{}
+	w.Dog.Host = dog
+	code := w.Execute(opts)
+
+	if code != 0 {
+		t.Fatalf("resume exit %d\n%s", code, f.out)
+	}
+	if calls := dog.Calls(); len(calls) != 0 {
+		t.Errorf("watchdog touched: %q", calls)
+	}
+	if got := stepEvents(f.load(id), "watchdog-skipped"); len(got) != 1 {
+		t.Errorf("watchdog-skipped events %+v", got)
+	}
+}
+
+func (f *fixture) seedKilledImplement() (string, string) {
+	f.t.Helper()
+	t := f.t
+	if err := store.EnsureExcluded(f.root); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := gitrepo.Open(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddWorktree(".r-loop/wt/phase-1", "r-loop/phase-1", "main"); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(f.root, ".r-loop/wt/phase-1")
+	baseline, err := repo.Snapshot(wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := store.New(f.root)
+	id, _ := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
+	plan := core.StepKey{Run: id, Phase: 1, Kind: "plan", Attempt: 1}
+	impl := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
+	for _, r := range []core.Record{
+		ev(t0, "run-list", 0, "", map[string]string{"phases": "1"}),
+		{Kind: core.RecordStep, Step: &plan, State: core.StepOK},
+		ev(t0, "baseline", 1, "implement", map[string]string{"step": "implement-a1", "tree": baseline}),
+		{Kind: core.RecordStep, Step: &impl, State: core.StepSpawned},
+		ev(t0, "step", 1, "implement", map[string]string{"state": "running", "attempt": "1", "workspace": "w2"}),
+		{Kind: core.RecordStep, Step: &impl, State: core.StepRunning},
+		{Kind: core.RecordRun, Run: core.RunRunning},
+	} {
+		if err := st.Append(id, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.SetCurrent(id, 999999)
+	f.write(".r-loop/wt/phase-1/wip.txt", "half done by the killed attempt")
+	return id, wt
+}
+
+func TestResumeClaimsTheLeftoversOfAStepKilledInItsWorkHalfAndBuildsOnThem(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, wt := f.seedKilledImplement()
+	sim := newSim()
+
+	code, lander, err := f.resume(sim)
+
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v\n%s", code, err, f.out)
+	}
+	if got := sim.promptedAgents(); !slices.Equal(got, []string{"rloop-p1-implement-a2"}) {
+		t.Fatalf("prompted %v", got)
+	}
+	if !slices.Equal(lander.landed, []int{1}) {
+		t.Fatalf("landed %v", lander.landed)
+	}
+	files := git(t, wt, "show", "--name-only", "--format=%s", "HEAD")
+	if !strings.Contains(files, "r-loop: phase 1 implement") || !strings.Contains(files, "wip.txt") || !strings.Contains(files, "code.txt") {
+		t.Fatalf("implement commit:\n%s", files)
+	}
+	if got := stepEvents(f.load(id), "baseline"); len(got) != 1 {
+		t.Fatalf("baseline re-taken: %+v", got)
+	}
+}
+
+func TestResumeRefusesChangesUnderARunningStepWithNoBaseline(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	if err := store.EnsureExcluded(f.root); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := gitrepo.Open(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddWorktree(".r-loop/wt/phase-1", "r-loop/phase-1", "main"); err != nil {
+		t.Fatal(err)
+	}
+	st := store.New(f.root)
+	id, _ := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
+	impl := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
+	for _, r := range []core.Record{
+		ev(t0, "run-list", 0, "", map[string]string{"phases": "1"}),
+		ev(t0, "baseline", 1, "plan", map[string]string{"step": "plan-a1", "tree": "whatever"}),
+		ev(t0, "step", 1, "implement", map[string]string{"state": "running", "attempt": "1", "workspace": "w2"}),
+		{Kind: core.RecordStep, Step: &impl, State: core.StepRunning},
+	} {
+		if err := st.Append(id, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.write(".r-loop/wt/phase-1/wip.txt", "someone's")
+
+	_, _, err = f.resume(newSim())
+
+	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), "unclaimed changes") || !strings.Contains(err.Error(), "wip.txt") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestResumeInterruptsTheKilledDriversStillWorkingStepAgentBeforeItClaims(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _ := f.seedKilledImplement()
+	script := "#!/bin/sh\necho \"$@\" >> \"$0.calls\"\n" +
+		"if [ \"$1 $2 $3\" = \"agent get rloop-p1-implement\" ]; then echo '{\"result\":{\"agent\":{\"name\":\"rloop-p1-implement\",\"pane_id\":\"w2:p1\",\"agent_status\":\"working\"}}}'; exit 0; fi\n" +
+		"echo '{}'\n"
+	if err := os.WriteFile(f.herdr, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, err := f.resume(newSim())
+
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v\n%s", code, err, f.out)
+	}
+	calls, _ := os.ReadFile(f.herdr + ".calls")
+	if !strings.Contains(string(calls), "agent send-keys rloop-p1-implement esc\nagent send-keys rloop-p1-implement ctrl+c\n") {
+		t.Fatalf("herdr calls:\n%s", calls)
+	}
+	stale := stepEvents(f.load(id), "stale-interrupted")
+	if len(stale) != 1 || stale[0].Phase != 1 || stale[0].Step != "implement" || stale[0].Fields["agent"] != "rloop-p1-implement" || stale[0].Fields["state"] != "working" {
+		t.Fatalf("stale-interrupted events %+v", stale)
+	}
+	if !strings.Contains(f.out.String(), "interrupted previous session rloop-p1-implement: still working") {
+		t.Fatalf("out:\n%s", f.out)
+	}
+}
+
+func TestResumeLeavesAPreviousSessionThatIsNoLongerWorkingAlone(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _ := f.seedKilledImplement()
+
+	code, _, err := f.resume(newSim())
+
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v\n%s", code, err, f.out)
+	}
+	calls, _ := os.ReadFile(f.herdr + ".calls")
+	if !strings.Contains(string(calls), "agent get rloop-p1-implement\n") || strings.Contains(string(calls), "send-keys") {
+		t.Fatalf("herdr calls:\n%s", calls)
+	}
+	if stale := stepEvents(f.load(id), "stale-interrupted"); len(stale) != 0 {
+		t.Fatalf("stale-interrupted events %+v", stale)
+	}
+}
+
+func TestResumeAfterAKilledDriverClosesItsStaleWatchdogAndStartsItsOwn(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _ := f.seedKilledImplement()
+
+	w, opts, err := PrepareResume(nil, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, newSim())
+	dog := &dogHost{stale: map[string]string{
+		core.WatchdogName(id):                "old-wd",
+		core.WatchdogName("20260101-000000"): "other-run-wd",
+		"rloop-watchdog":                     "legacy-wd",
+	}}
+	w.Dog.Host = dog
+	code := w.Execute(opts)
+
+	if code != 0 {
+		t.Fatalf("resume exit %d\n%s%s", code, f.out, f.err)
+	}
+	calls := dog.Calls()
+	if len(calls) < 3 || calls[0] != "ClosePane old-wd" || !strings.HasPrefix(calls[1], `Split "driver-pane" right`) || !strings.HasPrefix(calls[2], "Start wd-pane "+core.WatchdogName(id)+" ") {
+		t.Fatalf("watchdog calls %q", calls)
+	}
+	for _, c := range calls {
+		if c == "ClosePane other-run-wd" || c == "ClosePane legacy-wd" {
+			t.Errorf("closed a watchdog that is not this run's: %q", calls)
+		}
+	}
+}
+
+func TestAResolveFirstAnswerGivenDuringResumeIsStoredInTheResumedRun(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	f.write("docs/topic/todo.md", strings.Replace(resumeTodo, "### Phase 1", "## Resolve first\n- [ ] **Pick the database** — Owner: me · Blocks: Phase 1\n\n### Phase 1", 1))
+	f.commit()
+	id, _ := f.seedKilledImplement()
+	run := f.load(id)
+	w, err := Wire(Options{Todo: run.Todo}, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Face = &answeringFace{answers: []string{"Postgres"}}
+
+	if _, err := w.resume(run, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if w.Loop.RunID != id {
+		t.Fatalf("bound to %q, want %q", w.Loop.RunID, id)
+	}
+	answers := stepEvents(f.load(id), "human")
+	if len(answers) != 1 || answers[0].Fields["id"] != "r1" || answers[0].Fields["entry"] != "Pick the database" || answers[0].Fields["answer"] != "Postgres" {
+		t.Fatalf("human events %+v", answers)
+	}
+	if rep := core.Report(f.load(id), w.Plan); !strings.Contains(rep, "- r1 resolve first: Pick the database → Postgres (maintainer)\n") {
+		t.Fatalf("report:\n%s", rep)
 	}
 }

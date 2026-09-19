@@ -59,7 +59,7 @@ func (h *eventsHost) Prompt(agent, text string, wait bool, timeout time.Duration
 	h.mu.Lock()
 	b := h.behaviour[agent]
 	h.mu.Unlock()
-	if b == "hold" || b == "ask" || b == "ask-noinput" {
+	if b == "hold" || b == "ask" || b == "ask-noinput" || b == "ask-fail" {
 		h.record("SessionHost.Prompt %s", agent)
 		return nil
 	}
@@ -86,7 +86,7 @@ func (h *eventsHost) State(agent string) (AgentState, error) {
 	n := h.asked[agent]
 	h.asked[agent] = n + 1
 	h.mu.Unlock()
-	if b != "ask" && b != "ask-noinput" {
+	if b != "ask" && b != "ask-noinput" && b != "ask-fail" {
 		return h.agentSim.State(agent)
 	}
 	if n == 0 {
@@ -102,6 +102,9 @@ func (h *eventsHost) State(agent string) (AgentState, error) {
 	}
 	if b == "ask-noinput" && n == 10 {
 		h.finish(agent)
+	}
+	if b == "ask-fail" && n == 10 {
+		writeFile(h.spec(agent).Env["R_LOOP_SENTINEL"], `{"outcome":"failed","reason":"gave up","at":"2026-09-18T10:05:00Z"}`)
 	}
 	return AgentWorking, nil
 }
@@ -500,11 +503,11 @@ func TestErrNoInputKeepsTheRunAlivePastTheBackstop(t *testing.T) {
 	if got := r.calls("Face.Ask "); !reflect.DeepEqual(got, []string{"q1"}) {
 		t.Errorf("asked %v", got)
 	}
-	if got := r.calls("AskChannel.Answer "); len(got) != 0 {
+	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{`q1 "r-loop: phase-2/implement has ended; this question is withdrawn." withdrawn ""`}) {
 		t.Errorf("answered %v", got)
 	}
 	st, _ := r.store.Load("run-1")
-	if len(st.Questions) != 1 || st.Questions[0].AnsweredBy != "" {
+	if len(st.Questions) != 1 || st.Questions[0].AnsweredBy != "withdrawn" || st.Questions[0].Answer != "step ok" {
 		t.Errorf("questions %+v", st.Questions)
 	}
 	if got := r.stepStates("implement"); slices.Contains(got, "failed") || !slices.Contains(got, "waiting-input") {
@@ -825,6 +828,75 @@ func TestAFileAnswerWinsAndWithdrawsTheQuestionFromTheFace(t *testing.T) {
 	}
 	if got := r.stepStates("implement"); !reflect.DeepEqual(got, []string{"waiting-input", "running"}) {
 		t.Errorf("implement states %v", got)
+	}
+}
+
+func TestAStepThatEndsWithAnOpenQuestionWithdrawsItAndALateAnswerIsDropped(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.Face = &gatedFace{fakeFace: r.face, gate: make(chan struct{})}
+	r.host.behaviour["rloop-p2-implement"] = "ask-fail"
+
+	code := r.run(RunOptions{Phases: []int{2}})
+
+	if code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if got := r.calls("Face.Withdraw "); !reflect.DeepEqual(got, []string{"q1"}) {
+		t.Errorf("withdrawn %v", got)
+	}
+	st, _ := r.store.Load("run-1")
+	if len(st.Questions) != 1 || st.Questions[0].AnsweredBy != "withdrawn" {
+		t.Errorf("questions %+v", st.Questions)
+	}
+
+	err := r.loop.Answer("q1", "sqlite", "maintainer")
+
+	if err == nil || !strings.Contains(err.Error(), "not open") {
+		t.Fatalf("late answer err %v", err)
+	}
+	key := StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}
+	st, _ = r.store.Load("run-1")
+	if st.Steps[key] != StepFailed {
+		t.Errorf("step %s after the late answer, want failed", st.Steps[key])
+	}
+	if got := r.stepStates("implement"); got[len(got)-1] != "failed" {
+		t.Errorf("implement states %v", got)
+	}
+	if len(st.Questions) != 1 || st.Questions[0].AnsweredBy != "withdrawn" {
+		t.Errorf("questions after the late answer %+v", st.Questions)
+	}
+	if human := r.events("human"); len(human) != 0 {
+		t.Errorf("late answer counted as a human touch: %+v", human)
+	}
+	if got := r.calls("AskChannel.Answer "); len(got) != 1 || !strings.HasSuffix(got[0], ` withdrawn ""`) {
+		t.Errorf("answers %v", got)
+	}
+}
+
+func TestAQuestionForAStepThatHasEndedIsWithdrawnWithoutTouchingTheStep(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.runDir = r.store.dir
+	s := &Session{Ref: StepRef{Key: StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}}}
+	r.loop.setLive(s)
+	r.loop.Sessions.Finish(s, Outcome{State: StepFailed, Reason: "gave up", Session: s})
+
+	r.loop.question(context.Background(), Question{ID: "q1", Step: s.Ref.Key, Text: "which db?"})
+
+	if got := r.calls("Face.Ask "); len(got) != 0 {
+		t.Errorf("face asked %v", got)
+	}
+	if s.OpenQuestion.Load() {
+		t.Error("an ended step was frozen")
+	}
+	st, _ := r.store.Load("run-1")
+	if st.Steps[s.Ref.Key] != StepFailed {
+		t.Errorf("step %s, want failed", st.Steps[s.Ref.Key])
+	}
+	if len(st.Questions) != 1 || st.Questions[0].AnsweredBy != "withdrawn" {
+		t.Errorf("questions %+v", st.Questions)
+	}
+	if err := r.loop.Answer("q1", "sqlite", "maintainer"); err == nil {
+		t.Error("answered a withdrawn question")
 	}
 }
 

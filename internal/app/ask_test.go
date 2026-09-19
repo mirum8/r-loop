@@ -333,6 +333,9 @@ func TestRLoopAnswerWritesTheFileForAnOpenQuestion(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, f.err)
 	}
+	if f.out.Len() != 0 || f.err.Len() != 0 {
+		t.Errorf("printed on success: stdout %q stderr %q", f.out, f.err)
+	}
 	dir := filepath.Join(f.root, ".r-loop/runs", id, "answers")
 	if b, _ := os.ReadFile(filepath.Join(dir, "q2")); string(b) != "use sqlite" {
 		t.Errorf("answer file %q", b)

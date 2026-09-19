@@ -137,6 +137,44 @@ func TestStatusShowsNoLiveLineOnceTheStepEnded(t *testing.T) {
 	}
 }
 
+func TestStatusOfARunWhoseDriverDiedSaysSoAndClaimsNoLiveStep(t *testing.T) {
+	f := newFixture(t)
+	id := f.seedRun(
+		core.Record{Kind: core.RecordRun, Run: core.RunRunning},
+		stepRec(2, "implement", 1, core.StepRunning),
+		ev(t0, "step", 2, "implement", map[string]string{"state": "running", "attempt": "1", "provider": "claude", "workspace": "w1"}),
+	)
+	if err := store.New(f.root).SetCurrent(id, 999999); err != nil {
+		t.Fatal(err)
+	}
+
+	f.main("status", "--plain")
+
+	out := f.out.String()
+	if !strings.HasPrefix(out, "run "+id+" running (driver pid 999999 not alive — r-loop resume)\n") {
+		t.Fatalf("first line:\n%s", out)
+	}
+	if strings.Contains(out, "\nlive ") {
+		t.Fatalf("claims a live step:\n%s", out)
+	}
+}
+
+func TestStatusMarksPhasesOutsideTheRunList(t *testing.T) {
+	f := newFixture(t)
+	f.seedRun(
+		ev(t0, "run-list", 0, "", map[string]string{"phases": "2,4"}),
+		core.Record{Kind: core.RecordRun, Run: core.RunHalted},
+	)
+
+	f.main("status", "--plain")
+
+	for _, want := range []string{"phase 1 landed\n", "phase 2 unticked\n", "phase 3 not in this run\n", "phase 4 unticked\n", "phase 5 not in this run\n"} {
+		if !strings.Contains(f.out.String(), want) {
+			t.Errorf("%q missing:\n%s", want, f.out)
+		}
+	}
+}
+
 func TestStatusWithNoRunPrintsNoRun(t *testing.T) {
 	f := newFixture(t)
 

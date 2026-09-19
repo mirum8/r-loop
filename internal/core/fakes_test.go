@@ -56,6 +56,7 @@ type fakeSessionHost struct {
 	callLog
 	Opened  []OpenSpec
 	States  map[string]AgentState
+	Panes   map[string]string
 	Screens map[string]string
 	Err     error
 	next    int
@@ -89,6 +90,11 @@ func (f *fakeSessionHost) State(agent string) (AgentState, error) {
 		return s, f.Err
 	}
 	return AgentUnknown, f.Err
+}
+
+func (f *fakeSessionHost) AgentPane(agent string) (string, error) {
+	f.record("SessionHost.AgentPane %s", agent)
+	return f.Panes[agent], f.Err
 }
 
 func (f *fakeSessionHost) Read(agent string, lines int) (string, error) {

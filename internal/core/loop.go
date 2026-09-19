@@ -543,6 +543,9 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 				continue
 			}
 			reason := "watchdog: " + sig.Reason
+			if s := l.liveSession(); s != nil {
+				s.end()
+			}
 			recErr := l.Store.Append(l.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepFailed, Reason: reason})
 			if s := l.liveSession(); s != nil {
 				l.Sessions.Stop(s)
@@ -564,6 +567,7 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 			out := <-done
 			l.emitStep(ref, out.State, out.Reason, out.Session)
 			l.watcher().StepEnded(ref, out)
+			l.withdrawStep(ref.Key, out.State)
 			l.announceAbort(ref.Key.Phase, ref.Key.Kind)
 			return out, true
 		}
@@ -582,7 +586,9 @@ func (l *RunLoop) ended(ref StepRef, out Outcome) (Outcome, bool) {
 		h.Hold(ref.Key)
 	}
 	l.watcher().StepEnded(ref, out)
-	if out.State != StepFailed || !strings.HasPrefix(out.Reason, "backstop") || out.Session == nil || !out.Session.OpenQuestion.Load() {
+	invariant := out.State == StepFailed && strings.HasPrefix(out.Reason, "backstop") && out.Session != nil && out.Session.OpenQuestion.Load()
+	l.withdrawStep(ref.Key, out.State)
+	if !invariant {
 		return out, false
 	}
 	if holds {
@@ -619,24 +625,30 @@ func (l *RunLoop) serveQuestions(ctx context.Context) {
 
 func (l *RunLoop) question(ctx context.Context, q Question) {
 	var s *Session
-	if q.Step.Kind != "watchdog" {
+	if q.Step.Kind == "watchdog" {
+		l.track(q, nil)
+	} else {
 		if s = l.askingSession(ctx, q.Step); s == nil {
 			return
 		}
-		if l.openQuestion(s, 1) == 1 {
-			l.stepState(s, StepWaitingInput)
+		admitted := s.live(func() {
+			l.track(q, s)
+			if l.openQuestion(s, 1) == 1 {
+				l.stepState(s, StepWaitingInput)
+			}
+		})
+		if !admitted {
+			l.withdraw(q, "ended")
+			return
 		}
 	}
-	l.track(q, s)
 	l.recordQuestion(q)
 	l.emit(Event{Kind: "question", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"id": q.ID, "text": q.Text}})
 	if s != nil && l.watcher().Route(ctx, q) {
-		if _, ok := l.claim(q.ID); ok {
-			l.release(s)
-		}
+		l.settle(q.ID)
 		return
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || !l.isOpen(q.ID) {
 		return
 	}
 	if l.QuestionTimeout > 0 {
@@ -684,16 +696,13 @@ func (l *RunLoop) Answer(id, text, by string) error {
 
 func (l *RunLoop) Deliver(id, text, by, citation string) error {
 	defer os.Remove(filepath.Join(l.Store.Dir(l.RunID), "answers", id))
-	open, ok := l.claim(id)
+	open, ok := l.settle(id)
 	if !ok {
 		err := fmt.Errorf("question %s is not open", id)
 		l.emit(Event{Kind: "note", Fields: map[string]string{"reason": "answer dropped: " + err.Error()}})
 		return err
 	}
 	q := open.q
-	if open.s != nil {
-		l.release(open.s)
-	}
 	q.Answer, q.AnsweredBy, q.Citation, q.AnsweredAt = text, by, citation, time.Now()
 	l.recordQuestion(q)
 	if by != "maintainer" {
@@ -709,6 +718,56 @@ func (l *RunLoop) Deliver(id, text, by, citation string) error {
 		return err
 	}
 	return nil
+}
+
+func (l *RunLoop) settle(id string) (openAsk, bool) {
+	l.mu.Lock()
+	open, ok := l.asked[id]
+	l.mu.Unlock()
+	if !ok || open.s == nil {
+		return l.claim(id)
+	}
+	claimed := false
+	open.s.live(func() {
+		if open, claimed = l.claim(id); claimed {
+			l.release(open.s)
+		}
+	})
+	return open, claimed
+}
+
+func (l *RunLoop) isOpen(id string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, ok := l.asked[id]
+	return ok
+}
+
+func (l *RunLoop) withdrawStep(key StepKey, state StepState) {
+	l.mu.Lock()
+	var qs []Question
+	for id, a := range l.asked {
+		if a.s != nil && a.s.Ref.Key == key {
+			qs = append(qs, a.q)
+			delete(l.asked, id)
+			delete(l.open, a.s)
+		}
+	}
+	l.mu.Unlock()
+	slices.SortFunc(qs, func(a, b Question) int { return strings.Compare(a.ID, b.ID) })
+	for _, q := range qs {
+		l.withdraw(q, state)
+	}
+}
+
+func (l *RunLoop) withdraw(q Question, state StepState) {
+	text := fmt.Sprintf("r-loop: phase-%d/%s has ended; this question is withdrawn.", q.Step.Phase, q.Step.Kind)
+	q.Answer, q.AnsweredBy, q.AnsweredAt = "step "+string(state), "withdrawn", time.Now()
+	l.recordQuestion(q)
+	if w, ok := l.Face.(interface{ Withdraw(id string) }); ok {
+		w.Withdraw(q.ID)
+	}
+	l.Ask.Answer(q.ID, text, "withdrawn", "")
 }
 
 func (l *RunLoop) track(q Question, s *Session) {

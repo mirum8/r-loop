@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -17,6 +18,7 @@ import (
 const (
 	defaultPoll       = 10 * time.Second
 	defaultStallGrace = 2 * time.Minute
+	mcpToolTimeout    = 24 * time.Hour
 )
 
 type SessionManager struct {
@@ -51,6 +53,25 @@ type Session struct {
 	OpenQuestion, Reviewing          atomic.Bool
 	owner                            *Session
 	fix                              *fixHalf
+
+	mu    sync.Mutex
+	ended bool
+}
+
+func (s *Session) live(fn func()) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended {
+		return false
+	}
+	fn()
+	return true
+}
+
+func (s *Session) end() {
+	s.mu.Lock()
+	s.ended = true
+	s.mu.Unlock()
 }
 
 type fixHalf struct {
@@ -262,7 +283,7 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 			w.obs.Resumed(s)
 		}
 		return Outcome{}, false
-	case AgentIdle, AgentBlocked:
+	case AgentIdle, AgentBlocked, AgentDone:
 		w.quiet += dt
 	default:
 		return Outcome{}, false
@@ -318,7 +339,7 @@ func (m *SessionManager) recordState(at time.Time, s *Session, state StepState) 
 }
 
 func writeMCPConfig(path, url string) error {
-	data, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"r-loop": map[string]string{"type": "http", "url": url}}})
+	data, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"r-loop": map[string]any{"type": "http", "url": url, "timeout": mcpToolTimeout.Milliseconds()}}})
 	if err != nil {
 		return err
 	}
@@ -386,6 +407,7 @@ func (m *SessionManager) evidence(s *Session) EvidenceContext {
 }
 
 func (m *SessionManager) Finish(s *Session, out Outcome) Outcome {
+	s.end()
 	key := s.Ref.Key
 	recorded, done := m.terminal(key)
 	if done {

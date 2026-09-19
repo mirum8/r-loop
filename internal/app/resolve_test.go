@@ -63,7 +63,7 @@ func TestEachBlockingEntryIsAskedStampedAndCommittedInDocumentOrder(t *testing.T
 		{Name: "API version", Body: "- [ ] **API version** — Owner: me · Blocks: all"},
 	}
 
-	err := resolveFirst(fakePlan{s}, fakeRepo{s}, face, "/repo/todo.md", entries, time.Date(2026, 9, 18, 10, 0, 0, 0, time.Local))
+	_, err := resolveFirst(fakePlan{s}, fakeRepo{s}, face, "/repo/todo.md", entries, time.Date(2026, 9, 18, 10, 0, 0, 0, time.Local))
 
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestEachBlockingEntryIsAskedStampedAndCommittedInDocumentOrder(t *testing.T
 func TestAnUnansweredEntryStopsBeforeStamping(t *testing.T) {
 	s := &script{}
 
-	err := resolveFirst(fakePlan{s}, fakeRepo{s}, &answeringFace{s: s}, "/repo/todo.md", []core.Entry{{Name: "Pick the database"}}, time.Now())
+	_, err := resolveFirst(fakePlan{s}, fakeRepo{s}, &answeringFace{s: s}, "/repo/todo.md", []core.Entry{{Name: "Pick the database"}}, time.Now())
 
 	if code := exitCode(t, err); code != 4 || !strings.Contains(err.Error(), "Pick the database") {
 		t.Fatalf("code=%d err=%v", code, err)
@@ -136,19 +136,30 @@ func TestPreflightInTUIModeResolvesABlockingEntryAndCommitsItBeforeTheRun(t *tes
 	if w.Loop.RunID == "" {
 		t.Fatal("no run created after resolving")
 	}
+	run, err := w.Store.Load(w.Loop.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep := core.Report(run, w.Plan)
+	if !strings.Contains(rep, "human touches: 1\n") || !strings.Contains(rep, "- r1 resolve first: Pick the database → Postgres (maintainer)\n") {
+		t.Fatalf("report:\n%s", rep)
+	}
 }
 
 func TestAnAnsweredEntryIsReportedAsAnsweredByTheMaintainer(t *testing.T) {
 	face := &answeringFace{answers: []string{"Postgres"}}
 	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.Local)
 
-	err := resolveFirst(fakePlan{&script{}}, fakeRepo{&script{}}, face, "/repo/todo.md", []core.Entry{{Name: "Pick the database"}}, now)
+	events, err := resolveFirst(fakePlan{&script{}}, fakeRepo{&script{}}, face, "/repo/todo.md", []core.Entry{{Name: "Pick the database"}}, now)
 
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []core.Event{{At: now, Kind: "human", Step: "resolve first", Fields: map[string]string{"what": "answer", "id": "r1", "by": "maintainer"}}}
+	want := []core.Event{{At: now, Kind: "human", Step: "resolve first", Fields: map[string]string{"what": "answer", "id": "r1", "by": "maintainer", "entry": "Pick the database", "answer": "Postgres"}}}
 	if !reflect.DeepEqual(face.events, want) {
 		t.Fatalf("events %+v", face.events)
+	}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("returned events %+v", events)
 	}
 }

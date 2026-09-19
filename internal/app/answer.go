@@ -43,7 +43,6 @@ func Answer(args []string, env Env) int {
 	if err := writeAnswer(filepath.Join(st.Dir(runID), "answers"), id, text); err != nil {
 		return fail(env, exit(2, "%v", err))
 	}
-	fmt.Fprintf(env.Stdout, "answer to %s written for run %s\n", id, runID)
 	return 0
 }
 

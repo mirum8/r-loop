@@ -41,6 +41,7 @@ type Options struct {
 
 type Env struct {
 	Dir, Home, Herdr, Git string
+	Pane                  string
 	PID                   int
 	Stdin                 io.Reader
 	Stdout, Stderr        io.Writer
@@ -324,7 +325,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		fallbacks[k.Name] = k.Row.Fallback
 	}
 	w.Remedies = &core.Remedies{Allow: allow, Face: w.Face, Store: w.Store, Window: cfg.Watchdog.RemedyWindow, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks}
-	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow}
+	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, Pane: env.Pane, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow}
 	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Repo: repo, AnswerWindow: cfg.Watchdog.AnswerWindow}
 	if !opts.NoWatchdog {
 		w.Loop.RemedyWindow = cfg.Watchdog.RemedyWindow

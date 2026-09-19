@@ -22,11 +22,16 @@ type Face struct {
 	once   sync.Once
 	lines  chan string
 	gone   map[string]chan struct{}
+	prompt string
 }
 
 func (f *Face) Emit(ev core.Event) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.prompt != "" {
+		fmt.Fprintln(f.Out)
+		defer fmt.Fprint(f.Out, f.prompt)
+	}
 	switch ev.Kind {
 	case "step":
 		detail := ev.Fields["reason"]
@@ -71,15 +76,17 @@ func (f *Face) Ask(q core.Question) (string, error) {
 	f.once.Do(f.read)
 	gone := f.withdrawn(q.ID)
 	for {
-		f.print("answer %s> ", q.ID)
+		f.setPrompt(fmt.Sprintf("answer %s> ", q.ID))
 		var line string
 		select {
 		case l, ok := <-f.lines:
+			f.setPrompt("")
 			if !ok {
 				return "", core.ErrNoInput
 			}
 			line = strings.TrimSpace(l)
 		case <-gone:
+			f.setPrompt("")
 			f.print("\n%s answered elsewhere\n", q.ID)
 			return "", core.ErrNoInput
 		}
@@ -131,6 +138,13 @@ func (f *Face) withdrawn(id string) chan struct{} {
 		f.gone[id] = make(chan struct{})
 	}
 	return f.gone[id]
+}
+
+func (f *Face) setPrompt(p string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.prompt = p
+	fmt.Fprint(f.Out, p)
 }
 
 func (f *Face) print(format string, args ...any) {

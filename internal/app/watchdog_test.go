@@ -21,6 +21,7 @@ type dogHost struct {
 	mu       sync.Mutex
 	calls    []string
 	startErr error
+	stale    map[string]string
 }
 
 func (h *dogHost) record(format string, args ...any) {
@@ -48,6 +49,7 @@ func (h *dogHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 	return nil
 }
 func (h *dogHost) State(agent string) (core.AgentState, error)  { return core.AgentWorking, nil }
+func (h *dogHost) AgentPane(agent string) (string, error)       { return h.stale[agent], nil }
 func (h *dogHost) Read(agent string, lines int) (string, error) { return "", nil }
 func (h *dogHost) Interrupt(agent string) error                 { return nil }
 func (h *dogHost) Close(workspaceID string) error               { return nil }
@@ -62,7 +64,8 @@ func (h *dogHost) Split(pane, direction, cwd string) (string, error) {
 
 func (h *dogHost) prompted(prefix string) bool {
 	for _, c := range h.Calls() {
-		if strings.HasPrefix(c, "Prompt rloop-watchdog "+prefix) {
+		name, rest, _ := strings.Cut(strings.TrimPrefix(c, "Prompt "), " ")
+		if strings.HasPrefix(c, "Prompt ") && strings.HasPrefix(name, "rloop-wd-") && strings.HasPrefix(rest, prefix) {
 			return true
 		}
 	}
@@ -130,7 +133,7 @@ func TestExecuteStartsTheWatchdogAndAHaltThroughItsMCPSurfaceExits5(t *testing.T
 	runDir := w.Store.Dir(w.Loop.RunID)
 	mcpPath := filepath.Join(runDir, "watchdog.mcp.json")
 	calls := dog.Calls()
-	if len(calls) < 3 || calls[0] != `Split "" right `+f.root || calls[1] != "Start wd-pane rloop-watchdog claude --model sonnet --mcp-config "+mcpPath || !strings.Contains(calls[2], runDir) {
+	if len(calls) < 3 || calls[0] != `Split "driver-pane" right `+f.root || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model sonnet --mcp-config "+mcpPath || !strings.Contains(calls[2], runDir) {
 		t.Errorf("watchdog calls %q", calls)
 	}
 	if data, _ := os.ReadFile(mcpPath); !strings.Contains(string(data), w.Ask.WatchdogURL()) {
@@ -224,8 +227,12 @@ func TestExecuteSendsThePhaseCheckToTheWatchdogBeforeThePlanStep(t *testing.T) {
 		t.Fatalf("phase check %+v", pc)
 	}
 	calls := dog.Calls()
-	check := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "Prompt rloop-watchdog check phase 1 ") })
-	plan := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "Prompt rloop-watchdog step started phase-1/plan") })
+	check := slices.IndexFunc(calls, func(c string) bool {
+		return strings.HasPrefix(c, "Prompt "+core.WatchdogName(w.Loop.RunID)+" check phase 1 ")
+	})
+	plan := slices.IndexFunc(calls, func(c string) bool {
+		return strings.HasPrefix(c, "Prompt "+core.WatchdogName(w.Loop.RunID)+" step started phase-1/plan")
+	})
 	if check < 0 || plan < 0 || check > plan {
 		t.Errorf("check %d, plan %d in %q", check, plan, calls)
 	}
@@ -311,7 +318,7 @@ func TestAWatchdogAskFlagWithTheConfigPathEmbeddedStillGetsItsConfig(t *testing.
 	}
 
 	mcpPath := filepath.Join(w.Store.Dir(w.Loop.RunID), "watchdog.mcp.json")
-	if calls := dog.Calls(); len(calls) < 2 || calls[1] != "Start wd-pane rloop-watchdog claude --model sonnet --cfg="+mcpPath {
+	if calls := dog.Calls(); len(calls) < 2 || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model sonnet --cfg="+mcpPath {
 		t.Errorf("watchdog calls %q", calls)
 	}
 	if data, _ := os.ReadFile(mcpPath); !strings.Contains(string(data), "/mcp/watchdog/") {

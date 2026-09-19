@@ -267,7 +267,7 @@ func TestAnAskingProviderGetsTheStepURLAndAnMCPConfigWrittenBeforeItStarts(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"mcpServers":{"r-loop":{"type":"http","url":"` + url + `"}}}`; string(data) != want {
+	if want := `{"mcpServers":{"r-loop":{"timeout":86400000,"type":"http","url":"` + url + `"}}}`; string(data) != want {
 		t.Fatalf("mcp config = %s", data)
 	}
 	if len(r.events("ask-none")) != 0 {
@@ -573,6 +573,22 @@ func TestStillIdleAfterTheNudgeFailsAsStalledAndLeavesTheSession(t *testing.T) {
 	}
 	if r.count("SessionHost.Close") != 0 || r.count("SessionHost.Interrupt") != 0 {
 		t.Fatalf("calls = %q", r.shared.Calls())
+	}
+}
+
+func TestAnAgentHerdrReportsDoneStallsAndIsNudgedLikeAnIdleOne(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.host.script = func(n int) AgentState { return AgentDone }
+	obs := &recObserver{}
+
+	out := r.sm.Wait(context.Background(), s, obs)
+
+	if out.State != StepFailed || out.Reason != "stalled: no response to nudge" || !out.Stalled {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if obs.stalled != 1 || len(r.events("nudge")) != 1 {
+		t.Fatalf("observer = %+v, nudges = %d", obs, len(r.events("nudge")))
 	}
 }
 

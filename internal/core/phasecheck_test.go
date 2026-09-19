@@ -96,7 +96,7 @@ func TestPhaseCheckCreatesTheWorktreeThenWaitsOnTheCheckPromptBeforeThePlanSpawn
 
 	calls := r.shared.Calls()
 	add := indexOf(calls, "Repo.AddWorktree .r-loop/wt/phase-1 r-loop/phase-1 main")
-	check := indexOf(calls, `SessionHost.Prompt rloop-watchdog "check phase 1`)
+	check := indexOf(calls, `SessionHost.Prompt rloop-wd-run-1 "check phase 1`)
 	spawn := indexOf(calls, "SessionHost.Open")
 	if add < 0 || check < 0 || spawn < 0 || !(add < check && check < spawn) {
 		t.Fatalf("worktree %d, check %d, spawn %d in\n%q", add, check, spawn, calls)

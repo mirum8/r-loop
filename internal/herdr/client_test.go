@@ -196,6 +196,27 @@ func TestStateOfMissingAgentIsGone(t *testing.T) {
 	}
 }
 
+func TestAgentPaneNamesThePaneAnAgentRunsIn(t *testing.T) {
+	c, argv := fake(t, `{"id":"cli:agent:get","result":{"agent":{"agent":"claude","agent_status":"done","name":"rloop-watchdog","pane_id":"w2X:p3"},"type":"agent_info"}}`)
+
+	got, err := c.AgentPane("rloop-watchdog")
+
+	if err != nil || got != "w2X:p3" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	assertArgv(t, argv(), []string{"agent", "get", "rloop-watchdog"})
+}
+
+func TestAgentPaneOfMissingAgentIsEmpty(t *testing.T) {
+	c, _ := fakeExit(t, "", `{"error":{"code":"agent_not_found","message":"agent target a1 not found"},"id":"cli:agent:get"}`, 1)
+
+	got, err := c.AgentPane("a1")
+
+	if err != nil || got != "" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}
+
 func TestReadReturnsRecentUnwrappedOutput(t *testing.T) {
 	c, argv := fake(t, "line one\nline two\n")
 

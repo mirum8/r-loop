@@ -142,6 +142,28 @@ func TestEmitIsNotBlockedWhileAskWaitsForInput(t *testing.T) {
 	}
 }
 
+func TestAnEventDuringAnOpenPromptStartsOnAFreshLineAndThePromptIsRepeated(t *testing.T) {
+	var out syncBuffer
+	r, w := io.Pipe()
+	f := &Face{Out: &out, In: r, TTY: true}
+	done := make(chan string)
+	go func() { a, _ := f.Ask(core.Question{ID: "q3", Text: "Which port?"}); done <- a }()
+	for !strings.Contains(out.String(), "answer q3> ") {
+		time.Sleep(time.Millisecond)
+	}
+
+	f.Emit(core.Event{At: at, Kind: "warning", Fields: map[string]string{"reason": "still here"}})
+	f.Emit(core.Event{At: at, Kind: "step", Phase: 4, Step: "plan", Fields: map[string]string{"state": "running", "provider": "claude"}})
+	w.Write([]byte("8080\n"))
+	<-done
+	f.Emit(core.Event{At: at, Kind: "warning", Fields: map[string]string{"reason": "after"}})
+
+	want := "answer q3> \n!  still here\nanswer q3> \n14:03:09  phase 4  plan  running  claude\nanswer q3> !  after\n"
+	if !strings.HasSuffix(out.String(), want) {
+		t.Fatalf("got %q, want suffix %q", out.String(), want)
+	}
+}
+
 type syncBuffer struct {
 	mu sync.Mutex
 	b  bytes.Buffer
