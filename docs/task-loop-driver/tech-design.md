@@ -504,3 +504,41 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   **primary tree** and not under `.r-loop/`. The primary tree holds the spec, the tech design, the
   todo, the committed phase plans and every landed phase, and never the current phase's
   uncommitted worktree.
+
+## Issues files (ADR-69, ADR-70)
+
+- **Source** — `plan.Reader.Read` reads a file with no `### Phase` heading as an issues file
+  (`internal/plan/backlog.go`) and sets `Plan.Backlog`. Item = column-0 `- [ ]`/`* [ ]`/`- `/`* `/
+  `1. ` line plus the lines indented under it, or a `##`/`###` heading followed by prose; text
+  before the first item is header. Done = `[x]`/`[X]`, `~~…~~`, `<!-- fixed: … -->`, or under a
+  `Done|Completed|Fixed|Shipped|Archive` heading. `Phase.Number` = the item's place among all items;
+  `Title` = its text verbatim; `Items` = its indented list lines, or the title when it has none;
+  no `DependsOn`, `Files`, `DoneWhen`, `Milestone`. `Topic` = file name without extension. No items →
+  error (exit 2).
+- **Tick** — rewrites the item line's `[ ]` to `[x]` (box-less items keep their text) and appends
+  `  <!-- fixed: r-loop/phase-N -->`; an item already done → `ErrNothingToTick`.
+- **Checks** — `files-outside-plan` and `foreign-test-edit` are quiet when `Phase.Files` is empty.
+- **Item gate** — `SessionManager.ItemGates` (= `Plan.Backlog`) sets `EvidenceContext.NeedGate` for a
+  phase with no `Done when:`; `plan-file` then requires `## Gate` holding exactly one code span
+  (`core.PlanGate`). Prompt var `ItemGate` turns the section on in `plan.md` and `implement.md`.
+- **Suite** — `core.Suite{Command(ctx, Phase) (string, error)}`, implemented by `core.GateProbe`:
+  reuse the last `gate-discovered` event, else run the `gate` step (prompt `gate`, check `report`,
+  in the primary tree, `ReportPath` = `<runDir>/gate.md` relative to the root), take the first code
+  span, run it on the base (exit 0 required), `ResetHard HEAD`, append the event. Failure →
+  `ErrNoGate`. Config row `steps.gate` (default `claude/sonnet/medium/30m/report`).
+- **Land** — `LandGate.Suite` set only for a backlog. For a phase with no `Done when:`: suite first
+  (before the merge); after the merge, read `## Gate` from the phase plan in the primary tree
+  (`ErrNoGate` if absent); red check: changed test files (`isTestPath`) must exist, are copied onto
+  `.r-loop/wt/phase-N-red` at `HEAD` (the base, mid-merge) and the item command must exit non-zero
+  there (`ErrGate` otherwise); gate = `<item> && <suite>`. `ErrGate` → gate-fix rounds; `ErrNoGate`
+  → the phase blocks.
+- **Item skip** — with item gates on, `plan-file` also accepts `status: already-done` or
+  `status: not-work` with a `## Evidence` section holding at least one `path:line`; the plan must
+  still change only itself. After the plan step (fresh or resumed), `core.PlanSkip` reads that
+  status and the loop emits `item-skipped {phase, status, reason}` and moves on: no implement, no
+  land, no tick, exit 0 if nothing else blocked. The report lists it with the other skips.
+- **Review** — prompt var `ItemGate` adds the phase's open criteria to `review.md`: one test named
+  per criterion, a criterion without one is a finding; a skip plan's citations are opened instead.
+- **Preflight** — a backlog named `*-notes.md` → exit 2; dirty tree limited to the backlog and its
+  `-notes.md` → the exit-4 message ends `; commit <paths> first`; a backlog phase whose only item
+  is its title → `warning: phase N has no acceptance criteria…` in the dry run and the banner.

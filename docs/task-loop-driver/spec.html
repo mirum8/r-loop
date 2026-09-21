@@ -164,7 +164,7 @@ section:target > h2 { color: var(--clay); }
       </ul></li>
     <li class="p"><a href="#p6">Part 6 · Decisions</a>
       <ul>
-        <li class="s"><a href="#adr-index">ADR-1 … ADR-68</a></li>
+        <li class="s"><a href="#adr-index">ADR-1 … ADR-70</a></li>
       </ul></li>
     <li class="p"><a href="#p7">Part 7 · Technical details</a>
       <ul>
@@ -268,8 +268,8 @@ noticing needs the whole run in view and every context in the design is delibera
   <tr><td>Matching the fan-out depth of the pack's Workflows</td>
       <td>the review rounds' fixes per run fall below what <code>/r:task-review</code> records
           for the same repo</td></tr>
-  <tr><td>Any source other than a <code>todo.md</code></td>
-      <td>a backlog run is wanted without going through <code>/r:issues-fix</code></td></tr>
+  <tr><td>Any source other than a <code>todo.md</code> or an issues file (<a href="#adr-69">ADR-69</a>)</td>
+      <td>a third kind of plan file is wanted</td></tr>
   <tr><td>A web dashboard or a progress server</td>
       <td>never — herdr is the view, and every step is already a workspace</td></tr>
   
@@ -511,7 +511,7 @@ is everything that widens the loop rather than closing it.</p>
   <tr><td><em>Choose the agent for each step</em> · <em>Try a different provider for one run</em> · <em>Override the prompts for this project</em> · <em>Add a step to every phase</em> · <em>Review each phase with every configured reviewer</em></td>
       <td>Concurrent phases: a phase is the scheduling unit from day one, so waves are a scheduler change rather than a rewrite (<a href="#adr-11">ADR-11</a>)</td></tr>
   <tr><td><em>Be told when a run halts</em> · <em>Answer an agent's question without leaving the loop</em> · <em>Close a blocking plan decision at startup</em> · <em>Pre-authorise the blockers worth fixing automatically</em></td>
-      <td>Any source other than <code>todo.md</code> (<a href="#adr-21">ADR-21</a>)</td></tr>
+      <td>Any source other than <code>todo.md</code> or an issues file (<a href="#adr-21">ADR-21</a>, <a href="#adr-69">ADR-69</a>)</td></tr>
   <tr><td><em>Report a step's outcome so the driver can act</em> · <em>Ask the person a question</em></td>
       <td>Drift-watching — the watchdog noticing that one phase contradicts another. Same machinery, but it produces nothing on most phases, and "watched and found nothing" cannot be told from "watched badly" until there are rows</td></tr>
   <tr><td><em>Halt a step that has gone the wrong way</em> · <em>Fix what is blocking a step</em> · <em>Answer from the whole run's context</em> · <em>Check a phase before it runs</em></td>
@@ -1583,7 +1583,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Sixty-eight decisions, each with the alternative that was live at the time; seven are superseded and kept in place, and twenty-six carry a later amendment. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the three-tier rule that lets a watchdog veto and remedy but never approve; and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, and ADR-68 gives every session the driver starts its own model and effort.</p>
+<p class="lede">Seventy decisions, each with the alternative that was live at the time; seven are superseded and kept in place, and twenty-six carry a later amendment. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the three-tier rule that lets a watchdog veto and remedy but never approve; and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, and ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs.</p>
 
 <div id="adr-index">
 
@@ -1960,7 +1960,7 @@ or timeout.</p>
 
 <div class="adr">
 <h3 id="adr-21">ADR-21 — <code>todo.md</code> is the only source in v1</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-69">ADR-69</a> — an issues file is a second source</p>
 <p><span class="f">Context</span> The land gate and the future wave computation both read
 <code>Done when:</code> and <code>Files:</code> off the phase block
 (<a href="#adr-12">ADR-12</a>).</p>
@@ -2448,7 +2448,7 @@ real callers — about an afternoon — rather than filling in an interface desi
 
 <div class="adr">
 <h3 id="adr-48">ADR-48 — A unit with no <code>Done when:</code> lands with a named skip, from any source</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-70">ADR-70</a> — an issues-file item is never skipped: it lands on its own tests and the discovered suite; the named skip stays for a <code>todo.md</code> phase</p>
 <p><span class="f">Context</span> <a href="#adr-10">ADR-10</a> gates every landing on the phase's own
 command, and a <code>todo.md</code> phase without one is already a named skip.
 <a href="#adr-21">ADR-21</a> deferred other sources because they may carry no such field at all.</p>
@@ -2951,6 +2951,81 @@ fallback runs at the fallback's own setting — which the report names.</p>
 effort.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-69">ADR-69 — An issues file is a second source: one item is one phase</h3>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-21">ADR-21</a></p>
+<p><span class="f">Context</span> <code>/r:issues-draft</code> writes <code>issues-&lt;slug&gt;-&lt;date&gt;.md</code>
+and <code>/r:issues-fix</code> reads it, or any hand-written backlog in the same grammar. The file
+has no <code>### Phase</code> headings and, by design, no <code>Depends on:</code>,
+<code>Files:</code> or <code>Done when:</code>: one line per item, the sender's number and words,
+and acceptance criteria indented beneath. The maintainer wants the driver to run such a file as it
+runs a plan.</p>
+<p><span class="f">Decision</span> A file with no <code>### Phase</code> heading is read as an
+issues file, in the grammar <code>/r:issues-fix</code> reads: a column-0 <code>- [ ]</code>,
+<code>* [ ]</code>, <code>- </code> or <code>1. </code> line with the lines indented under it, or a
+<code>##</code>/<code>###</code> heading followed by prose; everything before the first item is a
+header. An item is done when it is ticked, struck through, carries <code>&lt;!-- fixed: … --&gt;</code>,
+or sits under a Done, Completed, Fixed, Shipped or Archive heading. Each item is one phase,
+numbered by its place among all items, done or not, so numbers hold as items are ticked and new
+ones are appended; each indented criterion is one of the phase's items, so the plan step must test
+every one. Landing ticks the item's own line and appends
+<code>&lt;!-- fixed: r-loop/phase-N --&gt;</code>, which <code>/r:issues-fix</code> reads as done.
+Items have no dependencies and no <code>Files:</code>, so the checks scoped by <code>Files:</code>
+stay quiet for them. A file named <code>*-notes.md</code> is refused (exit 2): it is the draft's
+reply to the sender, and its headings would read as items. An item with no indented criteria runs
+on its title alone, and the dry run and the banner warn about it. When the only uncommitted paths
+are the backlog and its notes file, the refusal of a dirty tree says to commit them.</p>
+<p><span class="f">Alternatives</span> Port the <code>/r:issues-fix</code> verifier and group items
+into phases — rejected, as in <a href="#adr-12">ADR-12</a>: the verifier derives what the plan step
+already derives, and a group of items is one landing that can fail for any one of them. Require
+the issues format to grow <code>Files:</code> and <code>Done when:</code> — rejected: the drafter
+writes from a message before anyone has read the code, and a stale hint is worse than none.</p>
+<p><span class="f">Consequences</span> One more parser beside the plan reader, behind the same
+port. A long backlog is a long serial run.</p>
+<p><span class="f">Revisit when</span> two items of one backlog keep conflicting on land, or a
+follow-up message is appended to a backlog while a run is on it — the next landing's commit takes
+those lines with it.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-70">ADR-70 — An issues item lands on its own tests, red at base, and on the discovered suite</h3>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-10">ADR-10</a> and <a href="#adr-48">ADR-48</a></p>
+<p><span class="f">Context</span> An issues item has no <code>Done when:</code>, so under
+<a href="#adr-48">ADR-48</a> a whole backlog would land without a single test being run. A gate
+command written in config was rejected by the maintainer: projects span stacks, and the command
+would have to be kept by hand in each one.</p>
+<p><span class="f">Decision</span> Two gates, both run by the driver, never taken on an agent's
+word. <em>The suite:</em> before the first item lands, a <code>gate</code> session in the primary
+tree finds the command that builds the project and runs its whole test suite, and writes it in
+backticks to <code>gate.md</code> in the run directory; the driver runs it on the base and accepts
+it only if it passes there, records it as a <code>gate-discovered</code> event, and every later
+landing and every resume reuses it. <em>The item:</em> the plan step of an issues item writes a
+<code>## Gate</code> section with one command that runs only the item's new tests, and the
+<code>plan-file</code> check refuses a plan without it. At land the driver checks the phase adds or
+changes a test file, copies those tests onto a worktree of the base and runs the item command there
+— it must fail, or the tests do not exercise the change — and then, after the merge, runs the item
+command and the suite joined by <code>&amp;&amp;</code>. A red result goes to the gate-fix rounds of
+<a href="#adr-64">ADR-64</a>; no suite, no plan or no <code>## Gate</code> blocks the phase with a
+named reason. A <code>todo.md</code> phase keeps its own <code>Done when:</code>, or the named skip.
+<em>Stale items:</em> when the code already does what the item asks, or the item is not code work,
+the plan step writes <code>status: already-done</code> or <code>status: not-work</code> with a
+<code>## Evidence</code> section citing a <code>path:line</code> per criterion; the plan reviewers
+open the citations like any other plan content, and the driver then reports the item as
+<code>item-skipped</code>, without landing or ticking it, and the run goes on. <em>Coverage:</em> the
+reviewers of an item's plan and implement steps name the test for each criterion and report every
+criterion no test proves as a finding.</p>
+<p><span class="f">Alternatives</span> A <code>gate:</code> key in config — rejected by the
+maintainer: one more thing to write per project. Guessing the command from the build files —
+rejected: wrong wherever a project runs its tests its own way, and the failure would look like the
+item's. Letting the plan step choose the only gate — rejected: the agent would choose its own
+judge; the red-at-base run is what keeps the item command honest.</p>
+<p><span class="f">Consequences</span> One more session per run and one extra suite run on the base;
+each landing runs the item tests twice and the suite once. A project whose suite is red on the base
+cannot run a backlog until it is fixed, and the halt says so.</p>
+<p><span class="f">Revisit when</span> a discovered suite proves wrong in a run, or a red-at-base run
+refuses tests a human would accept.</p>
+</div>
+
 </div>
 </section>
 
@@ -3077,6 +3152,13 @@ steps:
       - claude
     rounds: 3
     reviewTimeout: 45m
+  gate:                       # finds the suite for an issues file, once per run (ADR-70)
+    prompt: gate
+    check: report
+    provider: claude
+    model: sonnet
+    effort: medium
+    timeout: 30m
 
 providers:                    # claude and codex ship built in; a block here adds or overrides one
   codex:

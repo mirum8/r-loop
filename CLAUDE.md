@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`r-loop` is a Go supervisor binary that runs a phased implementation plan (`todo.md`, the format written by `/r:spec-design`) to completion: for each phase it drives fresh, provider-agnostic agent sessions (claude, codex) in herdr panes through `plan → implement → land`, each step reviewed in rounds by reviewer panes beside it, with disk as the only hand-off between steps. It is run by one maintainer, usually in a herdr pane on a second screen.
+`r-loop` is a Go supervisor binary that runs a phased implementation plan (`todo.md`, the format written by `/r:spec-design`) or an issues file (the backlog `/r:issues-draft` writes and `/r:issues-fix` reads) to completion: for each phase it drives fresh, provider-agnostic agent sessions (claude, codex) in herdr panes through `plan → implement → land`, each step reviewed in rounds by reviewer panes beside it, with disk as the only hand-off between steps. It is run by one maintainer, usually in a herdr pane on a second screen.
 
 **The repository has no code yet.** Everything is in the design docs; build it phase by phase from the plan.
 
 ## Source of truth
 
-- `docs/task-loop-driver/spec.html` — the spec (stories, domain model, invariants, 68 ADRs). Decisions are settled there; don't re-decide them.
+- `docs/task-loop-driver/spec.html` — the spec (stories, domain model, invariants, 70 ADRs). Decisions are settled there; don't re-decide them.
 - `docs/task-loop-driver/todo.md` — the implementation plan: 7 milestones, 30 phases, each with `Depends on:`, `Files:`, checklist items and a `Done when:` command. The `## Waves` block is generated from the `Depends on` edges — regenerate, never hand-edit.
 - `docs/task-loop-driver/tech-design.md` — contracts shared across phases of a milestone (types, enums, port signatures, run-dir layout, sentinel format, config resolution). Leaf items in `todo.md` repeat what they need, so an implementer working one phase can rely on that phase's block alone.
 - `docs/task-loop-driver/interview-notes.md` — the interview log behind the spec.
