@@ -29,6 +29,7 @@ type Remedies struct {
 	Watch       *Watch
 	MaxRestarts int
 	Fallbacks   map[string]Fallback
+	Asks        func(provider string) bool
 
 	mu sync.Mutex
 }
@@ -110,6 +111,9 @@ func (r *Remedies) Restart(step, addendum, provider, maintainerSaid string) (boo
 	}
 	if restarts >= r.MaxRestarts {
 		return false, fmt.Sprintf("restart limit %d reached", r.MaxRestarts)
+	}
+	if provider != "" && !r.Asks(provider) {
+		return false, "provider " + provider + " has no MCP ask channel"
 	}
 	fallback := provider == "" || provider == r.Fallbacks[kind].Provider
 	fits := func(rem Remedy) bool {

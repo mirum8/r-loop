@@ -371,10 +371,10 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   gets a pane split to its right (`Split(rootPane, "right", worktree)`, stacked when there are several).
   The panes are made in round 1 and reused; **each round starts a fresh reviewer agent** in its
   pane, after interrupting the previous round's. The author is the same agent session through
-  every round. A reviewer on an `ask: mcp` provider gets its own ask URL
+  every round. A reviewer gets its own ask URL
   (`<base>/<phase>/<kind>-rv-<provider>/<attempt>`) and, for a `{mcpConfig}` flag,
-  `<RunDir>/phase-<N>/<kind>-rv-<provider>-a<attempt>.mcp.json`; a reviewer on `ask: none` records
-  `ask-none` once per review half with `Step` `<kind>-rv-<provider>`.
+  `<RunDir>/phase-<N>/<kind>-rv-<provider>-a<attempt>.mcp.json`. Preflight refuses a provider with
+  `ask: none` in any session role (ADR-73), so every reviewer has the channel.
 - **A round** — (1) `RoundTree = Snapshot(worktree)`, appended as `Event{Kind: "review-round",
   Fields{step, round, tree}}` before any reviewer starts; (2) resolve every reviewer (one with no
   `review` command fails the step before any pane opens); start every reviewer agent, then prompt
@@ -421,7 +421,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   a blocking call is never cut off by the client.
 - **waiting-input** — a question moves the step `running → waiting-input`, freezes its backstop,
   and is recorded; the answer returns it to `running`. A backstop firing in `waiting-input` halts
-  with `invariant: a question never expires`. `ask: none` omits the flag and records `ask-none`.
+  with `invariant: a question never expires`.
 - **Routing** — the loop freezes the step first, records and emits the question, then hands it
   to `Watcher.Route` (the watchdog, Milestone 7). No face ever asks (ADR-73). The driver never
   answers a question itself: when the watchdog is gone, `Watch.Route` halts the run instead.

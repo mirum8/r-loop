@@ -237,7 +237,7 @@ func TestProviderBlockMissingKindIsRefusedInPreflight(t *testing.T) {
 
 func TestReviewerWithoutReviewCommandIsRefusedWithExit2(t *testing.T) {
 	f := newFixture(t)
-	f.write(".r-loop/config.yaml", "providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n")
+	f.write(".r-loop/config.yaml", "providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n")
 	f.commit()
 
 	_, err := f.preflight(f.todo, "--plain")

@@ -185,7 +185,7 @@ func (w *Wiring) clean() error {
 
 type role struct {
 	field, provider string
-	review, ask     bool
+	review          bool
 }
 
 func (w *Wiring) validateProviders() error {
@@ -206,7 +206,7 @@ func (w *Wiring) validateProviders() error {
 	for _, rv := range cfg.Steps["implement"].Reviewers {
 		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, review: true})
 	}
-	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider, ask: true})
+	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider})
 	for _, r := range roles {
 		p, err := w.Registry.Resolve(r.provider)
 		if err != nil {
@@ -215,7 +215,7 @@ func (w *Wiring) validateProviders() error {
 		if r.review && p.Review == "" {
 			return exit(2, "%s: provider %s has no review command", r.field, r.provider)
 		}
-		if r.ask && p.Ask != "mcp" {
+		if p.Ask != "mcp" {
 			return exit(2, "%s: provider %s has no MCP ask channel", r.field, r.provider)
 		}
 	}

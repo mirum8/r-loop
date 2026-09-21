@@ -2308,7 +2308,7 @@ only thing standing against that.</p>
 
 <div class="adr">
 <h3 id="adr-40">ADR-40 — <code>ask: none</code> is a named degradation</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> superseded by <a href="#adr-73">ADR-73</a>: every session r-loop starts — step, fallback, reviewer, gate fix and watchdog — needs <code>ask: mcp</code>, and preflight refuses a provider with <code>ask: none</code> in any of those roles (exit 2)</p>
 <p><span class="f">Context</span> <a href="#adr-28">ADR-28</a> excludes an agent that cannot host an
 MCP server. Its steps can still run — they just cannot ask.</p>
 <p><span class="f">Decision</span> A provider declares <code>ask: none</code>; its steps run with no
@@ -3141,6 +3141,7 @@ An unattended run's answers rest on the watchdog's reading of the repository, wh
 under Questions with who answered.</p>
 <p><span class="f">Revisit when</span> the maintainer wants to answer from somewhere other than the
 watchdog's pane, or a halt for a gone watchdog costs more than the answer would have.</p>
+<p><span class="f">Amendment</span> Every session r-loop starts needs <code>ask: mcp</code>: a step, fallback, reviewer or gate-fix session on <code>ask: none</code> would be told to call <code>ask_watchdog</code> and not have it. Preflight refuses such a provider in any role with exit 2, <code>&lt;field&gt;: provider &lt;name&gt; has no MCP ask channel</code>, and <code>restart_step</code> refuses such a provider with the same reason, consent or not; this supersedes <a href="#adr-40">ADR-40</a>.</p>
 </div>
 
 
@@ -3524,8 +3525,8 @@ accepted deliberately.</p>
       <td>first run with two providers in one plan</td></tr>
   <tr><td>Every provider worth using can host an MCP server</td>
       <td>claude, codex and opencode all do; it was not checked beyond those</td>
-      <td>a provider with <code>ask: none</code> runs steps that guess where they would have
-          asked</td>
+      <td>a provider with <code>ask: none</code> cannot be used for any session; preflight
+          refuses it</td>
       <td>the first adoption of a fourth provider</td></tr>
   <tr><td>Reading a session's live output is enough to catch a wrong path early</td>
       <td>a wrong turn is usually narrated before it is committed; this is the premise the pane

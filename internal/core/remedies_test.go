@@ -10,7 +10,8 @@ import (
 var remedyT0 = time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
 
 func newRemedies(w *Watch, store Store, allow ...string) *Remedies {
-	return &Remedies{Allow: allow, Store: store, Now: func() time.Time { return remedyT0 }, Watch: w, MaxRestarts: 2}
+	asks := func(provider string) bool { return provider != "plainbot" }
+	return &Remedies{Allow: allow, Store: store, Now: func() time.Time { return remedyT0 }, Watch: w, MaxRestarts: 2, Asks: asks}
 }
 
 func failedImplement(t *testing.T, store Store) (*Watch, StepKey) {
@@ -365,6 +366,22 @@ func TestABlankMaintainerQuoteIsNoConsent(t *testing.T) {
 
 	if got != "ask" || !strings.Contains(reason, "maintainer_said") {
 		t.Fatalf("decision %q reason %q", got, reason)
+	}
+	if recs := remedyRecords(store); len(recs) != 0 {
+		t.Errorf("records %+v", recs)
+	}
+}
+
+func TestARestartOnAProviderWithoutAnAskChannelIsRefused(t *testing.T) {
+	store := &fakeStore{}
+	w, _ := failedImplement(t, store)
+	rem := newRemedies(w, store, "provider")
+	rem.Fallbacks = map[string]Fallback{"implement": {Provider: "plainbot"}}
+
+	for _, said := range []string{"", "yes, use plainbot"} {
+		if ok, reason := rem.Restart("phase-2/implement", "", "plainbot", said); ok || reason != "provider plainbot has no MCP ask channel" {
+			t.Errorf("maintainer_said %q: %v %q", said, ok, reason)
+		}
 	}
 	if recs := remedyRecords(store); len(recs) != 0 {
 		t.Errorf("records %+v", recs)

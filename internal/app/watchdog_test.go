@@ -317,6 +317,28 @@ func TestAWatchdogProviderWithoutMCPIsRefusedInPreflight(t *testing.T) {
 	}
 }
 
+func TestAStepSessionProviderWithoutMCPIsRefusedInPreflight(t *testing.T) {
+	provider := "providers:\n  plainbot:\n    kind: codex\n    doneSignal: sentinel\n    review: plainbot review\n    ask: none\n"
+	for field, cfg := range map[string]string{
+		"steps.plan.provider":  "steps:\n  plan:\n    provider: plainbot\n",
+		"steps.plan.fallback":  "steps:\n  plan:\n    fallback: plainbot\n",
+		"steps.plan.reviewers": "steps:\n  plan:\n    reviewers:\n      - plainbot\n",
+		"land.fix.provider":    "land:\n  fix:\n    provider: plainbot\n",
+	} {
+		t.Run(field, func(t *testing.T) {
+			f := newFixture(t)
+			f.write(".r-loop/config.yaml", provider+cfg)
+			f.commit()
+
+			_, err := f.preflight(f.todo, "--plain")
+
+			if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), field+": provider plainbot has no MCP ask channel") {
+				t.Fatalf("code=%d err=%v", code, err)
+			}
+		})
+	}
+}
+
 func answeringDog(w *Wiring, answer, citation string) *dogHost {
 	return &dogHost{question: func(id string) {
 		for {
