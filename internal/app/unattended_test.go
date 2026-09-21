@@ -186,7 +186,7 @@ func (d *restartingDog) Prompt(agent, text string, wait bool, timeout time.Durat
 		return nil
 	}
 	go func() {
-		accepted, reason := d.remedies.Restart(step, "", "")
+		accepted, reason := d.remedies.Restart(step, "", "", "")
 		d.mu.Lock()
 		d.replies = append(d.replies, step+" "+map[bool]string{true: "accepted", false: reason}[accepted])
 		d.mu.Unlock()
@@ -212,7 +212,7 @@ func TestAnUnattendedFourPhaseRunFinishesWithNoHumanTouch(t *testing.T) {
 	lander := f.sim(w, sim)
 	w.Loop.Sessions.Host = host
 	w.Loop.RemedyWindow = w.Config.Watchdog.RemedyWindow
-	dog := &restartingDog{remedies: w.Remedies}
+	dog := &restartingDog{dogHost: *escalatingDog(w), remedies: w.Remedies}
 	w.Dog.Host = dog
 
 	code := w.Execute(core.RunOptions{})

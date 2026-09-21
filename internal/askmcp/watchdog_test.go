@@ -164,7 +164,7 @@ func TestAMalformedStepGoesThroughTheSignalHandlerAsAnUnknownStep(t *testing.T) 
 
 func TestAProposalRefusedWithAnExplanationKeepsTheDecisionExactAndCarriesTheReason(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
-	s.Handle(WatchdogHandlers{Propose: func(class, command, why string) (string, string) {
+	s.Handle(WatchdogHandlers{Propose: func(class, command, why, consentQuestion string) (string, string) {
 		return "refused", "no step to remedy"
 	}})
 
@@ -179,11 +179,11 @@ func TestEachToolDelegatesToItsHandler(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
 	var calls []string
 	s.Handle(WatchdogHandlers{
-		Propose: func(class, command, why string) (string, string) {
+		Propose: func(class, command, why, consentQuestion string) (string, string) {
 			calls = append(calls, "propose "+class+"|"+command+"|"+why)
 			return "authorised", ""
 		},
-		Restart: func(step, addendum, provider string) (bool, string) {
+		Restart: func(step, addendum, provider, consentQuestion string) (bool, string) {
 			calls = append(calls, "restart "+step+"|"+addendum+"|"+provider)
 			return false, "no authorised remedy"
 		},
@@ -237,7 +237,7 @@ func TestEveryCallIsRecordedBeforeItsHandlerRuns(t *testing.T) {
 	st := &memStore{}
 	s := serveWatchdog(t, st)
 	var seen []core.Record
-	s.Handle(WatchdogHandlers{Propose: func(class, command, why string) (string, string) {
+	s.Handle(WatchdogHandlers{Propose: func(class, command, why, consentQuestion string) (string, string) {
 		seen = st.records()
 		return "refused", ""
 	}})

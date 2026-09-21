@@ -20,8 +20,8 @@ var errMalformedStep = errors.New("not phase-<N>/<kind>")
 
 type WatchdogHandlers struct {
 	Signal  func(core.Signal) (bool, string)
-	Propose func(class, command, why string) (string, string)
-	Restart func(step, addendum, provider string) (bool, string)
+	Propose func(class, command, why, consentQuestion string) (string, string)
+	Restart func(step, addendum, provider, consentQuestion string) (bool, string)
 	Answer  func(id, answer, citation string) (bool, string)
 }
 
@@ -33,15 +33,17 @@ type signalInput struct {
 }
 
 type proposeInput struct {
-	Class   string `json:"class"`
-	Command string `json:"command"`
-	Why     string `json:"why"`
+	Class           string `json:"class"`
+	Command         string `json:"command"`
+	Why             string `json:"why"`
+	ConsentQuestion string `json:"consent_question,omitempty"`
 }
 
 type restartInput struct {
-	Step     string `json:"step"`
-	Addendum string `json:"addendum,omitempty"`
-	Provider string `json:"provider,omitempty"`
+	Step            string `json:"step"`
+	Addendum        string `json:"addendum,omitempty"`
+	Provider        string `json:"provider,omitempty"`
+	ConsentQuestion string `json:"consent_question,omitempty"`
 }
 
 type answerInput struct {
@@ -102,35 +104,35 @@ func (s *Server) watchdogServer() *mcp.Server {
 	})
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "propose_remedy",
-		Description: "Propose the exact command that would unblock the step, with its class and why. Run it only when the decision is authorised.",
+		Description: "Propose the exact command that would unblock the step, with its class and why. Run it only when the decision is authorised. A class off the allow-list needs consent_question: the id of an ask_user question the maintainer answered yes to.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in proposeInput) (*mcp.CallToolResult, decisionOutput, error) {
-		if err := s.record("propose_remedy", "", map[string]string{"class": in.Class, "command": in.Command, "why": in.Why}); err != nil {
+		if err := s.record("propose_remedy", "", map[string]string{"class": in.Class, "command": in.Command, "why": in.Why, "consent_question": in.ConsentQuestion}); err != nil {
 			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
 		}
 		h := s.handlersNow().Propose
 		if h == nil {
 			return nil, decisionOutput{Decision: "refused", Reason: notAvailable}, nil
 		}
-		decision, reason := h(in.Class, in.Command, in.Why)
+		decision, reason := h(in.Class, in.Command, in.Why, in.ConsentQuestion)
 		return nil, decisionOutput{Decision: decision, Reason: reason}, nil
 	})
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "restart_step",
-		Description: "Restart a failed or stalled step phase-<N>/<kind> as a new attempt, optionally with an addendum or another provider.",
+		Description: "Restart a failed or stalled step phase-<N>/<kind> as a new attempt, optionally with an addendum or another provider. A provider that is not the row's fallback needs consent_question: the id of an ask_user question the maintainer answered yes to.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in restartInput) (*mcp.CallToolResult, acceptedOutput, error) {
-		if err := s.record("restart_step", in.Step, map[string]string{"step": in.Step, "addendum": in.Addendum, "provider": in.Provider}); err != nil {
+		if err := s.record("restart_step", in.Step, map[string]string{"step": in.Step, "addendum": in.Addendum, "provider": in.Provider, "consent_question": in.ConsentQuestion}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
 		h := s.handlersNow().Restart
 		if h == nil {
 			return nil, acceptedOutput{Reason: notAvailable}, nil
 		}
-		ok, reason := h(in.Step, in.Addendum, in.Provider)
+		ok, reason := h(in.Step, in.Addendum, in.Provider, in.ConsentQuestion)
 		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
 	})
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "answer_question",
-		Description: "Answer an open question with a path:line citation; an empty citation escalates it to the person.",
+		Description: "Answer an open step question. Cite a path:line that holds the answer, or maintainer:<id> for the id of an ask_user question the maintainer answered. An empty citation hands the question to the maintainer directly; ask with ask_user instead.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in answerInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("answer_question", "", map[string]string{"id": in.ID, "answer": in.Answer, "citation": in.Citation}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil

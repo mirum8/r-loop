@@ -118,8 +118,7 @@ func startAskRun(t *testing.T, configure func(w *Wiring)) *askRun {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.Dog.Host = &dogHost{}
-	w.Router.AnswerWindow = time.Millisecond
+	w.Dog.Host = escalatingDog(w)
 	host := &askHost{simHost: newSim(), t: t, agent: buildBinary(t, "./testdata/ask-agent.go")}
 	f.sim(w, host.simHost)
 	w.Loop.Sessions.Host = host

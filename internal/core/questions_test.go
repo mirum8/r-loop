@@ -199,13 +199,31 @@ func TestAnAnswerForAQuestionThatIsNotOpenIsRefused(t *testing.T) {
 	}
 }
 
-func TestTheWindowExpiringReturnsFalseAndClosesTheQuestion(t *testing.T) {
+func TestTheWindowExpiringWhileTheWatchdogIsLiveKeepsTheQuestionWithIt(t *testing.T) {
 	r := newRouterRig(t, 20*time.Millisecond)
 
 	routed := r.route(t)
 
+	select {
+	case ok := <-routed:
+		t.Fatalf("Route returned %t while the watchdog is live", ok)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if ok, reason := r.router.Answer("q1", "sqlite", "docs/x/spec.html:1"); !ok || !routeResult(t, routed) {
+		t.Fatalf("answer %t %q", ok, reason)
+	}
+}
+
+func TestAWatchdogThatGoesAwayHandsTheQuestionBack(t *testing.T) {
+	r := newRouterRig(t, 20*time.Millisecond)
+
+	routed := r.route(t)
+	r.router.Dog.mu.Lock()
+	r.router.Dog.gone = true
+	r.router.Dog.mu.Unlock()
+
 	if routeResult(t, routed) {
-		t.Fatal("Route returned true after the window")
+		t.Fatal("Route returned true after the watchdog went away")
 	}
 	if ok, reason := r.router.Answer("q1", "sqlite", "docs/x/spec.html:1"); ok || !strings.Contains(reason, "not open") {
 		t.Errorf("late answer %t %q", ok, reason)
@@ -237,7 +255,7 @@ func TestAnUnreachableWatchdogIsNotAskedAgain(t *testing.T) {
 	}
 }
 
-func TestTheWindowExpiringHandsTheQuestionToTheFaceWithTheBackstopFrozen(t *testing.T) {
+func TestAnUnreachableWatchdogHandsTheQuestionToTheFaceWithTheBackstopFrozen(t *testing.T) {
 	r := newEventsRig(t)
 	gate := make(chan struct{})
 	r.loop.Face = &gatedFace{fakeFace: r.face, gate: gate}
@@ -261,6 +279,9 @@ func TestTheWindowExpiringHandsTheQuestionToTheFaceWithTheBackstopFrozen(t *test
 	if !s.OpenQuestion.Load() {
 		t.Error("backstop running while the watchdog holds the question")
 	}
+	router.Dog.mu.Lock()
+	router.Dog.gone = true
+	router.Dog.mu.Unlock()
 	waitFor(t, func() bool { return len(r.calls("Face.Ask ")) == 1 })
 	if !s.OpenQuestion.Load() {
 		t.Error("backstop running while the face holds the question")
@@ -344,5 +365,27 @@ func TestARunThatEndsWhileTheWatchdogHoldsAQuestionNeverAsksTheFace(t *testing.T
 
 	if got := r.calls("Face.Ask "); len(got) != 0 {
 		t.Errorf("face asked after the run ended: %q", got)
+	}
+}
+
+func TestAnAnswerTheMaintainerGaveTheWatchdogIsDeliveredAsTheMaintainers(t *testing.T) {
+	r := newRouterRig(t, time.Hour)
+	asked := map[string]Question{
+		"q7": {ID: "q7", Step: StepKey{Kind: "watchdog"}, Answer: "postgres", AnsweredBy: "maintainer"},
+		"q8": {ID: "q8", Step: StepKey{Kind: "watchdog"}, Answer: "no answer", AnsweredBy: "timeout"},
+	}
+	r.router.Answered = func(id string) (Question, bool) { q, ok := asked[id]; return q, ok }
+	routed := r.route(t)
+
+	if ok, reason := r.router.Answer("q1", "postgres", "maintainer:q8"); ok || !strings.Contains(reason, "q8 is not a question the maintainer answered") {
+		t.Fatalf("timed-out citation %t %q", ok, reason)
+	}
+	ok, reason := r.router.Answer("q1", "postgres", "maintainer:q7")
+
+	if !ok || !routeResult(t, routed) {
+		t.Fatalf("answer %t %q", ok, reason)
+	}
+	if got := r.calls("AskChannel.Answer "); len(got) != 1 || got[0] != `q1 "postgres" maintainer "maintainer:q7"` {
+		t.Errorf("ask %q", got)
 	}
 }

@@ -57,6 +57,7 @@ type askInput struct {
 }
 
 type askOutput struct {
+	ID     string `json:"id"`
 	Answer string `json:"answer"`
 }
 
@@ -195,17 +196,18 @@ func (s *Server) addAskUser(srv *mcp.Server, key core.StepKey) {
 		Name:        "ask_user",
 		Description: "Ask the person running r-loop a question you cannot answer from the repository. Blocks until answered.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in askInput) (*mcp.CallToolResult, askOutput, error) {
-		answer, err := s.ask(ctx, key, in)
-		return nil, askOutput{Answer: answer}, err
+		id, answer, err := s.ask(ctx, key, in)
+		return nil, askOutput{ID: id, Answer: answer}, err
 	})
 }
 
-func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput) (string, error) {
+func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput) (string, string, error) {
 	s.mu.Lock()
 	p, serverCtx := s.open(key, in), s.ctx
 	if p != nil {
 		s.mu.Unlock()
-		return s.await(ctx, serverCtx, p)
+		answer, err := s.await(ctx, serverCtx, p)
+		return p.q.ID, answer, err
 	}
 	s.Seq++
 	p = &pending{
@@ -219,14 +221,15 @@ func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput) (string
 	select {
 	case out <- p.q:
 	case <-serverCtx.Done():
-		return "", errors.New("r-loop stopped before the question was delivered")
+		return p.q.ID, "", errors.New("r-loop stopped before the question was delivered")
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return p.q.ID, "", ctx.Err()
 	}
 	s.mu.Lock()
 	p.delivered = true
 	s.mu.Unlock()
-	return s.await(ctx, serverCtx, p)
+	answer, err := s.await(ctx, serverCtx, p)
+	return p.q.ID, answer, err
 }
 
 func (s *Server) open(key core.StepKey, in askInput) *pending {

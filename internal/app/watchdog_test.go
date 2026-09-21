@@ -24,6 +24,7 @@ type dogHost struct {
 	failStarts int
 	stale      map[string]string
 	onPrompt   func(text string)
+	escalate   func(id string)
 }
 
 func (h *dogHost) record(format string, args ...any) {
@@ -56,6 +57,10 @@ func (h *dogHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 	h.record("Prompt %s %s", agent, text)
 	if h.onPrompt != nil {
 		h.onPrompt(text)
+	}
+	if rest, ok := strings.CutPrefix(text, "question "); ok && h.escalate != nil {
+		id, _, _ := strings.Cut(rest, " ")
+		go h.escalate(id)
 	}
 	return nil
 }
@@ -312,4 +317,15 @@ func TestAWatchdogProviderWithoutMCPIsRefusedInPreflight(t *testing.T) {
 	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), "watchdog.provider: provider plainbot has no MCP ask channel") {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
+}
+
+func escalatingDog(w *Wiring) *dogHost {
+	return &dogHost{escalate: func(id string) {
+		for {
+			if ok, reason := w.Router.Answer(id, "", ""); ok || !strings.Contains(reason, "not open") {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}}
 }

@@ -3043,7 +3043,7 @@ answer — and "abort", typed to leave that prompt, was stamped into a plan as a
 the phase loop, the evidence checks, every commit and the run list. The <strong>watchdog</strong> is
 the run's LLM: a full session that reads, runs commands, asks the maintainer through
 <code>ask_user</code> and edits the files a duty names; the driver checks the edit and commits it.
-The watchdog is always on: <code>--no-watchdog</code> is removed, and a watchdog that cannot start
+<strong>Every question to the maintainer goes through the watchdog's <code>ask_user</code></strong>, written for someone who has not read the logs: a step's question stays with the watchdog until it answers from a <code>path:line</code> or asks the maintainer and answers with <code>maintainer:&lt;id&gt;</code>; a remedy off the allow-list, or a provider that is not the row's fallback, is authorised only by <code>consent_question</code>, the id of an <code>ask_user</code> question the maintainer answered; the driver asks directly only when the watchdog is unreachable. The watchdog is always on: <code>--no-watchdog</code> is removed, and a watchdog that cannot start
 on its provider or its <code>watchdog.fallback</code> refuses the run with exit 4. Its row defaults to
 <code>claude / opus / high</code>. Signals about a step stay veto and remedy only. Milestone reports
 and the backlog suite command keep their dedicated sessions.</p>
@@ -3070,7 +3070,9 @@ same entry as raw text with a free answer.</p>
 blocks the run list — <code>decision</code>, <code>person</code> or <code>unclassified</code>, by
 <code>resolve_scope.py</code>'s patterns ported to Go, a person's first and an unmatched entry
 treated as a person's — and sends them to the watchdog with each blocked phase's block, then waits
-up to <code>watchdog.unblockTimeout</code>. The watchdog walks them one at a time: a brief in
+for the watchdog's done file (<code>unblock.done</code> in the run directory), up to
+<code>watchdog.unblockTimeout</code>; the prompt returning is not the walk finishing, since it
+returns as soon as the watchdog blocks in <code>ask_user</code>. The walk aims to fix each blocker, not only to record it: the watchdog asks "how do we fix it?", offering the work it can do itself (measure, try, read, decide from the code) beside the maintainer's own choices, an estimate to go on with, and "not now"; an entry of kind <code>person</code> gets only "I do it myself" and "not now". It walks them one at a time: a brief in
 Simplified Technical English, <code>ask_user</code> with the options recommended first plus
 "I don't know" and "Not now", only "Confirmed done" or "Not now" for a person's entry, and the answer
 written into the section as a tick with <code>Resolved:</code>, <code>Alternative:</code> and

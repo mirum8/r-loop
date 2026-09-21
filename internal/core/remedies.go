@@ -17,13 +17,15 @@ const (
 
 	decisionAuthorised = "authorised"
 	decisionRefused    = "refused"
+	decisionAsk        = "ask"
+
+	askForConsent = "ask the maintainer with ask_user: what fails, the command, and why it is safe; then call again with consent_question set to the id ask_user returned"
 )
 
 type Remedies struct {
 	Allow       []string
-	Face        Face
 	Store       Store
-	Window      time.Duration
+	Answered    func(id string) (Question, bool)
 	Now         func() time.Time
 	Watch       *Watch
 	MaxRestarts int
@@ -39,7 +41,7 @@ func (r *Remedies) now() time.Time {
 	return r.Now()
 }
 
-func (r *Remedies) Propose(class, command, why string) (string, string) {
+func (r *Remedies) Propose(class, command, why, consentQuestion string) (string, string) {
 	if !slices.Contains(remedyClasses, class) {
 		return decisionRefused, fmt.Sprintf("class %q is not a remedy class", class)
 	}
@@ -47,7 +49,17 @@ func (r *Remedies) Propose(class, command, why string) (string, string) {
 	if !ok {
 		return decisionRefused, "no step to remedy"
 	}
-	rem, err := r.decide(step, class, command, why, r.consent)
+	consent := consentAllowList
+	if !slices.Contains(r.Allow, class) {
+		if consentQuestion == "" {
+			return decisionAsk, askForConsent
+		}
+		if !r.maintainerAnswered(consentQuestion) {
+			return decisionRefused, fmt.Sprintf("%s is not a question the maintainer answered", consentQuestion)
+		}
+		consent = consentMaintainer
+	}
+	rem, err := r.decide(step, class, command, why, func(Remedy) string { return consent })
 	if err != nil {
 		return decisionRefused, err.Error()
 	}
@@ -73,49 +85,15 @@ func (r *Remedies) decide(step StepKey, class, command, why string, consent func
 	return rem, nil
 }
 
-func (r *Remedies) consent(rem Remedy) string {
-	if slices.Contains(r.Allow, rem.Class) {
-		return consentAllowList
+func (r *Remedies) maintainerAnswered(id string) bool {
+	if r.Answered == nil {
+		return false
 	}
-	return r.ask(rem)
+	q, ok := r.Answered(id)
+	return ok && q.Step.Kind == "watchdog" && q.AnsweredBy == consentMaintainer
 }
 
-func (r *Remedies) ask(rem Remedy) string {
-	if r.Window <= 0 {
-		return consentRefused
-	}
-	q := Question{ID: rem.ID, Step: rem.Step, Text: fmt.Sprintf("watchdog proposes (%s): %s — %s", rem.Class, rem.Command, rem.Why), Options: []string{"yes", "no"}, AskedAt: rem.ProposedAt}
-	answers := make(chan string, 1)
-	go func() {
-		a, err := r.Face.Ask(q)
-		if err != nil {
-			a = ""
-		}
-		answers <- a
-	}()
-	timeout := time.NewTimer(r.Window)
-	defer timeout.Stop()
-	select {
-	case a := <-answers:
-		if a == "" {
-			return consentRefused
-		}
-		ev := Event{At: r.now(), Kind: "human", Phase: rem.Step.Phase, Step: rem.Step.Kind, Fields: map[string]string{"what": "answer", "id": rem.ID, "by": consentMaintainer}}
-		r.Store.Append(rem.Step.Run, Record{Kind: RecordEvent, At: ev.At, Event: &ev})
-		r.Face.Emit(ev)
-		if a == "yes" {
-			return consentMaintainer
-		}
-		return consentRefused
-	case <-timeout.C:
-		if w, ok := r.Face.(interface{ Withdraw(id string) }); ok {
-			w.Withdraw(q.ID)
-		}
-		return consentRefused
-	}
-}
-
-func (r *Remedies) Restart(step, addendum, provider string) (bool, string) {
+func (r *Remedies) Restart(step, addendum, provider, consentQuestion string) (bool, string) {
 	var phase int
 	var kind string
 	if _, err := fmt.Sscanf(step, "phase-%d/%s", &phase, &kind); err != nil || fmt.Sprintf("phase-%d/%s", phase, kind) != step {
@@ -168,13 +146,17 @@ func (r *Remedies) Restart(step, addendum, provider string) (bool, string) {
 		remedy = consentAllowList
 	}
 	if remedy == "" && !fallback {
-		rem, err := r.decide(key, "provider", fmt.Sprintf("restart %s on %s", step, provider), provider+" is not the row's fallback", r.ask)
+		if consentQuestion == "" {
+			return false, provider + " is not the row's fallback: " + askForConsent
+		}
+		if !r.maintainerAnswered(consentQuestion) {
+			return false, fmt.Sprintf("%s is not a question the maintainer answered", consentQuestion)
+		}
+		rem, err := r.decide(key, "provider", fmt.Sprintf("restart %s on %s", step, provider), provider+" is not the row's fallback", func(Remedy) string { return consentMaintainer })
 		if err != nil {
 			return false, err.Error()
 		}
-		if rem.Consent == consentMaintainer {
-			remedy = rem.ID
-		}
+		remedy = rem.ID
 	}
 	if remedy == "" {
 		return false, "no authorised remedy"

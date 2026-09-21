@@ -257,10 +257,12 @@ func TestWatchdogCarriesTheAnsweringRule(t *testing.T) {
 	for _, want := range []string{
 		"## Answering questions",
 		"question <id> from phase-<N>/<kind>: <text> options: <options>",
-		"answer only with a `path:line` citation",
+		"answer with a `path:line` citation",
 		"the spec file, the tech-design file, the todo, a committed phase plan or code a landed phase wrote",
 		"never the current phase's worktree and never anything under `.r-loop/`",
-		"call `answer_question` with an empty citation to escalate rather than guess",
+		"When nothing answers it, ask the maintainer with `ask_user`",
+		"the citation `maintainer:<id>`",
+		"Never guess an answer",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q:\n%s", want, text)
@@ -479,16 +481,39 @@ func TestWatchdogWalksTheBlockersLikePlanUnblock(t *testing.T) {
 	for _, want := range []string{
 		"## Resolving blockers",
 		"one at a time, in the order given",
-		"Simplified Technical English",
-		"two to four options, each with what it costs",
-		"`I don't know — take the recommendation`",
+		"The goal is to fix each blocker, not only to record it",
+		"\"How do we fix it?\"",
+		"What you can do now, when it is work a session can do",
+		"`I do it myself, then tell you the result`",
+		"For an entry of kind `person`, offer only this and `Not now`",
 		"`Not now — skip phase <N> this run`",
-		"`Confirmed done`",
-		"Resolved: <YYYY-MM-DD> — <the decision>; <the force that settled it>",
-		"(recommended; not contested)",
+		"leave no file behind",
+		"Resolved: <YYYY-MM-DD> — <the decision or the result>; <what settled it>",
+		"(estimate; check again <when>)",
 		"Never edit that place yourself",
 		"Change nothing else in the plan and no other file",
 		"Carry the walk forward",
+		"write the empty file the request names, then stop",
+		"The driver waits for that file, not for your reply",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q", want)
+		}
+	}
+}
+
+func TestEveryQuestionToTheMaintainerGoesThroughTheWatchdogsAskUser(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"## Talking to the maintainer",
+		"Every question to the maintainer goes through `ask_user`, and only you ask them",
+		"It returns `{id, answer}`",
+		"a person who has not read the logs",
+		"Offer what you can do yourself as an option",
+		"propose_remedy(class, command, why, consent_question?)",
+		"restart_step(step, addendum?, provider?, consent_question?)",
+		"call `propose_remedy` again with `consent_question` set to the id `ask_user` returned",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q", want)

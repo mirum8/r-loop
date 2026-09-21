@@ -563,11 +563,15 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   legal|finance|procurement|hr|people|compliance|security council or a person pattern matches,
   else `decision` on a decision pattern, else `unclassified` (treated as a person's). `Entry` also
   carries `Alternative` and `Outstanding`.
-- **Walk request** — `core.UnblockText(plan, entries, runList)`:
+- **Walk request** — `core.UnblockText(plan, entries, runList, donePath)`:
   `resolve first: <n> open entries in <plan> block this run's phases <list>…`, then per entry
   `## R<n> — <name>`, `kind · owner · blocks · timebox · output`, the entry text and each blocked
-  phase's block. Sent with `Dog.Notify(text, wait=true, watchdog.unblockTimeout)`; the driver polls
-  `Store.Aborted` each second meanwhile.
+  phase's block, and last the line telling the watchdog to write an empty file at `donePath`
+  (`<runDir>/unblock.done`) when the walk is done. The driver removes a stale `unblock.done`, sends
+  the request with `Dog.Notify(text, wait=false, …)` — a prompt returns as soon as the watchdog
+  blocks in `ask_user`, so its return never means the walk is over — then polls every 100 ms for the
+  done file and `Store.Aborted`, up to `watchdog.unblockTimeout`. On timeout it records a `warning`
+  (`… did not finish within <timeout>`) and goes on; open entries are deferred.
 - **After the walk** (`app.Wiring.walk`) — a stop → exit 4 and the run `halted`. Any dirty path
   other than the plan → exit 4. A plan change outside `## Resolve first`
   (`plan.OnlyResolveFirstChanged`) → the file is restored and exit 4. Otherwise one commit
@@ -582,3 +586,11 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Report** — `## Blockers` lists `<entry> → <resolved>` and `<entry> still open: phase <list>
   skipped`; a watchdog question is listed by its first line.
 - **Deferred** — the watchdog managing the loop through MCP or a CLI (a non-goal in the spec).
+- **One channel to the maintainer** — every question to the maintainer is the watchdog's `ask_user`,
+  which returns `{id, answer}`. `QuestionRouter.Route` keeps a step question with the watchdog while
+  it is live (checked every `watchdog.answerWindow`) and falls back to the face only when it is gone
+  or answers with an empty citation. `answer_question` accepts `path:line` or `maintainer:<id>` (a
+  `watchdog` question answered `by=maintainer`, delivered as the maintainer's). `propose_remedy`
+  and `restart_step` take `consent_question`; without it an off-list class returns `ask` and
+  records nothing, and a non-fallback provider is refused with the same instruction. `Remedies`
+  no longer asks the face.

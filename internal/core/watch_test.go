@@ -357,7 +357,7 @@ func TestAnAcceptedHaltForTheHeldStepClosesItsRemedyWindow(t *testing.T) {
 	store := &fakeStore{}
 	w, key := failedImplement(t, store)
 	w.Poll = time.Hour
-	rem := newRemedies(w, store, &fakeFace{}, "restart")
+	rem := newRemedies(w, store, "restart")
 	go func() { <-w.Restarts() }()
 
 	if ok, reason := w.Handle(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: 2, Kind: "implement"}, Reason: "wrong turn"}); !ok {
@@ -367,7 +367,7 @@ func TestAnAcceptedHaltForTheHeldStepClosesItsRemedyWindow(t *testing.T) {
 		t.Errorf("forwarded %+v", fwd)
 	}
 
-	if ok, reason := rem.Restart("phase-2/implement", "", ""); ok || reason != "run halted" {
+	if ok, reason := rem.Restart("phase-2/implement", "", "", ""); ok || reason != "run halted" {
 		t.Errorf("restart %v %q", ok, reason)
 	}
 }
@@ -375,7 +375,7 @@ func TestAnAcceptedHaltForTheHeldStepClosesItsRemedyWindow(t *testing.T) {
 func TestARejectedWatchdogSignalDuringTheRemedyWindowHaltsTheHeldStep(t *testing.T) {
 	store := &fakeStore{}
 	w, key := failedImplement(t, store)
-	rem := newRemedies(w, store, &fakeFace{}, "restart")
+	rem := newRemedies(w, store, "restart")
 	go func() { <-w.Restarts() }()
 
 	w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Kind: "phase3/implement"}, Reason: "off the plan"})
@@ -384,7 +384,7 @@ func TestARejectedWatchdogSignalDuringTheRemedyWindowHaltsTheHeldStep(t *testing
 	if fwd.Kind != SignalHalt || fwd.Step != key || !strings.HasPrefix(fwd.Reason, "watchdog signal rejected: ") {
 		t.Errorf("forwarded %+v", fwd)
 	}
-	if ok, reason := rem.Restart("phase-2/implement", "", ""); ok || reason != "run halted" {
+	if ok, reason := rem.Restart("phase-2/implement", "", "", ""); ok || reason != "run halted" {
 		t.Errorf("restart %v %q", ok, reason)
 	}
 }

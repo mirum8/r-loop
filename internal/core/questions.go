@@ -15,9 +15,12 @@ const answeredByWatchdog = "watchdog"
 
 var citationPattern = regexp.MustCompile(`^[^\s:]+:\d+$`)
 
+const maintainerCitation = "maintainer:"
+
 type QuestionRouter struct {
 	Dog          *Watchdog
 	Deliver      func(id, answer, by, citation string) error
+	Answered     func(id string) (Question, bool)
 	Repo         Repo
 	AnswerWindow time.Duration
 
@@ -45,13 +48,17 @@ func (r *QuestionRouter) Route(ctx context.Context, q Question) bool {
 		r.close(q.ID)
 		return false
 	}
-	timer := time.NewTimer(r.AnswerWindow)
-	defer timer.Stop()
-	select {
-	case ok := <-p.done:
-		return ok
-	case <-timer.C:
-	case <-ctx.Done():
+	tick := time.NewTicker(r.AnswerWindow)
+	defer tick.Stop()
+	for waiting := true; waiting; {
+		select {
+		case ok := <-p.done:
+			return ok
+		case <-tick.C:
+			waiting = r.Dog.live()
+		case <-ctx.Done():
+			waiting = false
+		}
 	}
 	if r.close(q.ID) {
 		return false
@@ -79,6 +86,18 @@ func (r *QuestionRouter) Answer(id, answer, citation string) (bool, string) {
 		p.done <- false
 		return false, "escalated to the maintainer"
 	}
+	if qid, ok := strings.CutPrefix(citation, maintainerCitation); ok {
+		if a, found := r.answered(qid); !found || a.Step.Kind != "watchdog" || a.AnsweredBy != "maintainer" {
+			r.reopen(id, p)
+			return false, fmt.Sprintf("%s is not a question the maintainer answered", qid)
+		}
+		err := r.Deliver(id, answer, "maintainer", citation)
+		p.done <- true
+		if err != nil {
+			return false, err.Error()
+		}
+		return true, ""
+	}
 	if reason := r.rejectCitation(citation); reason != "" {
 		p.done <- false
 		return false, reason + "; escalated to the maintainer"
@@ -89,6 +108,19 @@ func (r *QuestionRouter) Answer(id, answer, citation string) (bool, string) {
 		return false, err.Error()
 	}
 	return true, ""
+}
+
+func (r *QuestionRouter) answered(id string) (Question, bool) {
+	if r.Answered == nil {
+		return Question{}, false
+	}
+	return r.Answered(id)
+}
+
+func (r *QuestionRouter) reopen(id string, p routed) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.open[id] = p
 }
 
 func (r *QuestionRouter) rejectCitation(citation string) string {

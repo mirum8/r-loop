@@ -177,7 +177,7 @@ func newResumeFixture(t *testing.T, config string) *fixture {
 func (f *fixture) sim(w *Wiring, sim *simHost) *landRecorder {
 	w.Loop.Sessions.Host = sim
 	w.Loop.Sessions.Poll = 5 * time.Millisecond
-	w.Dog.Host = &dogHost{}
+	w.Dog.Host = escalatingDog(w)
 	w.Loop.RemedyWindow = 0
 	lander := &landRecorder{st: w.Store}
 	w.Loop.Lander = lander

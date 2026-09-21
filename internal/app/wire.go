@@ -347,11 +347,24 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	for _, k := range kinds {
 		fallbacks[k.Name] = k.Row.Fallback
 	}
-	w.Remedies = &core.Remedies{Allow: allow, Face: w.Face, Store: w.Store, Window: cfg.Watchdog.RemedyWindow, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks}
+	w.Remedies = &core.Remedies{Allow: allow, Store: w.Store, Answered: w.answered, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks}
 	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, Pane: env.Pane, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow}
-	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Repo: repo, AnswerWindow: cfg.Watchdog.AnswerWindow}
+	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Answered: w.answered, Repo: repo, AnswerWindow: cfg.Watchdog.AnswerWindow}
 	w.Loop.RemedyWindow = cfg.Watchdog.RemedyWindow
 	return w, nil
+}
+
+func (w *Wiring) answered(id string) (core.Question, bool) {
+	run, err := w.Store.Load(w.Loop.RunID)
+	if err != nil {
+		return core.Question{}, false
+	}
+	for _, q := range run.Questions {
+		if q.ID == id {
+			return q, true
+		}
+	}
+	return core.Question{}, false
 }
 
 func addedClasses(cfg config.LoopConfig) []string {
