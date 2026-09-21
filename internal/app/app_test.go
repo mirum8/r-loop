@@ -165,25 +165,6 @@ func TestLiveRunIsRefusedWithExit4(t *testing.T) {
 	}
 }
 
-func TestBlockingResolveFirstEntryIsRefusedWithExit4InPlain(t *testing.T) {
-	f := newFixture(t)
-	data, _ := os.ReadFile(f.todo)
-	f.write("docs/topic/todo.md", strings.Replace(string(data), "## Waves",
-		"## Resolve first\n- [ ] **Pick the database** — Owner: me · Blocks: Phase 2\n\n## Waves", 1))
-	f.commit()
-
-	_, err := f.preflight(f.todo, "--plain")
-
-	if code := exitCode(t, err); code != 4 {
-		t.Fatalf("code=%d err=%v", code, err)
-	}
-	for _, want := range []string{"Pick the database", "/r:plan-unblock " + f.todo} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("%q missing from %v", want, err)
-		}
-	}
-}
-
 func TestResolveFirstEntryOutsideTheRunListDoesNotRefuse(t *testing.T) {
 	f := newFixture(t)
 	data, _ := os.ReadFile(f.todo)
@@ -275,10 +256,6 @@ func TestWatchdogProviderIsValidatedUnlessTheWatchdogIsOff(t *testing.T) {
 	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), "watchdog.provider") {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
-
-	if _, err := f.preflight(f.todo, "--plain", "--no-watchdog"); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestPreflightCreatesTheRunAndPrintsTheBanner(t *testing.T) {
@@ -301,7 +278,7 @@ func TestPreflightCreatesTheRunAndPrintsTheBanner(t *testing.T) {
 	if !strings.Contains(string(exclude), ".r-loop/runs/") || !strings.Contains(string(exclude), ".r-loop/wt/") {
 		t.Fatalf("exclude=%q", exclude)
 	}
-	for _, want := range []string{"face: plain\n", "implement  codex  gpt-5.6-sol  medium  4h  diff  ← default\n", "prompt plan: embedded\n", "prompt implement: embedded\n", "prompt milestone: embedded\n", "watchdog: on\n"} {
+	for _, want := range []string{"face: plain\n", "implement  codex  gpt-5.6-sol  medium  4h  diff  ← default\n", "prompt plan: embedded\n", "prompt implement: embedded\n", "prompt milestone: embedded\n", "  fallback codex provider default provider default  ← default\n"} {
 		if !strings.Contains(f.out.String(), want) {
 			t.Fatalf("%q missing from banner:\n%s", want, f.out.String())
 		}
@@ -357,7 +334,7 @@ func TestDryRunPrintsBannerWithOverridesAndTheRunList(t *testing.T) {
 		"override: implement effort high (flag) replaces medium (default)\n",
 		"gatefix claude gpt-5.6-sol high  ← provider flag:--provider model default effort flag:--effort\n",
 		"prompt implement: embedded\n",
-		"watchdog: on\n",
+		"watchdog: claude opus high allow []  ← default\n",
 		"phase 2  PlanReader: phases and milestones  plan (review ×2) → implement (review ×3) → land\n",
 		"phase 31  Unattended mode  plan (review ×2) → implement (review ×3) → land\n",
 	} {
@@ -444,13 +421,13 @@ func TestUsageErrorsExit2WithOneLine(t *testing.T) {
 
 func TestParseArgsReadsEveryFlag(t *testing.T) {
 	opts, err := ParseArgs([]string{"--from", "3", "todo.md", "--phases", "4,5", "--provider", "plan=codex", "--provider", "implement=claude",
-		"--model", "plan=o3", "--effort", "plan=low", "--no-watchdog", "--unattended", "--plain", "--dry-run"})
+		"--model", "plan=o3", "--effort", "plan=low", "--unattended", "--plain", "--dry-run"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if opts.Todo != "todo.md" || opts.From != 3 || len(opts.Phases) != 2 || opts.Phases[1] != 5 || len(opts.Overrides) != 4 ||
-		!opts.NoWatchdog || !opts.Unattended || !opts.Plain || !opts.DryRun {
+		!opts.Unattended || !opts.Plain || !opts.DryRun {
 		t.Fatalf("opts=%+v", opts)
 	}
 	if o := opts.Overrides[1]; o.Key != "provider" || o.Step != "implement" || o.Value != "claude" {
@@ -606,7 +583,13 @@ func TestDryRunNamesAnOpenResolveFirstEntryThatBlocksTheRunList(t *testing.T) {
 	if strings.Contains(quiet, "Resolve first") {
 		t.Errorf("entry named for a run it does not block:\n%s", quiet)
 	}
-	if want := `open ## Resolve first: "Measure it" blocks phase 2 — the run refuses until it is resolved: /r:plan-unblock`; !strings.Contains(f.out.String(), want) {
+	if want := `open ## Resolve first: "Measure it" (unclassified) blocks phase 2 — the watchdog will walk it`; !strings.Contains(f.out.String(), want) {
 		t.Errorf("out:\n%s", f.out.String())
+	}
+}
+
+func TestNoWatchdogIsAUsageError(t *testing.T) {
+	if _, err := ParseArgs([]string{"todo.md", "--no-watchdog"}); err == nil {
+		t.Fatal("--no-watchdog accepted")
 	}
 }

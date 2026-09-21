@@ -1,7 +1,6 @@
 package plan
 
 import (
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -85,6 +84,7 @@ func TestEntryFieldsSlicedByLabel(t *testing.T) {
 	}
 	want := core.Entry{
 		Name: "Debezium against RDS",
+		Kind: core.EntryDecision,
 		Body: "- [ ] **Debezium against RDS** — can it read our instance?\n" +
 			"      Owner: platform. Blocks: Phase 2. Timebox: one afternoon. Output: a line in the spec's Risks.",
 		HasBox:       true,
@@ -133,40 +133,6 @@ func TestBoxlessEntryIsOutstanding(t *testing.T) {
 	}
 	if got := p.Blocking([]int{1, 3}); len(got) != 0 {
 		t.Errorf("Blocking([1 3]) = %+v, want none", got)
-	}
-}
-
-func TestBoxlessEntryStamped(t *testing.T) {
-	before := `# Plan
-
-## Resolve first
-- **Legacy blocker** — still open?
-      Owner: platform. Blocks: Phase 2.
-
-` + phasesTail
-	path := writePlan(t, before)
-
-	if err := (Reader{}).Stamp(path, "Legacy blocker", "2026-09-18 — yes; it is."); err != nil {
-		t.Fatalf("Stamp: %v", err)
-	}
-
-	after, _ := os.ReadFile(path)
-	want := strings.Replace(before,
-		"- **Legacy blocker** — still open?\n      Owner: platform. Blocks: Phase 2.\n",
-		"- [x] **Legacy blocker** — still open?\n      Owner: platform. Blocks: Phase 2.\n      Resolved: 2026-09-18 — yes; it is.\n", 1)
-	if string(after) != want {
-		t.Errorf("after stamp:\n%s\nwant:\n%s", after, want)
-	}
-	p, err := Reader{}.Read(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e := onlyEntry(t, p)
-	if !e.Ticked || !e.HasBox || e.Resolved != "2026-09-18 — yes; it is" {
-		t.Errorf("stamped entry = %+v", e)
-	}
-	if got := p.Blocking([]int{1, 2, 3}); len(got) != 0 {
-		t.Errorf("Blocking after stamp = %+v, want none", got)
 	}
 }
 
@@ -366,5 +332,34 @@ func TestAPhaseBlockWithNoResolvedEntryIsUnchanged(t *testing.T) {
 
 	if got := p.Phases[1].Block; got != "### Phase 2 — Two\n**Depends on:** Phase 1\n- [ ] b\n\n" {
 		t.Errorf("Block = %q", got)
+	}
+}
+
+func TestEntriesAreSortedAsDecisionPersonOrUnclassified(t *testing.T) {
+	path := writePlan(t, "# P\n\n## Resolve first\n"+
+		"- **Debezium against RDS** — can it read our instance, or do we need a polling fallback?\n  Owner: platform. Blocks: Phase 1.\n"+
+		"- [ ] **Sign the payments DPA** — the processor needs it before live traffic.\n  Owner: legal. Blocks: Phase 1.\n"+
+		"- [ ] **Decide whether to sign the DPA** — legal wants an answer.\n  Owner: platform. Blocks: Phase 1.\n"+
+		"- [ ] **The thing about the stuff** — no pattern matches this.\n  Owner: platform. Blocks: Phase 1.\n"+
+		"- [ ] **Pick a queue** — Kafka or SQS?\n  Owner: finance. Blocks: Phase 1.\n"+
+		"- [x] **Queue vs cron** — which drives retries?\n  Owner: platform. Blocks: Phase 1.\n  Resolved: 2026-09-03 — queue; cron cannot honour the 30s target. Alternative: cron. Outstanding: the spec's Risks line.\n"+
+		"\n### Phase 1 — A\n- [ ] a thing\n")
+
+	p, err := Reader{}.Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var kinds []string
+	for _, e := range p.ResolveFirst {
+		kinds = append(kinds, e.Kind)
+	}
+	want := []string{"decision", "person", "person", "unclassified", "person", "decision"}
+	if !reflect.DeepEqual(kinds, want) {
+		t.Fatalf("kinds = %v, want %v", kinds, want)
+	}
+	last := p.ResolveFirst[5]
+	if last.Alternative != "cron" || last.Outstanding != "the spec's Risks line" {
+		t.Errorf("alternative %q outstanding %q", last.Alternative, last.Outstanding)
 	}
 }

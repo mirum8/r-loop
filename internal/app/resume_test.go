@@ -734,68 +734,8 @@ func TestResumeUsageNamesEveryFlag(t *testing.T) {
 
 	code := f.main("resume", "--bogus")
 
-	if code != 2 || !strings.Contains(f.err.String(), "usage: r-loop resume [--replan] [--unattended] [--no-watchdog] [--plain]") {
+	if code != 2 || !strings.Contains(f.err.String(), "usage: r-loop resume [--replan] [--unattended] [--plain]") {
 		t.Fatalf("code=%d stderr=%q", code, f.err)
-	}
-}
-
-func TestResumeOfARunStartedWithoutAWatchdogStartsNone(t *testing.T) {
-	f := newResumeFixture(t, noReviewConfig)
-	first := newSim()
-	first.fail["rloop-p1-implement"] = true
-	w, err := f.preflight(f.todo, "--plain", "--phases", "1", "--no-watchdog")
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.sim(w, first)
-	if code := w.Execute(core.RunOptions{Phases: []int{1}}); code != 1 {
-		t.Fatalf("first run exit %d", code)
-	}
-	id := w.Loop.RunID
-
-	w, opts, err := PrepareResume(nil, f.env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.sim(w, newSim())
-	dog := &dogHost{}
-	w.Dog.Host = dog
-	code := w.Execute(opts)
-
-	if code != 0 {
-		t.Fatalf("resume exit %d\n%s", code, f.out)
-	}
-	if calls := dog.Calls(); len(calls) != 0 {
-		t.Errorf("watchdog touched: %q", calls)
-	}
-	if got := stepEvents(f.load(id), "watchdog-skipped"); len(got) != 2 {
-		t.Errorf("watchdog-skipped events %+v", got)
-	}
-}
-
-func TestResumeWithNoWatchdogSkipsTheWatchdogOfARunThatHadOne(t *testing.T) {
-	f := newResumeFixture(t, noReviewConfig)
-	first := newSim()
-	first.fail["rloop-p1-implement"] = true
-	id, _ := f.firstRun(first, "--phases", "1")
-
-	w, opts, err := PrepareResume([]string{"--no-watchdog"}, f.env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.sim(w, newSim())
-	dog := &dogHost{}
-	w.Dog.Host = dog
-	code := w.Execute(opts)
-
-	if code != 0 {
-		t.Fatalf("resume exit %d\n%s", code, f.out)
-	}
-	if calls := dog.Calls(); len(calls) != 0 {
-		t.Errorf("watchdog touched: %q", calls)
-	}
-	if got := stepEvents(f.load(id), "watchdog-skipped"); len(got) != 1 {
-		t.Errorf("watchdog-skipped events %+v", got)
 	}
 }
 
@@ -972,34 +912,6 @@ func TestResumeAfterAKilledDriverClosesItsStaleWatchdogAndStartsItsOwn(t *testin
 		if c == "ClosePane other-run-wd" || c == "ClosePane legacy-wd" {
 			t.Errorf("closed a watchdog that is not this run's: %q", calls)
 		}
-	}
-}
-
-func TestAResolveFirstAnswerGivenDuringResumeIsStoredInTheResumedRun(t *testing.T) {
-	f := newResumeFixture(t, noReviewConfig)
-	f.write("docs/topic/todo.md", strings.Replace(resumeTodo, "### Phase 1", "## Resolve first\n- [ ] **Pick the database** — Owner: me · Blocks: Phase 1\n\n### Phase 1", 1))
-	f.commit()
-	id, _ := f.seedKilledImplement()
-	run := f.load(id)
-	w, err := Wire(Options{Todo: run.Todo}, f.env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	w.Face = &answeringFace{answers: []string{"Postgres"}}
-
-	if _, err := w.resume(run, false); err != nil {
-		t.Fatal(err)
-	}
-
-	if w.Loop.RunID != id {
-		t.Fatalf("bound to %q, want %q", w.Loop.RunID, id)
-	}
-	answers := stepEvents(f.load(id), "human")
-	if len(answers) != 1 || answers[0].Fields["id"] != "r1" || answers[0].Fields["entry"] != "Pick the database" || answers[0].Fields["answer"] != "Postgres" {
-		t.Fatalf("human events %+v", answers)
-	}
-	if rep := core.Report(f.load(id), w.Plan); !strings.Contains(rep, "- r1 resolve first: Pick the database → Postgres (maintainer)\n") {
-		t.Fatalf("report:\n%s", rep)
 	}
 }
 

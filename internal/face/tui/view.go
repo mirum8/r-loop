@@ -63,11 +63,7 @@ func (m Model) View() string {
 
 func (m Model) header(w int) string {
 	left := fmt.Sprintf("r-loop  %s  %s", m.RunID, m.Todo)
-	watchdog := "off"
-	if m.Watchdog {
-		watchdog = "on"
-	}
-	right := fmt.Sprintf("started %s · %s · watchdog %s", m.Started.Format("15:04"), m.Now.Sub(m.Started).Truncate(time.Second), watchdog)
+	right := fmt.Sprintf("started %s · %s", m.Started.Format("15:04"), m.Now.Sub(m.Started).Truncate(time.Second))
 	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 2 {
 		return left

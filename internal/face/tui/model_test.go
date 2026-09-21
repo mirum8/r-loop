@@ -67,7 +67,7 @@ func recorded() []core.Event {
 }
 
 func newModel(events []core.Event) Model {
-	m := NewModel(Header{RunID: "20260918-140000", Todo: "docs/x/todo.md", Started: t0, Watchdog: true}, plan(), NewTheme(lipgloss.NewRenderer(io.Discard), false))
+	m := NewModel(Header{RunID: "20260918-140000", Todo: "docs/x/todo.md", Started: t0}, plan(), NewTheme(lipgloss.NewRenderer(io.Discard), false))
 	for _, ev := range events {
 		m = m.Apply(ev)
 	}

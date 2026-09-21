@@ -48,13 +48,15 @@ land:
 
 watchdog:
   provider: claude
-  model: sonnet
-  effort: ""
+  model: opus
+  effort: high
+  fallback: codex
   maxRestarts: 2
   allow:
   remedyWindow: 10m
   answerWindow: 5m
   checkTimeout: 10m
+  unblockTimeout: 2h
   stallGrace: 2m
   overtimeFactor: 2
   diffFactor: 3

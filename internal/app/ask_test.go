@@ -114,10 +114,12 @@ type askRun struct {
 func startAskRun(t *testing.T, configure func(w *Wiring)) *askRun {
 	t.Helper()
 	f := newResumeFixture(t, askConfig)
-	w, err := f.preflight(f.todo, "--plain", "--phases", "1", "--no-watchdog")
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
 	if err != nil {
 		t.Fatal(err)
 	}
+	w.Dog.Host = &dogHost{}
+	w.Router.AnswerWindow = time.Millisecond
 	host := &askHost{simHost: newSim(), t: t, agent: buildBinary(t, "./testdata/ask-agent.go")}
 	f.sim(w, host.simHost)
 	w.Loop.Sessions.Host = host
@@ -216,7 +218,7 @@ func TestAQuestionFromTheAgentWaitsPastTheBackstopAndTakesTheTypedOption(t *test
 	if len(st.Questions) != 1 || st.Questions[0].Answer != "postgres" || st.Questions[0].AnsweredBy != "maintainer" {
 		t.Errorf("questions %+v", st.Questions)
 	}
-	if out := r.f.out.String(); !strings.Contains(out, "?  q1  phase 1 implement: Which database?\n   1. sqlite\n   2. postgres\n") {
+	if out := r.f.out.String(); !strings.Contains(out, "?  q1  phase 1 implement: Which database?\n   1. sqlite (recommended)\n   2. postgres\n") {
 		t.Errorf("face output:\n%s", out)
 	}
 }

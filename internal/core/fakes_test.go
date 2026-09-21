@@ -47,11 +47,6 @@ func (f *fakePlanSource) Tick(path string, phase int) error {
 	return f.Err
 }
 
-func (f *fakePlanSource) Stamp(path, entryName, resolvedLine string) error {
-	f.record("PlanSource.Stamp %s %s %s", path, entryName, resolvedLine)
-	return f.Err
-}
-
 type fakeSessionHost struct {
 	callLog
 	Opened  []OpenSpec

@@ -54,23 +54,6 @@ func TestWithoutTheFlagTheRunIsAttendedAndNothingChanges(t *testing.T) {
 	}
 }
 
-func TestUnattendedWithNoWatchdogIsAllowedAndWarnsFailuresAreNotRemedied(t *testing.T) {
-	f := newResumeFixture(t, noReviewConfig)
-
-	w, err := f.preflight(f.todo, "--plain", "--unattended", "--no-watchdog")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if w.Loop.QuestionTimeout != 30*time.Minute {
-		t.Errorf("question timeout %s", w.Loop.QuestionTimeout)
-	}
-	out := f.out.String()
-	if !strings.Contains(out, "mode: unattended  allow + deps, ports, locks, restart, retry, provider  question timeout 30m\n") || !strings.Contains(out, "no watchdog: failures are not remedied\n") {
-		t.Errorf("banner:\n%s", out)
-	}
-}
-
 func TestResumeUnattendedAppliesTheModeToTheResumedRun(t *testing.T) {
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()

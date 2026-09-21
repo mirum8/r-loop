@@ -20,7 +20,6 @@ import (
 	"r-loop/internal/config"
 	"r-loop/internal/core"
 	"r-loop/internal/face/tui"
-	"r-loop/internal/plan"
 	"r-loop/internal/store"
 )
 
@@ -52,8 +51,7 @@ func Preflight(w *Wiring) error {
 		}
 		fmt.Fprintf(env.Stdout, "cleared run %s: pid %d is gone\n", id, pid)
 	}
-	answers, err := w.unblocked(list)
-	if err != nil {
+	if err := w.clean(); err != nil {
 		return err
 	}
 	resolved, err := yaml.Marshal(cfg)
@@ -66,14 +64,6 @@ func Preflight(w *Wiring) error {
 	}
 	if err := w.Store.SetCurrent(id, env.PID); err != nil {
 		return exit(2, "%v", err)
-	}
-	if err := recordRunList(w.Store, id, list); err != nil {
-		return exit(2, "%v", err)
-	}
-	for _, ev := range answers {
-		if err := w.Store.Append(id, core.Record{Kind: core.RecordEvent, At: ev.At, Event: &ev}); err != nil {
-			return exit(2, "%v", err)
-		}
 	}
 	w.bind(id)
 	w.banner(env.Stdout, prompts)
@@ -94,9 +84,9 @@ func (w *Wiring) blockingEntries(out io.Writer, list []core.Phase) {
 	for i, ph := range list {
 		numbers[i] = ph.Number
 	}
-	then := "the run will ask for it"
-	if w.Face == core.Face(w.Plain) {
-		then = "the run refuses until it is resolved: /r:plan-unblock " + w.Opts.Todo
+	then := "the watchdog will walk it"
+	if w.Opts.Unattended {
+		then = "unattended: its phases are skipped"
 	}
 	for _, e := range w.Plan.Blocking(numbers) {
 		scope := "every phase"
@@ -109,7 +99,7 @@ func (w *Wiring) blockingEntries(out io.Writer, list []core.Phase) {
 			}
 			scope = "phase " + strings.Join(hit, ", ")
 		}
-		fmt.Fprintln(out, amber(out).Render(fmt.Sprintf("open ## Resolve first: %q blocks %s — %s", e.Name, scope, then)))
+		fmt.Fprintln(out, amber(out).Render(fmt.Sprintf("open ## Resolve first: %q (%s) blocks %s — %s", e.Name, e.Kind, scope, then)))
 	}
 }
 
@@ -176,76 +166,21 @@ func (w *Wiring) checks() ([]core.Phase, []string, error) {
 	return list, prompts, nil
 }
 
-func (w *Wiring) unblocked(list []core.Phase) ([]core.Event, error) {
+func (w *Wiring) clean() error {
 	dirty, err := w.Repo.Clean()
 	if err != nil {
-		return nil, exit(2, "%v", err)
+		return exit(2, "%v", err)
 	}
 	if len(dirty) > 0 {
 		if hint := w.commitHint(dirty); hint != "" {
-			return nil, exit(4, "primary tree is not clean: %s; %s", strings.Join(dirty, ", "), hint)
+			return exit(4, "primary tree is not clean: %s; %s", strings.Join(dirty, ", "), hint)
 		}
-		return nil, exit(4, "primary tree is not clean: %s", strings.Join(dirty, ", "))
-	}
-	numbers := make([]int, len(list))
-	for i, ph := range list {
-		numbers[i] = ph.Number
-	}
-	var events []core.Event
-	if blocking := w.Plan.Blocking(numbers); len(blocking) > 0 {
-		if w.Face == core.Face(w.Plain) {
-			return nil, exit(4, "## Resolve first entry %q blocks this run; resolve it with /r:plan-unblock %s", blocking[0].Name, w.Opts.Todo)
-		}
-		if events, err = w.unblock(blocking); err != nil {
-			return nil, err
-		}
+		return exit(4, "primary tree is not clean: %s", strings.Join(dirty, ", "))
 	}
 	if err := store.EnsureExcluded(w.Repo.Root()); err != nil {
-		return nil, exit(2, "%v", err)
+		return exit(2, "%v", err)
 	}
-	return events, nil
-}
-
-func (w *Wiring) unblock(entries []core.Entry) ([]core.Event, error) {
-	if w.TUI != nil {
-		w.TUI.Start(tui.Header{Todo: w.Opts.Todo, Started: time.Now(), Watchdog: !w.Opts.NoWatchdog}, w.Plan.Phases, nil)
-		defer w.TUI.Stop()
-	}
-	now := time.Now
-	if w.Env.Now != nil {
-		now = w.Env.Now
-	}
-	events, err := resolveFirst(plan.Reader{}, w.Repo, w.Face, w.Todo, entries, now())
-	if err != nil {
-		return nil, err
-	}
-	pl, err := plan.Reader{}.Read(w.Todo)
-	if err != nil {
-		return nil, exit(2, "%v", err)
-	}
-	w.Plan, w.Loop.Plan, w.Gate.Boundary.Plan = pl, pl, pl
-	return events, nil
-}
-
-func resolveFirst(src core.PlanSource, repo interface{ Commit(string) (string, error) }, face core.Face, todo string, entries []core.Entry, now time.Time) ([]core.Event, error) {
-	var events []core.Event
-	for i, e := range entries {
-		q := core.Question{ID: "r" + strconv.Itoa(i+1), Step: core.StepKey{Kind: core.ResolveFirstStep}, Text: e.Name + "\n" + e.Body, AskedAt: now}
-		answer, err := face.Ask(q)
-		if err != nil {
-			return nil, exit(4, "## Resolve first entry %q was not answered: %v", e.Name, err)
-		}
-		if err := src.Stamp(todo, e.Name, now.Format("2006-01-02")+" — "+answer); err != nil {
-			return nil, exit(2, "%v", err)
-		}
-		if _, err := repo.Commit("plan: resolve " + e.Name); err != nil {
-			return nil, exit(2, "%v", err)
-		}
-		ev := core.Event{At: now, Kind: "human", Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": q.ID, "by": "maintainer", "entry": e.Name, "answer": answer}}
-		face.Emit(ev)
-		events = append(events, ev)
-	}
-	return events, nil
+	return nil
 }
 
 type role struct {
@@ -271,8 +206,9 @@ func (w *Wiring) validateProviders() error {
 	for _, rv := range cfg.Steps["implement"].Reviewers {
 		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, review: true})
 	}
-	if !w.Opts.NoWatchdog {
-		roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider, ask: true})
+	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider, ask: true})
+	if fb := cfg.Watchdog.Fallback.Provider; fb != "" {
+		roles = append(roles, role{field: "watchdog.fallback", provider: fb, ask: true})
 	}
 	for _, r := range roles {
 		p, err := w.Registry.Resolve(r.provider)
@@ -316,19 +252,11 @@ func (w *Wiring) banner(out io.Writer, prompts []string) {
 	for _, l := range prompts {
 		fmt.Fprintln(out, l)
 	}
-	state := "on"
-	if w.Opts.NoWatchdog {
-		state = "off"
-	}
-	fmt.Fprintf(out, "watchdog: %s\n", state)
 	if !w.Opts.Unattended {
 		fmt.Fprintln(out, "mode: attended")
 		return
 	}
 	fmt.Fprintf(out, "mode: unattended  allow + %s  question timeout %s\n", strings.Join(addedClasses(w.Config), ", "), config.Duration(w.Config.Unattended.QuestionTimeout))
-	if w.Opts.NoWatchdog {
-		fmt.Fprintln(out, "no watchdog: failures are not remedied")
-	}
 }
 
 func (w *Wiring) extraSteps() []string {

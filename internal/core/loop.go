@@ -88,6 +88,7 @@ type RunLoop struct {
 	asked    map[string]openAsk
 	warnings map[int]string
 	halted   *Signal
+	serving  bool
 }
 
 type openAsk struct {
@@ -135,7 +136,7 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 	if l.Ask != nil {
 		qctx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		go l.serveQuestions(qctx)
+		l.ServeQuestions(qctx)
 	}
 	for _, ph := range list {
 		if !landed(prior, ph.Number) {
@@ -639,6 +640,19 @@ func (l *RunLoop) warn(sig Signal) {
 	l.fire(l.Hooks.OnWarn, "warning", sig.Step.Phase, sig.Step.Kind, sig.Reason)
 }
 
+func (l *RunLoop) ServeQuestions(ctx context.Context) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.serving {
+		return
+	}
+	l.serving = true
+	if l.runDir == "" {
+		l.runDir = l.Store.Dir(l.RunID)
+	}
+	go l.serveQuestions(ctx)
+}
+
 func (l *RunLoop) serveQuestions(ctx context.Context) {
 	for {
 		select {
@@ -906,10 +920,14 @@ func (l *RunLoop) block(ph Phase, step string, out Outcome) int {
 }
 
 func (l *RunLoop) dependents(n int) []int {
+	return Dependents(l.Plan, n)
+}
+
+func Dependents(plan Plan, n int) []int {
 	reached := map[int]bool{n: true}
 	for changed := true; changed; {
 		changed = false
-		for _, ph := range l.Plan.Phases {
+		for _, ph := range plan.Phases {
 			if reached[ph.Number] {
 				continue
 			}
@@ -922,7 +940,7 @@ func (l *RunLoop) dependents(n int) []int {
 		}
 	}
 	var out []int
-	for _, ph := range l.Plan.Phases {
+	for _, ph := range plan.Phases {
 		if reached[ph.Number] && ph.Number != n {
 			out = append(out, ph.Number)
 		}

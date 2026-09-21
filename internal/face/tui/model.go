@@ -19,7 +19,6 @@ const keptWarnings = 5
 type Header struct {
 	RunID, Todo, Report string
 	Started             time.Time
-	Watchdog            bool
 }
 
 type Row struct {
@@ -64,6 +63,7 @@ func (s Step) Remaining(now time.Time) (time.Duration, bool) {
 
 type Open struct {
 	ID, Kind, Text string
+	Recommended    string
 	Phase          int
 	Options        []string
 	reply          chan string

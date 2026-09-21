@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"r-loop/internal/core"
 )
@@ -43,7 +44,7 @@ func (m Model) ask(msg askMsg) Model {
 			return m
 		}
 	}
-	m.Questions = append(m.Questions, Open{ID: q.ID, Phase: q.Step.Phase, Kind: q.Step.Kind, Text: q.Text, Options: q.Options, reply: msg.reply})
+	m.Questions = append(m.Questions, Open{ID: q.ID, Phase: q.Step.Phase, Kind: q.Step.Kind, Text: q.Text, Options: q.Options, Recommended: q.Recommended, reply: msg.reply})
 	return m
 }
 
@@ -151,7 +152,7 @@ func (m Model) questions(w int) []string {
 			continue
 		}
 		if rest != "" {
-			for _, l := range strings.Split(rest, "\n") {
+			for _, l := range wrap(rest, w-3) {
 				lines = append(lines, fill(th.Text, "   "+l, w))
 			}
 		}
@@ -159,7 +160,16 @@ func (m Model) questions(w int) []string {
 			continue
 		}
 		for n, o := range q.Options {
-			lines = append(lines, fill(th.Text, fmt.Sprintf("   %d. %s", n+1, o), w))
+			if o == q.Recommended {
+				o += " (recommended)"
+			}
+			for i, l := range wrap(fmt.Sprintf("%d. %s", n+1, o), w-6) {
+				indent := "   "
+				if i > 0 {
+					indent = "      "
+				}
+				lines = append(lines, fill(th.Text, indent+l, w))
+			}
 		}
 		draft := ""
 		if m.draftFor == q.ID {
@@ -171,4 +181,20 @@ func (m Model) questions(w int) []string {
 		lines = append(lines, fill(th.Label, a, w))
 	}
 	return lines
+}
+
+func wrap(text string, width int) []string {
+	var out []string
+	for _, l := range strings.Split(text, "\n") {
+		if width < 10 {
+			out = append(out, l)
+			continue
+		}
+		indent := l[:len(l)-len(strings.TrimLeft(l, " "))]
+		body := ansi.Wordwrap(strings.TrimLeft(l, " "), width-len(indent), "")
+		for _, part := range strings.Split(body, "\n") {
+			out = append(out, indent+part)
+		}
+	}
+	return out
 }

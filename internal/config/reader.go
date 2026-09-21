@@ -54,8 +54,10 @@ type StepRow struct {
 
 type Watchdog struct {
 	Provider, Model, Effort                              string
+	Fallback                                             Fallback
 	Allow                                                []string
 	RemedyWindow, AnswerWindow, CheckTimeout, StallGrace time.Duration
+	UnblockTimeout                                       time.Duration
 	OvertimeFactor, DiffFactor                           float64
 	MaxRestarts                                          int
 }
@@ -119,8 +121,8 @@ var topSchema = schema{
 	"unattended": schema{"allow": nil, "questionTimeout": nil},
 	"notify":     schema{"onHalt": nil, "onWarn": nil, "onDone": nil},
 	"watchdog": schema{
-		"provider": nil, "model": nil, "effort": nil, "allow": nil, "maxRestarts": nil,
-		"remedyWindow": nil, "answerWindow": nil, "checkTimeout": nil, "stallGrace": nil,
+		"provider": nil, "model": nil, "effort": nil, "fallback": nil, "allow": nil, "maxRestarts": nil,
+		"remedyWindow": nil, "answerWindow": nil, "checkTimeout": nil, "stallGrace": nil, "unblockTimeout": nil,
 		"overtimeFactor": nil, "diffFactor": nil,
 	},
 }
@@ -513,6 +515,7 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 	}{
 		{"watchdog.remedyWindow", &w.RemedyWindow}, {"watchdog.answerWindow", &w.AnswerWindow},
 		{"watchdog.checkTimeout", &w.CheckTimeout}, {"watchdog.stallGrace", &w.StallGrace},
+		{"watchdog.unblockTimeout", &w.UnblockTimeout},
 		{"land.gateTimeout", &cfg.Land.GateTimeout}, {"unattended.questionTimeout", &cfg.Unattended.QuestionTimeout},
 	} {
 		if *f.dst, err = r.duration(f.path); err != nil {
@@ -533,6 +536,19 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 	}
 	if w.Allow, err = r.classes("watchdog.allow"); err != nil {
 		return err
+	}
+	if fb, fl := r.lookup("watchdog.fallback"); fb == nil || isNull(fb) {
+		r.prov["watchdog.fallback"] = defaultSource
+	} else {
+		r.prov["watchdog.fallback"] = source(fl, "watchdog.fallback")
+		pr, m, e, err := role(fl.file, "watchdog.fallback", fb)
+		if err != nil {
+			return err
+		}
+		if pr == w.Provider {
+			return errAt(fl.file, fb, "watchdog.fallback names the watchdog's own provider %q", pr)
+		}
+		w.Fallback = Fallback{pr, m, e}
 	}
 	cfg.Unattended.Allow, err = r.classes("unattended.allow")
 	return err

@@ -72,8 +72,6 @@ func (p *tickPlan) Tick(path string, phase int) error {
 	return os.WriteFile(path, []byte(strings.ReplaceAll(string(data), box, fmt.Sprintf("- [x] p%d ", phase))), 0o644)
 }
 
-func (p *tickPlan) Stamp(path, entryName, resolvedLine string) error { return nil }
-
 type memStore struct {
 	mu      sync.Mutex
 	dir     string

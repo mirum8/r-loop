@@ -68,6 +68,9 @@ func (f *Face) Ask(q core.Question) (string, error) {
 	defer f.readMu.Unlock()
 	block := fmt.Sprintf("?  %s  %s%s\n", q.ID, where(q.Step.Phase, q.Step.Kind), q.Text)
 	for i, o := range q.Options {
+		if o == q.Recommended {
+			o += " (recommended)"
+		}
 		block += fmt.Sprintf("   %d. %s\n", i+1, o)
 	}
 	f.print("%s", block)

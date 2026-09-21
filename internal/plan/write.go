@@ -42,38 +42,6 @@ func (Reader) Tick(path string, phase int) error {
 	return writeLines(path, lines)
 }
 
-func (Reader) Stamp(path, entryName, resolvedLine string) error {
-	lines, err := readLines(path)
-	if err != nil {
-		return err
-	}
-	_, spans := resolveFirst(lines)
-	for _, s := range spans {
-		if s.entry.Name != entryName {
-			continue
-		}
-		if s.entry.Ticked {
-			return fmt.Errorf("%s: entry %q is already ticked", path, entryName)
-		}
-		if s.entry.HasBox {
-			lines[s.start] = entryBoxRe.ReplaceAllString(lines[s.start], "${1}[x]")
-		} else {
-			marker := entryMarkerRe.FindString(lines[s.start])
-			lines[s.start] = marker + "[x] " + strings.TrimPrefix(lines[s.start], marker)
-		}
-		last := s.end - 1
-		stamp := "      Resolved: " + resolvedLine
-		if strings.HasSuffix(lines[last], "\n") {
-			stamp += "\n"
-		} else {
-			lines[last] += "\n"
-		}
-		lines = append(lines[:s.end], append([]string{stamp}, lines[s.end:]...)...)
-		return writeLines(path, lines)
-	}
-	return fmt.Errorf("%s: no Resolve first entry %q", path, entryName)
-}
-
 func readLines(path string) ([]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

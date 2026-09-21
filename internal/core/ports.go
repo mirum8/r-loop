@@ -14,7 +14,6 @@ var (
 type PlanSource interface {
 	Read(path string) (Plan, error)
 	Tick(path string, phase int) error
-	Stamp(path, entryName, resolvedLine string) error
 }
 
 type OpenSpec struct {

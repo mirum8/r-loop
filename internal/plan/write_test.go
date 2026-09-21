@@ -98,57 +98,6 @@ func TestTickUnknownPhase(t *testing.T) {
 	}
 }
 
-func TestStampBoxedEntry(t *testing.T) {
-	path := writePlan(t, tickPlan)
-
-	if err := (Reader{}).Stamp(path, "Open", "2026-09-18 — closed; because."); err != nil {
-		t.Fatalf("Stamp: %v", err)
-	}
-
-	b, _ := os.ReadFile(path)
-	want := strings.Replace(tickPlan,
-		"- [ ] **Open** — still?\n      Owner: platform. Blocks: Phase 3.\n",
-		"- [x] **Open** — still?\n      Owner: platform. Blocks: Phase 3.\n      Resolved: 2026-09-18 — closed; because.\n", 1)
-	if string(b) != want {
-		t.Errorf("after stamp:\n%s\nwant:\n%s", b, want)
-	}
-}
-
-func TestStampEntryAtEndOfFile(t *testing.T) {
-	content := "## Resolve first\n* **Last** — end?\n      Owner: x. Blocks: Phase 1."
-	path := writePlan(t, content)
-
-	if err := (Reader{}).Stamp(path, "Last", "done"); err != nil {
-		t.Fatalf("Stamp: %v", err)
-	}
-
-	b, _ := os.ReadFile(path)
-	want := "## Resolve first\n* [x] **Last** — end?\n      Owner: x. Blocks: Phase 1.\n      Resolved: done"
-	if string(b) != want {
-		t.Errorf("got %q, want %q", b, want)
-	}
-}
-
-func TestStampErrors(t *testing.T) {
-	ticked := strings.Replace(tickPlan, "- [ ] **Open**", "- [x] **Open**", 1)
-	for name, tc := range map[string]struct{ content, entry string }{
-		"not found":      {tickPlan, "Missing"},
-		"already ticked": {ticked, "Open"},
-		"no section":     {"### Phase 1 — One\n- [ ] a\n", "Open"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := writePlan(t, tc.content)
-
-			if err := (Reader{}).Stamp(path, tc.entry, "x"); err == nil {
-				t.Errorf("Stamp = nil, want an error")
-			}
-			if b, _ := os.ReadFile(path); string(b) != tc.content {
-				t.Errorf("file changed")
-			}
-		})
-	}
-}
-
 func TestTickZeroPaddedPhaseHeading(t *testing.T) {
 	path := writePlan(t, "### Phase 01 — One\n- [ ] a\n")
 

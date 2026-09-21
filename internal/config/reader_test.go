@@ -90,8 +90,8 @@ func TestDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Unattended, wantUnattended) {
 		t.Errorf("Unattended = %+v", cfg.Unattended)
 	}
-	wantWatchdog := Watchdog{Provider: "claude", Model: "sonnet", Allow: []string{}, RemedyWindow: 10 * time.Minute,
-		AnswerWindow: 5 * time.Minute, CheckTimeout: 10 * time.Minute, StallGrace: 2 * time.Minute,
+	wantWatchdog := Watchdog{Provider: "claude", Model: "opus", Effort: "high", Fallback: Fallback{Provider: "codex"}, Allow: []string{}, RemedyWindow: 10 * time.Minute,
+		AnswerWindow: 5 * time.Minute, CheckTimeout: 10 * time.Minute, StallGrace: 2 * time.Minute, UnblockTimeout: 2 * time.Hour,
 		OvertimeFactor: 2, DiffFactor: 3, MaxRestarts: 2}
 	if !reflect.DeepEqual(cfg.Watchdog, wantWatchdog) {
 		t.Errorf("Watchdog = %+v", cfg.Watchdog)
@@ -376,7 +376,8 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 		"gatefix codex gpt-5.6-sol high  ← provider flag:--provider model default effort .r-loop/config.yaml:land.fix.effort",
 		"override: implement provider codex (flag) replaces claude (.r-loop/config.yaml)",
 		"override: plan model sonnet (flag) replaces opus (default)",
-		"watchdog: claude sonnet low allow [deps]  ← provider default model default effort .r-loop/config.yaml:watchdog.effort",
+		"watchdog: claude opus low allow [deps]  ← provider default model default effort .r-loop/config.yaml:watchdog.effort",
+		"  fallback codex provider default provider default  ← default",
 	}, "\n") + "\n"
 	if got := Banner(cfg); got != want {
 		t.Errorf("banner:\n%s\nwant:\n%s", got, want)
@@ -486,4 +487,22 @@ func TestEmptyScalarReviewerRejected(t *testing.T) {
 	d.writeProject(t, "steps:\n  implement:\n    reviewers:\n      - \"\"\n")
 
 	d.loadErr(t, "config.yaml:4:")
+}
+
+func TestWatchdogFallbackMayNotBeItsOwnProvider(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "watchdog:\n  fallback: claude\n")
+
+	d.loadErr(t, "watchdog.fallback names the watchdog's own provider")
+}
+
+func TestWatchdogFallbackTakesABlock(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "watchdog:\n  fallback:\n    provider: codex\n    effort: high\n")
+
+	cfg := d.load(t)
+
+	if cfg.Watchdog.Fallback != (Fallback{Provider: "codex", Effort: "high"}) || cfg.Provenance["watchdog.fallback"] != ".r-loop/config.yaml:watchdog.fallback" {
+		t.Fatalf("fallback %+v from %q", cfg.Watchdog.Fallback, cfg.Provenance["watchdog.fallback"])
+	}
 }

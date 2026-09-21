@@ -31,12 +31,12 @@ import (
 )
 
 type Options struct {
-	Todo                   string
-	From                   int
-	Phases                 []int
-	Overrides              []config.Override
-	NoWatchdog, Unattended bool
-	Plain, DryRun          bool
+	Todo          string
+	From          int
+	Phases        []int
+	Overrides     []config.Override
+	Unattended    bool
+	Plain, DryRun bool
 }
 
 type Env struct {
@@ -124,7 +124,6 @@ func ParseArgs(args []string) (Options, error) {
 	for _, key := range []string{"provider", "model", "effort"} {
 		fs.Var(overrides{key, &o.Overrides}, key, "")
 	}
-	fs.BoolVar(&o.NoWatchdog, "no-watchdog", false, "")
 	fs.BoolVar(&o.Unattended, "unattended", false, "")
 	fs.BoolVar(&o.Plain, "plain", false, "")
 	fs.BoolVar(&o.DryRun, "dry-run", false, "")
@@ -198,7 +197,16 @@ func (w *Wiring) Execute(opts core.RunOptions) int {
 	} else {
 		go w.pollAnswers(ctx)
 		w.startTUI()
-		code = w.Loop.Run(ctx, opts)
+		w.Loop.ServeQuestions(ctx)
+		var err error
+		var empty bool
+		if opts, empty, err = w.unblock(ctx, opts); err != nil {
+			code = fail(w.Env, err)
+		} else if empty {
+			code = 0
+		} else {
+			code = w.Loop.Run(ctx, opts)
+		}
 	}
 	if err := w.Dog.Stop(); err != nil {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: close watchdog: %v\n", err)
@@ -342,9 +350,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	w.Remedies = &core.Remedies{Allow: allow, Face: w.Face, Store: w.Store, Window: cfg.Watchdog.RemedyWindow, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks}
 	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, Pane: env.Pane, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow}
 	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Repo: repo, AnswerWindow: cfg.Watchdog.AnswerWindow}
-	if !opts.NoWatchdog {
-		w.Loop.RemedyWindow = cfg.Watchdog.RemedyWindow
-	}
+	w.Loop.RemedyWindow = cfg.Watchdog.RemedyWindow
 	return w, nil
 }
 
@@ -359,20 +365,31 @@ func addedClasses(cfg config.LoopConfig) []string {
 }
 
 func (w *Wiring) startWatchdog(ctx context.Context) error {
-	if w.Opts.NoWatchdog {
-		at := time.Now()
-		ev := core.Event{At: at, Kind: "watchdog-skipped"}
-		if err := w.Store.Append(w.Loop.RunID, core.Record{Kind: core.RecordEvent, At: at, Event: &ev}); err != nil {
-			return exit(2, "%v", err)
-		}
-		return nil
-	}
 	wd := w.Config.Watchdog
+	err := w.startDog(ctx, "watchdog.provider", wd.Provider, wd.Model, wd.Effort)
+	if fb := wd.Fallback; err != nil && fb.Provider != "" {
+		first := err
+		if err = w.startDog(ctx, "watchdog.fallback", fb.Provider, fb.Model, fb.Effort); err != nil {
+			err = exit(4, "watchdog did not start: %v; fallback: %v", first, err)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	w.Watch.Dog = w.Dog
+	w.Watch.PhaseCheck = &core.PhaseCheck{Dog: w.Dog, Repo: w.Loop.Sessions.Repo, Timeout: wd.CheckTimeout}
+	w.Router.Dog = w.Dog
+	w.Watch.Router = w.Router
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer})
+	return nil
+}
+
+func (w *Wiring) startDog(ctx context.Context, field, provider, model, effort string) error {
 	url := w.Ask.WatchdogURL()
 	mcpPath := filepath.Join(w.Dog.RunDir, "watchdog.mcp.json")
-	args, err := w.resolve(wd.Provider, wd.Model, wd.Effort, url, mcpPath)
+	args, err := w.resolve(provider, model, effort, url, mcpPath)
 	if err != nil {
-		return exit(2, "watchdog.provider: %v", err)
+		return exit(2, "%s: %v", field, err)
 	}
 	if slices.ContainsFunc(args.Args, func(a string) bool { return strings.Contains(a, mcpPath) }) {
 		if err := providers.WriteMCPConfig(mcpPath, url); err != nil {
@@ -383,11 +400,6 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	if err := w.Dog.Start(ctx); err != nil {
 		return exit(4, "watchdog did not start: %v", err)
 	}
-	w.Watch.Dog = w.Dog
-	w.Watch.PhaseCheck = &core.PhaseCheck{Dog: w.Dog, Repo: w.Loop.Sessions.Repo, Timeout: wd.CheckTimeout}
-	w.Router.Dog = w.Dog
-	w.Watch.Router = w.Router
-	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer})
 	return nil
 }
 
@@ -401,11 +413,10 @@ func (w *Wiring) startTUI() {
 		started = time.Now()
 	}
 	w.TUI.Start(tui.Header{
-		RunID:    w.Loop.RunID,
-		Todo:     w.Opts.Todo,
-		Report:   w.Plain.Report,
-		Started:  started,
-		Watchdog: !w.Opts.NoWatchdog,
+		RunID:   w.Loop.RunID,
+		Todo:    w.Opts.Todo,
+		Report:  w.Plain.Report,
+		Started: started,
 	}, w.Plan.Phases, run.Events)
 }
 

@@ -31,9 +31,8 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 	replan := fs.Bool("replan", false, "")
 	plain := fs.Bool("plain", false, "")
 	unattended := fs.Bool("unattended", false, "")
-	noWatchdog := fs.Bool("no-watchdog", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
-		return nil, core.RunOptions{}, exit(2, "usage: r-loop resume [--replan] [--unattended] [--no-watchdog] [--plain]")
+		return nil, core.RunOptions{}, exit(2, "usage: r-loop resume [--replan] [--unattended] [--plain]")
 	}
 	repo, err := gitrepo.Open(env.Dir)
 	if err != nil {
@@ -57,7 +56,7 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 	if run.Status == core.RunFinished {
 		return nil, core.RunOptions{}, exit(2, "nothing to resume: run %s finished", id)
 	}
-	w, err := Wire(Options{Todo: run.Todo, Plain: *plain, Unattended: *unattended, NoWatchdog: *noWatchdog || skippedWatchdog(run)}, env)
+	w, err := Wire(Options{Todo: run.Todo, Plain: *plain, Unattended: *unattended}, env)
 	if err != nil {
 		return nil, core.RunOptions{}, err
 	}
@@ -84,14 +83,8 @@ func (w *Wiring) resume(run core.RunState, replan bool) (core.RunOptions, error)
 	if err := w.Host.Reachable(); err != nil {
 		return core.RunOptions{}, exit(4, "herdr server unreachable: %v", err)
 	}
-	answers, err := w.unblocked(list)
-	if err != nil {
+	if err := w.clean(); err != nil {
 		return core.RunOptions{}, err
-	}
-	for _, ev := range answers {
-		if err := w.Store.Append(id, core.Record{Kind: core.RecordEvent, At: ev.At, Event: &ev}); err != nil {
-			return core.RunOptions{}, exit(2, "%v", err)
-		}
 	}
 	halted := haltedPhases(run, list)
 	for _, n := range halted {
@@ -127,6 +120,7 @@ func recordedRunList(run core.RunState) []int {
 		if e.Kind != "run-list" {
 			continue
 		}
+		phases = nil
 		for _, s := range strings.Split(e.Fields["phases"], ",") {
 			if n, err := strconv.Atoi(s); err == nil {
 				phases = append(phases, n)
@@ -134,19 +128,6 @@ func recordedRunList(run core.RunState) []int {
 		}
 	}
 	return phases
-}
-
-func skippedWatchdog(run core.RunState) bool {
-	skipped := false
-	for _, e := range run.Events {
-		switch e.Kind {
-		case "watchdog-skipped":
-			skipped = true
-		case "watchdog-start":
-			skipped = false
-		}
-	}
-	return skipped
 }
 
 func haltedPhases(run core.RunState, list []core.Phase) []int {

@@ -303,3 +303,19 @@ func TestWithdrawEndsAWaitingFaceAsk(t *testing.T) {
 		t.Fatal("Ask did not return")
 	}
 }
+
+func TestAQuestionWithOptionsMarksTheRecommendedOneAndWrapsItsText(t *testing.T) {
+	m := newModel(recorded())
+	m.Width = 60
+	reply := make(chan string, 1)
+	brief := "R1 — JDT LS inside a container · decision\nPhase 6 sizes WorkspacePool from pool-depth, and its test asserts that a warm pool fits the memory budget of three gigabytes."
+	m = m.ask(askMsg{q: core.Question{ID: "q7", Step: core.StepKey{Kind: "watchdog"}, Text: brief, Options: []string{"Measure first", "Assume 5 s and 1.5 GB"}, Recommended: "Measure first"}, reply: reply})
+
+	view := m.View()
+
+	for _, want := range []string{"1. Measure first (recommended)", "2. Assume 5 s and 1.5 GB", "three gigabytes."} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view missing %q:\n%s", want, view)
+		}
+	}
+}

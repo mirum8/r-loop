@@ -18,10 +18,12 @@ import (
 )
 
 type dogHost struct {
-	mu       sync.Mutex
-	calls    []string
-	startErr error
-	stale    map[string]string
+	mu         sync.Mutex
+	calls      []string
+	startErr   error
+	failStarts int
+	stale      map[string]string
+	onPrompt   func(text string)
 }
 
 func (h *dogHost) record(format string, args ...any) {
@@ -42,10 +44,19 @@ func (h *dogHost) Open(spec core.OpenSpec) (core.Workspace, error) {
 }
 func (h *dogHost) Start(pane, name, kind string, args []string) (core.Agent, error) {
 	h.record("Start %s %s %s %s", pane, name, kind, strings.Join(args, " "))
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.failStarts > 0 {
+		h.failStarts--
+		return core.Agent{}, fmt.Errorf("usage limit")
+	}
 	return core.Agent{Name: name, Pane: pane}, h.startErr
 }
 func (h *dogHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
 	h.record("Prompt %s %s", agent, text)
+	if h.onPrompt != nil {
+		h.onPrompt(text)
+	}
 	return nil
 }
 func (h *dogHost) State(agent string) (core.AgentState, error)  { return core.AgentWorking, nil }
@@ -133,7 +144,7 @@ func TestExecuteStartsTheWatchdogAndAHaltThroughItsMCPSurfaceExits5(t *testing.T
 	runDir := w.Store.Dir(w.Loop.RunID)
 	mcpPath := filepath.Join(runDir, "watchdog.mcp.json")
 	calls := dog.Calls()
-	if len(calls) < 3 || calls[0] != `Split "driver-pane" right `+f.root || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model sonnet --mcp-config "+mcpPath || !strings.Contains(calls[2], runDir) {
+	if len(calls) < 3 || calls[0] != `Split "driver-pane" right `+f.root || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model opus --effort high --mcp-config "+mcpPath || !strings.Contains(calls[2], runDir) {
 		t.Errorf("watchdog calls %q", calls)
 	}
 	if data, _ := os.ReadFile(mcpPath); !strings.Contains(string(data), w.Ask.WatchdogURL()) {
@@ -268,41 +279,6 @@ func TestAWatchdogThatFailsToStartExits4NamingTheHerdrCode(t *testing.T) {
 	}
 }
 
-func TestNoWatchdogStartsNothingKeepsTheChecksAndRecordsWatchdogSkippedOnce(t *testing.T) {
-	f := newResumeFixture(t, noReviewConfig)
-	w, err := f.preflight(f.todo, "--plain", "--phases", "1", "--no-watchdog")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w.Loop.RemedyWindow != 0 {
-		t.Errorf("remedy window %s", w.Loop.RemedyWindow)
-	}
-	f.sim(w, newSim())
-	dog := &dogHost{}
-	w.Dog.Host = dog
-
-	if code := w.Execute(core.RunOptions{Phases: []int{1}}); code != 0 {
-		t.Fatalf("exit %d\n%s", code, f.out)
-	}
-
-	if calls := dog.Calls(); len(calls) != 0 {
-		t.Errorf("watchdog touched: %q", calls)
-	}
-	if w.Loop.Watcher != w.Watch || len(w.Watch.Checks) != 5 || w.Watch.Dog != nil || w.Watch.Route(context.Background(), core.Question{ID: "q1"}) {
-		t.Errorf("watch %+v", w.Watch)
-	}
-	if got := stepEvents(f.load(w.Loop.RunID), "watchdog-skipped"); len(got) != 1 {
-		t.Errorf("watchdog-skipped events %+v", got)
-	}
-	if got := stepEvents(f.load(w.Loop.RunID), "phase-check-skipped"); len(got) != 1 || w.Watch.PhaseCheck != nil {
-		t.Errorf("phase-check-skipped events %+v, check %+v", got, w.Watch.PhaseCheck)
-	}
-	report, _ := os.ReadFile(filepath.Join(w.Store.Dir(w.Loop.RunID), "report.md"))
-	if strings.Count(string(report), "watchdog-skipped") != 1 {
-		t.Errorf("report:\n%s", report)
-	}
-}
-
 func TestAWatchdogAskFlagWithTheConfigPathEmbeddedStillGetsItsConfig(t *testing.T) {
 	f := newResumeFixture(t, noReviewConfig+"providers:\n  claude:\n    kind: claude\n    modelFlag: --model {model}\n    askFlag: --cfg={mcpConfig}\n    doneSignal: sentinel\n    ask: mcp\n    review: /code-review\n")
 	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
@@ -318,7 +294,7 @@ func TestAWatchdogAskFlagWithTheConfigPathEmbeddedStillGetsItsConfig(t *testing.
 	}
 
 	mcpPath := filepath.Join(w.Store.Dir(w.Loop.RunID), "watchdog.mcp.json")
-	if calls := dog.Calls(); len(calls) < 2 || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model sonnet --cfg="+mcpPath {
+	if calls := dog.Calls(); len(calls) < 2 || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model opus --cfg="+mcpPath {
 		t.Errorf("watchdog calls %q", calls)
 	}
 	if data, _ := os.ReadFile(mcpPath); !strings.Contains(string(data), "/mcp/watchdog/") {
@@ -335,8 +311,5 @@ func TestAWatchdogProviderWithoutMCPIsRefusedInPreflight(t *testing.T) {
 
 	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), "watchdog.provider: provider plainbot has no MCP ask channel") {
 		t.Fatalf("code=%d err=%v", code, err)
-	}
-	if _, err := f.preflight(f.todo, "--plain", "--no-watchdog"); err != nil {
-		t.Fatal(err)
 	}
 }

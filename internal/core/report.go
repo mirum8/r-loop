@@ -19,6 +19,7 @@ func Report(state RunState, plan Plan) string {
 	fmt.Fprintf(&b, "human touches: %d\n", human)
 	writeSection(&b, "Automatic decisions", decisions(state))
 	writeSection(&b, "Landed", landedLines(state))
+	writeSection(&b, "Blockers", blockerLines(state))
 	writeSection(&b, "Phase checks", phaseCheckLines(state))
 	if state.Status == RunHalted {
 		b.WriteString("\n## Halt\n\n")
@@ -200,6 +201,19 @@ func assumptions(b *strings.Builder, st RunState) {
 	}
 }
 
+func blockerLines(st RunState) []string {
+	var out []string
+	for _, ev := range st.Events {
+		switch f := ev.Fields; ev.Kind {
+		case "entry-resolved":
+			out = append(out, fmt.Sprintf("%s → %s", f["entry"], f["resolved"]))
+		case "entry-deferred":
+			out = append(out, fmt.Sprintf("%s still open: phase %s skipped", f["entry"], f["phases"]))
+		}
+	}
+	return out
+}
+
 func questionLines(st RunState) []string {
 	var out []string
 	for _, ev := range st.Events {
@@ -208,7 +222,11 @@ func questionLines(st RunState) []string {
 		}
 	}
 	for _, q := range st.Questions {
-		line := fmt.Sprintf("%s %s: %s", q.ID, where(q.Step.Phase, q.Step.Kind), q.Text)
+		text := q.Text
+		if q.Step.Kind == "watchdog" {
+			text, _, _ = strings.Cut(text, "\n")
+		}
+		line := fmt.Sprintf("%s %s: %s", q.ID, where(q.Step.Phase, q.Step.Kind), text)
 		if q.AnsweredBy == "" {
 			line += " (open)"
 		} else {

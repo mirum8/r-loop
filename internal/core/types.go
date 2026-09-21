@@ -36,10 +36,17 @@ type Milestone struct {
 	Phases []int
 }
 
+const (
+	EntryDecision     = "decision"
+	EntryPerson       = "person"
+	EntryUnclassified = "unclassified"
+)
+
 type Entry struct {
-	Name, Body                               string
+	Name, Body, Kind                         string
 	Ticked, HasBox                           bool
 	Owner, Blocks, Timebox, Output, Resolved string
+	Alternative, Outstanding                 string
 	BlocksAll                                bool
 	BlocksPhases                             []int
 	Malformed                                []string

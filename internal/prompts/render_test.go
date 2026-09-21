@@ -207,7 +207,7 @@ func TestWatchdogHasNoSentinelParagraph(t *testing.T) {
 	if strings.Contains(text, `"outcome"`) || strings.Contains(text, "/runs/r1/phase-7/plan-a1.sentinel") {
 		t.Errorf("watchdog carries the sentinel paragraph:\n%s", text)
 	}
-	for _, want := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "never approve"} {
+	for _, want := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "ask_user", "You are a full session", "Never commit, merge or push yourself"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q", want)
 		}
@@ -243,8 +243,7 @@ func TestWatchdogCarriesTheRemedyRule(t *testing.T) {
 		"propose the exact command with `propose_remedy`",
 		"run it only when the decision is `authorised`",
 		"then call `restart_step`",
-		"Never edit code, tests or the plan",
-		"never merge, push, or delete anything that holds work",
+		"Never edit code or tests yourself, and never delete anything that holds work",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q:\n%s", want, text)
@@ -471,5 +470,28 @@ func TestReviewAsksForATestPerCriterionOnlyForAnItem(t *testing.T) {
 	}
 	if !strings.Contains(planReview, "in the plan's `## Tests`") || !strings.Contains(planReview, "## Evidence") {
 		t.Errorf("plan review:\n%s", planReview)
+	}
+}
+
+func TestWatchdogWalksTheBlockersLikePlanUnblock(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"## Resolving blockers",
+		"one at a time, in the order given",
+		"Simplified Technical English",
+		"two to four options, each with what it costs",
+		"`I don't know — take the recommendation`",
+		"`Not now — skip phase <N> this run`",
+		"`Confirmed done`",
+		"Resolved: <YYYY-MM-DD> — <the decision>; <the force that settled it>",
+		"(recommended; not contested)",
+		"Never edit that place yourself",
+		"Change nothing else in the plan and no other file",
+		"Carry the walk forward",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q", want)
+		}
 	}
 }
