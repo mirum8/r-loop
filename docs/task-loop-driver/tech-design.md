@@ -460,6 +460,13 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   question, the halt banner) fall back to inverse.
 - **Input** — `Face.Ask` in the questions region; a `yes`/`no` question is a consent line. An
   answered question, a Resolve-first entry included, becomes `<id>  answered by <who>`.
+- **Stop** — `ctrl+c` on a live run asks `stop the run? … [y/n]`; `y` marks the run aborted,
+  exactly as `r-loop abort` does (the live step's session and worktree are left for resume); any
+  other key cancels. Before a run exists (a Resolve-first question at startup) `y` leaves every
+  open question unanswered, so preflight exits 4 and nothing is stamped.
+- **Dry run** — after the run list, each open `## Resolve first` entry that blocks a phase in it
+  is named: `open ## Resolve first: "<name>" blocks phase <n> — the run will ask for it` (TUI) or
+  `… the run refuses until it is resolved: /r:plan-unblock <todo>` (`--plain`).
 
 ## Milestone 7 — The watchdog
 

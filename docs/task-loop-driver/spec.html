@@ -3101,7 +3101,8 @@ named reason on stderr; there is nothing paginated.</p>
           <code>--unattended</code>,
           <code>--plain</code>, <code>--dry-run</code></td>
       <td>the TUI, or with <code>--plain</code> a banner naming the resolved rows, one line per step
-          transition and review round, and a final report</td></tr>
+          transition and review round, and a final report; <code>--dry-run</code> prints the run
+          list and each open <code>## Resolve first</code> entry that blocks it</td></tr>
   <tr><td><code>r-loop status</code></td><td>Where the current run is</td><td><code>--plain</code></td>
       <td>phase, step, provider, workspace, time live, open questions, warnings; a driver whose pid
           is gone is named with <code>r-loop resume</code> and no live step, and a phase outside
@@ -3113,7 +3114,8 @@ named reason on stderr; there is nothing paginated.</p>
   <tr><td><code>r-loop answer</code></td><td>Answer an open question from any shell</td>
       <td>the question id from <code>r-loop status</code>, and the answer text</td>
       <td>nothing on success; exit 2 when the id is not open</td></tr>
-  <tr><td><code>r-loop abort</code></td><td>Stop scheduling, leave everything standing</td><td>—</td>
+  <tr><td><code>r-loop abort</code></td><td>Stop scheduling, leave everything standing; in the
+      TUI, <code>ctrl+c</code> then <code>y</code> does the same</td><td>—</td>
       <td>the workspace and worktree left behind, named</td></tr>
 </table>
 
