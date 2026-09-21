@@ -220,19 +220,57 @@ func TestElapsedTicksEverySecond(t *testing.T) {
 	}
 }
 
-func TestCtrlCDuringALiveStepDoesNotExit(t *testing.T) {
+func TestCtrlCDuringALiveStepAsksBeforeStopping(t *testing.T) {
 	m := newModel(recorded())
+	aborted := 0
+	m.abort = func() error { aborted++; return nil }
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 
-	if cmd != nil {
-		t.Fatal("ctrl+c quit a live run")
+	if cmd != nil || aborted != 0 {
+		t.Fatalf("ctrl+c alone quit or aborted: cmd=%v aborted=%d", cmd, aborted)
 	}
-	if !strings.Contains(next.(Model).View(), "use r-loop abort to stop the run") {
+	if !strings.Contains(next.(Model).View(), "stop the run?") {
+		t.Fatalf("view:\n%s", next.(Model).View())
+	}
+	next, cmd = next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if cmd != nil || aborted != 1 {
+		t.Fatalf("y: cmd=%v aborted=%d", cmd, aborted)
+	}
+	if !strings.Contains(next.(Model).View(), "abort requested") {
 		t.Fatalf("view:\n%s", next.(Model).View())
 	}
 	if _, cmd := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")}); cmd != nil {
 		t.Fatal("q quit a live run")
+	}
+}
+
+func TestAnyKeyButYCancelsTheStop(t *testing.T) {
+	m := newModel(recorded())
+	aborted := 0
+	m.abort = func() error { aborted++; return nil }
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	next, _ = next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+
+	if aborted != 0 || strings.Contains(next.(Model).View(), "stop the run?") {
+		t.Fatalf("aborted=%d view:\n%s", aborted, next.(Model).View())
+	}
+}
+
+func TestStoppingBeforeTheRunStartsLeavesItsQuestionsUnanswered(t *testing.T) {
+	m := NewModel(Header{Todo: "docs/x/todo.md", Started: t0}, plan(), NewTheme(lipgloss.NewRenderer(io.Discard), false))
+	reply := make(chan string, 1)
+	m = m.ask(askMsg{q: core.Question{ID: "r1", Text: "resolve first: X"}, reply: reply})
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	next, _ = next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+
+	if _, ok := <-reply; ok {
+		t.Fatal("the question was answered")
+	}
+	if len(next.(Model).Questions) != 0 {
+		t.Fatalf("questions left: %+v", next.(Model).Questions)
 	}
 }
 

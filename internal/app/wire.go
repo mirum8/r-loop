@@ -249,6 +249,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	if useTUI(opts.Plain, terminal(env.Stdin), terminal(env.Stdout)) {
 		_, noColor := os.LookupEnv("NO_COLOR")
 		w.TUI = &tui.Face{In: env.Stdin, Out: env.Stdout, NoColor: noColor}
+		w.TUI.Abort = func() error { return w.Store.MarkAbort(w.Loop.RunID) }
 		w.Face = w.TUI
 	}
 	w.Ask = &askmcp.Server{Store: w.Store}

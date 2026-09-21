@@ -89,6 +89,8 @@ type Model struct {
 	Blocked   string
 	Resume    string
 	Notice    string
+	stopping  bool
+	abort     func() error
 	Now       time.Time
 	Width     int
 	Height    int
@@ -262,8 +264,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.String() == "q" && m.Status != "":
 			return m, tea.Quit
+		case m.stopping:
+			m.confirmStop(msg)
 		case msg.Type == tea.KeyCtrlC && m.Status == "":
-			m.Notice = "use r-loop abort to stop the run"
+			m.stopping, m.Notice = true, "stop the run? the live step's session and worktree are left for resume [y/n]"
 		default:
 			m.input(msg)
 		}
@@ -275,6 +279,7 @@ type Face struct {
 	In      io.Reader
 	Out     io.Writer
 	NoColor bool
+	Abort   func() error
 	mu      sync.Mutex
 	prog    *tea.Program
 	backlog []core.Event
@@ -288,6 +293,7 @@ func (f *Face) Start(h Header, phases []core.Phase, history []core.Event) {
 		r.SetColorProfile(termenv.ANSI)
 	}
 	m := NewModel(h, phases, NewTheme(r, f.NoColor))
+	m.abort = f.Abort
 	m.Now = time.Now()
 	m = replay(m, history)
 	f.mu.Lock()
@@ -366,4 +372,28 @@ func (f *Face) Close() {
 	if f.report != "" {
 		fmt.Fprintf(f.Out, "report: %s\n", f.report)
 	}
+}
+
+func (m *Model) confirmStop(key tea.KeyMsg) {
+	m.stopping = false
+	if key.String() != "y" {
+		m.Notice = ""
+		return
+	}
+	if m.RunID == "" {
+		for len(m.Questions) > 0 {
+			m.drop(m.Questions[0].ID)
+		}
+		m.Notice = "stopping before the run starts"
+		return
+	}
+	if m.abort == nil {
+		m.Notice = "use r-loop abort to stop the run"
+		return
+	}
+	if err := m.abort(); err != nil {
+		m.Notice = "abort failed: " + err.Error()
+		return
+	}
+	m.Notice = "abort requested; the run stops before its next step"
 }
