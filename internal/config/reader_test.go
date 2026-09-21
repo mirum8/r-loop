@@ -66,7 +66,7 @@ func TestDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Pipeline, []string{"plan", "implement"}) {
 		t.Errorf("Pipeline = %v", cfg.Pipeline)
 	}
-	wantPlan := StepRow{Prompt: "plan", Check: "plan-file", Provider: "claude", Model: "opus", Effort: "high",
+	wantPlan := StepRow{Prompt: "plan", Check: "plan-file", Provider: "claude", Model: "fable", Effort: "medium",
 		Fallback: Fallback{Provider: "codex"}, Timeout: time.Hour,
 		Reviewers: []Reviewer{{Provider: "codex"}}, Rounds: 2, ReviewTimeout: 20 * time.Minute}
 	if !reflect.DeepEqual(cfg.Steps["plan"], wantPlan) {
@@ -364,7 +364,7 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 	)
 
 	want := strings.Join([]string{
-		"plan  claude  sonnet  high  1h  plan-file  ← provider default model flag:--model effort default",
+		"plan  claude  sonnet  medium  1h  plan-file  ← provider default model flag:--model effort default",
 		"  review rounds 2 20m  ← default",
 		"  reviewer codex provider default provider default  ← default",
 		"  fallback codex provider default provider default  ← default",
@@ -375,7 +375,7 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 		"milestone  claude  opus  medium  1h  report  ← default",
 		"gatefix codex gpt-5.6-sol high  ← provider flag:--provider model default effort .r-loop/config.yaml:land.fix.effort",
 		"override: implement provider codex (flag) replaces claude (.r-loop/config.yaml)",
-		"override: plan model sonnet (flag) replaces opus (default)",
+		"override: plan model sonnet (flag) replaces fable (default)",
 		"watchdog: claude opus low allow [deps]  ← provider default model default effort .r-loop/config.yaml:watchdog.effort",
 	}, "\n") + "\n"
 	if got := Banner(cfg); got != want {
@@ -420,7 +420,7 @@ func TestSwappedFallbackKeepsTheConfiguredModelAndEffortNotTheOverrides(t *testi
 func TestPlanProviderOverrideOntoFallbackSwaps(t *testing.T) {
 	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "plan", Value: "codex"})
 
-	if cfg.Steps["plan"].Fallback != (Fallback{Provider: "claude", Model: "opus", Effort: "high"}) {
+	if cfg.Steps["plan"].Fallback != (Fallback{Provider: "claude", Model: "fable", Effort: "medium"}) {
 		t.Errorf("Fallback = %+v", cfg.Steps["plan"].Fallback)
 	}
 }

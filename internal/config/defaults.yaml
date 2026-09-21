@@ -7,8 +7,8 @@ steps:
     prompt: plan
     check: plan-file
     provider: claude
-    model: opus
-    effort: high
+    model: fable
+    effort: medium
     timeout: 1h
     fallback: codex
     reviewers:
