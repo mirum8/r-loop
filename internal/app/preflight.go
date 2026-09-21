@@ -6,6 +6,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -33,6 +34,7 @@ func Preflight(w *Wiring) error {
 			fmt.Fprintf(env.Stdout, "phase %d  %s  %s\n", ph.Number, ph.Title, pipeline(w.Loop.Kinds, w.Plan.Backlog))
 		}
 		w.criteriaWarnings(env.Stdout, list)
+		w.blockingEntries(env.Stdout, list)
 		return nil
 	}
 	if err := w.Host.Reachable(); err != nil {
@@ -74,6 +76,30 @@ func Preflight(w *Wiring) error {
 	w.banner(env.Stdout, prompts)
 	w.criteriaWarnings(env.Stdout, list)
 	return nil
+}
+
+func (w *Wiring) blockingEntries(out io.Writer, list []core.Phase) {
+	numbers := make([]int, len(list))
+	for i, ph := range list {
+		numbers[i] = ph.Number
+	}
+	then := "the run will ask for it"
+	if w.Face == core.Face(w.Plain) {
+		then = "the run refuses until it is resolved: /r:plan-unblock " + w.Opts.Todo
+	}
+	for _, e := range w.Plan.Blocking(numbers) {
+		scope := "every phase"
+		if !e.BlocksAll {
+			var hit []string
+			for _, n := range e.BlocksPhases {
+				if slices.Contains(numbers, n) {
+					hit = append(hit, strconv.Itoa(n))
+				}
+			}
+			scope = "phase " + strings.Join(hit, ", ")
+		}
+		fmt.Fprintf(out, "open ## Resolve first: %q blocks %s — %s\n", e.Name, scope, then)
+	}
 }
 
 func (w *Wiring) criteriaWarnings(out io.Writer, list []core.Phase) {

@@ -589,3 +589,24 @@ func TestDryRunOfAnIssuesFileWarnsAboutItemsWithoutCriteria(t *testing.T) {
 		t.Errorf("no gate row or item gate in the dry run:\n%s", out)
 	}
 }
+
+func TestDryRunNamesAnOpenResolveFirstEntryThatBlocksTheRunList(t *testing.T) {
+	f := newFixture(t)
+	f.write("docs/topic/todo.md", "# Plan\n\n## Resolve first\n- [ ] **Measure it** — how fast?\n      Owner: me. Blocks: Phase 2.\n\n### Phase 1 — One\n- [ ] a\n\n### Phase 2 — Two\n- [ ] b\n")
+	f.commit()
+
+	code := f.main(f.todo, "--dry-run", "--plain", "--phases", "1")
+	quiet := f.out.String()
+	f.out.Reset()
+	code2 := f.main(f.todo, "--dry-run", "--plain")
+
+	if code != 0 || code2 != 0 {
+		t.Fatalf("exit %d, %d: %s", code, code2, f.err.String())
+	}
+	if strings.Contains(quiet, "Resolve first") {
+		t.Errorf("entry named for a run it does not block:\n%s", quiet)
+	}
+	if want := `open ## Resolve first: "Measure it" blocks phase 2 — the run refuses until it is resolved: /r:plan-unblock`; !strings.Contains(f.out.String(), want) {
+		t.Errorf("out:\n%s", f.out.String())
+	}
+}
