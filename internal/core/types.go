@@ -47,6 +47,7 @@ type Entry struct {
 
 type Plan struct {
 	Path, Topic  string
+	Backlog      bool
 	Phases       []Phase
 	Milestones   []Milestone
 	ResolveFirst []Entry

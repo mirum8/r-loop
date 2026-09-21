@@ -34,6 +34,13 @@ steps:
     model: opus
     effort: medium
     timeout: 1h
+  gate:
+    prompt: gate
+    check: report
+    provider: claude
+    model: sonnet
+    effort: medium
+    timeout: 30m
 
 land:
   fixRounds: 1

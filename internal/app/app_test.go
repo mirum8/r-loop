@@ -542,3 +542,50 @@ func TestTheTUIIsChosenOnlyWithATerminalOnStdinAndStdoutAndNoPlainFlag(t *testin
 		}
 	}
 }
+
+func TestAnUncommittedIssuesFileIsRefusedWithACommitHint(t *testing.T) {
+	f := newFixture(t)
+	f.commit()
+	f.fakeHerdr(0)
+	f.write("issues-polka-2026-08-18.md", "- [ ] [#1] one\n      - a criterion\n")
+	f.write("issues-polka-2026-08-18-notes.md", "# Notes\n")
+
+	_, err := f.preflight(filepath.Join(f.root, "issues-polka-2026-08-18.md"), "--plain")
+
+	if code := exitCode(t, err); code != 4 || !strings.Contains(err.Error(), "; commit issues-polka-2026-08-18-notes.md and issues-polka-2026-08-18.md first") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestADirtyTreeBeyondThePlanGetsNoCommitHint(t *testing.T) {
+	f := newFixture(t)
+	f.commit()
+	f.fakeHerdr(0)
+	f.write("issues.md", "- [ ] [#1] one\n")
+	f.write("notes.txt", "scratch")
+
+	_, err := f.preflight(filepath.Join(f.root, "issues.md"), "--plain")
+
+	if code := exitCode(t, err); code != 4 || strings.Contains(err.Error(), "first") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestDryRunOfAnIssuesFileWarnsAboutItemsWithoutCriteria(t *testing.T) {
+	f := newFixture(t)
+	f.write("issues.md", "- [ ] [#1] with criteria\n      - it works\n\n- [ ] [#2] bare title\n")
+	f.commit()
+
+	code := f.main(filepath.Join(f.root, "issues.md"), "--dry-run", "--plain")
+
+	out := f.out.String()
+	if code != 0 {
+		t.Fatalf("exit %d: %s%s", code, out, f.err.String())
+	}
+	if !strings.Contains(out, "warning: phase 2 has no acceptance criteria") || strings.Contains(out, "warning: phase 1 ") {
+		t.Errorf("out:\n%s", out)
+	}
+	if !strings.Contains(out, "gate  claude  sonnet") || !strings.Contains(out, "red at base") {
+		t.Errorf("no gate row or item gate in the dry run:\n%s", out)
+	}
+}

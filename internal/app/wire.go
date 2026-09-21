@@ -75,6 +75,7 @@ type Wiring struct {
 	TUI      *tui.Face
 	Notify   *notify.Shell
 	Gate     *core.LandGate
+	Probe    *core.GateProbe
 	Loop     *core.RunLoop
 	Ask      *askmcp.Server
 	Watch    *core.Watch
@@ -271,6 +272,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Resolve:    w.resolve,
 		Now:        time.Now,
 		StallGrace: cfg.Watchdog.StallGrace,
+		ItemGates:  pl.Backlog,
 	}
 	runners := core.DefaultRunners(sm, kinds)
 	impl := rows["implement"]
@@ -280,6 +282,15 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Timeout: impl.Timeout, Reviewers: impl.Reviewers, Rounds: 1, ReviewTimeout: impl.ReviewTimeout,
 	}}
 	ms := cfg.Steps["milestone"]
+	gs := cfg.Steps["gate"]
+	w.Probe = &core.GateProbe{
+		Sessions: sm,
+		Repo:     repo,
+		Kind:     core.StepKind{Name: "gate", Prompt: gs.Prompt, Check: gs.Check, Row: rows["gate"]},
+		Plan:     pl,
+		Face:     w.Face,
+		Timeout:  cfg.Land.GateTimeout,
+	}
 	w.Gate = &core.LandGate{
 		Repo:        repo,
 		Plan:        plan.Reader{},
@@ -298,6 +309,9 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		FixRounds: cfg.Land.FixRounds,
 		FixKind:   fixKind,
 		Runner:    core.DefaultRunners(sm, []core.StepKind{fixKind})["diff"],
+	}
+	if pl.Backlog {
+		w.Gate.Suite = w.Probe
 	}
 	w.Loop = &core.RunLoop{
 		Plan:        pl,
@@ -407,6 +421,7 @@ func (w *Wiring) bind(runID string) {
 	w.Gate.RunID = runID
 	w.Gate.Boundary.RunID = runID
 	w.Gate.Boundary.RunDir = dir
+	w.Probe.RunID, w.Probe.RunDir = runID, dir
 	w.Plain.Report = filepath.Join(dir, "report.md")
 	w.Notify.Log = filepath.Join(dir, "notify.log")
 	w.Ask.RunDir, w.Ask.RunID = dir, runID

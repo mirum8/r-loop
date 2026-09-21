@@ -48,6 +48,10 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 		h.mu.Unlock()
 	case "abort":
 		h.store.MarkAbort(spec.Env["R_LOOP_RUN"])
+	case "already-done":
+		writeFile(filepath.Join(spec.CWD, text), "status: already-done\n\n## Evidence\n- do it: store/store.go:12\n")
+		h.repo.setChanges(text)
+		writeFile(sentinel, `{"outcome":"ok","reason":"","at":"2026-09-18T10:05:00Z"}`)
 	default:
 		changed := "code.go"
 		if spec.Env["R_LOOP_STEP"] == "plan" {
@@ -784,7 +788,7 @@ func TestStepVarsFillsEveryTemplateVariable(t *testing.T) {
 		"Criteria": "- [ ] loop\n- [ ] report", "TodoPath": "docs/x/todo.md", "SpecDir": "docs/x",
 		"PlanPath": ".task-plans/phase-3-runloop-phases-steps-halts-and-the-re.md",
 		"Branch":   "r-loop/phase-3", "Base": "main", "Worktree": ".r-loop/wt/phase-3", "Sentinel": "",
-		"RunDir": "/runs/run-1", "AskURL": "", "PhaseWarnings": "", "ReviewedKind": "", "Round": 0, "Rounds": 0,
+		"RunDir": "/runs/run-1", "AskURL": "", "PhaseWarnings": "", "ItemGate": false, "ReviewedKind": "", "Round": 0, "Rounds": 0,
 		"ReviewCommand": "", "FindingsPath": "", "FindingsFiles": []FindingsFile(nil), "PriorFindings": "", "PriorVerdicts": "",
 		"RoundTree": "", "VerdictPath": "", "ReportPath": "", "MilestoneName": "Core", "MilestonePhases": "1, 2, 3, 4",
 		"Addendum": "",
@@ -914,5 +918,47 @@ func TestTheFaceSeesTheNudgeAfterTheStall(t *testing.T) {
 	}
 	if stored != 1 {
 		t.Errorf("nudge recorded %d times", stored)
+	}
+}
+
+func TestAnItemThePlanFindsAlreadyDoneIsSkippedNotLanded(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Sessions.ItemGates = true
+	r.loop.Plan.Phases[0].DoneWhen = "`go test ./...`"
+	r.host.behaviour["rloop-p2-plan"] = "already-done"
+
+	code := r.run(RunOptions{Phases: []int{1, 2}})
+
+	if code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	if got := r.calls("Land "); !slices.Equal(got, []string{"1"}) {
+		t.Errorf("landed %v, want only phase 1", got)
+	}
+	for _, c := range r.calls("SessionHost.Prompt ") {
+		if strings.Contains(c, "rloop-p2-implement") {
+			t.Errorf("phase 2 implement ran: %s", c)
+		}
+	}
+	skips := r.events("item-skipped")
+	if len(skips) != 1 || skips[0].Phase != 2 || skips[0].Fields["reason"] != "already-done: do it: store/store.go:12" {
+		t.Fatalf("item-skipped = %+v", skips)
+	}
+	if rep := r.report(t); !strings.Contains(rep, "phase 2: item-skipped: already-done: do it: store/store.go:12") {
+		t.Errorf("report:\n%s", rep)
+	}
+}
+
+func TestAnAlreadyDonePlanOnResumeSkipsTheItemAgain(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Sessions.ItemGates = true
+	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: 2, Kind: "plan", Attempt: 1}, State: StepOK})
+	plan := filepath.Join(r.repo.RootDir, ".r-loop/wt/phase-2", phasePlanPath(2, "Store"))
+	writeFile(plan, "status: not-work\n\n## Evidence\n- a question: docs/spec.md:3\n")
+
+	code := r.run(RunOptions{Phases: []int{2}, Resume: true})
+
+	if code != 0 || len(r.calls("Land ")) != 0 || len(r.events("item-skipped")) != 1 {
+		t.Fatalf("exit %d, lands %v, skips %+v", code, r.calls("Land "), r.events("item-skipped"))
 	}
 }

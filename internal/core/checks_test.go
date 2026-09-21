@@ -272,3 +272,12 @@ func TestEachCheckFiresAtMostOncePerAttempt(t *testing.T) {
 		})
 	}
 }
+
+func TestFilesScopedChecksAreQuietForAPhaseWithoutFiles(t *testing.T) {
+	repo := &fakeRepo{RootDir: "/repo", Changed: []string{"cmd/r-loop/main.go", "internal/store/store_test.go"}, RunOutput: "internal/store/store_test.go\n"}
+	ctx := checkCtx(&fakeStore{}, repo, "implement", 1, time.Minute)
+	ctx.Step.Phase.Files = nil
+
+	noWarning(t, shipped(t, "files-outside-plan").Run(ctx))
+	noWarning(t, shipped(t, "foreign-test-edit").Run(ctx))
+}

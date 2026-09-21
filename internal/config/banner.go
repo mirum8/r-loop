@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-func Banner(cfg LoopConfig) string {
+func Banner(cfg LoopConfig, extra ...string) string {
 	var b strings.Builder
 	p := cfg.Provenance
-	for _, name := range append(append([]string{}, cfg.Pipeline...), "milestone") {
+	for _, name := range append(append(append([]string{}, cfg.Pipeline...), "milestone"), extra...) {
 		row := cfg.Steps[name]
 		k := "steps." + name + "."
 		fmt.Fprintf(&b, "%s  %s  %s  %s  %s  %s  ← %s\n", name, row.Provider, orDefault(row.Model), orDefault(row.Effort),

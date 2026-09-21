@@ -88,6 +88,9 @@ func underFiles(p string, files []string) bool {
 }
 
 func filesOutsidePlan(ctx CheckContext) string {
+	if len(ctx.Step.Phase.Files) == 0 {
+		return ""
+	}
 	var outside []string
 	for _, p := range changedFiles(ctx) {
 		if !underFiles(p, ctx.Step.Phase.Files) && !strings.HasPrefix(p, ".task-plans/") {
@@ -199,6 +202,9 @@ func shellQuote(s string) string {
 }
 
 func foreignTestEdit(ctx CheckContext) string {
+	if len(ctx.Step.Phase.Files) == 0 {
+		return ""
+	}
 	var candidates []string
 	for _, p := range changedFiles(ctx) {
 		if isTestPath(p) && !underFiles(p, ctx.Step.Phase.Files) {

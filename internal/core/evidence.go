@@ -21,6 +21,7 @@ type EvidenceContext struct {
 	PlanPath                           string
 	FindingsFiles                      []string
 	VerdictPath, RoundTree, ReportPath string
+	NeedGate                           bool
 	FS                                 fs.FS
 }
 
@@ -58,7 +59,14 @@ func planFileCheck(ctx EvidenceContext) (bool, string) {
 		return false, "no plan at " + ctx.PlanPath
 	}
 	lines := splitLines(string(data))
-	if !hasStatusPlanned(lines) {
+	if ctx.NeedGate && itemSkipStatus[planStatus(lines)] {
+		evidence, _ := section(lines, "## Evidence")
+		if !citationRe.MatchString(strings.Join(evidence, "\n")) {
+			return false, "## Evidence cites no path:line"
+		}
+		return planChangedOnlyItself(ctx)
+	}
+	if planStatus(lines) != "planned" {
 		return false, "no status: planned header"
 	}
 	for _, h := range planHeadings {
@@ -70,6 +78,15 @@ func planFileCheck(ctx EvidenceContext) (bool, string) {
 	if len(listItems(tests))+len(tableRows(tests)) == 0 {
 		return false, "## Tests is empty"
 	}
+	if ctx.NeedGate {
+		if _, reason := PlanGate(lines); reason != "" {
+			return false, reason
+		}
+	}
+	return planChangedOnlyItself(ctx)
+}
+
+func planChangedOnlyItself(ctx EvidenceContext) (bool, string) {
 	changed, missing := stepChanges(ctx)
 	if missing != "" {
 		return false, missing
@@ -83,6 +100,43 @@ func planFileCheck(ctx EvidenceContext) (bool, string) {
 		return false, "plan step did not change " + ctx.PlanPath
 	}
 	return true, ""
+}
+
+var (
+	itemSkipStatus = map[string]bool{"already-done": true, "not-work": true}
+	citationRe     = regexp.MustCompile(`[\w./-]+\.\w+:\d+`)
+)
+
+func PlanSkip(path string, fsys fs.FS) (string, string) {
+	data, err := fs.ReadFile(fsys, path)
+	if err != nil {
+		return "", ""
+	}
+	lines := splitLines(string(data))
+	status := planStatus(lines)
+	if !itemSkipStatus[status] {
+		return "", ""
+	}
+	evidence, _ := section(lines, "## Evidence")
+	var parts []string
+	for _, l := range evidence {
+		if l != "" {
+			parts = append(parts, strings.TrimPrefix(l, "- "))
+		}
+	}
+	return status, strings.Join(parts, "; ")
+}
+
+func PlanGate(lines []string) (string, string) {
+	body, ok := section(lines, "## Gate")
+	if !ok {
+		return "", "missing ## Gate"
+	}
+	spans := codeSpanRe.FindAllStringSubmatch(strings.Join(body, "\n"), -1)
+	if len(spans) != 1 || strings.TrimSpace(spans[0][1]) == "" {
+		return "", "## Gate must hold exactly one command in backticks"
+	}
+	return strings.TrimSpace(spans[0][1]), ""
 }
 
 func diffCheck(ctx EvidenceContext) (bool, string) {
@@ -142,13 +196,13 @@ func splitLines(s string) []string {
 	return lines
 }
 
-func hasStatusPlanned(lines []string) bool {
+func planStatus(lines []string) string {
 	for i := 0; i < len(lines) && i < 5; i++ {
-		if lines[i] == "status: planned" {
-			return true
+		if status, ok := strings.CutPrefix(lines[i], "status: "); ok {
+			return strings.TrimSpace(status)
 		}
 	}
-	return false
+	return ""
 }
 
 func section(lines []string, heading string) ([]string, bool) {

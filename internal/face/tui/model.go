@@ -122,7 +122,7 @@ func (m Model) Apply(ev core.Event) Model {
 		m.Current = ev.Phase
 	case "phase-state":
 		m.setPhase(ev.Phase, core.PhaseState(ev.Fields["state"]))
-	case "phase-blocked", "phase-skipped":
+	case "phase-blocked", "phase-skipped", "item-skipped":
 		m.setPhase(ev.Phase, core.PhaseBlocked)
 	case "step":
 		m.step(ev)

@@ -532,3 +532,64 @@ func TestRegisterCheckAddsAStepWithoutEditingTheLoop(t *testing.T) {
 		t.Fatal("always-ok did not pass")
 	}
 }
+
+func TestPlanFileCheckRequiresOneGateCommandWhenTheItemGateIsOn(t *testing.T) {
+	cases := map[string]struct{ plan, missing string }{
+		"absent":      {goodPlan, "missing ## Gate"},
+		"no command":  {goodPlan + "\n## Gate\nrun the tests\n", "## Gate must hold exactly one command in backticks"},
+		"two":         {goodPlan + "\n## Gate\n`go test ./a` or `go test ./b`\n", "## Gate must hold exactly one command in backticks"},
+		"one command": {goodPlan + "\n## Gate\n`go test ./internal/plan -run TestReadsPhases`\n", ""},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctx := planCtx(c.plan, planPath)
+			ctx.NeedGate = true
+
+			ok, missing := runCheck(t, "plan-file", ctx)
+
+			if ok != (c.missing == "") || missing != c.missing {
+				t.Fatalf("ok = %v, missing = %q", ok, missing)
+			}
+		})
+	}
+}
+
+func TestPlanFileCheckIgnoresTheGateWhenTheItemGateIsOff(t *testing.T) {
+	ok, missing := runCheck(t, "plan-file", planCtx(goodPlan, planPath))
+
+	if !ok || missing != "" {
+		t.Fatalf("ok = %v, missing = %q", ok, missing)
+	}
+}
+
+func TestPlanFileCheckAcceptsAnItemSkipWithCitedEvidence(t *testing.T) {
+	for _, status := range []string{"already-done", "not-work"} {
+		ctx := planCtx("status: "+status+"\n\n## Evidence\n- rate shown: web/deal.html:40\n", planPath)
+		ctx.NeedGate = true
+
+		ok, missing := runCheck(t, "plan-file", ctx)
+
+		if !ok || missing != "" {
+			t.Errorf("%s: ok = %v, missing = %q", status, ok, missing)
+		}
+	}
+}
+
+func TestPlanFileCheckRefusesAnItemSkipWithoutACitation(t *testing.T) {
+	ctx := planCtx("status: already-done\n\n## Evidence\n- it is built\n", planPath)
+	ctx.NeedGate = true
+
+	ok, missing := runCheck(t, "plan-file", ctx)
+
+	if ok || missing != "## Evidence cites no path:line" {
+		t.Fatalf("ok = %v, missing = %q", ok, missing)
+	}
+}
+
+func TestPlanFileCheckRefusesAnItemSkipOutsideABacklog(t *testing.T) {
+	ok, missing := runCheck(t, "plan-file", planCtx("status: already-done\n\n## Evidence\n- x: a/b.go:1\n", planPath))
+
+	if ok || missing != "no status: planned header" {
+		t.Fatalf("ok = %v, missing = %q", ok, missing)
+	}
+}

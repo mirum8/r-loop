@@ -11,7 +11,7 @@ import (
 
 var _ core.Prompts = (*Renderer)(nil)
 
-var stepTemplates = []string{"plan", "implement", "review", "fix", "milestone", "gatefix"}
+var stepTemplates = []string{"plan", "implement", "review", "fix", "milestone", "gatefix", "gate"}
 
 func fullVars() map[string]any {
 	return map[string]any{
@@ -30,6 +30,7 @@ func fullVars() map[string]any {
 		"Allow":         []string{},
 		"AskURL":        "",
 		"PhaseWarnings": "",
+		"ItemGate":      false,
 		"ReviewedKind":  "implement",
 		"Round":         1,
 		"Rounds":        2,
@@ -429,5 +430,46 @@ func TestPlanAndImplementTreatResolvedFirstEntriesAsSettled(t *testing.T) {
 		if !strings.Contains(text, "A `Resolved first:` list under the phase records decisions the maintainer has already taken: follow each `Resolved:` line and never ask about it again.") {
 			t.Errorf("%s lacks the Resolved first rule:\n%s", name, text)
 		}
+	}
+}
+
+func TestPlanAndImplementNameTheItemGateOnlyWhenSet(t *testing.T) {
+	r := New(t.TempDir())
+
+	for _, name := range []string{"plan", "implement"} {
+		if strings.Contains(render(t, r, name, fullVars()), "## Gate") {
+			t.Errorf("%s: gate named without ItemGate", name)
+		}
+		if !strings.Contains(render(t, r, name, with("ItemGate", true)), "## Gate") {
+			t.Errorf("%s: gate not named with ItemGate", name)
+		}
+	}
+}
+
+func TestGateAsksForTheCommandAtItsReportPath(t *testing.T) {
+	text := render(t, New(t.TempDir()), "gate", fullVars())
+
+	for _, want := range []string{"/runs/r1/report-m2.md", "whole test suite", "/runs/r1/phase-7/plan-a1.sentinel"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("gate missing %q", want)
+		}
+	}
+}
+
+func TestReviewAsksForATestPerCriterionOnlyForAnItem(t *testing.T) {
+	r := New(t.TempDir())
+
+	if strings.Contains(render(t, r, "review", fullVars()), "name the test that proves it") {
+		t.Error("criterion rule without ItemGate")
+	}
+	plan := render(t, r, "review", with("ItemGate", true))
+	vars := fullVars()
+	vars["ItemGate"], vars["ReviewedKind"] = true, "plan"
+	planReview := render(t, r, "review", vars)
+	if !strings.Contains(plan, "- [ ] render prompts") || !strings.Contains(plan, "report every criterion no test proves as a finding") || strings.Contains(plan, "## Evidence") {
+		t.Errorf("implement review:\n%s", plan)
+	}
+	if !strings.Contains(planReview, "in the plan's `## Tests`") || !strings.Contains(planReview, "## Evidence") {
+		t.Errorf("plan review:\n%s", planReview)
 	}
 }

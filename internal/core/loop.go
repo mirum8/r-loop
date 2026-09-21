@@ -235,6 +235,9 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 		rerunPlan := replan && kind.Name == "plan"
 		if state == StepOK && !rerunPlan {
 			l.advance(n, kind.Name)
+			if l.itemSkipped(ph, kind, last.Dir) {
+				return "", Outcome{State: StepOK}, false
+			}
 			continue
 		}
 		ref := l.ref(ph, kind, attempt+1, base)
@@ -263,6 +266,9 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 				l.emit(Event{Kind: "assumption", Phase: n, Step: kind.Name, Fields: map[string]string{"phase": strconv.Itoa(n), "text": a}})
 			}
 		}
+		if l.itemSkipped(ph, kind, last.Dir) {
+			return "", Outcome{State: StepOK}, false
+		}
 	}
 	lander := l.Lander
 	if lander == nil {
@@ -279,6 +285,18 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	l.emit(Event{Kind: "phase-state", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "state": string(PhaseLanded)}})
 	l.emit(Event{Kind: "landed", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "merge": landing.MergeSHA, "gateSkipped": strconv.FormatBool(landing.GateSkipped)}})
 	return "", Outcome{State: StepOK}, false
+}
+
+func (l *RunLoop) itemSkipped(ph Phase, kind StepKind, dir string) bool {
+	if kind.Name != "plan" || !l.Sessions.ItemGates || ph.DoneWhen != "" {
+		return false
+	}
+	status, evidence := PlanSkip(phasePlanPath(ph.Number, ph.Title), os.DirFS(dir))
+	if status == "" {
+		return false
+	}
+	l.emit(Event{Kind: "item-skipped", Phase: ph.Number, Step: kind.Name, Fields: map[string]string{"phase": strconv.Itoa(ph.Number), "status": status, "reason": status + ": " + evidence}})
+	return true
 }
 
 func (l *RunLoop) checkPhase(ctx context.Context, ph Phase, base string) {
@@ -510,6 +528,7 @@ func (l *RunLoop) ref(ph Phase, kind StepKind, attempt int, base string) StepRef
 		RunDir:   l.runDir,
 	}
 	ref.Vars = StepVars(ref, l.Plan, l.TodoPath, l.runDir)
+	ref.Vars["ItemGate"] = l.Sessions.ItemGates && ph.DoneWhen == ""
 	if kind.Name == "plan" {
 		l.mu.Lock()
 		ref.Vars["PhaseWarnings"] = l.warnings[n]
@@ -1108,6 +1127,7 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 		"RunDir":          runDir,
 		"AskURL":          ref.AskURL,
 		"PhaseWarnings":   "",
+		"ItemGate":        false,
 		"ReviewedKind":    "",
 		"Round":           0,
 		"Rounds":          0,

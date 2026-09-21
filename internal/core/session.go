@@ -31,6 +31,7 @@ type SessionManager struct {
 	Now        func() time.Time
 	Poll       time.Duration
 	StallGrace time.Duration
+	ItemGates  bool
 }
 
 type StepRef struct {
@@ -400,6 +401,7 @@ func (m *SessionManager) evidence(s *Session) EvidenceContext {
 		VerdictPath: str("VerdictPath"),
 		RoundTree:   str("RoundTree"),
 		ReportPath:  str("ReportPath"),
+		NeedGate:    m.ItemGates && s.Ref.Phase.DoneWhen == "",
 		FS:          os.DirFS(s.Dir),
 	}
 	if s.Reviewer != "" {

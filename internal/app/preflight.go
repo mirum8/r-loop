@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -29,8 +30,9 @@ func Preflight(w *Wiring) error {
 		w.banner(env.Stdout, prompts)
 		fmt.Fprintln(env.Stdout, "run list:")
 		for _, ph := range list {
-			fmt.Fprintf(env.Stdout, "phase %d  %s  %s\n", ph.Number, ph.Title, pipeline(w.Loop.Kinds))
+			fmt.Fprintf(env.Stdout, "phase %d  %s  %s\n", ph.Number, ph.Title, pipeline(w.Loop.Kinds, w.Plan.Backlog))
 		}
+		w.criteriaWarnings(env.Stdout, list)
 		return nil
 	}
 	if err := w.Host.Reachable(); err != nil {
@@ -70,7 +72,41 @@ func Preflight(w *Wiring) error {
 	}
 	w.bind(id)
 	w.banner(env.Stdout, prompts)
+	w.criteriaWarnings(env.Stdout, list)
 	return nil
+}
+
+func (w *Wiring) criteriaWarnings(out io.Writer, list []core.Phase) {
+	if !w.Plan.Backlog {
+		return
+	}
+	for _, ph := range list {
+		if len(ph.Items) == 1 && ph.Items[0].Text == ph.Title {
+			fmt.Fprintf(out, "warning: phase %d has no acceptance criteria; the plan tests only its title — /r:issues-draft writes them\n", ph.Number)
+		}
+	}
+}
+
+func (w *Wiring) commitHint(dirty []string) string {
+	root, todo := w.Repo.Root(), w.Todo
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		root = r
+	}
+	if t, err := filepath.EvalSymlinks(todo); err == nil {
+		todo = t
+	}
+	rel, err := filepath.Rel(root, todo)
+	if err != nil {
+		return ""
+	}
+	rel = filepath.ToSlash(rel)
+	notes := strings.TrimSuffix(rel, ".md") + "-notes.md"
+	for _, p := range dirty {
+		if p != rel && p != notes {
+			return ""
+		}
+	}
+	return "commit " + strings.Join(dirty, " and ") + " first"
 }
 
 func recordRunList(st *store.Store, id string, list []core.Phase) error {
@@ -109,6 +145,9 @@ func (w *Wiring) unblocked(list []core.Phase) ([]core.Event, error) {
 		return nil, exit(2, "%v", err)
 	}
 	if len(dirty) > 0 {
+		if hint := w.commitHint(dirty); hint != "" {
+			return nil, exit(4, "primary tree is not clean: %s; %s", strings.Join(dirty, ", "), hint)
+		}
 		return nil, exit(4, "primary tree is not clean: %s", strings.Join(dirty, ", "))
 	}
 	numbers := make([]int, len(list))
@@ -180,7 +219,7 @@ type role struct {
 func (w *Wiring) validateProviders() error {
 	cfg := w.Config
 	var roles []role
-	for _, name := range append(append([]string{}, cfg.Pipeline...), "milestone") {
+	for _, name := range w.sessionSteps() {
 		row := cfg.Steps[name]
 		p := "steps." + name + "."
 		roles = append(roles, role{field: p + "provider", provider: row.Provider})
@@ -217,8 +256,7 @@ func (w *Wiring) promptSources() ([]string, error) {
 	vars := core.StepVars(core.StepRef{}, w.Plan, w.Todo, "")
 	vars["GateCommand"], vars["GateOutput"] = "", ""
 	var lines []string
-	steps := append(append([]string{}, w.Config.Pipeline...), "milestone")
-	for _, name := range steps {
+	for _, name := range w.sessionSteps() {
 		_, source, err := w.Prompts.Render(w.Config.Steps[name].Prompt, vars)
 		if err != nil {
 			return nil, fmt.Errorf("steps.%s.prompt: %w", name, err)
@@ -237,7 +275,7 @@ func (w *Wiring) promptSources() ([]string, error) {
 
 func (w *Wiring) banner(out io.Writer, prompts []string) {
 	fmt.Fprintf(out, "face: %s\n", w.faceName())
-	fmt.Fprint(out, config.Banner(w.Config))
+	fmt.Fprint(out, config.Banner(w.Config, w.extraSteps()...))
 	for _, l := range prompts {
 		fmt.Fprintln(out, l)
 	}
@@ -256,7 +294,18 @@ func (w *Wiring) banner(out io.Writer, prompts []string) {
 	}
 }
 
-func pipeline(kinds []core.StepKind) string {
+func (w *Wiring) extraSteps() []string {
+	if w.Plan.Backlog {
+		return []string{"gate"}
+	}
+	return nil
+}
+
+func (w *Wiring) sessionSteps() []string {
+	return append(append(append([]string{}, w.Config.Pipeline...), "milestone"), w.extraSteps()...)
+}
+
+func pipeline(kinds []core.StepKind, backlog bool) string {
 	parts := make([]string, 0, len(kinds)+1)
 	for _, k := range kinds {
 		part := k.Name
@@ -265,7 +314,11 @@ func pipeline(kinds []core.StepKind) string {
 		}
 		parts = append(parts, part)
 	}
-	return strings.Join(append(parts, "land"), " → ")
+	land := "land"
+	if backlog {
+		land = "land (gate: item tests red at base, then item tests && discovered suite)"
+	}
+	return strings.Join(append(parts, land), " → ")
 }
 
 func alive(pid int) bool {

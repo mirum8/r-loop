@@ -9,6 +9,14 @@ the uncommitted changes in {{.Worktree}}.
 The phase:
 
 {{.PhaseBlock}}
+{{- if .ItemGate}}
+
+Its open criteria:
+
+{{.Criteria}}
+
+For each criterion, name the test that proves it{{if eq .ReviewedKind "plan"}} in the plan's `## Tests`{{end}}, and report every criterion no test proves as a finding.{{if eq .ReviewedKind "plan"}} When the plan says `status: already-done` or `status: not-work`, open each `path:line` under `## Evidence` instead, and report every criterion the cited code does not show.{{end}}
+{{- end}}
 {{- if .PriorFindings}}
 
 ## Earlier rounds

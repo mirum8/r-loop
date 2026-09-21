@@ -97,6 +97,9 @@ func (s *memStore) Load(runID string) (core.RunState, error) {
 		if r.Kind == core.RecordStep {
 			st.Steps[*r.Step] = r.State
 		}
+		if r.Kind == core.RecordEvent {
+			st.Events = append(st.Events, *r.Event)
+		}
 	}
 	return st, nil
 }

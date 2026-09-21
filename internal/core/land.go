@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -43,17 +44,18 @@ type LandGate struct {
 	FixRounds       int
 	FixKind         StepKind
 	Runner          StepRunner
+	Suite           Suite
 }
 
 func (g *LandGate) Land(ctx context.Context, phase Phase) (Landing, error) {
-	landing, output, err := g.attempt(phase)
+	landing, command, output, err := g.attempt(ctx, phase)
 	for round := 1; errors.Is(err, ErrGate) && round <= g.FixRounds && g.Runner != nil; round++ {
 		g.emit(Event{Kind: "gate-fix", Phase: phase.Number, Step: "land", Fields: map[string]string{"phase": strconv.Itoa(phase.Number), "round": strconv.Itoa(round)}})
-		out := g.fix(ctx, phase, gateCommand(phase.DoneWhen), output)
+		out := g.fix(ctx, phase, command, output)
 		if out.State != StepOK {
 			return Landing{}, fmt.Errorf("%w: gate-fix round %d ended %s: %s", ErrGate, round, out.State, out.Reason)
 		}
-		landing, output, err = g.attempt(phase)
+		landing, command, output, err = g.attempt(ctx, phase)
 	}
 	if err != nil {
 		return Landing{}, err
@@ -67,17 +69,35 @@ func (g *LandGate) Land(ctx context.Context, phase Phase) (Landing, error) {
 	return landing, nil
 }
 
-func (g *LandGate) attempt(phase Phase) (Landing, string, error) {
+func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, string, error) {
 	n := phase.Number
+	itemGate := g.Suite != nil && phase.DoneWhen == ""
+	var suite string
+	if itemGate {
+		var err error
+		if suite, err = g.Suite.Command(ctx, phase); err != nil {
+			return Landing{}, "", "", err
+		}
+	}
 	if err := g.Repo.MergeNoFF(fmt.Sprintf("r-loop/phase-%d", n)); err != nil {
-		return Landing{}, "", err
+		return Landing{}, "", "", err
 	}
 	landing := Landing{Phase: n}
 	var err error
 	if landing.Added, landing.Deleted, err = g.Repo.DiffStat("", "HEAD"); err != nil {
-		return Landing{}, "", errors.Join(fmt.Errorf("diff size: %w", err), g.Repo.AbortMerge())
+		return Landing{}, "", "", errors.Join(fmt.Errorf("diff size: %w", err), g.Repo.AbortMerge())
 	}
 	command := gateCommand(phase.DoneWhen)
+	if itemGate {
+		item, err := g.itemCommand(phase)
+		if err != nil {
+			return Landing{}, "", "", errors.Join(err, g.Repo.AbortMerge())
+		}
+		command = item + " && " + suite
+		if output, err := g.redAtBase(phase, item); err != nil {
+			return Landing{}, command, output, errors.Join(err, g.Repo.AbortMerge())
+		}
+	}
 	if command == "" {
 		landing.GateSkipped = true
 		g.emit(Event{Kind: "gate-skipped", Phase: n, Step: "land", Fields: map[string]string{"phase": strconv.Itoa(n)}})
@@ -87,25 +107,75 @@ func (g *LandGate) attempt(phase Phase) (Landing, string, error) {
 			err = fmt.Errorf("%w: %s exited %d\n%s", ErrGate, command, code, output)
 		}
 		if err != nil {
-			return Landing{}, output, errors.Join(err, g.Repo.AbortMerge())
+			return Landing{}, command, output, errors.Join(err, g.Repo.AbortMerge())
 		}
 		landing.GateOutput = output
 	}
 	if err := g.Plan.Tick(g.TodoPath, n); err != nil {
-		return Landing{}, "", errors.Join(fmt.Errorf("tick: %w", err), g.Repo.ResetHard("HEAD"))
+		return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), g.Repo.ResetHard("HEAD"))
 	}
 	sha, err := g.Repo.Commit(fmt.Sprintf("phase %d: %s", n, phase.Title))
 	if err != nil {
-		return Landing{}, "", errors.Join(fmt.Errorf("commit: %w", err), g.Repo.ResetHard("HEAD"))
+		return Landing{}, "", "", errors.Join(fmt.Errorf("commit: %w", err), g.Repo.ResetHard("HEAD"))
 	}
 	touched, err := g.Repo.CommitTouches(sha)
 	todo := g.todoRel()
 	if err != nil || !slices.Contains(touched, todo) || len(touched) < 2 {
 		reason := fmt.Errorf("%w: code and ticks land as one commit; %s touched %v", ErrLanding, sha, touched)
-		return Landing{}, "", errors.Join(reason, err, g.Repo.ResetHard("HEAD~1"))
+		return Landing{}, "", "", errors.Join(reason, err, g.Repo.ResetHard("HEAD~1"))
 	}
 	landing.MergeSHA = sha
-	return landing, "", nil
+	return landing, "", "", nil
+}
+
+func (g *LandGate) itemCommand(phase Phase) (string, error) {
+	rel := phasePlanPath(phase.Number, phase.Title)
+	data, err := os.ReadFile(filepath.Join(g.Repo.Root(), rel))
+	if err != nil {
+		return "", fmt.Errorf("%w: no plan names the item's tests: %v", ErrNoGate, err)
+	}
+	item, reason := PlanGate(splitLines(string(data)))
+	if reason != "" {
+		return "", fmt.Errorf("%w: %s: %s", ErrNoGate, rel, reason)
+	}
+	return item, nil
+}
+
+func (g *LandGate) redAtBase(phase Phase, item string) (string, error) {
+	n := phase.Number
+	changed, err := g.Repo.ChangedFiles("", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("changed files: %w", err)
+	}
+	root := g.Repo.Root()
+	var tests []string
+	for _, p := range changed {
+		if _, err := os.Stat(filepath.Join(root, p)); err == nil && isTestPath(p) {
+			tests = append(tests, p)
+		}
+	}
+	if len(tests) == 0 {
+		return "phase adds or changes no test file", fmt.Errorf("%w: phase %d adds or changes no test file", ErrGate, n)
+	}
+	red := fmt.Sprintf(".r-loop/wt/phase-%d-red", n)
+	remove := "git worktree remove --force " + shellQuote(red) + " 2>/dev/null; rm -rf " + shellQuote(red)
+	setup := []string{"git worktree add --detach " + shellQuote(red) + " HEAD >/dev/null"}
+	for _, p := range tests {
+		setup = append(setup, fmt.Sprintf("mkdir -p %s && cp %s %s", shellQuote(filepath.Dir(filepath.Join(red, p))), shellQuote(p), shellQuote(filepath.Join(red, p))))
+	}
+	defer g.Repo.Run("", remove+"; git worktree prune", time.Minute)
+	if code, out, err := g.Repo.Run("", remove+"; "+strings.Join(setup, " && "), time.Minute); err != nil || code != 0 {
+		return out, fmt.Errorf("base worktree for the red check: exit %d: %v\n%s", code, err, out)
+	}
+	code, out, err := g.Repo.Run(red, item, g.GateTimeout)
+	if err != nil {
+		return out, fmt.Errorf("red check: %w", err)
+	}
+	if code == 0 {
+		msg := fmt.Sprintf("the item gate %s passes on the base code with only the phase's tests added (%s): the tests do not exercise the change\n%s", item, strings.Join(tests, ", "), out)
+		return msg, fmt.Errorf("%w: %s", ErrGate, msg)
+	}
+	return "", nil
 }
 
 func (g *LandGate) todoRel() string {
