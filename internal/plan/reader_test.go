@@ -48,6 +48,9 @@ func TestReadFixturePhaseCountAndTopic(t *testing.T) {
 	if p.Path != "testdata/todo.md" {
 		t.Errorf("Path = %q", p.Path)
 	}
+	if p.Backlog {
+		t.Error("a todo reads as a backlog")
+	}
 	if p.Topic != "testdata" {
 		t.Errorf("Topic = %q, want testdata", p.Topic)
 	}

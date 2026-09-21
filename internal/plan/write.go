@@ -16,6 +16,9 @@ func (Reader) Tick(path string, phase int) error {
 	if err != nil {
 		return err
 	}
+	if isBacklog(lines) {
+		return tickBacklog(path, lines, phase)
+	}
 	start := -1
 	for i, l := range lines {
 		if m := phaseRe.FindStringSubmatch(strings.TrimRight(l, "\r\n")); m != nil && atoi(m[1]) == phase {

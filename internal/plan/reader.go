@@ -40,9 +40,11 @@ func (Reader) Read(path string) (core.Plan, error) {
 	if err != nil {
 		return core.Plan{}, err
 	}
-	p := core.Plan{Path: path, Topic: filepath.Base(filepath.Dir(abs))}
-
 	lines := strings.SplitAfter(string(raw), "\n")
+	if isBacklog(lines) {
+		return readBacklog(path, lines)
+	}
+	p := core.Plan{Path: path, Topic: filepath.Base(filepath.Dir(abs))}
 	if found, spans := resolveFirst(lines); found {
 		p.ResolveFirst = []core.Entry{}
 		for _, s := range spans {
