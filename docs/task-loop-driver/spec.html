@@ -164,7 +164,7 @@ section:target > h2 { color: var(--clay); }
       </ul></li>
     <li class="p"><a href="#p6">Part 6 · Decisions</a>
       <ul>
-        <li class="s"><a href="#adr-index">ADR-1 … ADR-70</a></li>
+        <li class="s"><a href="#adr-index">ADR-1 … ADR-72</a></li>
       </ul></li>
     <li class="p"><a href="#p7">Part 7 · Technical details</a>
       <ul>
@@ -273,8 +273,10 @@ noticing needs the whole run in view and every context in the design is delibera
   <tr><td>A web dashboard or a progress server</td>
       <td>never — herdr is the view, and every step is already a workspace</td></tr>
   
-  <tr><td>A watchdog that can approve anything</td>
-      <td>never — this is the line the first driving characteristic rests on</td></tr>
+  <tr><td>The watchdog manages the driver loop — skip, pause, reorder, re-plan or run phases — through
+          MCP or a CLI (<a href="#adr-71">ADR-71</a>)</td>
+      <td>a run needs a decision about the loop that is not about one step; until then the watchdog
+          changes the loop only through the plan file the driver reads</td></tr>
   <tr><td>Replacing <code>/r:plan-run</code></td>
       <td>the driver has run a full plan end to end twice without a halt the prose loop would
           have avoided</td></tr>
@@ -371,10 +373,11 @@ step enters <code>waiting-input</code> rather than counting as stalled, its back
 <p>As the <strong>maintainer</strong>, I want the plan's unresolved decisions put to me before the
 first phase runs, so that a run does not start and then stop on something only I can settle.</p>
 <p><em>Given</em> a todo with an open <code>## Resolve first</code> entry blocking a phase in the
-run list, <em>when</em> I start the driver, <em>then</em> the TUI presents that entry in full — the
-plan format carries no recommendation, so none is offered (<a href="#adr-42">ADR-42</a>, amended
-2026-09-19) — and on my answer writes the <code>Resolved:</code> stamp into the plan before phase
-one is scheduled.</p>
+run list, <em>when</em> I start the driver, <em>then</em> the watchdog walks it as
+<code>/r:plan-unblock</code> does — a brief of why it blocks, the options with their cost and a
+recommendation, asked in the TUI — writes my answer into the plan as a <code>Resolved:</code> stamp
+the driver commits before phase one is scheduled, and when I say "not now" the driver skips the
+phases it blocks and the phases that depend on them (<a href="#adr-72">ADR-72</a>).</p>
 
 <h3>Pre-authorise the blockers worth fixing automatically</h3>
 <p>As the <strong>maintainer</strong>, I want to say once which classes of blocker may be fixed
@@ -742,12 +745,14 @@ not carry both the phase's code and its ticked checkboxes, the driver refuses th
 phase; on violation it halts before touching the todo. <em>Source: "built" and "ticked" must revert
 together. Configurable: no.</em></p>
 
-<p><strong>The watchdog never approves.</strong> When the watchdog emits a signal, if that signal
-would move the run toward proceeding — a step marked ok, a landing approved, a checkbox ticked, a
-halt lifted — the driver rejects it and records the attempt, per signal; on violation the run halts
-and the rejected signal is in the run report. A veto and a remedy are the only two shapes it can
-emit. <em>Source: an approval wrongly given lets bad work land, while a veto wrongly given costs a
-resume; this asymmetry is what lets a model near the loop at all. Configurable: no.</em></p>
+<p><strong>The driver keeps the rules; the watchdog keeps the judgement.</strong> Every step state,
+landing, tick, commit and run-list change is made by the driver's code. The watchdog is a full
+session that decides and edits where a duty names it — today, the <code>## Resolve first</code>
+section — and the driver checks its edit and commits it. A step's own signals from the watchdog are
+still veto (halt, warn) and remedy only: a signal that would mark a step ok or lift a halt is
+rejected and recorded. <em>Source: some work cannot be done by rule, and an LLM that can only veto
+could not do it (<a href="#adr-71">ADR-71</a>, which replaced the invariant "the watchdog never
+approves"). Configurable: no.</em></p>
 
 <p><strong>A remedy is authorised before it runs, and recorded verbatim after.</strong> When the
 watchdog proposes a remedy, if its class is not in <code>watchdog.allow</code> and the maintainer
@@ -933,7 +938,7 @@ watchdog derives which files must change and how deep the cut is, compares that 
 <code>Files:</code> and <code>Risk:</code>, and when they disagree emits a warn signal naming the
 difference. The warning shows in the TUI and lands in the report; the planning session opens
 regardless. It cannot halt on this, and it cannot rewrite the fields
-(<a href="#adr-53">ADR-53</a>). With <code>--no-watchdog</code> the check is a named skip.</p>
+(<a href="#adr-53">ADR-53</a>). The watchdog is always on (<a href="#adr-71">ADR-71</a>).</p>
 
 <h4>A step is reviewed</h4>
 <p>The plan or implement session writes its sentinel and its evidence passes; nothing is committed.
@@ -1583,7 +1588,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Seventy decisions, each with the alternative that was live at the time; seven are superseded and kept in place, and twenty-six carry a later amendment. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the three-tier rule that lets a watchdog veto and remedy but never approve; and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, and ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs.</p>
+<p class="lede">Seventy-two decisions, each with the alternative that was live at the time; eight are superseded and kept in place, and twenty-six carry a later amendment. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, and ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk.</p>
 
 <div id="adr-index">
 
@@ -2148,7 +2153,7 @@ first build step. One source of truth, and nothing to release.</p>
 
 <div class="adr">
 <h3 id="adr-32">ADR-32 — The watchdog may veto unilaterally, remedy with consent, and never approve</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted · the "never approve" tier superseded by <a href="#adr-71">ADR-71</a> — the watchdog is a full session; veto and remedy on a step stay as written</p>
 <p><span class="f">Context</span> A watchdog with the whole run in view is the only thing that can
 catch an implementation going somewhere wrong — every other context in the design is one phase wide.
 But <em>determinism of approval</em> (Part 3) is the characteristic everything else rests on.</p>
@@ -2322,7 +2327,7 @@ Noticing things nobody asked about waits for evidence that it can.</p>
 
 <div class="adr">
 <h3 id="adr-42">ADR-42 — An open <code>## Resolve first</code> entry is asked in the TUI</h3>
-<p><span class="f">Status</span> accepted · supersedes <a href="#adr-18">ADR-18</a> · amended by <a href="#adr-43">ADR-43</a> — <code>PlanReader</code> decides what is open and what it blocks, by the same fail-closed rules as the pack's <code>resolve_scope.py</code> ·
+<p><span class="f">Status</span> superseded by <a href="#adr-72">ADR-72</a> · was accepted · supersedes <a href="#adr-18">ADR-18</a> · amended by <a href="#adr-43">ADR-43</a> — <code>PlanReader</code> decides what is open and what it blocks, by the same fail-closed rules as the pack's <code>resolve_scope.py</code> ·
 amended 2026-09-19 — the plan format carries no recommendation, so the TUI shows the
 entry's full text and takes a free answer, shown as answered by the maintainer; an unknown
 <code>Word:</code> label anywhere in an entry is reported as malformed ·
@@ -2547,8 +2552,8 @@ already covers. One pass over every phase at run start — rejected: verdicts on
 stale as earlier ones land. Halting the phase on a mismatch — rejected: a false mismatch stops an
 unattended run until a person resumes it. Rewriting the plan's fields — rejected: a second writer
 to the plan file, and the driver's own checks would then trust values a model wrote.</p>
-<p><span class="f">Consequences</span> The watchdog pane must be up before phase one, so a
-<code>--no-watchdog</code> run skips the check with a named skip. A wrong plan still runs, with a
+<p><span class="f">Consequences</span> The watchdog pane must be up before phase one; it always is,
+since <code>--no-watchdog</code> was removed (<a href="#adr-71">ADR-71</a>). A wrong plan still runs, with a
 warning in the TUI and the report. The check is judgement rather than a mechanical rule
 (<a href="#adr-33">ADR-33</a>), so its threshold lives in the watchdog's prompt with the rest.</p>
 <p><span class="f">Revisit when</span> a phase check warning was right and the phase failed anyway
@@ -3026,6 +3031,64 @@ cannot run a backlog until it is fixed, and the halt says so.</p>
 refuses tests a human would accept.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-71">ADR-71 — The driver is deterministic; the watchdog is the run's LLM</h3>
+<p><span class="f">Status</span> accepted · supersedes the "never approve" tier of <a href="#adr-32">ADR-32</a> and the invariant "The watchdog never approves" · amends <a href="#adr-53">ADR-53</a></p>
+<p><span class="f">Context</span> Some run-wide work cannot be done by rule: briefing a blocker, judging
+whether a plan drifted, answering an agent's question. The watchdog is the one session that is open
+for the whole run and holds the plan, the spec and what it watched. The three-tier rule kept it to
+veto and remedy, so a blocker was put to the maintainer as a bare prompt that took any text as the
+answer — and "abort", typed to leave that prompt, was stamped into a plan as a decision.</p>
+<p><span class="f">Decision</span> Two halves. The <strong>driver</strong> is deterministic: the TUI,
+the phase loop, the evidence checks, every commit and the run list. The <strong>watchdog</strong> is
+the run's LLM: a full session that reads, runs commands, asks the maintainer through
+<code>ask_user</code> and edits the files a duty names; the driver checks the edit and commits it.
+The watchdog is always on: <code>--no-watchdog</code> is removed, and a watchdog that cannot start
+on its provider or its <code>watchdog.fallback</code> refuses the run with exit 4. Its row defaults to
+<code>claude / opus / high</code>. Signals about a step stay veto and remedy only. Milestone reports
+and the backlog suite command keep their dedicated sessions.</p>
+<p><span class="f">Alternatives</span> A dedicated session per judgement — rejected: each one starts
+cold and reads again what the watchdog already holds. Keep the watchdog veto-only and put the
+judgement in the driver — rejected: the judgement cannot be written as a rule. Let the watchdog run
+the loop through MCP or a CLI — deferred: nothing needs it yet, and the plan file is a narrower
+channel the driver already reads and checks.</p>
+<p><span class="f">Consequences</span> A run always costs one standing session at opus/high. Test
+harnesses fake the watchdog instead of turning it off. Loop management by the watchdog is a named
+non-goal.</p>
+<p><span class="f">Revisit when</span> a run needs the watchdog to change the loop in a way the plan
+file cannot carry.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-72">ADR-72 — The watchdog walks <code>## Resolve first</code></h3>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-42">ADR-42</a></p>
+<p><span class="f">Context</span> <code>/r:plan-unblock</code> closes blockers well: it sorts each
+entry as a decision or a person's, briefs why it blocks with options and their cost, asks with a
+recommendation, and stamps the answer with what settled it. <a href="#adr-42">ADR-42</a> asked the
+same entry as raw text with a free answer.</p>
+<p><span class="f">Decision</span> Before the first phase, the driver sorts every open entry that
+blocks the run list — <code>decision</code>, <code>person</code> or <code>unclassified</code>, by
+<code>resolve_scope.py</code>'s patterns ported to Go, a person's first and an unmatched entry
+treated as a person's — and sends them to the watchdog with each blocked phase's block, then waits
+up to <code>watchdog.unblockTimeout</code>. The watchdog walks them one at a time: a brief in
+Simplified Technical English, <code>ask_user</code> with the options recommended first plus
+"I don't know" and "Not now", only "Confirmed done" or "Not now" for a person's entry, and the answer
+written into the section as a tick with <code>Resolved:</code>, <code>Alternative:</code> and
+<code>Outstanding:</code> lines. The driver then refuses any change outside
+<code>## Resolve first</code> (undoing it) or outside the plan file, makes one commit
+<code>docs: resolve N plan blockers</code>, and skips the phases an entry still open blocks, with the
+phases that depend on them. <code>--unattended</code> skips the walk and those phases. A stop during
+the walk halts the run with exit 4.</p>
+<p><span class="f">Alternatives</span> Keep the driver's own prompt and add options — rejected: the
+options and the recommendation need a reading of the repository. Refuse the run while an entry is
+open — rejected: "not now" is a real answer, and the phases it does not block can still run.</p>
+<p><span class="f">Consequences</span> The first phase starts a few minutes later when a plan has
+open blockers. A skipped entry stays open and is asked again by the next run that includes its
+phases.</p>
+<p><span class="f">Revisit when</span> a walk's stamp disagrees with what the maintainer chose.</p>
+</div>
+
+
 </div>
 </section>
 
@@ -3097,7 +3160,7 @@ named reason on stderr; there is nothing paginated.</p>
   <tr><td><code>r-loop &lt;todo&gt;</code></td><td>Run every unticked phase in order</td>
       <td>path to the plan; <code>--from N</code>, <code>--phases n,n</code>,
           <code>--provider &lt;step&gt;=&lt;name&gt;</code>, <code>--model &lt;step&gt;=&lt;model&gt;</code>,
-          <code>--effort &lt;step&gt;=&lt;effort&gt;</code>, <code>--no-watchdog</code>,
+          <code>--effort &lt;step&gt;=&lt;effort&gt;</code>,
           <code>--unattended</code>,
           <code>--plain</code>, <code>--dry-run</code></td>
       <td>the TUI, or with <code>--plain</code> a banner naming the resolved rows, one line per step
@@ -3108,7 +3171,7 @@ named reason on stderr; there is nothing paginated.</p>
           is gone is named with <code>r-loop resume</code> and no live step, and a phase outside
           the run as <code>not in this run</code></td></tr>
   <tr><td><code>r-loop resume</code></td><td>Pick up a stopped run at its last step</td><td><code>--replan</code> re-runs the phase's plan step first (<a href="#adr-60">ADR-60</a>);
-          <code>--unattended</code>, <code>--no-watchdog</code> (default: the run's last choice),
+          <code>--unattended</code>,
           <code>--plain</code></td>
       <td>as the run command, from the resumed step</td></tr>
   <tr><td><code>r-loop answer</code></td><td>Answer an open question from any shell</td>
@@ -3177,10 +3240,12 @@ land:
   fix:                        # the gatefix session; absent = the implement row (ADR-68)
     effort: high
 
-watchdog:
+watchdog:                     # always on; the run's LLM (ADR-71)
   provider: claude
-  model: sonnet
-  effort: medium
+  model: opus
+  effort: high
+  fallback: codex             # a name or a provider/model/effort block; used when the watchdog cannot start
+  unblockTimeout: 2h          # how long the ## Resolve first walk may take (ADR-72)
   maxRestarts: 2              # per step, in every mode (ADR-61)
   allow:                      # deps | ports | containers | locks | restart | retry | provider
     - deps                    # empty or absent = ask about everything
@@ -3397,7 +3462,8 @@ accepted deliberately.</p>
       <td>if the real failure was context loss or a hang, the defences sit at the wrong step</td>
       <td>one sentence from the maintainer</td></tr>
   <tr><td>The CLI surface designed before the provider-agnostic turn still fits</td>
-      <td><code>--provider</code>, <code>--plain</code> and <code>--no-watchdog</code> were added;
+      <td><code>--provider</code> and <code>--plain</code> were added, and <code>--no-watchdog</code> was
+          added and later removed (<a href="#adr-71">ADR-71</a>);
           nothing else in the surface names a vendor</td>
       <td>a per-step flag beyond provider would mean re-cutting the surface</td>
       <td>first run with two providers in one plan</td></tr>

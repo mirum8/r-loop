@@ -77,8 +77,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   Events []Event; Warnings []string; Spans map[StepKey]StepSpan}` · `StepSpan{Started, Ended
   time.Time}` — a step's first `running` record (the moment `Watch.StepStarted` fires) to its `ok`/`failed` record, replayed from the step log.
 - **Ports** (interfaces in `internal/core`, each with a fake in `internal/core/fakes_test.go`):
-  - `PlanSource`: `Read(path) (Plan, error)` · `Tick(path, phase int) error` · `Stamp(path,
-    entryName, resolvedLine string) error`; `Plan{Path, Topic string; Phases []Phase; Milestones
+  - `PlanSource`: `Read(path) (Plan, error)` · `Tick(path, phase int) error` (the `Stamp` method was removed
+    with ADR-72: the watchdog writes the stamp); `Plan{Path, Topic string; Phases []Phase; Milestones
     []Milestone; ResolveFirst []Entry}`.
   - `SessionHost`: `Reachable() error` · `Open(OpenSpec{CWD, Label string; Env
     map[string]string}) (Workspace{ID, RootPane string}, error)` · `Start(pane, name, kind
@@ -163,8 +163,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   milestone `claude/opus/medium/1h/report`, no review; `land.fixRounds 1`, `land.gateTimeout 30m`, no `land.fix`;
   `unattended.allow [deps, ports, locks, restart, retry, provider]` and
   `unattended.questionTimeout 30m`, both applied only with `--unattended`;
-  `watchdog.maxRestarts 2`; `watchdog.provider claude`, `watchdog.model sonnet`,
-  `watchdog.effort ""` (provider default), `watchdog.allow []`, `watchdog.remedyWindow 10m`,
+  `watchdog.maxRestarts 2`; `watchdog.provider claude`, `watchdog.model opus`,
+  `watchdog.effort high`, `watchdog.fallback codex`, `watchdog.unblockTimeout 2h`, `watchdog.allow []`, `watchdog.remedyWindow 10m`,
   `watchdog.answerWindow 5m`, `watchdog.checkTimeout 10m`, `watchdog.stallGrace 2m`,
   `watchdog.overtimeFactor 2`, `watchdog.diffFactor 3`; `notify.onHalt/onWarn/onDone ""`. A
   flow-style YAML node is rejected naming the line; an unknown key is rejected naming the key and
@@ -318,9 +318,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   step that differs from its snapshot, or under a step with no baseline — is an unclaimed tree,
   exit `2`. A step whose author half had passed resumes at its recorded round
   with a fresh author session. `--replan` re-runs the phase's `plan` step as a new attempt, with
-  the failed step's reason as its addendum, before the step that failed. `--no-watchdog` defaults
-  to the run's last choice: on when its last `watchdog-skipped`/`watchdog-start` event is
-  `watchdog-skipped`. A Resolve-first entry answered during resume is recorded in the resumed
+  the failed step's reason as its addendum, before the step that failed. The watchdog is always
+  started (`--no-watchdog` was removed, ADR-71). A Resolve-first entry answered during resume is recorded in the resumed
   run as it is at startup (Report, below).
 - **Gate fix** — a red gate with `land.fixRounds` left runs one `gatefix` step in the phase
   worktree on the config's resolved `land.fix` provider, model and effort (the implement row's
@@ -476,7 +475,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   It then records `Event{Kind: "watchdog-start"}` and splits a pane to the right of the driver's
   own pane — `HERDR_PANE_ID`, passed in as `Env.Pane` and `Watchdog.Pane`; with no driver pane it
   opens its own workspace labelled with the watchdog name. `Stop` closes that workspace, or else
-  the pane. `--no-watchdog` records `Event{Kind: "watchdog-skipped"}` instead.
+  the pane. If `Start` fails on `watchdog.provider`, it is tried once on `watchdog.fallback`; a
+  second failure is exit 4.
 - **Second MCP surface** — `<base>/watchdog/<wdToken>`; tools `signal(kind, step, reason,
   evidence) → {accepted, reason?}` · `propose_remedy(class, command, why) → {decision:
   authorised|refused, reason?}` ·
@@ -549,3 +549,36 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Preflight** — a backlog named `*-notes.md` → exit 2; dirty tree limited to the backlog and its
   `-notes.md` → the exit-4 message ends `; commit <paths> first`; a backlog phase whose only item
   is its title → `warning: phase N has no acceptance criteria…` in the dry run and the banner.
+
+## The run's LLM (ADR-71, ADR-72)
+
+- **Split** — the driver makes every step-state change, tick, commit and run-list change; the
+  watchdog is a full session for judgement. It is always on (no `--no-watchdog`), and its row is
+  `watchdog.{provider, model, effort, fallback}`.
+- **Order in `Execute`** — `Ask.Serve` → `startWatchdog` (fallback on failure) → `startTUI` →
+  `Loop.ServeQuestions(ctx)` (started once; `Run` no longer starts it when it is already serving) →
+  `unblock` → `Loop.Run`. `Preflight` creates and binds the run first; `recordRunList` is written by
+  `unblock`, after deferral. `recordedRunList` reads the last `run-list` event.
+- **Sorting** — `plan.classify(head, owner)` sets `Entry.Kind`: `person` when the owner matches
+  legal|finance|procurement|hr|people|compliance|security council or a person pattern matches,
+  else `decision` on a decision pattern, else `unclassified` (treated as a person's). `Entry` also
+  carries `Alternative` and `Outstanding`.
+- **Walk request** — `core.UnblockText(plan, entries, runList)`:
+  `resolve first: <n> open entries in <plan> block this run's phases <list>…`, then per entry
+  `## R<n> — <name>`, `kind · owner · blocks · timebox · output`, the entry text and each blocked
+  phase's block. Sent with `Dog.Notify(text, wait=true, watchdog.unblockTimeout)`; the driver polls
+  `Store.Aborted` each second meanwhile.
+- **After the walk** (`app.Wiring.walk`) — a stop → exit 4 and the run `halted`. Any dirty path
+  other than the plan → exit 4. A plan change outside `## Resolve first`
+  (`plan.OnlyResolveFirstChanged`) → the file is restored and exit 4. Otherwise one commit
+  `docs: resolve <n> plan blockers`, an `entry-resolved {entry, resolved}` event per newly ticked
+  entry, and the new plan swapped into `Loop`, `Gate.Boundary`, `Watch` and `Probe`.
+- **Deferral** — `core.DeferBlocked(plan, list)` drops, for each still-open blocking entry, the
+  phases it blocks and their dependents (`core.Dependents`), records `entry-deferred {entry,
+  phases}` and writes the new run list. An empty result finishes the run with exit 0.
+  `--unattended` skips the walk and defers.
+- **TUI and plain** — a question with options marks the one equal to `Recommended` as
+  `(recommended)`; question text and options wrap to the width.
+- **Report** — `## Blockers` lists `<entry> → <resolved>` and `<entry> still open: phase <list>
+  skipped`; a watchdog question is listed by its first line.
+- **Deferred** — the watchdog managing the loop through MCP or a CLI (a non-goal in the spec).

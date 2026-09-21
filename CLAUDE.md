@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Source of truth
 
-- `docs/task-loop-driver/spec.html` — the spec (stories, domain model, invariants, 70 ADRs). Decisions are settled there; don't re-decide them.
+- `docs/task-loop-driver/spec.html` — the spec (stories, domain model, invariants, 72 ADRs). Decisions are settled there; don't re-decide them.
 - `docs/task-loop-driver/todo.md` — the implementation plan: 7 milestones, 30 phases, each with `Depends on:`, `Files:`, checklist items and a `Done when:` command. The `## Waves` block is generated from the `Depends on` edges — regenerate, never hand-edit.
 - `docs/task-loop-driver/tech-design.md` — contracts shared across phases of a milestone (types, enums, port signatures, run-dir layout, sentinel format, config resolution). Leaf items in `todo.md` repeat what they need, so an implementer working one phase can rely on that phase's block alone.
 - `docs/task-loop-driver/interview-notes.md` — the interview log behind the spec.
@@ -41,4 +41,5 @@ Hexagonal core inside one self-contained binary, supervising out-of-process agen
 - A step signals completion via a JSON sentinel in `.r-loop/runs/<runID>/phase-<N>/`; the driver judges it against evidence (diff, plan file, verdict), never on the agent's word. After a step's work half, reviewer panes split beside it report findings and the step's own session verifies and fixes real P1/P2, in configurable rounds. The driver commits a step's work itself, once, after its last review round; nothing is committed before that.
 - Run state is append-only JSONL under `.r-loop/runs/<runID>/`; a transition is appended **before** the action it describes. `.r-loop/runs/` and `.r-loop/wt/` go in `.git/info/exclude`, never `.gitignore`.
 - Config resolves CLI flag → `.r-loop/config.yaml` → `~/.config/r-loop/config.yaml` → embedded defaults, with provenance per key. Block-style YAML only; flow-style nodes and unknown keys are rejected (exit 2).
+- The driver is deterministic; the watchdog is the run's LLM (ADR-71): an always-on full session that does the judgement — watching steps, phase checks, answering questions, and walking `## Resolve first` like `/r:plan-unblock` (ADR-72). The driver commits and keeps the run list.
 - Both faces render the same `Event` stream. The TUI follows `DESIGN.md`: amber (`secondary`) means only "waiting for you", one row is bold (the live phase), one line per row down to 80 columns.
