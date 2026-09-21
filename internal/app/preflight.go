@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"gopkg.in/yaml.v3"
 
 	"r-loop/internal/config"
@@ -78,6 +81,14 @@ func Preflight(w *Wiring) error {
 	return nil
 }
 
+func amber(out io.Writer) lipgloss.Style {
+	r := lipgloss.NewRenderer(out)
+	if _, noColor := os.LookupEnv("NO_COLOR"); noColor {
+		r.SetColorProfile(termenv.Ascii)
+	}
+	return r.NewStyle().Foreground(lipgloss.Color(tui.Secondary))
+}
+
 func (w *Wiring) blockingEntries(out io.Writer, list []core.Phase) {
 	numbers := make([]int, len(list))
 	for i, ph := range list {
@@ -98,7 +109,7 @@ func (w *Wiring) blockingEntries(out io.Writer, list []core.Phase) {
 			}
 			scope = "phase " + strings.Join(hit, ", ")
 		}
-		fmt.Fprintf(out, "open ## Resolve first: %q blocks %s — %s\n", e.Name, scope, then)
+		fmt.Fprintln(out, amber(out).Render(fmt.Sprintf("open ## Resolve first: %q blocks %s — %s", e.Name, scope, then)))
 	}
 }
 
@@ -108,7 +119,7 @@ func (w *Wiring) criteriaWarnings(out io.Writer, list []core.Phase) {
 	}
 	for _, ph := range list {
 		if len(ph.Items) == 1 && ph.Items[0].Text == ph.Title {
-			fmt.Fprintf(out, "warning: phase %d has no acceptance criteria; the plan tests only its title — /r:issues-draft writes them\n", ph.Number)
+			fmt.Fprintln(out, amber(out).Render(fmt.Sprintf("warning: phase %d has no acceptance criteria; the plan tests only its title — /r:issues-draft writes them", ph.Number)))
 		}
 	}
 }
