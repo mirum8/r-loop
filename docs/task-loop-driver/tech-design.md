@@ -25,10 +25,10 @@ and applying the findings, in configurable rounds (ADR-56, ADR-57), committed on
 
 Round 21 (2026-09-18) made unattended completion a goal: a stalled step is nudged once and then
 fails (ADR-62); a halt stops only the failed phase and the phases that depend on it (ADR-65); a red
-land gate gets a bounded fix round (ADR-64); an answer can come from any shell (ADR-67); and
-`--unattended` pre-authorises the routine remedies, bounds restarts, lets an unanswered question
-resolve to the asking agent's own recommendation, and restarts a step on its row's fallback
-provider (ADR-61, ADR-63, ADR-66). Every automatic decision opens the run report. Every session
+land gate gets a bounded fix round (ADR-64); and `--unattended` pre-authorises the routine
+remedies, bounds restarts, and restarts a step on its row's fallback provider (ADR-61, ADR-66).
+Step agents ask the watchdog, and only the watchdog asks the maintainer, in its own session
+(ADR-73, which removed ADR-63's question timeout and ADR-67's `r-loop answer`). Every automatic decision opens the run report. Every session
 the driver starts — a step, a reviewer, a fallback, the gate fix, the watchdog — names its own
 provider, model and effort, and `--model` and `--effort` override one row for one run (ADR-68).
 
@@ -118,16 +118,14 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   - `Prompts`: `Render(name string, vars map[string]any) (text, source string, err error)`.
   - `AskChannel`: `Serve(ctx) (baseURL string, err error)` · `StepURL(StepKey) string` ·
     `Questions() <-chan Question` · `Answer(id, answer, by, citation string) error`.
-  - `Face`: `Emit(Event)` · `Ask(Question) (string, error)` · `Close()`. Both faces also have
-    `Withdraw(id string)`, outside the port, which ends a waiting `Ask` for that id; the core calls
-    it through an interface assertion when an answer arrives elsewhere or a question is withdrawn.
+  - `Face`: `Emit(Event)` · `Close()`. A face never asks anything (ADR-73).
   - `Notifier`: `Fire(hook string, env map[string]string)` (never returns an error to the loop; a
     non-zero exit is an `Event{Kind: "notify-failed"}`).
 - **Run directory** (`Store` adapter) — `.r-loop/runs/<runID>/` with `runID =
   <yyyymmdd-HHMMSS>`; files: `config.resolved.yaml`, `events.jsonl` (step, run, landing and
   display events, including `baseline`, `snapshot` and `review-round` events), `questions.jsonl`,
   `signals.jsonl`, `remedies.jsonl`, `report.md`, and `phase-<N>/` holding sentinels, step logs,
-  findings and verdicts, and `answers/`, where `r-loop answer` drops one file per answer. A question's answer is a second line for the same id; `Load` keeps the
+  findings and verdicts. A question's answer is a second line for the same id; `Load` keeps the
   last. `.r-loop/runs/current` holds `<runID> <pid>`; `.r-loop/runs/<runID>/abort` is the abort
   marker. `.r-loop/runs/` and `.r-loop/wt/` are appended to `<git-common-dir>/info/exclude` when
   absent, never to `.gitignore`.
@@ -161,11 +159,11 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `codex/gpt-5.6-sol/medium/4h/diff`, reviewers `[claude]`, `rounds 3`, `reviewTimeout 45m`;
   fallback plan `codex`, implement `claude` (scalars: provider defaults for model and effort);
   milestone `claude/opus/medium/1h/report`, no review; `land.fixRounds 1`, `land.gateTimeout 30m`, no `land.fix`;
-  `unattended.allow [deps, ports, locks, restart, retry, provider]` and
-  `unattended.questionTimeout 30m`, both applied only with `--unattended`;
+  `unattended.allow [deps, ports, locks, restart, retry, provider]`, applied only with
+  `--unattended`;
   `watchdog.maxRestarts 2`; `watchdog.provider claude`, `watchdog.model opus`,
-  `watchdog.effort high`, `watchdog.fallback codex`, `watchdog.unblockTimeout 2h`, `watchdog.allow []`, `watchdog.remedyWindow 10m`,
-  `watchdog.answerWindow 5m`, `watchdog.checkTimeout 10m`, `watchdog.stallGrace 2m`,
+  `watchdog.effort high`, `watchdog.unblockTimeout 2h`, `watchdog.allow []`, `watchdog.remedyWindow 10m`,
+  `watchdog.checkTimeout 10m`, `watchdog.stallGrace 2m`,
   `watchdog.overtimeFactor 2`, `watchdog.diffFactor 3`; `notify.onHalt/onWarn/onDone ""`. A
   flow-style YAML node is rejected naming the line; an unknown key is rejected naming the key and
   file; a negative `rounds` is rejected; each is exit `2`.
@@ -183,7 +181,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.tool_timeout_sec=86400`, `review: /review`).
   `{mcpConfig}` is a per-agent file
   `{"mcpServers":{"r-loop":{"type":"http","url":"<url>","timeout":86400000}}}`. **Both carry a
-  fixed 24 h MCP tool timeout**: `ask_user` and `propose_remedy` block until a person answers,
+  fixed 24 h MCP tool timeout**: `ask_watchdog` blocks until the watchdog answers, perhaps after asking a person,
   which has no bound in an attended run, and an agent's MCP client must never time the call out
   first (claude's default HTTP timeout is 60 s). The core sees a provider only as
   `ProviderArgs{Kind string; Args []string; Ask bool; Review string}`.
@@ -231,7 +229,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   half the same rule applies per half and per round.
 - **Nudge** — fixed text in `internal/core`, never model output: `r-loop: no sentinel and no
   activity for <grace>. If your work is done, write the sentinel now. If you are blocked, call
-  ask_user, or write a failed sentinel with the reason.` — `call ask_user, or` only when the
+  ask_watchdog, or write a failed sentinel with the reason.` — `call ask_watchdog, or` only when the
   session has an ask URL. Sent once per stall, to step agents and reviewers alike, and recorded as
   `Event{Kind: "nudge"}`; a nudge that cannot be delivered fails the step `stalled: nudge not
   delivered: <err>`.
@@ -340,8 +338,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   commit `docs(report): milestone <M>`; anything else → `report-skipped`, never a halt.
 - **Report** — `report.md` opens with `human touches: <n>` (every answer a person gave, every
   consent, every resume, every Resolve-first answer) and an **Automatic decisions** section: restarts with their remedy,
-  question timeouts with the answer the agent took, fallback restarts with the provider, model
-  and effort used, gate-fix rounds,
+  fallback restarts with the provider, model and effort used, gate-fix rounds,
   round-limit warnings, nudges, and blocked and skipped phases. A Resolve-first answer — at startup
   or during resume — is an `Event{Kind: "human", Step: "resolve first", Fields{what: answer, id:
   r<n>, entry, answer, by}}`, appended as soon as the run exists, and listed first under Questions
@@ -354,16 +351,15 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   default>`; watchdog on/off with `<provider> <model> <effort|provider default>`. Every step,
   reviewer, fallback, gatefix and watchdog line ends `← <provenance>`: one source when its
   provider, model and effort share it, else `provider <src> model <src> effort <src>`. Overrides
-  with the value replaced; prompt source per step; `mode: unattended` with the added allow-list
-  and the question timeout, or `mode: attended`.
+  with the value replaced; prompt source per step; `mode: unattended` with the added allow-list,
+  or `mode: attended`.
 - **Plain lines / status / report / notify env** — as written in Phases 15–16: `HH:MM:SS phase
   <N> <kind> <state> <provider> <detail>` (during a review, `<detail>` is `review r<round>/<rounds>
-  <half>`, `<half>` `find` or `fix`); `HH:MM:SS phase <N> <kind> nudge` when a stalled step is nudged; a remedy asked with no
-  terminal prints `remedy-<n> refused — no terminal to consent from`, remedy ids being `remedy-<n>`); while an `answer <id>> ` prompt is open, each emitted line
-  starts on a fresh line and the prompt is printed again after it; `r-loop status --plain` lines
+  <half>`, `<half>` `find` or `fix`); `HH:MM:SS phase <N> <kind> nudge` when a stalled step is
+  nudged; `r-loop status --plain` lines
   — `run <id> running (driver pid <pid> not alive — r-loop resume)` and no `live` line when
   `current` names this run with a dead pid, `phase <N> not in this run` for an unticked phase
-  outside the recorded run list; `r-loop answer` prints nothing on success; `report.md` rewritten on every
+  outside the recorded run list; `report.md` rewritten on every
   transition; hook env `R_LOOP_RUN, R_LOOP_STATUS, R_LOOP_PHASE, R_LOOP_STEP, R_LOOP_REASON,
   R_LOOP_TODO, R_LOOP_REPORT`, with `R_LOOP_STATUS ∈ {halted, finished, warning, blocked}`,
   `sh -c`, 60 s.
@@ -419,50 +415,39 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Server** — MCP go-sdk streamable HTTP on `127.0.0.1:<free port>`, base `/mcp/<runToken>`
   (32 hex chars, stored mode 0600). A step URL is `<base>/<phase>/<kind>/<attempt>`, a reviewer's
   `<base>/<phase>/<kind>-rv-<provider>/<attempt>` — the path identifies the asking agent. Tool
-  `ask_user(question, options?, recommended?) → {answer}` blocks until answered; ids `q<seq>`; a repeated `ask_user` from the same step with the same text and options while that
-  question is open reuses its id and receives its answer — it is not recorded or escalated again.
+  `ask_watchdog(question, options?, recommended?) → {answer}` blocks until the watchdog answers; ids `q<seq>`; a repeated `ask_watchdog` from the same step with the same text and options while that
+  question is open reuses its id and receives its answer — it is not recorded or forwarded again.
   Every agent's MCP client is configured with a 24 h tool timeout (Milestone 2, Provider block), so
   a blocking call is never cut off by the client.
 - **waiting-input** — a question moves the step `running → waiting-input`, freezes its backstop,
   and is recorded; the answer returns it to `running`. A backstop firing in `waiting-input` halts
   with `invariant: a question never expires`. `ask: none` omits the flag and records `ask-none`.
-- **Routing** — the loop freezes the step first, then offers the question to `Watcher.Route`
-  (the watchdog, Milestone 7); when that returns false, `Face.Ask`. Plain face:
-  stdin when it is a terminal, else the question stays open. Whatever the face, an answer may
-  also arrive as `<RunDir>/answers/<id>`, written by `r-loop answer <id> <text>` from any shell —
-  a temp file hard-linked into place, so a second answer while one is still waiting for that id is
-  refused, exit `2`; the loop reads that directory each tick, and the first answer wins.
+- **Routing** — the loop freezes the step first, records and emits the question, then hands it
+  to `Watcher.Route` (the watchdog, Milestone 7). No face ever asks (ADR-73). The driver never
+  answers a question itself: when the watchdog is gone, `Watch.Route` halts the run instead.
 - **Withdrawal** — when a step ends (`ok`, `failed`, `stalled`, a halt or an abort) its open
-  questions are withdrawn: each is recorded `AnsweredBy: withdrawn`, `Answer: step <state>`, the
-  face's `Withdraw(id)` is called, and the agent's pending call is released with `r-loop:
+  questions are withdrawn: each is recorded `AnsweredBy: withdrawn`, `Answer: step <state>`, and
+  the agent's pending call is released with `r-loop:
   phase-<N>/<kind> has ended; this question is withdrawn.` A question that arrives for a step that
   has already ended is withdrawn at once (`Answer: step ended`) and never moves the step to
   `waiting-input`. An answer to a withdrawn question or an ended step's question is dropped with
   `Event{Kind: "note", Fields{reason: "answer dropped: question <id> is not open"}}` — not
-  delivered, not a human touch, and never moving a step out of `ok` or `failed` (spec ADR-67,
-  amended 2026-09-19).
-- **Unattended timeout** — only with `--unattended`: a question still open
-  `unattended.questionTimeout` after it reached the face is answered by the driver with `No
-  answer within <t>. Proceed with your recommendation: <recommended>` — or, with none given, `…
-  Proceed with the option you judge safest and name it in your sentinel's reason` — recorded
-  `AnsweredBy: timeout` and listed under Automatic decisions.
+  delivered, not a human touch, and never moving a step out of `ok` or `failed`.
 
 ## Milestone 6 — The TUI
 
 - **Model** — one Bubble Tea model fed by `Event`s; header, phase rail (24 columns), live-step
-  panel, warnings, questions. Instrument tokens from `DESIGN.md`: surface `#0F1115`, raised
+  panel, warnings. Instrument tokens from `DESIGN.md`: surface `#0F1115`, raised
   `#171A20`, text `#D6DAE0`, dim `#8A929E`, primary `#6E9FC4`, secondary `#E0A458`, tertiary
   `#8FA87F`, error `#E0736A`, outline `#2E343D`. Both faces consume the same event log. During a
   review the live step reads `<kind> · review r<round>/<rounds>`. The TUI runs only without
   `--plain` and with a terminal on both stdin and stdout. `error` events and the halt banner draw
-  in `error`, warnings in `secondary`; with `NO_COLOR` the loud states (a blocked phase, an open
-  question, the halt banner) fall back to inverse.
-- **Input** — `Face.Ask` in the questions region; a `yes`/`no` question is a consent line. An
-  answered question, a Resolve-first entry included, becomes `<id>  answered by <who>`.
+  in `error`, warnings in `secondary`; with `NO_COLOR` the loud states (a blocked phase, the halt
+  banner) fall back to inverse. The TUI shows no questions: the maintainer answers in the
+  watchdog's pane (ADR-73).
 - **Stop** — `ctrl+c` on a live run asks `stop the run? … [y/n]`; `y` marks the run aborted,
   exactly as `r-loop abort` does (the live step's session and worktree are left for resume); any
-  other key cancels. Before a run exists (a Resolve-first question at startup) `y` leaves every
-  open question unanswered, so preflight exits 4 and nothing is stamped.
+  other key cancels. Before a run exists `y` only says `stopping before the run starts`.
 - **Dry run** — after the run list, each open `## Resolve first` entry that blocks a phase in it
   is named: `open ## Resolve first: "<name>" blocks phase <n> — the run will ask for it` (TUI) or
   `… the run refuses until it is resolved: /r:plan-unblock <todo>` (`--plain`).
@@ -475,14 +460,15 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   It then records `Event{Kind: "watchdog-start"}` and splits a pane to the right of the driver's
   own pane — `HERDR_PANE_ID`, passed in as `Env.Pane` and `Watchdog.Pane`; with no driver pane it
   opens its own workspace labelled with the watchdog name. `Stop` closes that workspace, or else
-  the pane. If `Start` fails on `watchdog.provider`, it is tried once on `watchdog.fallback`; a
-  second failure is exit 4.
+  the pane. If `Start` fails on its row, the run is blocked with exit 4 (`watchdog did not start:
+  <reason>`); there is no fallback provider for the watchdog.
 - **Second MCP surface** — `<base>/watchdog/<wdToken>`; tools `signal(kind, step, reason,
-  evidence) → {accepted, reason?}` · `propose_remedy(class, command, why) → {decision:
-  authorised|refused, reason?}` ·
-  `restart_step(step, addendum?, provider?) → {accepted, reason?}` · `answer_question(id, answer,
-  citation) → {accepted, reason?}`; `step` is `phase-<N>/<kind>`, resolved to the latest attempt.
-  None of these is reachable from a step path.
+  evidence) → {accepted, reason?}` · `propose_remedy(class, command, why, maintainer_said?) →
+  {decision: authorised|refused|ask, reason?}` ·
+  `restart_step(step, addendum?, provider?, maintainer_said?) → {accepted, reason?}` ·
+  `answer_question(id, answer, citation) → {accepted, reason?}`; `step` is `phase-<N>/<kind>`,
+  resolved to the latest attempt. None of these is reachable from a step path, and this path
+  serves no ask tool.
 - **Acceptance** — `Watch.Accept`: `warn` or `halt` naming the live step, or one that ended within
   the last poll tick, is accepted; anything else is recorded `Rejected` with its reason. A
   `signal` whose `step` is not `phase-<N>/<kind>` still goes through `Accept` and is rejected. A
@@ -496,19 +482,23 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Phase check into the plan** — the accepted warnings of `phase-<N>/check` become the plan
   prompt's `PhaseWarnings`, so the planner addresses each one.
 - **Remedies** — classes `deps · ports · containers · locks · restart · retry · provider`;
-  allow-listed → authorised at once, else `Face.Ask` yes/no, the maintainer's answer recorded and
-  emitted as `Event{Kind: "human", Fields{what: answer, by: maintainer}}`; the record is the
-  command as proposed with `Consent ∈ {allow-list, maintainer, refused}`; the driver never runs it.
+  allow-listed → authorised at once; otherwise an empty `maintainer_said` returns `ask` and records
+  nothing, and a non-empty one — the maintainer's reply, quoted, from the watchdog's own session —
+  is authorised with `Consent: maintainer` (the `watchdog-call` event keeps the quote); the record
+  is the command as proposed with `Consent ∈ {allow-list, maintainer, refused}`; the driver never
+  runs it.
   `restart_step` is accepted only for a `failed` or `stalled` step inside its remedy window, after
   an authorised remedy for it (or an allow-listed restart class), and while the step has had fewer
   than `watchdog.maxRestarts` restarts; it queues a new attempt. With `--unattended`,
   `unattended.allow` is added to `watchdog.allow`, and an allow-listed `provider` restart may name
-  only the row's `fallback` — any other provider still asks, unless a `provider` remedy the
-  maintainer authorised names it, which authorises the restart without asking again. A restart naming the fallback runs
+  only the row's `fallback` — any other provider needs `maintainer_said`, unless a `provider`
+  remedy the maintainer authorised names it, which authorises the restart without asking again. A restart naming the fallback runs
   the new attempt on the fallback's provider, model and effort; one naming any other provider
   runs on that provider's defaults; neither carries the row's own model or effort.
 - **Citations** — `path:line`, the path relative to the repository root, existing in the
-  **primary tree** and not under `.r-loop/`. The primary tree holds the spec, the tech design, the
+  **primary tree** and not under `.r-loop/`, or the literal `maintainer` when the watchdog asked
+  the maintainer in its own session. An empty or invalid citation is refused and the question
+  stays open with the watchdog. The primary tree holds the spec, the tech design, the
   todo, the committed phase plans and every landed phase, and never the current phase's
   uncommitted worktree.
 
@@ -554,10 +544,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 
 - **Split** — the driver makes every step-state change, tick, commit and run-list change; the
   watchdog is a full session for judgement. It is always on (no `--no-watchdog`), and its row is
-  `watchdog.{provider, model, effort, fallback}`.
-- **Order in `Execute`** — `Ask.Serve` → `startWatchdog` (fallback on failure) → `startTUI` →
-  `Loop.ServeQuestions(ctx)` (started once; `Run` no longer starts it when it is already serving) →
-  `unblock` → `Loop.Run`. `Preflight` creates and binds the run first; `recordRunList` is written by
+  `watchdog.{provider, model, effort}`.
+- **Order in `Execute`** — `Ask.Serve` → `startWatchdog` (exit 4 on failure) → `startTUI` →
+  `unblock` → `Loop.Run`, which starts `ServeQuestions`. `Preflight` creates and binds the run first; `recordRunList` is written by
   `unblock`, after deferral. `recordedRunList` reads the last `run-list` event.
 - **Sorting** — `plan.classify(head, owner)` sets `Entry.Kind`: `person` when the owner matches
   legal|finance|procurement|hr|people|compliance|security council or a person pattern matches,
@@ -569,7 +558,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   phase's block, and last the line telling the watchdog to write an empty file at `donePath`
   (`<runDir>/unblock.done`) when the walk is done. The driver removes a stale `unblock.done`, sends
   the request with `Dog.Notify(text, wait=false, …)` — a prompt returns as soon as the watchdog
-  blocks in `ask_user`, so its return never means the walk is over — then polls every 100 ms for the
+  starts asking the maintainer, so its return never means the walk is over — then polls every 100 ms for the
   done file and `Store.Aborted`, up to `watchdog.unblockTimeout`. On timeout it records a `warning`
   (`… did not finish within <timeout>`) and goes on; open entries are deferred.
 - **After the walk** (`app.Wiring.walk`) — a stop → exit 4 and the run `halted`. Any dirty path
@@ -581,16 +570,20 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   phases it blocks and their dependents (`core.Dependents`), records `entry-deferred {entry,
   phases}` and writes the new run list. An empty result finishes the run with exit 0.
   `--unattended` skips the walk and defers.
-- **TUI and plain** — a question with options marks the one equal to `Recommended` as
-  `(recommended)`; question text and options wrap to the width.
 - **Report** — `## Blockers` lists `<entry> → <resolved>` and `<entry> still open: phase <list>
-  skipped`; a watchdog question is listed by its first line.
+  skipped`.
 - **Deferred** — the watchdog managing the loop through MCP or a CLI (a non-goal in the spec).
-- **One channel to the maintainer** — every question to the maintainer is the watchdog's `ask_user`,
-  which returns `{id, answer}`. `QuestionRouter.Route` keeps a step question with the watchdog while
-  it is live (checked every `watchdog.answerWindow`) and falls back to the face only when it is gone
-  or answers with an empty citation. `answer_question` accepts `path:line` or `maintainer:<id>` (a
-  `watchdog` question answered `by=maintainer`, delivered as the maintainer's). `propose_remedy`
-  and `restart_step` take `consent_question`; without it an off-list class returns `ask` and
-  records nothing, and a non-fallback provider is refused with the same instruction. `Remedies`
-  no longer asks the face.
+- **Only the watchdog asks, in its own session (ADR-73)** — a step agent asks with
+  `ask_watchdog`; `QuestionRouter.Route` sends the watchdog `question <id> from phase-<N>/<kind>:
+  <text> options: <…> recommended: <…>` and waits while it is live (checked on a fixed 5 s
+  ticker). The watchdog answers with `answer_question`, citing a `path:line` or `maintainer` —
+  after asking the maintainer in its own session with AskUserQuestion, or as plain text — which
+  delivers `AnsweredBy: maintainer` and counts as a human touch. An empty or invalid citation is
+  refused and the question stays open. When the watchdog is not live as a question arrives, or
+  stops being live while it holds one, `Watch.Route` accepts a driver `halt` signal `the watchdog
+  is gone` for the asking step; the question is never answered, and `r-loop resume` starts a new
+  watchdog. With `--unattended` the watchdog prompt says never to ask the maintainer: answer from
+  the repository, or take the agent's recommended option citing the `path:line` that supports it.
+  `propose_remedy` and `restart_step` take `maintainer_said`, the maintainer's reply, quoted; an
+  off-list class without it returns `ask` and records nothing, and a non-fallback provider is
+  refused with the same instruction.

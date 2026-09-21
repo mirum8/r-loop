@@ -11,59 +11,63 @@ import (
 	"time"
 )
 
-const answeredByWatchdog = "watchdog"
+const (
+	answeredByWatchdog = "watchdog"
+	maintainerCitation = "maintainer"
+	defaultRouterPoll  = 5 * time.Second
+	watchdogGone       = "the watchdog is gone"
+)
 
 var citationPattern = regexp.MustCompile(`^[^\s:]+:\d+$`)
 
-const maintainerCitation = "maintainer:"
-
 type QuestionRouter struct {
-	Dog          *Watchdog
-	Deliver      func(id, answer, by, citation string) error
-	Answered     func(id string) (Question, bool)
-	Repo         Repo
-	AnswerWindow time.Duration
+	Dog     *Watchdog
+	Deliver func(id, answer, by, citation string) error
+	Repo    Repo
 
+	poll time.Duration
 	mu   sync.Mutex
-	open map[string]routed
-}
-
-type routed struct {
-	done chan bool
+	open map[string]chan struct{}
 }
 
 func (r *QuestionRouter) Route(ctx context.Context, q Question) bool {
 	if r.Dog == nil || !r.Dog.live() {
 		return false
 	}
-	p := routed{done: make(chan bool, 1)}
+	done := make(chan struct{})
 	r.mu.Lock()
 	if r.open == nil {
-		r.open = map[string]routed{}
+		r.open = map[string]chan struct{}{}
 	}
-	r.open[q.ID] = p
+	r.open[q.ID] = done
 	r.mu.Unlock()
-	text := fmt.Sprintf("question %s from phase-%d/%s: %s options: %s", q.ID, q.Step.Phase, q.Step.Kind, q.Text, strings.Join(q.Options, ", "))
+	text := fmt.Sprintf("question %s from phase-%d/%s: %s options: %s recommended: %s", q.ID, q.Step.Phase, q.Step.Kind, q.Text, strings.Join(q.Options, ", "), q.Recommended)
 	if err := r.Dog.Notify(text, false, 0); err != nil {
 		r.close(q.ID)
 		return false
 	}
-	tick := time.NewTicker(r.AnswerWindow)
+	poll := r.poll
+	if poll <= 0 {
+		poll = defaultRouterPoll
+	}
+	tick := time.NewTicker(poll)
 	defer tick.Stop()
-	for waiting := true; waiting; {
+	for {
 		select {
-		case ok := <-p.done:
-			return ok
+		case <-done:
+			return true
 		case <-tick.C:
-			waiting = r.Dog.live()
+			if r.Dog.live() {
+				continue
+			}
 		case <-ctx.Done():
-			waiting = false
 		}
+		if r.close(q.ID) {
+			return false
+		}
+		<-done
+		return true
 	}
-	if r.close(q.ID) {
-		return false
-	}
-	return <-p.done
 }
 
 func (r *QuestionRouter) close(id string) bool {
@@ -75,57 +79,38 @@ func (r *QuestionRouter) close(id string) bool {
 }
 
 func (r *QuestionRouter) Answer(id, answer, citation string) (bool, string) {
+	citation = strings.TrimSpace(citation)
+	if reason := r.rejectCitation(citation); reason != "" {
+		return false, reason + "; the question stays open"
+	}
 	r.mu.Lock()
-	p, ok := r.open[id]
+	done, ok := r.open[id]
 	delete(r.open, id)
 	r.mu.Unlock()
 	if !ok {
 		return false, fmt.Sprintf("question %s is not open", id)
 	}
-	if citation == "" {
-		p.done <- false
-		return false, "escalated to the maintainer"
+	by := answeredByWatchdog
+	if citation == maintainerCitation {
+		by, citation = maintainerCitation, ""
 	}
-	if qid, ok := strings.CutPrefix(citation, maintainerCitation); ok {
-		if a, found := r.answered(qid); !found || a.Step.Kind != "watchdog" || a.AnsweredBy != "maintainer" {
-			r.reopen(id, p)
-			return false, fmt.Sprintf("%s is not a question the maintainer answered", qid)
-		}
-		err := r.Deliver(id, answer, "maintainer", citation)
-		p.done <- true
-		if err != nil {
-			return false, err.Error()
-		}
-		return true, ""
-	}
-	if reason := r.rejectCitation(citation); reason != "" {
-		p.done <- false
-		return false, reason + "; escalated to the maintainer"
-	}
-	err := r.Deliver(id, answer, answeredByWatchdog, citation)
-	p.done <- true
+	err := r.Deliver(id, answer, by, citation)
+	close(done)
 	if err != nil {
 		return false, err.Error()
 	}
 	return true, ""
 }
 
-func (r *QuestionRouter) answered(id string) (Question, bool) {
-	if r.Answered == nil {
-		return Question{}, false
-	}
-	return r.Answered(id)
-}
-
-func (r *QuestionRouter) reopen(id string, p routed) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.open[id] = p
-}
-
 func (r *QuestionRouter) rejectCitation(citation string) string {
+	if citation == maintainerCitation {
+		return ""
+	}
+	if citation == "" {
+		return "citation is empty: cite path:line, or maintainer once the maintainer answered in your session"
+	}
 	if !citationPattern.MatchString(citation) {
-		return fmt.Sprintf("citation %q is not path:line", citation)
+		return fmt.Sprintf("citation %q is not path:line or maintainer", citation)
 	}
 	path := filepath.Clean(citation[:strings.LastIndex(citation, ":")])
 	if filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, "../") {

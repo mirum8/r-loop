@@ -10,16 +10,7 @@ import (
 var remedyT0 = time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
 
 func newRemedies(w *Watch, store Store, allow ...string) *Remedies {
-	asked := map[string]Question{
-		"q9": {ID: "q9", Step: StepKey{Kind: "watchdog"}, Answer: "yes", AnsweredBy: "maintainer"},
-		"q8": {ID: "q8", Step: StepKey{Kind: "watchdog"}, Answer: "No answer within 30m", AnsweredBy: "timeout"},
-		"q7": {ID: "q7", Step: StepKey{Phase: 2, Kind: "implement"}, Answer: "yes", AnsweredBy: "maintainer"},
-	}
-	answered := func(id string) (Question, bool) {
-		q, ok := asked[id]
-		return q, ok
-	}
-	return &Remedies{Allow: allow, Store: store, Answered: answered, Now: func() time.Time { return remedyT0 }, Watch: w, MaxRestarts: 2}
+	return &Remedies{Allow: allow, Store: store, Now: func() time.Time { return remedyT0 }, Watch: w, MaxRestarts: 2}
 }
 
 func failedImplement(t *testing.T, store Store) (*Watch, StepKey) {
@@ -42,7 +33,7 @@ func remedyRecords(store *fakeStore) []Remedy {
 	return out
 }
 
-func TestAnAllowListedClassIsAuthorisedWithoutAConsentQuestion(t *testing.T) {
+func TestAnAllowListedClassIsAuthorisedWithoutTheMaintainer(t *testing.T) {
 	store := &fakeStore{}
 	w, key := failedImplement(t, store)
 	rem := newRemedies(w, store, "locks")
@@ -103,7 +94,7 @@ func TestTheRecordHoldsTheCommandVerbatimAndIsAppendedBeforeTheDecisionReturns(t
 	rem := newRemedies(w, store)
 	cmd := "  pkill -f 'vite --port 5173' && rm -rf node_modules/.vite  "
 
-	rem.Propose("ports", cmd, "vite still holds the port", "q9")
+	rem.Propose("ports", cmd, "vite still holds the port", "yes, go ahead")
 	seen := remedyRecords(store)
 
 	if len(seen) != 1 || seen[0].Command != cmd || seen[0].Why != "vite still holds the port" || seen[0].Class != "ports" {
@@ -118,7 +109,7 @@ func TestARestartAfterAnAuthorisedRestartRemedyIsQueuedForTheHeldStep(t *testing
 	store := &fakeStore{}
 	w, key := failedImplement(t, store)
 	rem := newRemedies(w, store)
-	rem.Propose("restart", "herdr pane close stuck", "the agent froze", "q9")
+	rem.Propose("restart", "herdr pane close stuck", "the agent froze", "yes, go ahead")
 
 	got := make(chan Restart, 1)
 	go func() { got <- <-w.Restarts() }()
@@ -274,7 +265,7 @@ func TestAnAuthorisedRemedyIsSpentByOneRestart(t *testing.T) {
 	store := &fakeStore{}
 	w, _ := failedImplement(t, store)
 	rem := newRemedies(w, store)
-	rem.Propose("restart", "herdr pane close stuck", "froze", "q9")
+	rem.Propose("restart", "herdr pane close stuck", "froze", "yes, go ahead")
 	store.Append("run-1", Record{Kind: RecordEvent, Event: &Event{Kind: "restart", Fields: map[string]string{"step": "phase-2/implement", "remedy": "remedy-1"}}})
 
 	if ok, reason := rem.Restart("phase-2/implement", "", "", ""); ok || reason != "no authorised remedy" {
@@ -297,7 +288,7 @@ func TestAnAuthorisedRestartRerunsTheStepAsANewAttemptWithTheAddendum(t *testing
 			}
 			time.Sleep(time.Millisecond)
 		}
-		decided <- decisionOf(rem.Propose("restart", "herdr pane close stuck", "froze", "q9"))
+		decided <- decisionOf(rem.Propose("restart", "herdr pane close stuck", "froze", "yes, go ahead"))
 		_, reason := rem.Restart("phase-2/implement", "use the fake", "", "")
 		decided <- reason
 	}()
@@ -342,7 +333,7 @@ func TestAnUnlistedClassWithoutConsentAsksTheWatchdogToAskAndRecordsNothing(t *t
 
 	got, reason := rem.Propose("deps", "go mod download", "module cache is empty", "")
 
-	if got != "ask" || !strings.Contains(reason, "ask_user") || !strings.Contains(reason, "consent_question") {
+	if got != "ask" || !strings.Contains(reason, "ask the maintainer in your session") || !strings.Contains(reason, "maintainer_said") {
 		t.Fatalf("decision %q reason %q", got, reason)
 	}
 	if recs := remedyRecords(store); len(recs) != 0 {
@@ -350,12 +341,12 @@ func TestAnUnlistedClassWithoutConsentAsksTheWatchdogToAskAndRecordsNothing(t *t
 	}
 }
 
-func TestAnUnlistedClassIsAuthorisedByAWatchdogQuestionTheMaintainerAnswered(t *testing.T) {
+func TestAnUnlistedClassIsAuthorisedByWhatTheMaintainerSaid(t *testing.T) {
 	store := &fakeStore{}
 	w, _ := failedImplement(t, store)
 	rem := newRemedies(w, store, "locks")
 
-	got, _ := rem.Propose("deps", "go mod download", "module cache is empty", "q9")
+	got, _ := rem.Propose("deps", "go mod download", "module cache is empty", "yes, go ahead")
 
 	if got != "authorised" {
 		t.Fatalf("decision %q", got)
@@ -365,21 +356,17 @@ func TestAnUnlistedClassIsAuthorisedByAWatchdogQuestionTheMaintainerAnswered(t *
 	}
 }
 
-func TestAConsentQuestionNobodyAnsweredIsRefused(t *testing.T) {
-	for name, id := range map[string]string{"timed out": "q8", "a step's own question": "q7", "unknown": "q42"} {
-		t.Run(name, func(t *testing.T) {
-			store := &fakeStore{}
-			w, _ := failedImplement(t, store)
-			rem := newRemedies(w, store)
+func TestABlankMaintainerQuoteIsNoConsent(t *testing.T) {
+	store := &fakeStore{}
+	w, _ := failedImplement(t, store)
+	rem := newRemedies(w, store)
 
-			got, reason := rem.Propose("ports", "kill $(lsof -ti :8080)", "port 8080 is taken", id)
+	got, reason := rem.Propose("ports", "kill $(lsof -ti :8080)", "port 8080 is taken", "  ")
 
-			if got != "refused" || !strings.Contains(reason, id+" is not a question the maintainer answered") {
-				t.Fatalf("decision %q reason %q", got, reason)
-			}
-			if recs := remedyRecords(store); len(recs) != 0 {
-				t.Errorf("records %+v", recs)
-			}
-		})
+	if got != "ask" || !strings.Contains(reason, "maintainer_said") {
+		t.Fatalf("decision %q reason %q", got, reason)
+	}
+	if recs := remedyRecords(store); len(recs) != 0 {
+		t.Errorf("records %+v", recs)
 	}
 }

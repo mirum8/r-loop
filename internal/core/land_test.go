@@ -143,8 +143,7 @@ func (f *memFace) Emit(ev core.Event) {
 	f.events = append(f.events, ev)
 }
 
-func (f *memFace) Ask(q core.Question) (string, error) { return "", core.ErrNoInput }
-func (f *memFace) Close()                              {}
+func (f *memFace) Close() {}
 
 type runnerFunc func(ctx context.Context, ref core.StepRef, obs core.Observer) core.Outcome
 

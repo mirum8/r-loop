@@ -622,12 +622,12 @@ func TestReviewerWithoutAskUserIsNotNudgedToCallIt(t *testing.T) {
 	r.run()
 
 	nudges := r.callsFrom(`SessionHost.Prompt rloop-p3-implement-rv-claude-r1 "r-loop: no sentinel`)
-	if len(nudges) != 1 || strings.Contains(nudges[0], "ask_user") {
+	if len(nudges) != 1 || strings.Contains(nudges[0], "ask_watchdog") {
 		t.Fatalf("nudges = %q", nudges)
 	}
 }
 
-func TestReviewerWithAskUserIsNudgedToCallIt(t *testing.T) {
+func TestReviewerWithAskWatchdogIsNudgedToCallIt(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "claude"})
 	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
 	r.sm.Resolve = askingReviewResolve(r)
@@ -636,7 +636,7 @@ func TestReviewerWithAskUserIsNudgedToCallIt(t *testing.T) {
 	r.run()
 
 	nudges := r.callsFrom(`SessionHost.Prompt rloop-p3-implement-rv-claude-r1 "r-loop: no sentinel`)
-	if len(nudges) != 1 || !strings.Contains(nudges[0], "ask_user") {
+	if len(nudges) != 1 || !strings.Contains(nudges[0], "ask_watchdog") {
 		t.Fatalf("nudges = %q", nudges)
 	}
 }

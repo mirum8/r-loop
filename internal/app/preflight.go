@@ -207,9 +207,6 @@ func (w *Wiring) validateProviders() error {
 		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, review: true})
 	}
 	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider, ask: true})
-	if fb := cfg.Watchdog.Fallback.Provider; fb != "" {
-		roles = append(roles, role{field: "watchdog.fallback", provider: fb, ask: true})
-	}
 	for _, r := range roles {
 		p, err := w.Registry.Resolve(r.provider)
 		if err != nil {
@@ -256,7 +253,7 @@ func (w *Wiring) banner(out io.Writer, prompts []string) {
 		fmt.Fprintln(out, "mode: attended")
 		return
 	}
-	fmt.Fprintf(out, "mode: unattended  allow + %s  question timeout %s\n", strings.Join(addedClasses(w.Config), ", "), config.Duration(w.Config.Unattended.QuestionTimeout))
+	fmt.Fprintf(out, "mode: unattended  allow + %s\n", strings.Join(addedClasses(w.Config), ", "))
 }
 
 func (w *Wiring) extraSteps() []string {

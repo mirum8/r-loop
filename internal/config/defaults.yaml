@@ -50,11 +50,9 @@ watchdog:
   provider: claude
   model: opus
   effort: high
-  fallback: codex
   maxRestarts: 2
   allow:
   remedyWindow: 10m
-  answerWindow: 5m
   checkTimeout: 10m
   unblockTimeout: 2h
   stallGrace: 2m
@@ -69,7 +67,6 @@ unattended:
     - restart
     - retry
     - provider
-  questionTimeout: 30m
 
 notify:
   onHalt: ""

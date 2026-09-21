@@ -24,6 +24,7 @@ type Watchdog struct {
 	RunID, Root, TodoPath, SpecDir, RunDir string
 	Pane                                   string
 	Allow                                  []string
+	Unattended                             bool
 	Sleep                                  func(time.Duration)
 
 	mu        sync.Mutex
@@ -79,7 +80,7 @@ func (d *Watchdog) Start(ctx context.Context) error {
 	if _, err := d.Host.Start(pane, name, d.Provider.Kind, d.Provider.Args); err != nil {
 		return fmt.Errorf("start %s: %w", name, err)
 	}
-	text, _, err := d.Prompts.Render("watchdog", map[string]any{"TodoPath": d.TodoPath, "SpecDir": d.SpecDir, "RunDir": d.RunDir, "Allow": d.Allow})
+	text, _, err := d.Prompts.Render("watchdog", map[string]any{"TodoPath": d.TodoPath, "SpecDir": d.SpecDir, "RunDir": d.RunDir, "Allow": d.Allow, "Unattended": d.Unattended})
 	if err != nil {
 		return fmt.Errorf("render watchdog: %w", err)
 	}

@@ -514,7 +514,7 @@ func TestAGoneAgentFailsTheStep(t *testing.T) {
 	}
 }
 
-const nudgeText = "r-loop: no sentinel and no activity for 2m0s. If your work is done, write the sentinel now. If you are blocked, call ask_user, or write a failed sentinel with the reason."
+const nudgeText = "r-loop: no sentinel and no activity for 2m0s. If your work is done, write the sentinel now. If you are blocked, call ask_watchdog, or write a failed sentinel with the reason."
 
 func TestIdleForTheGraceStallsAndNudgesOnceThenWorkingResumes(t *testing.T) {
 	r := newRig(t)

@@ -154,8 +154,6 @@ func Main(args []string, env Env) int {
 			return Resume(args[1:], env)
 		case "abort":
 			return Abort(args[1:], env)
-		case "answer":
-			return Answer(args[1:], env)
 		}
 	}
 	opts, err := ParseArgs(args)
@@ -195,9 +193,7 @@ func (w *Wiring) Execute(opts core.RunOptions) int {
 	} else if err := w.startWatchdog(ctx); err != nil {
 		code = fail(w.Env, err)
 	} else {
-		go w.pollAnswers(ctx)
 		w.startTUI()
-		w.Loop.ServeQuestions(ctx)
 		var err error
 		var empty bool
 		if opts, empty, err = w.unblock(ctx, opts); err != nil {
@@ -251,7 +247,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Prompts:  prompts.New(root),
 		Host:     herdr.Client{Bin: env.Herdr},
 		Repo:     repo,
-		Plain:    &plain.Face{Out: env.Stdout, In: env.Stdin, TTY: terminal(env.Stdin)},
+		Plain:    &plain.Face{Out: env.Stdout},
 	}
 	w.Face = w.Plain
 	if useTUI(opts.Plain, terminal(env.Stdin), terminal(env.Stdout)) {
@@ -341,30 +337,16 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	allow := cfg.Watchdog.Allow
 	if opts.Unattended {
 		allow = append(slices.Clone(allow), addedClasses(cfg)...)
-		w.Loop.QuestionTimeout = cfg.Unattended.QuestionTimeout
 	}
 	fallbacks := map[string]core.Fallback{}
 	for _, k := range kinds {
 		fallbacks[k.Name] = k.Row.Fallback
 	}
-	w.Remedies = &core.Remedies{Allow: allow, Store: w.Store, Answered: w.answered, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks}
-	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, Pane: env.Pane, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow}
-	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Answered: w.answered, Repo: repo, AnswerWindow: cfg.Watchdog.AnswerWindow}
+	w.Remedies = &core.Remedies{Allow: allow, Store: w.Store, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks}
+	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, Pane: env.Pane, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow, Unattended: opts.Unattended}
+	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Repo: repo}
 	w.Loop.RemedyWindow = cfg.Watchdog.RemedyWindow
 	return w, nil
-}
-
-func (w *Wiring) answered(id string) (core.Question, bool) {
-	run, err := w.Store.Load(w.Loop.RunID)
-	if err != nil {
-		return core.Question{}, false
-	}
-	for _, q := range run.Questions {
-		if q.ID == id {
-			return q, true
-		}
-	}
-	return core.Question{}, false
 }
 
 func addedClasses(cfg config.LoopConfig) []string {
@@ -379,14 +361,7 @@ func addedClasses(cfg config.LoopConfig) []string {
 
 func (w *Wiring) startWatchdog(ctx context.Context) error {
 	wd := w.Config.Watchdog
-	err := w.startDog(ctx, "watchdog.provider", wd.Provider, wd.Model, wd.Effort)
-	if fb := wd.Fallback; err != nil && fb.Provider != "" {
-		first := err
-		if err = w.startDog(ctx, "watchdog.fallback", fb.Provider, fb.Model, fb.Effort); err != nil {
-			err = exit(4, "watchdog did not start: %v; fallback: %v", first, err)
-		}
-	}
-	if err != nil {
+	if err := w.startDog(ctx, wd.Provider, wd.Model, wd.Effort); err != nil {
 		return err
 	}
 	w.Watch.Dog = w.Dog
@@ -397,12 +372,12 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	return nil
 }
 
-func (w *Wiring) startDog(ctx context.Context, field, provider, model, effort string) error {
+func (w *Wiring) startDog(ctx context.Context, provider, model, effort string) error {
 	url := w.Ask.WatchdogURL()
 	mcpPath := filepath.Join(w.Dog.RunDir, "watchdog.mcp.json")
 	args, err := w.resolve(provider, model, effort, url, mcpPath)
 	if err != nil {
-		return exit(2, "%s: %v", field, err)
+		return exit(2, "watchdog.provider: %v", err)
 	}
 	if slices.ContainsFunc(args.Args, func(a string) bool { return strings.Contains(a, mcpPath) }) {
 		if err := providers.WriteMCPConfig(mcpPath, url); err != nil {

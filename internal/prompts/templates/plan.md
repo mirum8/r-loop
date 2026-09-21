@@ -26,8 +26,7 @@ Read the phase block, every file its `Files:` line names, and the existing code 
 
 ## 2. Decide
 
-A fact the repository can answer is looked up, never asked.
-{{- if .AskURL}} A real choice goes to the `ask_user` tool.{{else}} For a real choice, take the sensible default most consistent with the spec and the design docs.{{end}} Write every default you take under `## Assumptions`.
+A fact the repository can answer is looked up, never asked. A real choice the repository cannot answer goes to the `ask_watchdog` tool. Write every default the plan itself chooses under `## Assumptions`.
 
 ## 3. Write
 

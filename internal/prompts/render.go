@@ -22,10 +22,8 @@ const sentinel = `{{define "sentinel"}}
 ## Reporting the outcome
 
 As your last action, write ` + "`" + `{"outcome":"ok","reason":"","at":"<RFC3339>"}` + "`" + ` to ` + "`" + `{{.Sentinel}}` + "`" + `, with ` + "`" + `at` + "`" + ` set to the current time. When the work cannot be done, write ` + "`" + `{"outcome":"failed","reason":"<why>","at":"<RFC3339>"}` + "`" + ` there instead, naming the cause. The driver reads only that file: never report completion only in the terminal. Never commit — the driver commits the step's work once its review is done.
-{{- if .AskURL}}
 
-When you need a decision you cannot take from the repository, use the ` + "`" + `ask_user` + "`" + ` tool instead of guessing.
-{{- end}}
+When you need a decision you cannot take from the repository, call the ` + "`" + `ask_watchdog` + "`" + ` tool with the options and the one you recommend, instead of guessing. Never ask the user in this pane.
 {{- if .Addendum}}
 
 ## Note from the previous attempt:

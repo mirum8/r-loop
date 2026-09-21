@@ -75,31 +75,20 @@ func newModel(events []core.Event) Model {
 }
 
 type plainView struct {
-	states    map[int]string
-	live      string
-	questions []string
+	states map[int]string
+	live   string
 }
 
 func readPlain(out string) plainView {
 	v := plainView{states: map[int]string{}}
 	stateRe := regexp.MustCompile(`phase-state  phase=(\d+) state=(\S+)`)
 	stepRe := regexp.MustCompile(`^\S+  phase (\d+)  (\S+)  (\S+)  (\S+)`)
-	askRe := regexp.MustCompile(`question  id=(\S+)`)
-	answerRe := regexp.MustCompile(`human  id=(\S+) what=answer`)
 	for _, line := range strings.Split(out, "\n") {
 		if m := stateRe.FindStringSubmatch(line); m != nil {
 			n, _ := strconv.Atoi(m[1])
 			v.states[n] = m[2]
 		} else if m := stepRe.FindStringSubmatch(line); m != nil {
 			v.live = strings.Join(m[1:], " ")
-		} else if m := askRe.FindStringSubmatch(line); m != nil {
-			v.questions = append(v.questions, m[1])
-		} else if m := answerRe.FindStringSubmatch(line); m != nil {
-			for i, id := range v.questions {
-				if id == m[1] {
-					v.questions = append(v.questions[:i], v.questions[i+1:]...)
-				}
-			}
 		}
 	}
 	return v
@@ -130,15 +119,8 @@ func TestPlainFaceAndTUIModelShowTheSameRun(t *testing.T) {
 	if live != want.live || live != "2 implement waiting-input codex" {
 		t.Errorf("live: tui %q, plain %q", live, want.live)
 	}
-	var open []string
-	for _, q := range m.Questions {
-		open = append(open, q.ID)
-	}
-	if strings.Join(open, ",") != strings.Join(want.questions, ",") || strings.Join(open, ",") != "q2" {
-		t.Errorf("open questions: tui %v, plain %v", open, want.questions)
-	}
-	if view := m.View(); !strings.Contains(view, "Which port?") || strings.Contains(view, "Which config format?") {
-		t.Errorf("view:\n%s", view)
+	if view := m.View(); strings.Contains(view, "Which port?") || strings.Contains(view, "QUESTIONS") {
+		t.Errorf("a question is shown in the TUI:\n%s", view)
 	}
 }
 
@@ -258,19 +240,14 @@ func TestAnyKeyButYCancelsTheStop(t *testing.T) {
 	}
 }
 
-func TestStoppingBeforeTheRunStartsLeavesItsQuestionsUnanswered(t *testing.T) {
+func TestStoppingBeforeTheRunStartsSaysSo(t *testing.T) {
 	m := NewModel(Header{Todo: "docs/x/todo.md", Started: t0}, plan(), NewTheme(lipgloss.NewRenderer(io.Discard), false))
-	reply := make(chan string, 1)
-	m = m.ask(askMsg{q: core.Question{ID: "r1", Text: "resolve first: X"}, reply: reply})
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	next, _ = next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 
-	if _, ok := <-reply; ok {
-		t.Fatal("the question was answered")
-	}
-	if len(next.(Model).Questions) != 0 {
-		t.Fatalf("questions left: %+v", next.(Model).Questions)
+	if !strings.Contains(next.(Model).View(), "stopping before the run starts") {
+		t.Fatalf("view:\n%s", next.(Model).View())
 	}
 }
 
@@ -328,9 +305,6 @@ func TestFaceSendsEventsToTheProgramAndClosesOnQ(t *testing.T) {
 	if !strings.Contains(out.String(), "report: /repo/report.md") {
 		t.Fatalf("out:\n%s", out.String())
 	}
-	if _, err := f.Ask(core.Question{ID: "q1"}); err != core.ErrNoInput {
-		t.Fatalf("ask err %v", err)
-	}
 }
 
 func TestSkippedDependentsAreBlocked(t *testing.T) {
@@ -375,7 +349,7 @@ func TestResumeReplaysHistoryButNotTheOldEnding(t *testing.T) {
 	if len(m.Warnings) != 1 || m.Phases[0].State != core.PhaseLanded || m.Phases[1].State != core.PhasePlanned {
 		t.Fatalf("warnings %+v phases %+v", m.Warnings, m.Phases)
 	}
-	if m.Status != "" || m.Live != nil || len(m.Questions) != 0 || m.Resume != "" {
-		t.Fatalf("stale ending: status %q live %+v questions %+v", m.Status, m.Live, m.Questions)
+	if m.Status != "" || m.Live != nil || m.Resume != "" {
+		t.Fatalf("stale ending: status %q live %+v", m.Status, m.Live)
 	}
 }

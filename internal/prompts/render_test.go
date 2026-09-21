@@ -28,6 +28,7 @@ func fullVars() map[string]any {
 		"Sentinel":      "/runs/r1/phase-7/plan-a1.sentinel",
 		"RunDir":        "/runs/r1",
 		"Allow":         []string{},
+		"Unattended":    false,
 		"AskURL":        "",
 		"PhaseWarnings": "",
 		"ItemGate":      false,
@@ -207,7 +208,7 @@ func TestWatchdogHasNoSentinelParagraph(t *testing.T) {
 	if strings.Contains(text, `"outcome"`) || strings.Contains(text, "/runs/r1/phase-7/plan-a1.sentinel") {
 		t.Errorf("watchdog carries the sentinel paragraph:\n%s", text)
 	}
-	for _, want := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "ask_user", "You are a full session", "Never commit, merge or push yourself"} {
+	for _, want := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "ask_watchdog", "AskUserQuestion", "You are a full session", "Never commit, merge or push yourself"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q", want)
 		}
@@ -256,12 +257,12 @@ func TestWatchdogCarriesTheAnsweringRule(t *testing.T) {
 
 	for _, want := range []string{
 		"## Answering questions",
-		"question <id> from phase-<N>/<kind>: <text> options: <options>",
+		"question <id> from phase-<N>/<kind>: <text> options: <options> recommended: <recommended>",
 		"answer with a `path:line` citation",
 		"the spec file, the tech-design file, the todo, a committed phase plan or code a landed phase wrote",
 		"never the current phase's worktree and never anything under `.r-loop/`",
-		"When nothing answers it, ask the maintainer with `ask_user`",
-		"the citation `maintainer:<id>`",
+		"When nothing answers it, ask the maintainer here",
+		"the citation `maintainer`",
 		"Never guess an answer",
 	} {
 		if !strings.Contains(text, want) {
@@ -288,14 +289,15 @@ func TestWatchdogCarriesThePhaseCheck(t *testing.T) {
 	}
 }
 
-func TestAskUserOnlyWhenAskURLSet(t *testing.T) {
+func TestStepTemplatesSendRealChoicesToTheWatchdog(t *testing.T) {
 	r := New(t.TempDir())
 	for _, name := range stepTemplates {
-		if strings.Contains(render(t, r, name, fullVars()), "ask_user") {
-			t.Errorf("%s: mentions ask_user without AskURL", name)
+		text := render(t, r, name, fullVars())
+		if !strings.Contains(text, "call the `ask_watchdog` tool") || !strings.Contains(text, "Never ask the user in this pane") {
+			t.Errorf("%s does not send real choices to the watchdog:\n%s", name, text)
 		}
-		if !strings.Contains(render(t, r, name, with("AskURL", "http://127.0.0.1:9/mcp/x")), "ask_user") {
-			t.Errorf("%s: no ask_user with AskURL", name)
+		if strings.Contains(text, "ask_user") {
+			t.Errorf("%s names ask_user", name)
 		}
 	}
 }
@@ -502,21 +504,43 @@ func TestWatchdogWalksTheBlockersLikePlanUnblock(t *testing.T) {
 	}
 }
 
-func TestEveryQuestionToTheMaintainerGoesThroughTheWatchdogsAskUser(t *testing.T) {
+func TestOnlyTheWatchdogAsksTheMaintainerInItsOwnSession(t *testing.T) {
 	text := render(t, New(t.TempDir()), "watchdog", fullVars())
 
 	for _, want := range []string{
 		"## Talking to the maintainer",
-		"Every question to the maintainer goes through `ask_user`, and only you ask them",
-		"It returns `{id, answer}`",
+		"Only you ask the maintainer, and only here, in your own session",
+		"AskUserQuestion",
 		"a person who has not read the logs",
 		"Offer what you can do yourself as an option",
-		"propose_remedy(class, command, why, consent_question?)",
-		"restart_step(step, addendum?, provider?, consent_question?)",
-		"call `propose_remedy` again with `consent_question` set to the id `ask_user` returned",
+		"propose_remedy(class, command, why, maintainer_said?)",
+		"restart_step(step, addendum?, provider?, maintainer_said?)",
+		"call `propose_remedy` again with `maintainer_said` set to their reply",
+		"write the empty file the request names",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q", want)
 		}
+	}
+	for _, gone := range []string{"ask_user", "consent_question", "maintainer:<id>", "unattended"} {
+		if strings.Contains(text, gone) {
+			t.Errorf("watchdog still names %q", gone)
+		}
+	}
+}
+
+func TestAnUnattendedWatchdogNeverAsksTheMaintainer(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", with("Unattended", true))
+
+	for _, want := range []string{
+		"This run is unattended: never ask the maintainer",
+		"take the agent's recommended option and cite the `path:line` that best supports it",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "the citation `maintainer`") {
+		t.Errorf("an unattended watchdog is told to cite the maintainer:\n%s", text)
 	}
 }

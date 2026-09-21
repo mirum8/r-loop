@@ -31,7 +31,7 @@ func run() error {
 		return err
 	}
 	defer cs.Close()
-	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "ask_user", Arguments: map[string]any{
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "ask_watchdog", Arguments: map[string]any{
 		"question":    "Which database?",
 		"options":     []string{"sqlite", "postgres"},
 		"recommended": "sqlite",
@@ -40,7 +40,7 @@ func run() error {
 		return err
 	}
 	if res.IsError {
-		return fmt.Errorf("ask_user failed: %v", res.Content)
+		return fmt.Errorf("ask_watchdog failed: %v", res.Content)
 	}
 	out, _ := res.StructuredContent.(map[string]any)
 	answer, _ := out["answer"].(string)

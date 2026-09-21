@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,13 +19,13 @@ import (
 )
 
 type dogHost struct {
-	mu         sync.Mutex
-	calls      []string
-	startErr   error
-	failStarts int
-	stale      map[string]string
-	onPrompt   func(text string)
-	escalate   func(id string)
+	mu       sync.Mutex
+	calls    []string
+	startErr error
+	stale    map[string]string
+	onPrompt func(text string)
+	question func(id string)
+	blocked  string
 }
 
 func (h *dogHost) record(format string, args ...any) {
@@ -45,22 +46,19 @@ func (h *dogHost) Open(spec core.OpenSpec) (core.Workspace, error) {
 }
 func (h *dogHost) Start(pane, name, kind string, args []string) (core.Agent, error) {
 	h.record("Start %s %s %s %s", pane, name, kind, strings.Join(args, " "))
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.failStarts > 0 {
-		h.failStarts--
-		return core.Agent{}, fmt.Errorf("usage limit")
-	}
 	return core.Agent{Name: name, Pane: pane}, h.startErr
 }
 func (h *dogHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
 	h.record("Prompt %s %s", agent, text)
+	if h.blocked != "" && strings.HasPrefix(text, h.blocked) {
+		return errors.New("herdr: agent_blocked")
+	}
 	if h.onPrompt != nil {
 		h.onPrompt(text)
 	}
-	if rest, ok := strings.CutPrefix(text, "question "); ok && h.escalate != nil {
+	if rest, ok := strings.CutPrefix(text, "question "); ok && h.question != nil {
 		id, _, _ := strings.Cut(rest, " ")
-		go h.escalate(id)
+		go h.question(id)
 	}
 	return nil
 }
@@ -214,7 +212,7 @@ func TestExecuteRegistersProposeRemedyAndRestartStepOnTheWatchdogSurface(t *test
 	if answered["accepted"] != false || answered["reason"] != "question q-none is not open" {
 		t.Errorf("answer_question %v", answered)
 	}
-	if w.Watch.Router != w.Router || w.Router.Dog != w.Dog || w.Router.AnswerWindow != 5*time.Minute {
+	if w.Watch.Router != w.Router || w.Router.Dog != w.Dog {
 		t.Errorf("router %+v", w.Router)
 	}
 	select {
@@ -319,10 +317,10 @@ func TestAWatchdogProviderWithoutMCPIsRefusedInPreflight(t *testing.T) {
 	}
 }
 
-func escalatingDog(w *Wiring) *dogHost {
-	return &dogHost{escalate: func(id string) {
+func answeringDog(w *Wiring, answer, citation string) *dogHost {
+	return &dogHost{question: func(id string) {
 		for {
-			if ok, reason := w.Router.Answer(id, "", ""); ok || !strings.Contains(reason, "not open") {
+			if ok, reason := w.Router.Answer(id, answer, citation); ok || !strings.Contains(reason, "not open") {
 				return
 			}
 			time.Sleep(time.Millisecond)

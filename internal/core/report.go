@@ -92,11 +92,6 @@ func decisions(st RunState) []string {
 			out = append(out, skippedLine(ev))
 		}
 	}
-	for _, q := range st.Questions {
-		if q.AnsweredBy == "timeout" {
-			out = append(out, fmt.Sprintf("%s %s: timed out; the agent took %s", q.ID, where(q.Step.Phase, q.Step.Kind), q.Answer))
-		}
-	}
 	return out
 }
 
@@ -222,11 +217,7 @@ func questionLines(st RunState) []string {
 		}
 	}
 	for _, q := range st.Questions {
-		text := q.Text
-		if q.Step.Kind == "watchdog" {
-			text, _, _ = strings.Cut(text, "\n")
-		}
-		line := fmt.Sprintf("%s %s: %s", q.ID, where(q.Step.Phase, q.Step.Kind), text)
+		line := fmt.Sprintf("%s %s: %s", q.ID, where(q.Step.Phase, q.Step.Kind), q.Text)
 		if q.AnsweredBy == "" {
 			line += " (open)"
 		} else {

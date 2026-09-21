@@ -96,10 +96,12 @@ arrangement this identity's glance-first premise depends on.
 **What is built.** The layout the TUI actually draws is the one in the golden frames of Phase 22,
 `internal/face/tui/testdata/frame-120x40.golden` and `frame-70x30.golden`, and those frames are
 authoritative where this document or `docs/design/variants/layouts/rail.txt` differ: a header line,
-the phase rail beside the live-step panel with its warnings (stacked below 80 columns), a questions
-area, and a status line for a notice or a finished run. Not implemented: the bordered frame, the
-watchdog feed, the raised panel (modal) and the key bar drawn in `rail.txt`, and the ASCII box
-fallback under **Shapes**.
+the phase rail beside the live-step panel with its warnings (stacked below 80 columns), and a
+status line for a notice or a finished run. Not implemented: the bordered frame, the watchdog feed,
+the raised panel (modal), the question banner and the key bar drawn in `rail.txt`, and the ASCII box
+fallback under **Shapes**. **Questions are no longer shown in the TUI** (spec ADR-73): step agents
+ask the watchdog, and the watchdog asks the maintainer in its own pane, so the TUI never waits on an
+answer; a step waiting on one shows only its `waiting-input` state and its paused backstop.
 
 ## Colors
 
@@ -113,9 +115,9 @@ labels all use it, which is what leaves the two accent colours alone to mean som
 
 - **`primary`** — a muted steel blue. The live step, and the selected row. One thing on screen is
   live, so one thing on screen is blue.
-- **`secondary`** — amber. **Something is waiting for you**: an open question, a warning, a remedy
-  asking for consent. This is the only colour that means *act*, and nothing else is allowed to use
-  it.
+- **`secondary`** — amber. **Something is waiting for you**: today, a warning. Questions and
+  consent are asked in the watchdog's own pane, not here. This is the only colour that means *act*,
+  and nothing else is allowed to use it.
 - **`tertiary`** — a desaturated sage. A phase that landed. It reads as settled rather than
   celebratory, because a landed phase is not news.
 - **`error`** — a warm red, used for a failed step, a blocked phase, an error event and the halt
@@ -133,8 +135,8 @@ the rules are narrow:
 - **Bold** marks exactly one thing: the phase currently being built. Not headers, not labels.
 - **Dim** is `on-surface-dim`'s job and is not additionally applied.
 - **Inverse** is reserved for the selected row, and pairs with `primary`. Under `NO_COLOR`, the
-  monochrome fallback also uses inverse for the loud states — a blocked phase, an open question
-  and the halt banner — with bold for the live phase and dim for the quiet ones.
+  monochrome fallback also uses inverse for the loud states — a blocked phase and the halt
+  banner — with bold for the live phase and dim for the quiet ones.
 - **Underline** is unused. It survives poorly across terminals and there is nothing here that needs
   a third emphasis.
 
@@ -188,12 +190,14 @@ The state vocabulary is small on purpose — five row states, three banners:
 | `row-selected` | the row under the cursor — inverse against `primary` |
 | `row-landed` | merged and ticked — `tertiary` |
 | `row-failed` | a failed step or a watchdog halt — `error` |
-| `banner-question` | an agent is waiting on an answer — full-width `secondary` |
+| `banner-question` | reserved, not drawn: questions are asked in the watchdog's pane (ADR-73) |
 | `banner-warn` | the watchdog raised a warning, run continues — `secondary` on raised surface |
 | `banner-halt` | the run stopped — full-width `error` |
 
-`banner-question` is the loudest thing this design can produce, and that is correct: it is the one
-state where the run is stopped and a person is the only thing that can move it.
+`banner-question` was the loudest thing this design could produce, for the one state where a
+person is the only thing that can move the run. Since ADR-73 that conversation happens in the
+watchdog's pane, so the TUI no longer draws it; the token stays so a later banner keeps the same
+meaning.
 
 ## Do's and Don'ts
 

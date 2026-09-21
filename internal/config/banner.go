@@ -40,9 +40,6 @@ func Banner(cfg LoopConfig, extra ...string) string {
 	w := cfg.Watchdog
 	fmt.Fprintf(&b, "watchdog: %s %s %s allow [%s]  ← %s\n", w.Provider, orDefault(w.Model), orDefault(w.Effort),
 		strings.Join(w.Allow, ", "), sources(p["watchdog.provider"], p["watchdog.model"], p["watchdog.effort"]))
-	if fb := w.Fallback; fb.Provider != "" {
-		fmt.Fprintf(&b, "  fallback %s  ← %s\n", roleLine(fb.Provider, fb.Model, fb.Effort), p["watchdog.fallback"])
-	}
 	return b.String()
 }
 

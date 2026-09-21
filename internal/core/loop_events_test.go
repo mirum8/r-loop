@@ -2,8 +2,6 @@ package core
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -19,7 +17,7 @@ type fakeWatcher struct {
 	restarts chan Restart
 	started  func(StepRef, *Session)
 	ended    func(StepRef, Outcome)
-	routes   bool
+	route    func(context.Context, Question) bool
 }
 
 func (w *fakeWatcher) BeforePhase(ctx context.Context, ph Phase, base string) CheckOutcome {
@@ -46,7 +44,7 @@ func (w *fakeWatcher) Restarts() <-chan Restart { return w.restarts }
 
 func (w *fakeWatcher) Route(ctx context.Context, q Question) bool {
 	w.log.record("Watcher.Route %s", q.ID)
-	return w.routes
+	return w.route != nil && w.route(ctx, q)
 }
 
 type eventsHost struct {
@@ -426,10 +424,13 @@ func TestNoWindowWithoutAWatchdog(t *testing.T) {
 	}
 }
 
-func TestQuestionAnsweredThroughTheFaceReturnsToRunning(t *testing.T) {
+func TestAQuestionTheWatcherAnswersReturnsTheStepToRunning(t *testing.T) {
 	r := newEventsRig(t)
 	r.host.behaviour["rloop-p2-implement"] = "ask"
-	r.face.Answers = map[string]string{"q1": "sqlite"}
+	r.watcher.route = func(ctx context.Context, q Question) bool {
+		r.loop.Deliver(q.ID, "sqlite", "watchdog", "docs/spec.html:3")
+		return true
+	}
 
 	code := r.run(RunOptions{Phases: []int{2}})
 
@@ -440,68 +441,49 @@ func TestQuestionAnsweredThroughTheFaceReturnsToRunning(t *testing.T) {
 	if got := r.stepStates("implement"); !reflect.DeepEqual(got, want) {
 		t.Errorf("implement states %v, want %v", got, want)
 	}
-	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{`q1 "sqlite" maintainer ""`}) {
+	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{`q1 "sqlite" watchdog "docs/spec.html:3"`}) {
 		t.Errorf("answers %v", got)
 	}
 	var order []string
 	for _, c := range r.shared.Calls() {
 		switch {
-		case c == "Store.Append run-1 question", c == "Face.Emit question", strings.HasPrefix(c, "Watcher.Route"), strings.HasPrefix(c, "Face.Ask"), strings.HasPrefix(c, "AskChannel.Answer"):
+		case c == "Store.Append run-1 question", c == "Face.Emit question", strings.HasPrefix(c, "Watcher.Route"), strings.HasPrefix(c, "AskChannel.Answer"):
 			order = append(order, strings.Fields(c)[0])
 		}
 	}
-	wantOrder := []string{"Store.Append", "Face.Emit", "Watcher.Route", "Face.Ask", "Store.Append", "AskChannel.Answer"}
+	wantOrder := []string{"Store.Append", "Face.Emit", "Watcher.Route", "Store.Append", "AskChannel.Answer"}
 	if !reflect.DeepEqual(order, wantOrder) {
 		t.Errorf("order %v, want %v", order, wantOrder)
 	}
-	calls := r.shared.Calls()
-	asked := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "Face.Ask") })
-	answered := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "AskChannel.Answer") })
-	if running := slices.Index(calls[asked:], "Store.Append run-1 step"); running < 0 || asked+running > answered {
-		t.Errorf("running not recorded before the answer reached the agent: %v", calls[asked:])
-	}
 	st, _ := r.store.Load("run-1")
-	if len(st.Questions) != 1 || st.Questions[0].Answer != "sqlite" || st.Questions[0].AnsweredBy != "maintainer" {
+	if len(st.Questions) != 1 || st.Questions[0].Answer != "sqlite" || st.Questions[0].AnsweredBy != "watchdog" {
 		t.Errorf("questions %+v", st.Questions)
 	}
-	if human := r.events("human"); len(human) != 1 || human[0].Fields["what"] != "answer" {
+	if human := r.events("human"); len(human) != 0 {
 		t.Errorf("human %+v", human)
 	}
 }
 
-func TestAQuestionTheWatcherRoutesNeverReachesTheFace(t *testing.T) {
-	r := newEventsRig(t)
-	r.watcher.routes = true
-	r.host.behaviour["rloop-p2-implement"] = "ask"
-
-	code := r.run(RunOptions{Phases: []int{2}})
-
-	if code != 0 {
-		t.Fatalf("exit %d, want 0", code)
-	}
-	if got := r.calls("Face.Ask "); len(got) != 0 {
-		t.Errorf("face asked %v", got)
-	}
-	want := []string{"queued", "spawned", "running", "waiting-input", "running", "ok"}
-	if got := r.stepStates("implement"); !reflect.DeepEqual(got, want) {
-		t.Errorf("implement states %v, want %v", got, want)
-	}
+func holdQuestions(ctx context.Context, q Question) bool {
+	<-ctx.Done()
+	return false
 }
 
-func TestErrNoInputKeepsTheRunAlivePastTheBackstop(t *testing.T) {
+func TestAHeldQuestionKeepsTheRunAlivePastTheBackstop(t *testing.T) {
 	r := newEventsRig(t)
 	kind := r.loop.Kinds[1]
 	kind.Row.Timeout = 3 * time.Minute
 	r.loop.Kinds[1] = kind
 	r.host.behaviour["rloop-p2-implement"] = "ask-noinput"
+	r.watcher.route = holdQuestions
 
 	code := r.run(RunOptions{Phases: []int{2}})
 
 	if code != 0 {
 		t.Fatalf("exit %d, want 0", code)
 	}
-	if got := r.calls("Face.Ask "); !reflect.DeepEqual(got, []string{"q1"}) {
-		t.Errorf("asked %v", got)
+	if got := r.calls("Watcher.Route "); !reflect.DeepEqual(got, []string{"q1"}) {
+		t.Errorf("routed %v", got)
 	}
 	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{`q1 "r-loop: phase-2/implement has ended; this question is withdrawn." withdrawn ""`}) {
 		t.Errorf("answered %v", got)
@@ -680,7 +662,11 @@ func TestResumeKeepsTheRestartsAlreadySpent(t *testing.T) {
 func TestTheStepStaysWaitingUntilItsLastQuestionIsAnswered(t *testing.T) {
 	r := newEventsRig(t)
 	gate := make(chan struct{})
-	r.loop.Face = &gatedFace{fakeFace: r.face, gate: gate}
+	r.watcher.route = func(ctx context.Context, q Question) bool {
+		<-gate
+		r.loop.Deliver(q.ID, "yes", "watchdog", "docs/spec.html:1")
+		return true
+	}
 	s := &Session{Ref: StepRef{Key: StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}}}
 	r.loop.runDir = r.store.dir
 	r.loop.setLive(s)
@@ -689,9 +675,9 @@ func TestTheStepStaysWaitingUntilItsLastQuestionIsAnswered(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() { r.loop.question(ctx, Question{ID: "q1", Step: s.Ref.Key}); done <- struct{}{} }()
-	waitFor(t, func() bool { return len(r.calls("Face.Ask ")) == 1 })
+	waitFor(t, func() bool { return len(r.calls("Watcher.Route ")) == 1 })
 	go func() { r.loop.question(ctx, Question{ID: "q2", Step: s.Ref.Key}); done <- struct{}{} }()
-	waitFor(t, func() bool { return len(r.calls("Face.Ask ")) == 2 })
+	waitFor(t, func() bool { return len(r.calls("Watcher.Route ")) == 2 })
 	gate <- struct{}{}
 	<-done
 
@@ -705,40 +691,6 @@ func TestTheStepStaysWaitingUntilItsLastQuestionIsAnswered(t *testing.T) {
 	}
 }
 
-type gatedFace struct {
-	*fakeFace
-	gate chan struct{}
-	mu   sync.Mutex
-	gone map[string]chan struct{}
-}
-
-func (f *gatedFace) Ask(q Question) (string, error) {
-	f.record("Face.Ask %s", q.ID)
-	select {
-	case <-f.gate:
-		return "yes", nil
-	case <-f.withdrawn(q.ID):
-		return "", ErrNoInput
-	}
-}
-
-func (f *gatedFace) withdrawn(id string) chan struct{} {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.gone == nil {
-		f.gone = map[string]chan struct{}{}
-	}
-	if f.gone[id] == nil {
-		f.gone[id] = make(chan struct{})
-	}
-	return f.gone[id]
-}
-
-func (f *gatedFace) Withdraw(id string) {
-	f.record("Face.Withdraw %s", id)
-	close(f.withdrawn(id))
-}
-
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
 	for range 5000 {
@@ -750,90 +702,9 @@ func waitFor(t *testing.T, cond func() bool) {
 	t.Fatal("condition never held")
 }
 
-func TestAWatchdogQuestionGoesStraightToTheFaceWithoutTouchingTheStep(t *testing.T) {
-	r := newEventsRig(t)
-	r.face.Answers = map[string]string{"q7": "yes"}
-	answered := make(chan string, 1)
-	r.ask.answered = func(id string) { answered <- id }
-	r.watcher.started = func(ref StepRef, s *Session) {
-		if ref.Key.Kind != "implement" {
-			return
-		}
-		r.ask.Asked <- Question{ID: "q7", Step: StepKey{Run: "run-1", Kind: "watchdog"}, Text: "run go mod download?"}
-		select {
-		case <-answered:
-		case <-time.After(5 * time.Second):
-			t.Error("the watchdog question was never answered")
-		}
-	}
-
-	code := r.run(RunOptions{Phases: []int{2}})
-
-	if code != 0 {
-		t.Fatalf("exit %d, want 0", code)
-	}
-	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{`q7 "yes" maintainer ""`}) {
-		t.Errorf("answers %v", got)
-	}
-	if got := r.calls("Watcher.Route "); len(got) != 0 {
-		t.Errorf("routed %v", got)
-	}
-	if got := r.stepStates("implement"); !reflect.DeepEqual(got, []string{"queued", "spawned", "running", "ok"}) {
-		t.Errorf("implement states %v", got)
-	}
-	st, _ := r.store.Load("run-1")
-	if len(st.Questions) != 1 || st.Questions[0].Answer != "yes" || st.Questions[0].AnsweredBy != "maintainer" {
-		t.Errorf("questions %+v", st.Questions)
-	}
-}
-
-func TestAFileAnswerWinsAndWithdrawsTheQuestionFromTheFace(t *testing.T) {
-	r := newEventsRig(t)
-	gate := make(chan struct{})
-	r.loop.Face = &gatedFace{fakeFace: r.face, gate: gate}
-	s := &Session{Ref: StepRef{Key: StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}}}
-	r.loop.runDir = r.store.dir
-	r.loop.setLive(s)
-	file := filepath.Join(r.store.dir, "answers", "q1")
-	writeFile(file, "postgres")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan struct{})
-	go func() { r.loop.question(ctx, Question{ID: "q1", Step: s.Ref.Key, Text: "which db?"}); close(done) }()
-	waitFor(t, func() bool { return len(r.calls("Face.Ask ")) == 1 })
-
-	if err := r.loop.Answer("q1", "postgres", "maintainer"); err != nil {
-		t.Fatal(err)
-	}
-
-	if s.OpenQuestion.Load() {
-		t.Error("step still frozen after the file answer")
-	}
-	if _, err := os.Stat(file); !os.IsNotExist(err) {
-		t.Errorf("answer file left behind: %v", err)
-	}
-	<-done
-	if got := r.calls("Face.Withdraw "); !reflect.DeepEqual(got, []string{"q1"}) {
-		t.Errorf("withdrawn %v", got)
-	}
-	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{`q1 "postgres" maintainer ""`}) {
-		t.Errorf("answers %v", got)
-	}
-	st, _ := r.store.Load("run-1")
-	if len(st.Questions) != 1 || st.Questions[0].Answer != "postgres" || st.Questions[0].AnsweredBy != "maintainer" {
-		t.Errorf("questions %+v", st.Questions)
-	}
-	if human := r.events("human"); len(human) != 1 || human[0].Fields["id"] != "q1" {
-		t.Errorf("human %+v", human)
-	}
-	if got := r.stepStates("implement"); !reflect.DeepEqual(got, []string{"waiting-input", "running"}) {
-		t.Errorf("implement states %v", got)
-	}
-}
-
 func TestAStepThatEndsWithAnOpenQuestionWithdrawsItAndALateAnswerIsDropped(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.Face = &gatedFace{fakeFace: r.face, gate: make(chan struct{})}
+	r.watcher.route = holdQuestions
 	r.host.behaviour["rloop-p2-implement"] = "ask-fail"
 
 	code := r.run(RunOptions{Phases: []int{2}})
@@ -841,15 +712,12 @@ func TestAStepThatEndsWithAnOpenQuestionWithdrawsItAndALateAnswerIsDropped(t *te
 	if code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
-	if got := r.calls("Face.Withdraw "); !reflect.DeepEqual(got, []string{"q1"}) {
-		t.Errorf("withdrawn %v", got)
-	}
 	st, _ := r.store.Load("run-1")
 	if len(st.Questions) != 1 || st.Questions[0].AnsweredBy != "withdrawn" {
 		t.Errorf("questions %+v", st.Questions)
 	}
 
-	err := r.loop.Answer("q1", "sqlite", "maintainer")
+	err := r.loop.Deliver("q1", "sqlite", "maintainer", "")
 
 	if err == nil || !strings.Contains(err.Error(), "not open") {
 		t.Fatalf("late answer err %v", err)
@@ -882,8 +750,8 @@ func TestAQuestionForAStepThatHasEndedIsWithdrawnWithoutTouchingTheStep(t *testi
 
 	r.loop.question(context.Background(), Question{ID: "q1", Step: s.Ref.Key, Text: "which db?"})
 
-	if got := r.calls("Face.Ask "); len(got) != 0 {
-		t.Errorf("face asked %v", got)
+	if got := r.calls("Watcher.Route "); len(got) != 0 {
+		t.Errorf("routed %v", got)
 	}
 	if s.OpenQuestion.Load() {
 		t.Error("an ended step was frozen")
@@ -895,7 +763,7 @@ func TestAQuestionForAStepThatHasEndedIsWithdrawnWithoutTouchingTheStep(t *testi
 	if len(st.Questions) != 1 || st.Questions[0].AnsweredBy != "withdrawn" {
 		t.Errorf("questions %+v", st.Questions)
 	}
-	if err := r.loop.Answer("q1", "sqlite", "maintainer"); err == nil {
+	if err := r.loop.Deliver("q1", "sqlite", "maintainer", ""); err == nil {
 		t.Error("answered a withdrawn question")
 	}
 }
@@ -904,7 +772,7 @@ func TestAnsweringAQuestionThatIsNotOpenIsAnError(t *testing.T) {
 	r := newEventsRig(t)
 	r.loop.runDir = r.store.dir
 
-	err := r.loop.Answer("q9", "yes", "maintainer")
+	err := r.loop.Deliver("q9", "yes", "maintainer", "")
 
 	if err == nil || !strings.Contains(err.Error(), "q9") {
 		t.Fatalf("err %v", err)

@@ -15,7 +15,7 @@ const (
 )
 
 type Theme struct {
-	Header, Label, Idle, Text, Live, Landed, Failed, Warn, Question, Halt, Status, Border lipgloss.Style
+	Header, Label, Idle, Text, Live, Landed, Failed, Warn, Halt, Status, Border lipgloss.Style
 }
 
 func NewTheme(r *lipgloss.Renderer, noColor bool) Theme {
@@ -24,22 +24,21 @@ func NewTheme(r *lipgloss.Renderer, noColor bool) Theme {
 		return Theme{
 			Header: s(), Label: s().Faint(true), Idle: s().Faint(true), Text: s(),
 			Live: s().Bold(true), Landed: s().Faint(true), Failed: s().Reverse(true),
-			Warn: s(), Question: s().Reverse(true), Halt: s().Reverse(true), Status: s(), Border: s().Faint(true),
+			Warn: s(), Halt: s().Reverse(true), Status: s(), Border: s().Faint(true),
 		}
 	}
 	fg := func(c string) lipgloss.Style { return s().Foreground(lipgloss.Color(c)) }
 	return Theme{
-		Header:   fg(Dim).Background(lipgloss.Color(Raised)),
-		Label:    fg(Dim),
-		Idle:     fg(Dim),
-		Text:     fg(Text),
-		Live:     fg(Primary).Bold(true),
-		Landed:   fg(Tertiary),
-		Failed:   fg(Error),
-		Warn:     fg(Secondary).Background(lipgloss.Color(Raised)),
-		Question: fg(Surface).Background(lipgloss.Color(Secondary)),
-		Halt:     fg(Surface).Background(lipgloss.Color(Error)),
-		Status:   fg(Dim).Background(lipgloss.Color(Raised)),
-		Border:   fg(Outline),
+		Header: fg(Dim).Background(lipgloss.Color(Raised)),
+		Label:  fg(Dim),
+		Idle:   fg(Dim),
+		Text:   fg(Text),
+		Live:   fg(Primary).Bold(true),
+		Landed: fg(Tertiary),
+		Failed: fg(Error),
+		Warn:   fg(Secondary).Background(lipgloss.Color(Raised)),
+		Halt:   fg(Surface).Background(lipgloss.Color(Error)),
+		Status: fg(Dim).Background(lipgloss.Color(Raised)),
+		Border: fg(Outline),
 	}
 }

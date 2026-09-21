@@ -164,7 +164,7 @@ section:target > h2 { color: var(--clay); }
       </ul></li>
     <li class="p"><a href="#p6">Part 6 · Decisions</a>
       <ul>
-        <li class="s"><a href="#adr-index">ADR-1 … ADR-72</a></li>
+        <li class="s"><a href="#adr-index">ADR-1 … ADR-73</a></li>
       </ul></li>
     <li class="p"><a href="#p7">Part 7 · Technical details</a>
       <ul>
@@ -234,8 +234,8 @@ noticing needs the whole run in view and every context in the design is delibera
       <td>provider, model and effort settable for both steps and every reviewer, and the number of
           review rounds per step, in a file and per run</td></tr>
   <tr><td>A halt or a question reaches you immediately</td>
-      <td>a question arrives as an explicit state, never inferred from silence, and can be answered
-          from any shell with <code>r-loop answer</code>; a halt the moment it happens; a step with no signal at all falls back to its backstop (1 h plan · 4 h implement
+      <td>a question arrives as an explicit state, never inferred from silence, and reaches you
+          only in the watchdog's own pane, when the repository cannot answer it; a halt the moment it happens; a step with no signal at all falls back to its backstop (1 h plan · 4 h implement
           · 20 min or 45 min per review round)</td></tr>
   <tr><td>A run finishes with nobody present</td>
       <td>fewer than 1 halt that needs a person per run, counted from the human touches the run
@@ -294,7 +294,7 @@ noticing needs the whole run in view and every context in the design is delibera
           accepts a halt</td></tr>
   <tr><td>Provider agent</td>
       <td>one step's work, in one session, with a prompt and a worktree</td>
-      <td>writing code and tests in its own tree, and committing there; asking a question when it is
+      <td>writing code and tests in its own tree, and committing there; asking the watchdog when it is
           blocked; never merging, never ticking the plan, never deciding the next step</td></tr>
   <tr><td>Watchdog</td>
       <td>to see the whole run, check each phase before it starts, and stop the run going somewhere
@@ -332,8 +332,8 @@ plan the planning step already wrote, and does not re-plan the phase.</p>
 <p>As the <strong>maintainer</strong>, I want the run's shape on screen without opening a session,
 so that I can tell a working run from a stuck one at a glance.</p>
 <p><em>Given</em> a run in progress, <em>when</em> I look at the TUI, <em>then</em> it shows every
-phase and its state, the live step with its provider and elapsed time, any open question, and any
-warning the watchdog has raised; <em>and</em> <code>r-loop status --plain</code> prints the same
+phase and its state, the live step with its provider and elapsed time, and any warning the watchdog
+has raised; <em>and</em> <code>r-loop status --plain</code> prints the same
 facts as lines for a script.</p>
 
 <h3>Choose the agent for each step</h3>
@@ -362,12 +362,14 @@ or finishes, so that a run that stops at 3am is not discovered in the morning.</
 it is logged and changes nothing about the run's own outcome.</p>
 
 <h3>Answer an agent's question without leaving the loop</h3>
-<p>As the <strong>maintainer</strong>, I want an agent's question to arrive where I am watching the
-run, so that being blocked costs a keystroke rather than a hunt through workspaces.</p>
+<p>As the <strong>maintainer</strong>, I want an agent's question to reach me only when the
+repository cannot answer it, and then in one place — the watchdog's own pane — so that being
+blocked costs a reply rather than a hunt through workspaces.</p>
 <p><em>Given</em> an implement session that cannot proceed without knowing which module owns a
-type, <em>when</em> it asks, <em>then</em> the question appears in the TUI with its options, the
-step enters <code>waiting-input</code> rather than counting as stalled, its backstop timer pauses,
-<em>and</em> my answer returns to the session that asked.</p>
+type, <em>when</em> it asks the watchdog, <em>then</em> the step enters <code>waiting-input</code>
+rather than counting as stalled, its backstop timer pauses, the watchdog answers from the plan or
+asks me in its own session, <em>and</em> my answer returns to the session that asked; the TUI never
+asks me anything (<a href="#adr-73">ADR-73</a>).</p>
 
 <h3>Close a blocking plan decision at startup</h3>
 <p>As the <strong>maintainer</strong>, I want the plan's unresolved decisions put to me before the
@@ -375,7 +377,7 @@ first phase runs, so that a run does not start and then stop on something only I
 <p><em>Given</em> a todo with an open <code>## Resolve first</code> entry blocking a phase in the
 run list, <em>when</em> I start the driver, <em>then</em> the watchdog walks it as
 <code>/r:plan-unblock</code> does — a brief of why it blocks, the options with their cost and a
-recommendation, asked in the TUI — writes my answer into the plan as a <code>Resolved:</code> stamp
+recommendation, asked in the watchdog's own pane — writes my answer into the plan as a <code>Resolved:</code> stamp
 the driver commits before phase one is scheduled, and when I say "not now" the driver skips the
 phases it blocks and the phases that depend on them (<a href="#adr-72">ADR-72</a>).</p>
 
@@ -399,8 +401,8 @@ far as it could get — in the morning, so that a plan does not wait on me betwe
 <p><em>Given</em> a six-phase plan started with <code>--unattended</code>, where phase 3's implement
 session goes quiet and phase 5 depends on phase 3, <em>when</em> the run proceeds, <em>then</em>
 phase 3 is nudged, fails, is restarted within its budget and, if it still fails, is blocked together
-with phase 5 while phases 4 and 6 land; a question nobody answers resolves to the asking agent's own
-recommendation after the timeout; <em>and</em> the report opens with the number of times a person
+with phase 5 while phases 4 and 6 land; an agent's question the repository cannot answer is taken
+by the watchdog on the agent's own recommendation, citing the line that supports it; <em>and</em> the report opens with the number of times a person
 was needed and every decision the driver took on its own.</p>
 
 <h3>Override the prompts for this project</h3>
@@ -451,12 +453,13 @@ the driver never has to read my terminal to find out.</p>
 <em>then</em> I write the outcome to that path as my last action, and the driver reads it rather
 than my output.</p>
 
-<h3>Ask the person a question</h3>
+<h3>Ask the watchdog a question</h3>
 <p>As a <strong>provider agent</strong>, I want one way to ask when the plan does not tell me
 something I need, so that guessing is never the cheapest option available to me.</p>
-<p><em>Given</em> the driver's <code>ask_user</code> tool in my session, <em>when</em> I call it
-with a question and its options, <em>then</em> the call blocks until an answer comes back, and I am
-not penalised for the wait.</p>
+<p><em>Given</em> the driver's <code>ask_watchdog</code> tool in my session, <em>when</em> I call it
+with a question, its options and my recommendation, <em>then</em> the call blocks until the
+watchdog answers — from the repository, or from the maintainer it asked in its own session — and I
+am not penalised for the wait; I never ask the person in my own pane.</p>
 
 <h3>Fan out reviewers using my own mechanism</h3>
 <p>As a <strong>provider agent</strong>, I want the reviewer list expanded into whatever parallel
@@ -489,8 +492,9 @@ been touched.</p>
 the plan already answers does not reach a person at all.</p>
 <p><em>Given</em> a question whose answer is in the spec, the tech-design or an earlier phase,
 <em>when</em> it arrives, <em>then</em> I answer it with a <code>file:line</code> citation and the
-answer is logged and shown in the TUI; <em>and</em> when I cannot cite an answer, it escalates to
-the maintainer unanswered.</p>
+answer is logged; <em>and</em> when I cannot cite an answer, I ask the maintainer in my own session
+and answer with the citation <code>maintainer</code> — or, in an unattended run, take the agent's
+recommended option, citing the line that supports it.</p>
 
 <h3>Check a phase before it runs</h3>
 <p>As the <strong>watchdog</strong>, I want to read each phase before its first step, so that a
@@ -515,7 +519,7 @@ is everything that widens the loop rather than closing it.</p>
       <td>Concurrent phases: a phase is the scheduling unit from day one, so waves are a scheduler change rather than a rewrite (<a href="#adr-11">ADR-11</a>)</td></tr>
   <tr><td><em>Be told when a run halts</em> · <em>Answer an agent's question without leaving the loop</em> · <em>Close a blocking plan decision at startup</em> · <em>Pre-authorise the blockers worth fixing automatically</em></td>
       <td>Any source other than <code>todo.md</code> or an issues file (<a href="#adr-21">ADR-21</a>, <a href="#adr-69">ADR-69</a>)</td></tr>
-  <tr><td><em>Report a step's outcome so the driver can act</em> · <em>Ask the person a question</em></td>
+  <tr><td><em>Report a step's outcome so the driver can act</em> · <em>Ask the watchdog a question</em></td>
       <td>Drift-watching — the watchdog noticing that one phase contradicts another. Same machinery, but it produces nothing on most phases, and "watched and found nothing" cannot be told from "watched badly" until there are rows</td></tr>
   <tr><td><em>Halt a step that has gone the wrong way</em> · <em>Fix what is blocking a step</em> · <em>Answer from the whole run's context</em> · <em>Check a phase before it runs</em></td>
       <td><em>Fan out reviewers using my own mechanism</em> — the driver opens one workspace per reviewer itself (<a href="#adr-54">ADR-54</a>); revisit when a provider's own parallel review is measurably wider than that</td></tr>
@@ -764,12 +768,11 @@ allow-list lives in the driver. Configurable: the allow-list, yes; the rule, no.
 <p><strong>A question never kills a step.</strong> When a step enters <code>waiting-input</code>,
 its backstop timer is paused for as long as the question is open, per step; on violation — that is,
 if a step in that state is ever killed by a timer — the run halts rather than discarding the
-question. An attended run waits for the answer as long as that takes; with
-<code>--unattended</code>, a question nobody has answered after
-<code>unattended.questionTimeout</code> is answered by the driver with the asking agent's own
-recommendation, and that answer is listed as an automatic decision (<a href="#adr-63">ADR-63</a>).
-<em>Source: a step killed for asking teaches every future step to guess instead. Configurable: the
-unattended timeout, yes; the rule, no.</em></p>
+question. The question waits with the watchdog for as long as that takes, and the driver never
+answers it itself: a watchdog that is gone when a step asks, or goes while it holds a question,
+halts the run instead (<a href="#adr-73">ADR-73</a>).
+<em>Source: a step killed for asking teaches every future step to guess instead. Configurable:
+no.</em></p>
 
 <p><strong>Nothing is built on a failed phase.</strong> When a phase is blocked — its step failed
 past its remedies, a watchdog halted it, or its gate stayed red — if a later phase depends on it,
@@ -845,7 +848,7 @@ others are variations of.</p>
   <text x="591" y="166" class="lbl-sm">writes the plan / the code / the fixes</text>
 
   <line x1="577" y1="206" x2="238" y2="206" class="clay" marker-end="url(#sq-c)"/>
-  <text x="300" y="200" class="lbl-sm">ask_user (MCP) — step enters waiting-input</text>
+  <text x="300" y="200" class="lbl-sm">ask_watchdog (MCP) — step enters waiting-input</text>
 
   <line x1="232" y1="236" x2="397" y2="236" class="clay" marker-end="url(#sq-c)"/>
   <text x="240" y="230" class="lbl-sm">question forwarded</text>
@@ -856,7 +859,7 @@ others are variations of.</p>
   <polyline points="403,300 320,300 320,330 577,330" class="clay" fill="none" marker-end="url(#sq-c)"/>
   <text x="330" y="294" class="lbl-sm">cited answer — logged, shown, returned</text>
   <line x1="397" y1="300" x2="72" y2="300" class="clay" stroke-dasharray="5 3" marker-end="url(#sq-c)"/>
-  <text x="80" y="294" class="lbl-sm">no citation → escalates to you</text>
+  <text x="80" y="294" class="lbl-sm">no citation → asks you in its pane</text>
 
   <line x1="577" y1="366" x2="409" y2="366" class="stroke2" marker-end="url(#sq-a)"/>
   <text x="418" y="360" class="lbl-sm">herdr agent read — live output</text>
@@ -887,14 +890,17 @@ skipped. The run goes on with the phases that do not. When nothing is left to ru
 phase at its stopped step (<a href="#adr-65">ADR-65</a>).</p>
 
 <h4>A step asks a question</h4>
-<p>The session calls <code>ask_user</code>. The step enters <code>waiting-input</code>, its backstop
-pauses, and the question goes to the watchdog first. If the watchdog can answer it from the spec,
-the tech-design or an earlier phase, it answers with a <code>file:line</code> citation; the answer
-is logged, shown in the TUI, and returned to the session, which resumes. If it cannot cite an
-answer, the question escalates to the TUI unanswered and waits for the maintainer, who can answer
-there or from any shell with <code>r-loop answer</code>. An attended run waits as long as that takes;
-an <code>--unattended</code> one waits <code>unattended.questionTimeout</code> and then tells the
-agent to proceed with the option it recommended, recording that as an automatic decision.</p>
+<p>The session calls <code>ask_watchdog</code>. The step enters <code>waiting-input</code>, its
+backstop pauses, and the driver hands the question to the watchdog. If the watchdog can answer it
+from the spec, the tech-design or an earlier phase, it answers with a <code>file:line</code>
+citation; the answer is logged and returned to the session, which resumes. If it cannot cite an
+answer, it asks the maintainer in its own session — with its question tool, rewritten so it makes
+sense without the agent's context — and answers with the citation <code>maintainer</code>. An empty
+or invalid citation is refused and the question stays with the watchdog; the TUI never shows it. An
+<code>--unattended</code> watchdog never asks: it takes the agent's recommended option, citing the
+line that supports it. If the watchdog is gone when the step asks, or goes while it holds the
+question, the driver halts the run with <code>the watchdog is gone</code>; the question stays
+unanswered, and <code>r-loop resume</code> starts a new watchdog (<a href="#adr-73">ADR-73</a>).</p>
 
 <h4>A step stalls</h4>
 <p>herdr reports the agent <code>blocked</code>, <code>idle</code> or <code>done</code>, no sentinel exists, and no
@@ -917,7 +923,8 @@ which is the whole reason it is allowed to make the call at all.</p>
 <h4>A blocker is fixed and the step restarts</h4>
 <p>A step fails because a toolchain is missing. The watchdog diagnoses it and proposes an exact
 command. If the remedy's class is in <code>watchdog.allow</code>, the driver authorises it
-immediately; otherwise the question goes to the TUI. On yes, the watchdog runs the command it
+immediately; otherwise the watchdog asks the maintainer in its own session and proposes again
+with their reply as <code>maintainer_said</code>. On yes, the watchdog runs the command it
 proposed, the driver records it verbatim, and the step restarts in a fresh session — on the same
 prompt, or with an addendum naming what was learned, so the retry differs from the repeat. Nothing
 about the plan or the code has been touched.</p>
@@ -975,8 +982,9 @@ warning, never a halt. Only then does the driver commit the step, once
   <tr class="driving">
     <td>Evidence over autonomy</td>
     <td>a step completes on <strong>2</strong> independent signals — its sentinel <em>and</em> the
-        artifact it owes; a run pauses rather than guesses, except that <code>--unattended</code>
-        lets an unanswered agent take its own recorded recommendation (<a href="#adr-63">ADR-63</a>)</td>
+        artifact it owes; a run pauses rather than guesses, except that with <code>--unattended</code>
+        the watchdog answers an agent with its own recommended option, citing the line that supports
+        it (<a href="#adr-73">ADR-73</a>)</td>
     <td>for each step kind, a test where the sentinel says ok and the artifact is absent asserts
         that the driver halts</td>
     <td>a phase stops for a person where a more trusting loop would continue; a stop is confined to
@@ -1029,12 +1037,12 @@ characteristic constrains the direction a model may push, not whether one is pre
           rather than observed</td></tr>
   <tr><td>Unattended completion</td>
       <td>fewer than 1 halt that needs a person per run; with <code>--unattended</code>, the routine
-          remedy classes, a bounded number of restarts, a fallback provider and an unanswered
+          remedy classes, a bounded number of restarts, a fallback provider and an agent's
           question all resolve without one</td>
       <td>every answer, consent and resume a person gives is recorded as a human touch, and the
           report opens with the count and with every automatic decision</td>
       <td>a pre-authorised remedy can do something you would have refused this once, a cited
-          answer or a timed-out one reaches an agent without you seeing the question, and the
+          answer or the agent's own recommended option reaches an agent without you seeing the question, and the
           morning's report has to be read (<a href="#adr-61">ADR-61</a>)</td></tr>
   <tr><td>Independence from the skill-pack</td>
       <td>0 files from the skill-pack read at run time; the <code>todo.md</code> format is the only
@@ -1132,12 +1140,12 @@ characteristic constrains the direction a model may push, not whether one is pre
       <td><code>RunLoop</code> · <code>LandGate</code></td>
       <td>Resumability; <em>Resume a run that stopped</em></td></tr>
   <tr><td><code>AskServer</code></td>
-      <td>Serves the MCP surfaces: <code>ask_user</code> to every session, and the watchdog's
-          signal and remedy tools to the watchdog alone; with <code>--unattended</code>, answers a
-          question that has waited past its timeout with the asker's own recommendation</td>
+      <td>Serves the MCP surfaces: <code>ask_watchdog</code> to every step session, whose questions
+          go to the watchdog, and the watchdog's signal, remedy and answer tools to the watchdog
+          alone</td>
       <td><code>Question</code></td>
       <td>step sessions · the watchdog</td>
-      <td><em>Ask the person a question</em>; <em>Answer an agent's question without leaving the
+      <td><em>Ask the watchdog a question</em>; <em>Answer an agent's question without leaving the
           loop</em></td></tr>
   <tr><td><code>Watch</code></td>
       <td>Runs the registered deterministic anomaly checks, hands the watchdog each phase to check
@@ -1156,8 +1164,9 @@ characteristic constrains the direction a model may push, not whether one is pre
       <td><em>Fix what is blocking a step</em>; <em>Pre-authorise the blockers worth fixing
           automatically</em></td></tr>
   <tr><td><code>Ui</code></td>
-      <td>Renders the run — phases, the live step, open questions, warnings — and takes the
-          maintainer's answers. <code>--plain</code> writes the same event stream as lines</td>
+      <td>Renders the run — phases, the live step, warnings — and takes the stop key; it never asks
+          a question (<a href="#adr-73">ADR-73</a>). <code>--plain</code> writes the same event
+          stream as lines</td>
       <td>nothing</td>
       <td>the maintainer</td>
       <td>Observability; <em>See where a run is</em></td></tr>
@@ -1281,9 +1290,9 @@ observes and never links against. The phase is a pipeline inside that supervisor
 hand off through the filesystem rather than through memory.</p>
 
 <p>The supervisor is also a small <strong>server</strong>, which is the one thing that does not
-follow from the pattern. Workers need a way back in — to ask a question, and for the watchdog, to
-signal — so the driver exposes two MCP surfaces: <code>ask_user</code> to every session, and the
-signal and remedy tools to the watchdog alone. Scoping them separately is not a detail: an ordinary
+follow from the pattern. Workers need a way back in — to ask the watchdog a question, and for the
+watchdog, to signal and answer — so the driver exposes two MCP surfaces: <code>ask_watchdog</code>
+to every step session, and the signal, remedy and answer tools to the watchdog alone. Scoping them separately is not a detail: an ordinary
 step session that could emit a halt signal would be a worker vetoing its own supervisor.</p>
 
 <p><strong>Inside the binary, a hexagonal core</strong> (<a href="#adr-46">ADR-46</a>). The loop,
@@ -1505,15 +1514,11 @@ a different release cadence or a different blast radius; it is one sequence over
       <td>the only concurrency in v1, and safe because every reviewer is read-only over the step's
           worktree, which the driver snapshots before and checks after
           (<a href="#adr-56">ADR-56</a>)</td></tr>
-  <tr><td><code>r-loop answer</code> → the run</td><td>a file in the run directory, read every
-          tick</td>
-      <td>an answer can come from any shell — ssh from a phone included — with no port, token or
-          client (<a href="#adr-67">ADR-67</a>)</td></tr>
   <tr><td>a session → <code>AskServer</code></td><td>MCP, synchronous from the caller's view</td>
-      <td>the call blocks until answered, which is what makes <code>waiting-input</code> a real
-          state rather than a guess about silence</td></tr>
+      <td>the call blocks until the watchdog answers, which is what makes <code>waiting-input</code>
+          a real state rather than a guess about silence</td></tr>
   <tr><td>watchdog → <code>AskServer</code></td><td>MCP, on a separate tool surface</td>
-      <td>signals and remedies must not be reachable from a step session</td></tr>
+      <td>signals, remedies and answers must not be reachable from a step session</td></tr>
   <tr><td>watchdog → a running session</td><td><code>herdr agent read</code> — read-only</td>
       <td>a wrong path is visible in the output long before it reaches the diff; the watchdog can
           read a session but never write to one</td></tr>
@@ -1544,7 +1549,7 @@ the merge, the ticks and the phase's own bookkeeping either all exist or none do
     <rect x="44" y="64" width="280" height="56" rx="5" class="g-fill" stroke="#D1CFC5"/>
     <text x="58" y="88" class="lbl-hd">r-loop</text><text x="58" y="108" class="lbl-sm">13 components · one sequence</text>
     <rect x="44" y="134" width="280" height="56" rx="5" class="g-fill" stroke="#D1CFC5"/>
-    <text x="58" y="158" class="lbl-hd">MCP surfaces</text><text x="58" y="178" class="lbl-sm">ask_user · watchdog-only tools</text>
+    <text x="58" y="158" class="lbl-hd">MCP surfaces</text><text x="58" y="178" class="lbl-sm">ask_watchdog · watchdog-only tools</text>
     <rect x="44" y="204" width="280" height="56" rx="5" class="g-fill" stroke="#D1CFC5"/>
     <text x="58" y="228" class="lbl-hd">.r-loop/</text><text x="58" y="248" class="lbl-sm">run state · signals · remedies</text>
     <rect x="44" y="274" width="280" height="56" rx="5" class="g-fill" stroke="#D1CFC5"/>
@@ -1571,7 +1576,7 @@ the merge, the ticks and the phase's own bookkeeping either all exist or none do
   <line x1="346" y1="150" x2="434" y2="150" class="stroke2" marker-end="url(#cx-a)"/>
   <text x="350" y="142" class="lbl-sm">prompt</text>
   <line x1="434" y1="164" x2="346" y2="164" class="clay" marker-end="url(#cx-c)"/>
-  <text x="350" y="180" class="lbl-sm">ask_user</text>
+  <text x="350" y="180" class="lbl-sm">ask_watchdog</text>
   <line x1="434" y1="216" x2="346" y2="216" class="clay" marker-end="url(#cx-c)"/>
   <text x="350" y="208" class="lbl-sm">signals</text>
   <line x1="346" y1="230" x2="434" y2="230" class="stroke2" marker-end="url(#cx-a)"/>
@@ -1588,7 +1593,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Seventy-two decisions, each with the alternative that was live at the time; eight are superseded and kept in place, and twenty-six carry a later amendment. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, and ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk.</p>
+<p class="lede">Seventy-three decisions, each with the alternative that was live at the time; ten are superseded and kept in place, and twenty-nine carry a later amendment. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, and ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session.</p>
 
 <div id="adr-index">
 
@@ -2083,7 +2088,8 @@ messages.</p>
 
 <div class="adr">
 <h3 id="adr-28">ADR-28 — Agents ask through an MCP server the driver exposes</h3>
-<p><span class="f">Status</span> accepted ·
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-73">ADR-73</a> — the tool is
+<code>ask_watchdog</code>, and its questions go to the watchdog, never to the maintainer or the TUI ·
 amended 2026-09-19 — every reviewer session gets its own ask URL too, and a reviewer's
 clocks hold while its step has a question open, after reviewers were found started with no
 channel ·
@@ -2094,8 +2100,9 @@ a person answers, which has no bound in an attended run, and claude's default of
 off first</p>
 <p><span class="f">Context</span> An agent that cannot ask will guess, and a guess reaches the code.
 Before this, a blocked session could only be detected as silence.</p>
-<p><span class="f">Decision</span> The driver serves an <code>ask_user</code> tool; every step
-session is started pointed at it.</p>
+<p><span class="f">Decision</span> The driver serves an <code>ask_watchdog</code> tool
+(<code>ask_user</code> before <a href="#adr-73">ADR-73</a>); every step session is started pointed
+at it.</p>
 <p><span class="f">Alternatives</span> A small CLI the agent shells to — rejected as the primary
 channel: it works on any agent with a shell, but it is a convention the prompt has to teach rather
 than a tool the agent discovers. Both — rejected for v1, two implementations of one channel.</p>
@@ -2107,7 +2114,7 @@ is excluded, which <a href="#adr-40">ADR-40</a> handles.</p>
 
 <div class="adr">
 <h3 id="adr-29">ADR-29 — An open question is its own state, exempt from the backstop</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-63">ADR-63</a> — with <code>--unattended</code>, an unanswered question resolves to the agent's own recommendation</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-63">ADR-63</a> — with <code>--unattended</code>, an unanswered question resolves to the agent's own recommendation · amended by <a href="#adr-73">ADR-73</a>, which removes that timeout: a question waits with the watchdog, and a watchdog that is gone halts the run</p>
 <p><span class="f">Context</span> A step that has asked something is not stalled and not working. If
 its timer keeps running, a question asked at 3am kills the step that asked it.</p>
 <p><span class="f">Decision</span> <code>waiting-input</code> is a distinct state and pauses the
@@ -2259,7 +2266,9 @@ refused this once, which is why every remedy is recorded verbatim whether it was
 
 <div class="adr">
 <h3 id="adr-38">ADR-38 — The watchdog proposes the command, the driver authorises, the watchdog runs it</h3>
-<p><span class="f">Status</span> accepted ·
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-73">ADR-73</a> — the watchdog
+asks the maintainer in its own session and proposes again with their reply as
+<code>maintainer_said</code>; <code>Remedies</code> never asks ·
 amended 2026-09-19 — <code>propose_remedy</code> answers the decision with its reason; the
 maintainer's answer counts as a human touch; and a <code>provider</code> remedy the maintainer
 authorised authorises the restart onto that provider without asking a second time</p>
@@ -2280,7 +2289,9 @@ The watchdog can never approve its own action, because the list lives in the dri
 
 <div class="adr">
 <h3 id="adr-39">ADR-39 — A question reaches the watchdog first, escalating when it cannot cite an answer</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-73">ADR-73</a> — the watchdog
+escalates by asking the maintainer in its own session and answering with the citation
+<code>maintainer</code>; nothing reaches the TUI, and an empty citation is refused</p>
 <p><span class="f">Context</span> Most questions an implementer asks are already answered in the
 spec, the tech-design or an earlier phase. The watchdog is the only context that holds all
 three.</p>
@@ -2290,8 +2301,8 @@ unanswered.</p>
 <p><span class="f">Alternatives</span> The maintainer first, with the watchdog advising — rejected,
 the run then stops for a person on every question, which is the cost this removes.</p>
 <p><span class="f">Consequences</span> A wrong citation reaches an implementer without the
-maintainer seeing the question. Every answer is logged and shown in the TUI, which is the only thing
-standing against that.</p>
+maintainer seeing the question. Every answer is logged and listed in the run report, which is the
+only thing standing against that.</p>
 <p><span class="f">Revisit when</span> a cited answer turns out to have been wrong.</p>
 </div>
 
@@ -2765,7 +2776,7 @@ unattended run stopped at its first routine failure.</p>
 <code>watchdog.allow</code> for the run. Every step, in every mode, has at most
 <code>watchdog.maxRestarts</code> restarts (default 2). Every person's answer, consent and resume is
 recorded as a human touch; the report opens with their count and an Automatic decisions section —
-nudges, restarts, question timeouts, fallbacks, gate-fix rounds, round-limit warnings, blocked and
+nudges, restarts, fallbacks, gate-fix rounds, round-limit warnings, blocked and
 skipped phases. Without the flag nothing about consent changes.</p>
 <p><span class="f">Alternatives</span> Make unattended the default — rejected: a run the maintainer
 is watching should ask, and the empty allow-list is what keeps a first run honest. Automatic retry
@@ -2782,8 +2793,9 @@ maintainer would have refused, or unattended runs still need a person more than 
 <div class="adr">
 <h3 id="adr-62">ADR-62 — A stalled step is nudged once, then fails</h3>
 <p><span class="f">Status</span> accepted · amends <a href="#adr-14">ADR-14</a> ·
-amended 2026-09-19 — the nudge offers <code>ask_user</code> only to a session that has
-an ask channel</p>
+amended 2026-09-19 — the nudge offers the ask tool only to a session that has
+an ask channel · amended by <a href="#adr-73">ADR-73</a> — the tool it names is
+<code>ask_watchdog</code></p>
 <p><span class="f">Context</span> <a href="#adr-14">ADR-14</a> left a stalled step standing and the
 run paused until a person came. Since questions became explicit (<a href="#adr-29">ADR-29</a>), a
 stall is an agent that went quiet without asking — most often one that finished and never wrote its
@@ -2805,7 +2817,7 @@ ask or fail.</p>
 
 <div class="adr">
 <h3 id="adr-63">ADR-63 — With <code>--unattended</code>, an unanswered question resolves to the agent's own recommendation</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-29">ADR-29</a></p>
+<p><span class="f">Status</span> superseded by <a href="#adr-73">ADR-73</a> · was accepted · amends <a href="#adr-29">ADR-29</a></p>
 <p><span class="f">Context</span> A question the watchdog cannot cite waits for the maintainer for as
 long as that takes (<a href="#adr-29">ADR-29</a>, <a href="#adr-39">ADR-39</a>). At night that is
 the whole night, for one sentence.</p>
@@ -2896,7 +2908,7 @@ first.</p>
 
 <div class="adr">
 <h3 id="adr-67">ADR-67 — An answer can come from any shell</h3>
-<p><span class="f">Status</span> accepted ·
+<p><span class="f">Status</span> superseded by <a href="#adr-73">ADR-73</a> — <code>r-loop answer</code> is removed · was accepted ·
 amended 2026-09-19 — the answer file is published by hard link, so a second
 <code>r-loop answer</code> for a question whose first answer is still waiting is refused, exit
 <code>2</code> ·
@@ -3033,7 +3045,7 @@ refuses tests a human would accept.</p>
 
 <div class="adr">
 <h3 id="adr-71">ADR-71 — The driver is deterministic; the watchdog is the run's LLM</h3>
-<p><span class="f">Status</span> accepted · supersedes the "never approve" tier of <a href="#adr-32">ADR-32</a> and the invariant "The watchdog never approves" · amends <a href="#adr-53">ADR-53</a></p>
+<p><span class="f">Status</span> accepted · supersedes the "never approve" tier of <a href="#adr-32">ADR-32</a> and the invariant "The watchdog never approves" · amends <a href="#adr-53">ADR-53</a> · amended by <a href="#adr-73">ADR-73</a> — its one-channel paragraph is replaced: step agents ask the watchdog, and the watchdog asks the maintainer in its own session; <code>watchdog.fallback</code> is removed</p>
 <p><span class="f">Context</span> Some run-wide work cannot be done by rule: briefing a blocker, judging
 whether a plan drifted, answering an agent's question. The watchdog is the one session that is open
 for the whole run and holds the plan, the spec and what it watched. The three-tier rule kept it to
@@ -3041,10 +3053,10 @@ veto and remedy, so a blocker was put to the maintainer as a bare prompt that to
 answer — and "abort", typed to leave that prompt, was stamped into a plan as a decision.</p>
 <p><span class="f">Decision</span> Two halves. The <strong>driver</strong> is deterministic: the TUI,
 the phase loop, the evidence checks, every commit and the run list. The <strong>watchdog</strong> is
-the run's LLM: a full session that reads, runs commands, asks the maintainer through
-<code>ask_user</code> and edits the files a duty names; the driver checks the edit and commits it.
-<strong>Every question to the maintainer goes through the watchdog's <code>ask_user</code></strong>, written for someone who has not read the logs: a step's question stays with the watchdog until it answers from a <code>path:line</code> or asks the maintainer and answers with <code>maintainer:&lt;id&gt;</code>; a remedy off the allow-list, or a provider that is not the row's fallback, is authorised only by <code>consent_question</code>, the id of an <code>ask_user</code> question the maintainer answered; the driver asks directly only when the watchdog is unreachable. The watchdog is always on: <code>--no-watchdog</code> is removed, and a watchdog that cannot start
-on its provider or its <code>watchdog.fallback</code> refuses the run with exit 4. Its row defaults to
+the run's LLM: a full session that reads, runs commands, asks the maintainer in its own session
+and edits the files a duty names; the driver checks the edit and commits it.
+<strong>Only the watchdog asks the maintainer, in its own session</strong> (<a href="#adr-73">ADR-73</a>), written for someone who has not read the logs: a step's question stays with the watchdog until it answers from a <code>path:line</code> or asks the maintainer and answers with the citation <code>maintainer</code>; a remedy off the allow-list, or a provider that is not the row's fallback, is authorised only by <code>maintainer_said</code>, the maintainer's reply, quoted. The watchdog is always on: <code>--no-watchdog</code> is removed, and a watchdog that cannot start
+on its provider refuses the run with exit 4, with no retry on another provider. Its row defaults to
 <code>claude / opus / high</code>. Signals about a step stay veto and remedy only. Milestone reports
 and the backlog suite command keep their dedicated sessions.</p>
 <p><span class="f">Alternatives</span> A dedicated session per judgement — rejected: each one starts
@@ -3072,8 +3084,8 @@ blocks the run list — <code>decision</code>, <code>person</code> or <code>uncl
 treated as a person's — and sends them to the watchdog with each blocked phase's block, then waits
 for the watchdog's done file (<code>unblock.done</code> in the run directory), up to
 <code>watchdog.unblockTimeout</code>; the prompt returning is not the walk finishing, since it
-returns as soon as the watchdog blocks in <code>ask_user</code>. The walk aims to fix each blocker, not only to record it: the watchdog asks "how do we fix it?", offering the work it can do itself (measure, try, read, decide from the code) beside the maintainer's own choices, an estimate to go on with, and "not now"; an entry of kind <code>person</code> gets only "I do it myself" and "not now". It walks them one at a time: a brief in
-Simplified Technical English, <code>ask_user</code> with the options recommended first plus
+returns as soon as the watchdog starts asking the maintainer. The walk aims to fix each blocker, not only to record it: the watchdog asks "how do we fix it?", offering the work it can do itself (measure, try, read, decide from the code) beside the maintainer's own choices, an estimate to go on with, and "not now"; an entry of kind <code>person</code> gets only "I do it myself" and "not now". It walks them one at a time: a brief in
+Simplified Technical English, asked in the watchdog's own session with the options recommended first plus
 "I don't know" and "Not now", only "Confirmed done" or "Not now" for a person's entry, and the answer
 written into the section as a tick with <code>Resolved:</code>, <code>Alternative:</code> and
 <code>Outstanding:</code> lines. The driver then refuses any change outside
@@ -3088,6 +3100,47 @@ open — rejected: "not now" is a real answer, and the phases it does not block 
 open blockers. A skipped entry stays open and is asked again by the next run that includes its
 phases.</p>
 <p><span class="f">Revisit when</span> a walk's stamp disagrees with what the maintainer chose.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-73">ADR-73 — Step agents ask the watchdog; only the watchdog asks the maintainer, in its own session</h3>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-63">ADR-63</a>, <a href="#adr-67">ADR-67</a> and the one-channel paragraph of <a href="#adr-71">ADR-71</a> · amends <a href="#adr-28">ADR-28</a>, <a href="#adr-29">ADR-29</a>, <a href="#adr-38">ADR-38</a>, <a href="#adr-39">ADR-39</a> and <a href="#adr-62">ADR-62</a></p>
+<p><span class="f">Context</span> The maintainer talks to the watchdog in its pane, and the watchdog
+asked them through <code>ask_user</code>, which put the question in the TUI's questions panel — a
+second place to answer, beside the conversation the question came from. A question the watchdog
+could not cite also escalated to that panel as the agent wrote it, and <code>r-loop answer</code>
+was a third way in.</p>
+<p><span class="f">Decision</span> Step and reviewer sessions keep one MCP tool,
+<code>ask_watchdog(question, options?, recommended?) → answer</code>; the step still enters
+<code>waiting-input</code> with its backstop paused, and the driver hands the question to the
+watchdog. The watchdog answers with <code>answer_question(id, answer, citation)</code>: a
+<code>path:line</code> in the primary tree, or <code>maintainer</code> when it asked the maintainer
+in its own session — with its question tool (AskUserQuestion) when it has one, otherwise as plain
+text. An empty or invalid citation is refused and the question stays with the watchdog. The
+watchdog's surface has no ask tool. Consent is the maintainer's reply, quoted:
+<code>propose_remedy(…, maintainer_said?)</code> and <code>restart_step(…, maintainer_said?)</code>;
+off the allow-list, an empty quote comes back <code>ask</code>. The TUI's questions panel,
+<code>Face.Ask</code>, <code>r-loop answer</code>, <code>watchdog.answerWindow</code> and
+<code>unattended.questionTimeout</code> are removed. The driver never answers a question itself: a
+watchdog that is gone when a step asks, or goes while it holds a question, halts the run with a
+driver signal <code>the watchdog is gone</code>, and <code>r-loop resume</code> starts a new one.
+With <code>--unattended</code> the watchdog never asks: it answers from the repository or takes the
+agent's recommended option, citing the <code>path:line</code> that supports it.
+<code>watchdog.fallback</code> is removed too: a watchdog that does not start on its own row blocks
+the run with exit 4.</p>
+<p><span class="f">Alternatives</span> Remove the step channel and have agents fail with the
+question in their sentinel reason — rejected: a failed step costs its session and a restart for a
+one-line answer. Keep the TUI panel as a fallback when the watchdog is gone — rejected: two places
+to answer is the problem, and a run without its watchdog has lost its judgement anyway. A driver
+answer ("take your recommendation") when the watchdog is gone — rejected: the driver would be
+making the call a model is there to make.</p>
+<p><span class="f">Consequences</span> The maintainer answers in one conversation that already holds
+the run's context, and every answer that reaches an agent carries a citation or the word
+<code>maintainer</code>. A run cannot survive its watchdog: losing it halts the phase that asked.
+An unattended run's answers rest on the watchdog's reading of the repository, which the report lists
+under Questions with who answered.</p>
+<p><span class="f">Revisit when</span> the maintainer wants to answer from somewhere other than the
+watchdog's pane, or a halt for a gone watchdog costs more than the answer would have.</p>
 </div>
 
 
@@ -3116,8 +3169,8 @@ phases.</p>
       <td>The TUI loop and its layout</td>
       <td><a href="#adr-27">ADR-27</a></td></tr>
   <tr><td>MCP Go SDK</td><td>v1.8.0</td>
-      <td>The channel back into the driver: <code>ask_user</code> for every session, signals and
-          remedies for the watchdog</td>
+      <td>The channel back into the driver: <code>ask_watchdog</code> for every step session,
+          signals, remedies and answers for the watchdog</td>
       <td><a href="#adr-28">ADR-28</a></td></tr>
   <tr><td>yaml.v3</td><td>v3.0.1</td>
       <td>Reads <code>.r-loop/config.yaml</code> at the node level, so a flow-style node can be
@@ -3176,9 +3229,6 @@ named reason on stderr; there is nothing paginated.</p>
           <code>--unattended</code>,
           <code>--plain</code></td>
       <td>as the run command, from the resumed step</td></tr>
-  <tr><td><code>r-loop answer</code></td><td>Answer an open question from any shell</td>
-      <td>the question id from <code>r-loop status</code>, and the answer text</td>
-      <td>nothing on success; exit 2 when the id is not open</td></tr>
   <tr><td><code>r-loop abort</code></td><td>Stop scheduling, leave everything standing; in the
       TUI, <code>ctrl+c</code> then <code>y</code> does the same</td><td>—</td>
       <td>the workspace and worktree left behind, named</td></tr>
@@ -3246,14 +3296,13 @@ watchdog:                     # always on; the run's LLM (ADR-71)
   provider: claude
   model: opus
   effort: high
-  fallback: codex             # a name or a provider/model/effort block; used when the watchdog cannot start
   unblockTimeout: 2h          # how long the ## Resolve first walk may take (ADR-72)
   maxRestarts: 2              # per step, in every mode (ADR-61)
   allow:                      # deps | ports | containers | locks | restart | retry | provider
     - deps                    # empty or absent = ask about everything
     - ports
 
-unattended:                   # applied only with --unattended (ADR-61, ADR-63)
+unattended:                   # applied only with --unattended (ADR-61)
   allow:                      # added to watchdog.allow for the run
     - deps
     - ports
@@ -3261,7 +3310,6 @@ unattended:                   # applied only with --unattended (ADR-61, ADR-63)
     - restart
     - retry
     - provider
-  questionTimeout: 30m        # then the agent proceeds with its own recommendation
 
 notify:
   onHalt: ""                  # one shell command; run summary in the environment
@@ -3277,12 +3325,17 @@ of in each project's file.</p>
 
 <p><strong>The MCP surfaces.</strong> Every step session and every reviewer session gets one tool,
 each on its own URL:
-<code>ask_user(question, options?, recommended?) → answer</code>, which blocks. The watchdog session gets that one
-plus its own, offered to no other session:
+<code>ask_watchdog(question, options?, recommended?) → answer</code>, which blocks until the
+watchdog answers; the driver hands the watchdog
+<code>question &lt;id&gt; from phase-&lt;N&gt;/&lt;kind&gt;: &lt;text&gt; options: … recommended: …</code>.
+The watchdog session gets its own tools, offered to no other session, and no ask tool — it asks the
+maintainer in its own session (<a href="#adr-73">ADR-73</a>):
 <code>signal(kind: warn|halt, step, reason, evidence)</code>,
-<code>propose_remedy(class, command, why) → {decision: authorised|refused, reason}</code>,
-<code>restart_step(step, addendum?, provider?)</code>, and
-<code>answer_question(id, answer, citation)</code>. A signal whose effect would move the run forward
+<code>propose_remedy(class, command, why, maintainer_said?) → {decision: authorised|refused|ask, reason}</code>,
+<code>restart_step(step, addendum?, provider?, maintainer_said?)</code>, and
+<code>answer_question(id, answer, citation)</code>, whose citation is a <code>path:line</code> in
+the primary tree or <code>maintainer</code>; an empty or invalid one is refused and the question
+stays open. A signal whose effect would move the run forward
 is rejected by <code>Watch</code> and the rejection is recorded — the tool surface is narrow by
 design, but the enforcement is not the surface. A <code>signal</code> whose step is not
 <code>phase-&lt;N&gt;/&lt;kind&gt;</code> goes through <code>Watch</code> too, is rejected, and
@@ -3321,8 +3374,8 @@ from, and the only way a watchdog's threshold can be tuned from rows rather than
       were blocked, the code is that of the first</td></tr>
   <tr><td><code>2</code></td><td>usage, git state, or a config the reader rejected</td></tr>
   <tr><td><code>3</code></td><td>the first block began as a stall: the step went quiet, was nudged, and stayed quiet — never an open question, which has no timer</td></tr>
-  <tr><td><code>5</code></td><td>the first block was a watchdog halt; its reason is in the run report</td></tr>
-  <tr><td><code>4</code></td><td>preflight refused — herdr unreachable, an unclean tree, or an open <code>## Resolve first</code> entry</td></tr>
+  <tr><td><code>5</code></td><td>the first block was a watchdog halt, or the watchdog was gone when a step asked it; its reason is in the run report</td></tr>
+  <tr><td><code>4</code></td><td>preflight refused — herdr unreachable, an unclean tree, an open <code>## Resolve first</code> entry, or a watchdog that did not start</td></tr>
   <tr><td><code>127</code></td><td>a required binary is missing</td></tr>
 </table>
 
@@ -3380,7 +3433,7 @@ accepted deliberately.</p>
       <td>recorded halts are more often wrong than right</td></tr>
   <tr><td>A cited answer is wrong and no one saw the question</td><td>medium</td><td>high</td>
       <td>Accepted in <a href="#adr-39">ADR-39</a>. The citation requirement is the constraint; the
-          log and the TUI are the only visibility. If wrong answers appear, narrow what counts as a
+          log and the report are the only visibility. If wrong answers appear, narrow what counts as a
           citable source, or escalate anything touching a contract.</td>
       <td>the first cited answer that turns out wrong</td></tr>
   <tr><td>A pre-authorised remedy does something you would have refused</td><td>medium</td><td>medium</td>
@@ -3416,8 +3469,8 @@ accepted deliberately.</p>
           habit of waving findings away is visible in rows.</td>
       <td>a dismissed finding later confirmed real</td></tr>
   <tr><td>An unattended run takes a decision you would not have</td><td>medium</td><td>high</td>
-      <td>Accepted in <a href="#adr-61">ADR-61</a> and <a href="#adr-63">ADR-63</a>. Every automatic
-          decision — restart, fallback, timed-out answer, gate fix — opens the report, and the
+      <td>Accepted in <a href="#adr-61">ADR-61</a> and <a href="#adr-73">ADR-73</a>. Every automatic
+          decision — restart, fallback, an answer taken on the agent's recommendation, gate fix — opens the report, and the
           review rounds and the gate still judge the result.</td>
       <td>an automatic decision in a report the maintainer would have refused</td></tr>
   <tr><td>A phase lands past a block it silently depended on</td><td>low</td><td>high</td>

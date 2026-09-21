@@ -57,7 +57,6 @@ type askInput struct {
 }
 
 type askOutput struct {
-	ID     string `json:"id"`
 	Answer string `json:"answer"`
 }
 
@@ -187,18 +186,14 @@ func (s *Server) stepKey(path string) (core.StepKey, bool) {
 
 func (s *Server) mcpServer(key core.StepKey) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "r-loop", Version: "1"}, nil)
-	s.addAskUser(srv, key)
-	return srv
-}
-
-func (s *Server) addAskUser(srv *mcp.Server, key core.StepKey) {
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "ask_user",
-		Description: "Ask the person running r-loop a question you cannot answer from the repository. Blocks until answered.",
+		Name:        "ask_watchdog",
+		Description: "Ask the run's watchdog a real choice the repository cannot answer, with the options and your recommendation. Blocks until answered.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in askInput) (*mcp.CallToolResult, askOutput, error) {
-		id, answer, err := s.ask(ctx, key, in)
-		return nil, askOutput{ID: id, Answer: answer}, err
+		_, answer, err := s.ask(ctx, key, in)
+		return nil, askOutput{Answer: answer}, err
 	})
+	return srv
 }
 
 func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput) (string, string, error) {

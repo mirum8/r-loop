@@ -6,10 +6,7 @@ import (
 	"time"
 )
 
-var (
-	ErrMergeConflict = errors.New("merge conflict")
-	ErrNoInput       = errors.New("no input available")
-)
+var ErrMergeConflict = errors.New("merge conflict")
 
 type PlanSource interface {
 	Read(path string) (Plan, error)
@@ -101,7 +98,6 @@ type AskChannel interface {
 
 type Face interface {
 	Emit(ev Event)
-	Ask(q Question) (string, error)
 	Close()
 }
 

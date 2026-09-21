@@ -24,8 +24,7 @@ func (e *events) Emit(ev core.Event) {
 	e.got = append(e.got, ev)
 }
 
-func (e *events) Ask(q core.Question) (string, error) { return "", core.ErrNoInput }
-func (e *events) Close()                              {}
+func (e *events) Close() {}
 
 func (e *events) kind(kind string) []core.Event {
 	e.mu.Lock()

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -164,7 +165,7 @@ func TestAMalformedStepGoesThroughTheSignalHandlerAsAnUnknownStep(t *testing.T) 
 
 func TestAProposalRefusedWithAnExplanationKeepsTheDecisionExactAndCarriesTheReason(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
-	s.Handle(WatchdogHandlers{Propose: func(class, command, why, consentQuestion string) (string, string) {
+	s.Handle(WatchdogHandlers{Propose: func(class, command, why, maintainerSaid string) (string, string) {
 		return "refused", "no step to remedy"
 	}})
 
@@ -179,11 +180,11 @@ func TestEachToolDelegatesToItsHandler(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
 	var calls []string
 	s.Handle(WatchdogHandlers{
-		Propose: func(class, command, why, consentQuestion string) (string, string) {
+		Propose: func(class, command, why, maintainerSaid string) (string, string) {
 			calls = append(calls, "propose "+class+"|"+command+"|"+why)
 			return "authorised", ""
 		},
-		Restart: func(step, addendum, provider, consentQuestion string) (bool, string) {
+		Restart: func(step, addendum, provider, maintainerSaid string) (bool, string) {
 			calls = append(calls, "restart "+step+"|"+addendum+"|"+provider)
 			return false, "no authorised remedy"
 		},
@@ -237,7 +238,7 @@ func TestEveryCallIsRecordedBeforeItsHandlerRuns(t *testing.T) {
 	st := &memStore{}
 	s := serveWatchdog(t, st)
 	var seen []core.Record
-	s.Handle(WatchdogHandlers{Propose: func(class, command, why, consentQuestion string) (string, string) {
+	s.Handle(WatchdogHandlers{Propose: func(class, command, why, maintainerSaid string) (string, string) {
 		seen = st.records()
 		return "refused", ""
 	}})
@@ -259,19 +260,49 @@ func TestEveryCallIsRecordedBeforeItsHandlerRuns(t *testing.T) {
 	}
 }
 
-func TestWatchdogPathAlsoServesAskUser(t *testing.T) {
+func TestWatchdogPathListsNoAskTool(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
-	done := ask(connect(t, s.WatchdogURL()), map[string]any{"question": "Which remedy?"})
 
-	q := next(t, s)
-	if q.Text != "Which remedy?" || q.Step.Kind != "watchdog" {
-		t.Fatalf("question = %+v", q)
-	}
-	if err := s.Answer(q.ID, "deps", "person", ""); err != nil {
+	tools, err := connect(t, s.WatchdogURL()).ListTools(context.Background(), nil)
+
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := answerText(t, <-done); got != "deps" {
-		t.Fatalf("answer = %q", got)
+	var names []string
+	for _, tool := range tools.Tools {
+		names = append(names, tool.Name)
+	}
+	slices.Sort(names)
+	if want := []string{"answer_question", "propose_remedy", "restart_step", "signal"}; !slices.Equal(names, want) {
+		t.Fatalf("watchdog tools = %v, want %v", names, want)
+	}
+}
+
+func TestMaintainerSaidReachesTheHandlersAndIsRecorded(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	var said []string
+	s.Handle(WatchdogHandlers{
+		Propose: func(class, command, why, maintainerSaid string) (string, string) {
+			said = append(said, maintainerSaid)
+			return "authorised", ""
+		},
+		Restart: func(step, addendum, provider, maintainerSaid string) (bool, string) {
+			said = append(said, maintainerSaid)
+			return true, ""
+		},
+	})
+	cs := connect(t, s.WatchdogURL())
+
+	call(t, cs, "propose_remedy", map[string]any{"class": "deps", "command": "go mod download", "why": "missing module", "maintainer_said": "yes, download it"})
+	call(t, cs, "restart_step", map[string]any{"step": "phase-3/implement", "provider": "gemini", "maintainer_said": "use gemini"})
+
+	if !slices.Equal(said, []string{"yes, download it", "use gemini"}) {
+		t.Fatalf("handlers got %q", said)
+	}
+	recs := st.records()
+	if len(recs) != 2 || recs[0].Event.Fields["maintainer_said"] != "yes, download it" || recs[1].Event.Fields["maintainer_said"] != "use gemini" {
+		t.Fatalf("records = %+v", recs)
 	}
 }
 
@@ -289,7 +320,7 @@ func TestWatchdogToolsOnAStepPathAre404(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 1 || tools.Tools[0].Name != "ask_user" {
+	if len(tools.Tools) != 1 || tools.Tools[0].Name != "ask_watchdog" {
 		t.Fatalf("step tools = %+v", tools.Tools)
 	}
 	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question"} {
@@ -333,7 +364,7 @@ func TestAWrongWatchdogTokenIs404(t *testing.T) {
 func TestAnOversizedBodyOnAStepPathIsRefusedWithoutBeingReadWhole(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
 	stepURL := s.StepURL(core.StepKey{Run: "run-7", Phase: 3, Kind: "implement", Attempt: 1})
-	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask_user","arguments":{"question":"` + strings.Repeat("x", 5<<20) + `"}}}`
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask_watchdog","arguments":{"question":"` + strings.Repeat("x", 5<<20) + `"}}}`
 
 	resp, err := http.Post(stepURL, "application/json", strings.NewReader(body))
 	if err != nil {

@@ -15,7 +15,7 @@ import (
 	"r-loop/internal/core"
 )
 
-func TestUnattendedAddsItsAllowListAndQuestionTimeoutAndSaysSoInTheBanner(t *testing.T) {
+func TestUnattendedAddsItsAllowListAndTellsTheWatchdogAndSaysSoInTheBanner(t *testing.T) {
 	f := newResumeFixture(t, "watchdog:\n  allow:\n    - locks\n")
 
 	w, err := f.preflight(f.todo, "--plain", "--unattended")
@@ -27,13 +27,13 @@ func TestUnattendedAddsItsAllowListAndQuestionTimeoutAndSaysSoInTheBanner(t *tes
 	if !slices.Equal(w.Remedies.Allow, want) || !slices.Equal(w.Dog.Allow, want) {
 		t.Errorf("allow remedies %v dog %v", w.Remedies.Allow, w.Dog.Allow)
 	}
-	if w.Loop.QuestionTimeout != 30*time.Minute {
-		t.Errorf("question timeout %s", w.Loop.QuestionTimeout)
+	if !w.Dog.Unattended {
+		t.Error("the watchdog is not told the run is unattended")
 	}
 	if w.Remedies.Fallbacks == nil {
 		t.Error("remedies know no fallbacks")
 	}
-	if out := f.out.String(); !strings.Contains(out, "mode: unattended  allow + deps, ports, restart, retry, provider  question timeout 30m\n") || strings.Contains(out, "no watchdog") {
+	if out := f.out.String(); !strings.Contains(out, "mode: unattended  allow + deps, ports, restart, retry, provider\n") || strings.Contains(out, "no watchdog") {
 		t.Errorf("banner:\n%s", out)
 	}
 }
@@ -46,8 +46,8 @@ func TestWithoutTheFlagTheRunIsAttendedAndNothingChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !slices.Equal(w.Remedies.Allow, []string{"locks"}) || !slices.Equal(w.Dog.Allow, []string{"locks"}) || w.Loop.QuestionTimeout != 0 {
-		t.Errorf("allow %v %v timeout %s", w.Remedies.Allow, w.Dog.Allow, w.Loop.QuestionTimeout)
+	if !slices.Equal(w.Remedies.Allow, []string{"locks"}) || !slices.Equal(w.Dog.Allow, []string{"locks"}) || w.Dog.Unattended {
+		t.Errorf("allow %v %v unattended %t", w.Remedies.Allow, w.Dog.Allow, w.Dog.Unattended)
 	}
 	if out := f.out.String(); !strings.Contains(out, "mode: attended\n") || strings.Contains(out, "unattended") {
 		t.Errorf("banner:\n%s", out)
@@ -68,8 +68,8 @@ func TestResumeUnattendedAppliesTheModeToTheResumedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !w.Opts.Unattended || w.Loop.QuestionTimeout != 30*time.Minute || !slices.Contains(w.Remedies.Allow, "restart") {
-		t.Errorf("opts %+v timeout %s allow %v", w.Opts, w.Loop.QuestionTimeout, w.Remedies.Allow)
+	if !w.Opts.Unattended || !w.Dog.Unattended || !slices.Contains(w.Remedies.Allow, "restart") {
+		t.Errorf("opts %+v unattended %t allow %v", w.Opts, w.Dog.Unattended, w.Remedies.Allow)
 	}
 	if !strings.Contains(f.out.String(), "mode: unattended") {
 		t.Errorf("banner:\n%s", f.out.String())
@@ -104,10 +104,7 @@ const unattendedConfig = `steps:
 watchdog:
   maxRestarts: 1
   remedyWindow: 500ms
-  answerWindow: 20ms
   stallGrace: 30ms
-unattended:
-  questionTimeout: 50ms
 `
 
 type unattendedHost struct {
@@ -154,7 +151,7 @@ func (h *unattendedHost) Prompt(agent, text string, wait bool, timeout time.Dura
 			return
 		}
 		defer cs.Close()
-		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "ask_user", Arguments: map[string]any{"question": "which db?", "options": []string{"sqlite", "postgres"}, "recommended": "sqlite"}})
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "ask_watchdog", Arguments: map[string]any{"question": "which db?", "options": []string{"sqlite", "postgres"}, "recommended": "sqlite"}})
 		if err != nil {
 			h.t.Error(err)
 			return
@@ -212,7 +209,7 @@ func TestAnUnattendedFourPhaseRunFinishesWithNoHumanTouch(t *testing.T) {
 	lander := f.sim(w, sim)
 	w.Loop.Sessions.Host = host
 	w.Loop.RemedyWindow = w.Config.Watchdog.RemedyWindow
-	dog := &restartingDog{dogHost: *escalatingDog(w), remedies: w.Remedies}
+	dog := &restartingDog{dogHost: *answeringDog(w, "sqlite", "docs/topic/todo.md:1"), remedies: w.Remedies}
 	w.Dog.Host = dog
 
 	code := w.Execute(core.RunOptions{})
@@ -238,8 +235,7 @@ func TestAnUnattendedFourPhaseRunFinishesWithNoHumanTouch(t *testing.T) {
 	if want := []string{"phase-1/implement accepted", "phase-2/implement accepted", "phase-2/implement restart limit 1 reached"}; !slices.Equal(replies, want) {
 		t.Errorf("restart replies %q, want %q", replies, want)
 	}
-	text := "No answer within 50ms. Proceed with your recommendation: sqlite"
-	if host.answer != text {
+	if host.answer != "sqlite" {
 		t.Errorf("the agent received %q", host.answer)
 	}
 	st := f.load(w.Loop.RunID)
@@ -256,8 +252,7 @@ func TestAnUnattendedFourPhaseRunFinishesWithNoHumanTouch(t *testing.T) {
 		"- phase 1 implement: restart as attempt 2 (remedy: allow-list)\n" +
 		"- phase 2 implement: restart as attempt 2 (remedy: allow-list)\n" +
 		"- phase 2 blocked: tests red\n" +
-		"- phase 3 skipped: depends on blocked phase 2\n" +
-		"- q1 phase 4 implement: timed out; the agent took " + text + "\n"
+		"- phase 3 skipped: depends on blocked phase 2\n"
 	for _, want := range []string{"human touches: 0\n", decisions, "\nr-loop resume\n"} {
 		if !strings.Contains(rep, want) {
 			t.Errorf("report missing %q:\n%s", want, rep)

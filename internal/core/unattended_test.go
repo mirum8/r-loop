@@ -1,101 +1,11 @@
 package core
 
 import (
-	"context"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
-
-func askUnanswered(t *testing.T, timeout time.Duration, q Question) (*eventsRig, chan struct{}) {
-	t.Helper()
-	r := newEventsRig(t)
-	gate := make(chan struct{})
-	r.loop.Face = &gatedFace{fakeFace: r.face, gate: gate}
-	r.loop.QuestionTimeout = timeout
-	s := &Session{Ref: StepRef{Key: q.Step}}
-	r.loop.runDir = r.store.dir
-	r.loop.setLive(s)
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go r.loop.question(ctx, q)
-	waitFor(t, func() bool { return len(r.calls("Face.Ask ")) == 1 })
-	return r, gate
-}
-
-func TestAnUnansweredQuestionTimesOutToTheAgentsRecommendation(t *testing.T) {
-	key := StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}
-	r, _ := askUnanswered(t, 20*time.Millisecond, Question{ID: "q1", Step: key, Text: "which db?", Options: []string{"sqlite", "postgres"}, Recommended: "sqlite"})
-
-	waitFor(t, func() bool { return len(r.calls("AskChannel.Answer ")) == 1 })
-
-	text := "No answer within 20ms. Proceed with your recommendation: sqlite"
-	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{`q1 "` + text + `" timeout ""`}) {
-		t.Errorf("answers %v", got)
-	}
-	if got := r.calls("Face.Withdraw "); !reflect.DeepEqual(got, []string{"q1"}) {
-		t.Errorf("withdrawn %v", got)
-	}
-	st, _ := r.store.Load("run-1")
-	if len(st.Questions) != 1 || st.Questions[0].AnsweredBy != "timeout" || st.Questions[0].Answer != text {
-		t.Errorf("questions %+v", st.Questions)
-	}
-	if got := r.events("question-answered"); len(got) != 1 || got[0].Fields["by"] != "timeout" {
-		t.Errorf("question-answered %+v", got)
-	}
-	if got := r.events("human"); len(got) != 0 {
-		t.Errorf("a timeout counted as a human touch: %+v", got)
-	}
-	rep := Report(st, Plan{})
-	if !strings.Contains(rep, "## Automatic decisions\n\n- q1 phase 2 implement: timed out; the agent took "+text+"\n") {
-		t.Errorf("report:\n%s", rep)
-	}
-}
-
-func TestAQuestionWithNoRecommendationTimesOutToTheSafestOption(t *testing.T) {
-	key := StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}
-	r, _ := askUnanswered(t, 20*time.Millisecond, Question{ID: "q1", Step: key, Text: "which db?"})
-
-	waitFor(t, func() bool { return len(r.calls("AskChannel.Answer ")) == 1 })
-
-	want := `q1 "No answer within 20ms. Proceed with the option you judge safest and name it in your sentinel's reason." timeout ""`
-	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{want}) {
-		t.Errorf("answers %v", got)
-	}
-}
-
-func TestWithoutAQuestionTimeoutAnOpenQuestionWaitsForAnAnswer(t *testing.T) {
-	key := StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}
-	r, gate := askUnanswered(t, 0, Question{ID: "q1", Step: key, Text: "which db?", Recommended: "sqlite"})
-
-	time.Sleep(50 * time.Millisecond)
-
-	if got := r.calls("AskChannel.Answer "); len(got) != 0 {
-		t.Fatalf("answered without the flag: %v", got)
-	}
-	close(gate)
-	waitFor(t, func() bool { return len(r.calls("AskChannel.Answer ")) == 1 })
-	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{`q1 "yes" maintainer ""`}) {
-		t.Errorf("answers %v", got)
-	}
-}
-
-func TestAnAnswerBeforeTheTimeoutWins(t *testing.T) {
-	key := StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}
-	r, gate := askUnanswered(t, 30*time.Millisecond, Question{ID: "q1", Step: key, Text: "which db?", Recommended: "sqlite"})
-
-	close(gate)
-	waitFor(t, func() bool { return len(r.calls("AskChannel.Answer ")) == 1 })
-	time.Sleep(60 * time.Millisecond)
-
-	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{`q1 "yes" maintainer ""`}) {
-		t.Errorf("answers %v", got)
-	}
-	if got := r.events("note"); len(got) != 0 {
-		t.Errorf("notes %+v", got)
-	}
-}
 
 func fallbackRemedies(t *testing.T, store *fakeStore, allow ...string) (*Remedies, *Watch) {
 	t.Helper()
@@ -122,21 +32,21 @@ func TestAnAllowListedProviderRestartOnTheRowsFallbackIsAccepted(t *testing.T) {
 	}
 }
 
-func TestAProviderRestartOnAnotherProviderNeedsAConsentQuestion(t *testing.T) {
+func TestAProviderRestartOnAnotherProviderNeedsTheMaintainersWord(t *testing.T) {
 	store := &fakeStore{}
 	rem, w := fallbackRemedies(t, store, "provider")
 	rem.Propose("provider", "switch provider", "codex usage limit reached", "")
 	go func() { <-w.Restarts() }()
 
 	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "")
-	if ok || !strings.Contains(reason, "gemini is not the row's fallback") || !strings.Contains(reason, "ask_user") {
+	if ok || !strings.Contains(reason, "gemini is not the row's fallback") || !strings.Contains(reason, "maintainer_said") {
 		t.Fatalf("restart without consent %v %q", ok, reason)
 	}
-	if ok, reason := rem.Restart("phase-2/implement", "", "gemini", "q8"); ok || !strings.Contains(reason, "q8 is not a question the maintainer answered") {
-		t.Fatalf("restart on a timed-out question %v %q", ok, reason)
+	if ok, reason := rem.Restart("phase-2/implement", "", "gemini", " "); ok || !strings.Contains(reason, "maintainer_said") {
+		t.Fatalf("restart on a blank quote %v %q", ok, reason)
 	}
 
-	ok, reason = rem.Restart("phase-2/implement", "", "gemini", "q9")
+	ok, reason = rem.Restart("phase-2/implement", "", "gemini", "yes, use gemini")
 
 	if !ok {
 		t.Fatalf("restart %v %q", ok, reason)
@@ -217,7 +127,7 @@ func TestAnAllowListedRestartClassDoesNotSwitchProviders(t *testing.T) {
 func TestAMaintainerApprovedProviderRemedyDoesNotAuthoriseAnotherProviderWithoutAsking(t *testing.T) {
 	store := &fakeStore{}
 	rem, w := fallbackRemedies(t, store)
-	rem.Propose("provider", "switch to claude", "codex usage limit reached", "q9")
+	rem.Propose("provider", "switch to claude", "codex usage limit reached", "yes, go ahead")
 	go func() { <-w.Restarts() }()
 
 	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "")
@@ -230,7 +140,7 @@ func TestAMaintainerApprovedProviderRemedyDoesNotAuthoriseAnotherProviderWithout
 func TestAMaintainerApprovedProviderRemedyNamingTheProviderIsNotAskedAgain(t *testing.T) {
 	store := &fakeStore{}
 	rem, w := fallbackRemedies(t, store)
-	rem.Propose("provider", "restart phase-2/implement on gemini", "codex usage limit reached", "q9")
+	rem.Propose("provider", "restart phase-2/implement on gemini", "codex usage limit reached", "yes, go ahead")
 	got := make(chan Restart, 1)
 	go func() { got <- <-w.Restarts() }()
 

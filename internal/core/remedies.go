@@ -19,13 +19,12 @@ const (
 	decisionRefused    = "refused"
 	decisionAsk        = "ask"
 
-	askForConsent = "ask the maintainer with ask_user: what fails, the command, and why it is safe; then call again with consent_question set to the id ask_user returned"
+	askForConsent = "ask the maintainer in your session: what fails, the command, and why it is safe; then call again with maintainer_said set to their reply"
 )
 
 type Remedies struct {
 	Allow       []string
 	Store       Store
-	Answered    func(id string) (Question, bool)
 	Now         func() time.Time
 	Watch       *Watch
 	MaxRestarts int
@@ -41,7 +40,7 @@ func (r *Remedies) now() time.Time {
 	return r.Now()
 }
 
-func (r *Remedies) Propose(class, command, why, consentQuestion string) (string, string) {
+func (r *Remedies) Propose(class, command, why, maintainerSaid string) (string, string) {
 	if !slices.Contains(remedyClasses, class) {
 		return decisionRefused, fmt.Sprintf("class %q is not a remedy class", class)
 	}
@@ -51,11 +50,8 @@ func (r *Remedies) Propose(class, command, why, consentQuestion string) (string,
 	}
 	consent := consentAllowList
 	if !slices.Contains(r.Allow, class) {
-		if consentQuestion == "" {
+		if strings.TrimSpace(maintainerSaid) == "" {
 			return decisionAsk, askForConsent
-		}
-		if !r.maintainerAnswered(consentQuestion) {
-			return decisionRefused, fmt.Sprintf("%s is not a question the maintainer answered", consentQuestion)
 		}
 		consent = consentMaintainer
 	}
@@ -85,15 +81,7 @@ func (r *Remedies) decide(step StepKey, class, command, why string, consent func
 	return rem, nil
 }
 
-func (r *Remedies) maintainerAnswered(id string) bool {
-	if r.Answered == nil {
-		return false
-	}
-	q, ok := r.Answered(id)
-	return ok && q.Step.Kind == "watchdog" && q.AnsweredBy == consentMaintainer
-}
-
-func (r *Remedies) Restart(step, addendum, provider, consentQuestion string) (bool, string) {
+func (r *Remedies) Restart(step, addendum, provider, maintainerSaid string) (bool, string) {
 	var phase int
 	var kind string
 	if _, err := fmt.Sscanf(step, "phase-%d/%s", &phase, &kind); err != nil || fmt.Sprintf("phase-%d/%s", phase, kind) != step {
@@ -146,11 +134,8 @@ func (r *Remedies) Restart(step, addendum, provider, consentQuestion string) (bo
 		remedy = consentAllowList
 	}
 	if remedy == "" && !fallback {
-		if consentQuestion == "" {
+		if strings.TrimSpace(maintainerSaid) == "" {
 			return false, provider + " is not the row's fallback: " + askForConsent
-		}
-		if !r.maintainerAnswered(consentQuestion) {
-			return false, fmt.Sprintf("%s is not a question the maintainer answered", consentQuestion)
 		}
 		rem, err := r.decide(key, "provider", fmt.Sprintf("restart %s on %s", step, provider), provider+" is not the row's fallback", func(Remedy) string { return consentMaintainer })
 		if err != nil {

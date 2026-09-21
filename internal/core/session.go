@@ -353,7 +353,7 @@ func writeMCPConfig(path, url string) error {
 func nudge(grace time.Duration, ask bool) string {
 	blocked := "If you are blocked, write a failed sentinel with the reason."
 	if ask {
-		blocked = "If you are blocked, call ask_user, or write a failed sentinel with the reason."
+		blocked = "If you are blocked, call ask_watchdog, or write a failed sentinel with the reason."
 	}
 	return "r-loop: no sentinel and no activity for " + grace.String() + ". If your work is done, write the sentinel now. " + blocked
 }

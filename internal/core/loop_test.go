@@ -702,7 +702,7 @@ func TestReportCountsHumanTouchesAndListsAutomaticDecisions(t *testing.T) {
 			ev("finding", 1, "implement", map[string]string{"step": "implement", "round": "1", "reviewer": "codex", "id": "codex-r1-1", "title": "nil map", "verdict": "real", "severity": "P1", "fixed": "true", "evidence": "x.go:3"}),
 		},
 		Questions: []Question{
-			{ID: "q1", Step: StepKey{Phase: 1, Kind: "implement"}, Text: "which db?", Answer: "sqlite", AnsweredBy: "timeout"},
+			{ID: "q1", Step: StepKey{Phase: 1, Kind: "implement"}, Text: "which db?", Answer: "sqlite", AnsweredBy: "watchdog", Citation: "docs/spec.html:4"},
 			{ID: "q2", Step: StepKey{Phase: 1, Kind: "implement"}, Text: "keep api?", Answer: "yes", AnsweredBy: "maintainer"},
 		},
 		Signals:  []Signal{{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Phase: 1, Kind: "implement"}, Reason: "drifting"}},
@@ -718,10 +718,9 @@ func TestReportCountsHumanTouchesAndListsAutomaticDecisions(t *testing.T) {
 			"- phase 1 implement: nudge\n" +
 			"- phase 1 implement: restart as attempt 2 on claude model sonnet effort provider default — use the fake (remedy: rm lock)\n" +
 			"- phase 1: gate-fix round 1\n" +
-			"- phase 1 implement: review round limit reached; round 3 fixes unreviewed\n" +
-			"- q1 phase 1 implement: timed out; the agent took sqlite\n",
+			"- phase 1 implement: review round limit reached; round 3 fixes unreviewed\n",
 		"## Landed\n\n- phase 2 abc gate skipped\n",
-		"## Questions\n\n- q1 phase 1 implement: which db? → sqlite (timeout, waited 0s)\n- q2 phase 1 implement: keep api? → yes (maintainer, waited 0s)\n",
+		"## Questions\n\n- q1 phase 1 implement: which db? → sqlite (watchdog, cites docs/spec.html:4, waited 0s)\n- q2 phase 1 implement: keep api? → yes (maintainer, waited 0s)\n",
 		"## Signals\n\n- warn from watchdog, phase 1 implement: drifting\n",
 		"## Remedies\n\n- phase 1 implement: lock `rm lock` — authorised; no restart\n",
 		"## Findings\n\n- phase 1 implement r1 codex codex-r1-1 nil map: real P1 fixed true — x.go:3\n",

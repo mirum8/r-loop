@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -218,13 +219,13 @@ func TestARunWhoseEveryPhaseIsBlockedFinishesWithNothingToRun(t *testing.T) {
 	}
 }
 
-func TestTheWatchdogStartsOnItsFallbackWhenItsProviderFails(t *testing.T) {
+func TestAWatchdogThatFailsToStartBlocksTheRunWithoutTryingAnotherProvider(t *testing.T) {
 	k := startWalk(t, nil)
-	k.dog.failStarts = 1
+	k.dog.startErr = errors.New("usage limit")
 
 	code := k.w.Execute(core.RunOptions{Phases: []int{2}})
 
-	if code != 0 {
+	if code != 4 || !strings.Contains(k.f.err.String(), "watchdog did not start: ") || !strings.Contains(k.f.err.String(), "usage limit") {
 		t.Fatalf("exit %d: %s", code, k.f.err)
 	}
 	var starts []string
@@ -233,19 +234,11 @@ func TestTheWatchdogStartsOnItsFallbackWhenItsProviderFails(t *testing.T) {
 			starts = append(starts, c)
 		}
 	}
-	if len(starts) != 2 || !strings.Contains(starts[0], " claude ") || !strings.Contains(starts[1], " codex ") {
+	if len(starts) != 1 || !strings.Contains(starts[0], " claude ") {
 		t.Fatalf("starts %q", starts)
 	}
-}
-
-func TestAWatchdogThatFailsOnBothProvidersRefusesTheRun(t *testing.T) {
-	k := startWalk(t, nil)
-	k.dog.failStarts = 2
-
-	code := k.w.Execute(core.RunOptions{Phases: []int{2}})
-
-	if code != 4 || !strings.Contains(k.f.err.String(), "watchdog did not start") || !strings.Contains(k.f.err.String(), "fallback") {
-		t.Fatalf("exit %d: %s", code, k.f.err)
+	if len(k.land.landed) != 0 {
+		t.Errorf("landed %v", k.land.landed)
 	}
 }
 

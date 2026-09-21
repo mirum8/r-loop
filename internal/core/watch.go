@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -170,7 +171,15 @@ func (w *Watch) BeforePhase(ctx context.Context, ph Phase, base string) CheckOut
 }
 
 func (w *Watch) Route(ctx context.Context, q Question) bool {
-	return w.Router != nil && w.Router.Route(ctx, q)
+	if w.Router != nil && w.Router.Route(ctx, q) {
+		return true
+	}
+	if ctx.Err() == nil {
+		key := q.Step
+		key.Kind, _, _ = strings.Cut(key.Kind, "-rv-")
+		w.Accept(Signal{Kind: SignalHalt, Source: SourceDriver, Step: key, Reason: watchdogGone})
+	}
+	return false
 }
 
 func (w *Watch) StepStarted(ref StepRef, s *Session) {

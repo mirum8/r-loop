@@ -48,7 +48,7 @@ func TestWatchdogStartSplitsThenStartsThenPromptsWithoutWait(t *testing.T) {
 		t.Errorf("calls\n got %q\nwant %q", got, want)
 	}
 	p := dog.Prompts.(*varsCapture)
-	wantVars := map[string]any{"TodoPath": "docs/x/todo.md", "SpecDir": "docs/x", "RunDir": "/repo/.r-loop/runs/run-1", "Allow": []string{"deps", "ports"}}
+	wantVars := map[string]any{"TodoPath": "docs/x/todo.md", "SpecDir": "docs/x", "RunDir": "/repo/.r-loop/runs/run-1", "Allow": []string{"deps", "ports"}, "Unattended": false}
 	if p.name != "watchdog" || !reflect.DeepEqual(p.vars, wantVars) {
 		t.Errorf("rendered %s %v", p.name, p.vars)
 	}

@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -72,11 +71,10 @@ type RunLoop struct {
 	Runners  map[string]StepRunner
 	RunID    string
 
-	Watcher         Watcher
-	Ask             AskChannel
-	RemedyWindow    time.Duration
-	MaxRestarts     int
-	QuestionTimeout time.Duration
+	Watcher      Watcher
+	Ask          AskChannel
+	RemedyWindow time.Duration
+	MaxRestarts  int
 
 	mu       sync.Mutex
 	runDir   string
@@ -668,78 +666,26 @@ func (l *RunLoop) serveQuestions(ctx context.Context) {
 }
 
 func (l *RunLoop) question(ctx context.Context, q Question) {
-	var s *Session
-	if q.Step.Kind == "watchdog" {
-		l.track(q, nil)
-	} else {
-		if s = l.askingSession(ctx, q.Step); s == nil {
-			return
+	s := l.askingSession(ctx, q.Step)
+	if s == nil {
+		return
+	}
+	admitted := s.live(func() {
+		l.track(q, s)
+		if l.openQuestion(s, 1) == 1 {
+			l.stepState(s, StepWaitingInput)
 		}
-		admitted := s.live(func() {
-			l.track(q, s)
-			if l.openQuestion(s, 1) == 1 {
-				l.stepState(s, StepWaitingInput)
-			}
-		})
-		if !admitted {
-			l.withdraw(q, "ended")
-			return
-		}
+	})
+	if !admitted {
+		l.withdraw(q, "ended")
+		return
 	}
 	l.recordQuestion(q)
 	l.emit(Event{Kind: "question", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"id": q.ID, "text": q.Text}})
-	if s != nil && l.watcher().Route(ctx, q) {
-		l.settle(q.ID)
-		return
-	}
-	if ctx.Err() != nil || !l.isOpen(q.ID) {
-		return
-	}
-	if l.QuestionTimeout > 0 {
-		t := time.AfterFunc(l.QuestionTimeout, func() { l.timeOut(q) })
-		context.AfterFunc(ctx, func() { t.Stop() })
-	}
-	answer, err := l.Face.Ask(q)
-	if err != nil {
-		if !errors.Is(err, ErrNoInput) {
-			l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "ask " + q.ID + ": " + err.Error()}})
-		}
-		return
-	}
-	l.Answer(q.ID, answer, "maintainer")
-}
-
-func (l *RunLoop) timeOut(q Question) {
-	l.mu.Lock()
-	_, open := l.asked[q.ID]
-	l.mu.Unlock()
-	if !open {
-		return
-	}
-	text := fmt.Sprintf("No answer within %s. Proceed with the option you judge safest and name it in your sentinel's reason.", shortDuration(l.QuestionTimeout))
-	if q.Recommended != "" {
-		text = fmt.Sprintf("No answer within %s. Proceed with your recommendation: %s", shortDuration(l.QuestionTimeout), q.Recommended)
-	}
-	l.Deliver(q.ID, text, "timeout", "")
-}
-
-func shortDuration(d time.Duration) string {
-	s := d.String()
-	if strings.HasSuffix(s, "m0s") {
-		s = strings.TrimSuffix(s, "0s")
-	}
-	if strings.HasSuffix(s, "h0m") {
-		s = strings.TrimSuffix(s, "0m")
-	}
-	return s
-}
-
-func (l *RunLoop) Answer(id, text, by string) error {
-	return l.Deliver(id, text, by, "")
+	l.watcher().Route(ctx, q)
 }
 
 func (l *RunLoop) Deliver(id, text, by, citation string) error {
-	defer os.Remove(filepath.Join(l.Store.Dir(l.RunID), "answers", id))
 	open, ok := l.settle(id)
 	if !ok {
 		err := fmt.Errorf("question %s is not open", id)
@@ -749,13 +695,9 @@ func (l *RunLoop) Deliver(id, text, by, citation string) error {
 	q := open.q
 	q.Answer, q.AnsweredBy, q.Citation, q.AnsweredAt = text, by, citation, time.Now()
 	l.recordQuestion(q)
-	if by != "maintainer" {
-		l.emit(Event{Kind: "question-answered", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"id": id, "answer": text, "by": by, "citation": citation}})
-	} else {
+	l.emit(Event{Kind: "question-answered", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"id": id, "answer": text, "by": by, "citation": citation}})
+	if by == maintainerCitation {
 		l.emit(Event{Kind: "human", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": id}})
-	}
-	if w, ok := l.Face.(interface{ Withdraw(id string) }); ok {
-		w.Withdraw(id)
 	}
 	if err := l.Ask.Answer(id, text, by, citation); err != nil {
 		l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "answer " + id + ": " + err.Error()}})
@@ -768,8 +710,8 @@ func (l *RunLoop) settle(id string) (openAsk, bool) {
 	l.mu.Lock()
 	open, ok := l.asked[id]
 	l.mu.Unlock()
-	if !ok || open.s == nil {
-		return l.claim(id)
+	if !ok {
+		return open, false
 	}
 	claimed := false
 	open.s.live(func() {
@@ -778,13 +720,6 @@ func (l *RunLoop) settle(id string) (openAsk, bool) {
 		}
 	})
 	return open, claimed
-}
-
-func (l *RunLoop) isOpen(id string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	_, ok := l.asked[id]
-	return ok
 }
 
 func (l *RunLoop) withdrawStep(key StepKey, state StepState) {
@@ -808,9 +743,6 @@ func (l *RunLoop) withdraw(q Question, state StepState) {
 	text := fmt.Sprintf("r-loop: phase-%d/%s has ended; this question is withdrawn.", q.Step.Phase, q.Step.Kind)
 	q.Answer, q.AnsweredBy, q.AnsweredAt = "step "+string(state), "withdrawn", time.Now()
 	l.recordQuestion(q)
-	if w, ok := l.Face.(interface{ Withdraw(id string) }); ok {
-		w.Withdraw(q.ID)
-	}
 	l.Ask.Answer(q.ID, text, "withdrawn", "")
 }
 

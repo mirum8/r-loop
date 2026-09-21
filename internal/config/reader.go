@@ -53,13 +53,12 @@ type StepRow struct {
 }
 
 type Watchdog struct {
-	Provider, Model, Effort                              string
-	Fallback                                             Fallback
-	Allow                                                []string
-	RemedyWindow, AnswerWindow, CheckTimeout, StallGrace time.Duration
-	UnblockTimeout                                       time.Duration
-	OvertimeFactor, DiffFactor                           float64
-	MaxRestarts                                          int
+	Provider, Model, Effort                string
+	Allow                                  []string
+	RemedyWindow, CheckTimeout, StallGrace time.Duration
+	UnblockTimeout                         time.Duration
+	OvertimeFactor, DiffFactor             float64
+	MaxRestarts                            int
 }
 
 type Land struct {
@@ -69,8 +68,7 @@ type Land struct {
 }
 
 type Unattended struct {
-	Allow           []string
-	QuestionTimeout time.Duration
+	Allow []string
 }
 
 type Notify struct {
@@ -118,11 +116,11 @@ var topSchema = schema{
 	}},
 	"providers":  schema{"*": nil},
 	"land":       schema{"fixRounds": nil, "gateTimeout": nil, "fix": roleSchema},
-	"unattended": schema{"allow": nil, "questionTimeout": nil},
+	"unattended": schema{"allow": nil},
 	"notify":     schema{"onHalt": nil, "onWarn": nil, "onDone": nil},
 	"watchdog": schema{
-		"provider": nil, "model": nil, "effort": nil, "fallback": nil, "allow": nil, "maxRestarts": nil,
-		"remedyWindow": nil, "answerWindow": nil, "checkTimeout": nil, "stallGrace": nil, "unblockTimeout": nil,
+		"provider": nil, "model": nil, "effort": nil, "allow": nil, "maxRestarts": nil,
+		"remedyWindow": nil, "checkTimeout": nil, "stallGrace": nil, "unblockTimeout": nil,
 		"overtimeFactor": nil, "diffFactor": nil,
 	},
 }
@@ -513,10 +511,10 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 		path string
 		dst  *time.Duration
 	}{
-		{"watchdog.remedyWindow", &w.RemedyWindow}, {"watchdog.answerWindow", &w.AnswerWindow},
+		{"watchdog.remedyWindow", &w.RemedyWindow},
 		{"watchdog.checkTimeout", &w.CheckTimeout}, {"watchdog.stallGrace", &w.StallGrace},
 		{"watchdog.unblockTimeout", &w.UnblockTimeout},
-		{"land.gateTimeout", &cfg.Land.GateTimeout}, {"unattended.questionTimeout", &cfg.Unattended.QuestionTimeout},
+		{"land.gateTimeout", &cfg.Land.GateTimeout},
 	} {
 		if *f.dst, err = r.duration(f.path); err != nil {
 			return err
@@ -536,19 +534,6 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 	}
 	if w.Allow, err = r.classes("watchdog.allow"); err != nil {
 		return err
-	}
-	if fb, fl := r.lookup("watchdog.fallback"); fb == nil || isNull(fb) {
-		r.prov["watchdog.fallback"] = defaultSource
-	} else {
-		r.prov["watchdog.fallback"] = source(fl, "watchdog.fallback")
-		pr, m, e, err := role(fl.file, "watchdog.fallback", fb)
-		if err != nil {
-			return err
-		}
-		if pr == w.Provider {
-			return errAt(fl.file, fb, "watchdog.fallback names the watchdog's own provider %q", pr)
-		}
-		w.Fallback = Fallback{pr, m, e}
 	}
 	cfg.Unattended.Allow, err = r.classes("unattended.allow")
 	return err

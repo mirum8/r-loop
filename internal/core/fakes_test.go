@@ -384,26 +384,13 @@ func (f *fakeAskChannel) Answer(id, answer, by, citation string) error {
 
 type fakeFace struct {
 	callLog
-	Events  []Event
-	Answers map[string]string
-	AskErr  error
-	Closed  bool
+	Events []Event
+	Closed bool
 }
 
 func (f *fakeFace) Emit(ev Event) {
 	f.record("Face.Emit %s", ev.Kind)
 	f.Events = append(f.Events, ev)
-}
-
-func (f *fakeFace) Ask(q Question) (string, error) {
-	f.record("Face.Ask %s", q.ID)
-	if f.AskErr != nil {
-		return "", f.AskErr
-	}
-	if a, ok := f.Answers[q.ID]; ok {
-		return a, nil
-	}
-	return "", ErrNoInput
 }
 
 func (f *fakeFace) Close() {

@@ -61,14 +61,6 @@ func (s Step) Remaining(now time.Time) (time.Duration, bool) {
 	return s.Backstop - (now.Sub(s.Started) - s.pausedFor), false
 }
 
-type Open struct {
-	ID, Kind, Text string
-	Recommended    string
-	Phase          int
-	Options        []string
-	reply          chan string
-}
-
 type Warning struct {
 	Text  string
 	Error bool
@@ -76,29 +68,24 @@ type Warning struct {
 
 type Model struct {
 	Header
-	Phases    []Row
-	Current   int
-	Live      *Step
-	Warnings  []Warning
-	Questions []Open
-	Draft     string
-	draftFor  string
-	Answered  []string
-	done      map[string]bool
-	Status    string
-	Blocked   string
-	Resume    string
-	Notice    string
-	stopping  bool
-	abort     func() error
-	Now       time.Time
-	Width     int
-	Height    int
-	theme     Theme
+	Phases   []Row
+	Current  int
+	Live     *Step
+	Warnings []Warning
+	Status   string
+	Blocked  string
+	Resume   string
+	Notice   string
+	stopping bool
+	abort    func() error
+	Now      time.Time
+	Width    int
+	Height   int
+	theme    Theme
 }
 
 func NewModel(h Header, phases []core.Phase, th Theme) Model {
-	m := Model{Header: h, Now: h.Started, Width: 80, Height: 24, theme: th, done: map[string]bool{}}
+	m := Model{Header: h, Now: h.Started, Width: 80, Height: 24, theme: th}
 	for _, ph := range phases {
 		state := core.PhaseUnticked
 		if landed(ph) {
@@ -130,18 +117,6 @@ func (m Model) Apply(ev core.Event) Model {
 		m.step(ev)
 	case "warning", "error":
 		m.warn(ev)
-	case "question":
-		m.Questions = append(m.Questions, Open{ID: ev.Fields["id"], Phase: ev.Phase, Kind: ev.Step, Text: ev.Fields["text"]})
-	case "human":
-		if ev.Fields["what"] == "answer" {
-			by := ev.Fields["by"]
-			if by == "" {
-				by = "maintainer"
-			}
-			m.settle(ev.Fields["id"], by)
-		}
-	case "question-answered":
-		m.settle(ev.Fields["id"], ev.Fields["by"]+"  "+ev.Fields["citation"])
 	case "finished":
 		m.end("finished")
 	case "halt":
@@ -161,7 +136,7 @@ func replay(m Model, history []core.Event) Model {
 	for _, ev := range history {
 		m = m.Apply(ev)
 	}
-	m.Status, m.Blocked, m.Resume, m.Current, m.Live, m.Questions = "", "", "", 0, nil, nil
+	m.Status, m.Blocked, m.Resume, m.Current, m.Live = "", "", "", 0, nil
 	return m
 }
 
@@ -248,10 +223,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 	case eventMsg:
 		return m.Apply(core.Event(msg)), nil
-	case askMsg:
-		return m.ask(msg), nil
-	case withdrawMsg:
-		m.settle(string(msg), "")
 	case closedMsg:
 		if m.Status == "" {
 			m.end("ended")
@@ -268,8 +239,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.confirmStop(msg)
 		case msg.Type == tea.KeyCtrlC && m.Status == "":
 			m.stopping, m.Notice = true, "stop the run? the live step's session and worktree are left for resume [y/n]"
-		default:
-			m.input(msg)
 		}
 	}
 	return m, nil
@@ -321,33 +290,6 @@ func (f *Face) Emit(ev core.Event) {
 	f.prog.Send(eventMsg(ev))
 }
 
-func (f *Face) Ask(q core.Question) (string, error) {
-	f.mu.Lock()
-	prog, done := f.prog, f.done
-	f.mu.Unlock()
-	if prog == nil {
-		return "", core.ErrNoInput
-	}
-	reply := make(chan string, 1)
-	prog.Send(askMsg{q: q, reply: reply})
-	select {
-	case a, ok := <-reply:
-		if ok {
-			return a, nil
-		}
-	case <-done:
-	}
-	return "", core.ErrNoInput
-}
-
-func (f *Face) Withdraw(id string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.prog != nil {
-		f.prog.Send(withdrawMsg(id))
-	}
-}
-
 func (f *Face) Stop() {
 	f.mu.Lock()
 	prog, done := f.prog, f.done
@@ -381,9 +323,6 @@ func (m *Model) confirmStop(key tea.KeyMsg) {
 		return
 	}
 	if m.RunID == "" {
-		for len(m.Questions) > 0 {
-			m.drop(m.Questions[0].ID)
-		}
 		m.Notice = "stopping before the run starts"
 		return
 	}

@@ -52,7 +52,7 @@ type result struct {
 func ask(cs *mcp.ClientSession, args map[string]any) <-chan result {
 	out := make(chan result, 1)
 	go func() {
-		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "ask_user", Arguments: args})
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "ask_watchdog", Arguments: args})
 		out <- result{res, err}
 	}()
 	return out
@@ -249,7 +249,7 @@ func TestARepeatedAskFromTheSameStepReusesTheOpenQuestionAndGetsItsAnswer(t *tes
 	callCtx, hangUp := context.WithCancel(context.Background())
 	gone := make(chan error, 1)
 	go func() {
-		_, err := connect(t, s.StepURL(key)).CallTool(callCtx, &mcp.CallToolParams{Name: "ask_user", Arguments: args})
+		_, err := connect(t, s.StepURL(key)).CallTool(callCtx, &mcp.CallToolParams{Name: "ask_watchdog", Arguments: args})
 		gone <- err
 	}()
 	if q := next(t, s); q.ID != "q1" {
