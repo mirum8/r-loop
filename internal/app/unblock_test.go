@@ -2,8 +2,10 @@ package app
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"r-loop/internal/core"
 )
@@ -32,6 +34,7 @@ type walk struct {
 	w    *Wiring
 	dog  *dogHost
 	land *landRecorder
+	hang bool
 }
 
 func startWalk(t *testing.T, onWalk func(w *Wiring), args ...string) *walk {
@@ -45,13 +48,22 @@ func startWalk(t *testing.T, onWalk func(w *Wiring), args ...string) *walk {
 	}
 	land := f.sim(w, newSim())
 	dog := &dogHost{}
+	k := &walk{f: f, w: w, dog: dog, land: land}
 	dog.onPrompt = func(text string) {
-		if strings.HasPrefix(text, "resolve first:") && onWalk != nil {
+		if !strings.HasPrefix(text, "resolve first:") {
+			return
+		}
+		if onWalk != nil {
 			onWalk(w)
+		}
+		if !k.hang {
+			if err := os.WriteFile(filepath.Join(w.Store.Dir(w.Loop.RunID), "unblock.done"), nil, 0o644); err != nil {
+				t.Error(err)
+			}
 		}
 	}
 	w.Dog.Host = dog
-	return &walk{f: f, w: w, dog: dog, land: land}
+	return k
 }
 
 func (k *walk) edit(old, new string) {
@@ -89,7 +101,7 @@ func TestTheWatchdogWalksABlockerAndTheDriverCommitsOnlyThePlan(t *testing.T) {
 			walkText = c
 		}
 	}
-	for _, want := range []string{"## R1 — Pick the database", "kind: decision", "blocks: Phase 1", "Blocked phase 1:", "- [ ] a"} {
+	for _, want := range []string{"## R1 — Pick the database", "kind: decision", "blocks: Phase 1", "Blocked phase 1:", "- [ ] a", "When the walk is done, write an empty file at " + filepath.Join(k.w.Store.Dir(k.w.Loop.RunID), "unblock.done") + "."} {
 		if !strings.Contains(walkText, want) {
 			t.Errorf("walk request missing %q:\n%s", want, walkText)
 		}
@@ -234,5 +246,47 @@ func TestAWatchdogThatFailsOnBothProvidersRefusesTheRun(t *testing.T) {
 
 	if code != 4 || !strings.Contains(k.f.err.String(), "watchdog did not start") || !strings.Contains(k.f.err.String(), "fallback") {
 		t.Fatalf("exit %d: %s", code, k.f.err)
+	}
+}
+
+func TestTheDriverWaitsForTheWalkToFinishNotForThePromptToReturn(t *testing.T) {
+	var k *walk
+	k = startWalk(t, func(w *Wiring) {
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			k.edit("- [ ] **Pick the database** — which one backs the store?\n      Owner: me. Blocks: Phase 1. Timebox: an hour. Output: a line in the spec.\n",
+				"- [x] **Pick the database** — which one backs the store?\n      Owner: me. Blocks: Phase 1. Timebox: an hour. Output: a line in the spec.\n      Resolved: 2026-09-21 — Postgres; the team already runs it.\n")
+			if err := os.WriteFile(filepath.Join(w.Store.Dir(w.Loop.RunID), "unblock.done"), nil, 0o644); err != nil {
+				t.Error(err)
+			}
+		}()
+	})
+	k.hang = true
+
+	code := k.w.Execute(core.RunOptions{Phases: []int{1, 2}})
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, k.f.out, k.f.err)
+	}
+	if got := stepEvents(k.f.load(k.w.Loop.RunID), "entry-deferred"); len(got) != 0 {
+		t.Fatalf("the driver moved on before the walk finished: %+v", got)
+	}
+	if len(k.land.landed) != 2 {
+		t.Errorf("landed %v, want 1 and 2", k.land.landed)
+	}
+}
+
+func TestAWalkThatNeverFinishesTimesOutAndSkipsTheBlockedPhases(t *testing.T) {
+	k := startWalk(t, nil)
+	k.hang = true
+	k.w.Config.Watchdog.UnblockTimeout = 200 * time.Millisecond
+
+	code := k.w.Execute(core.RunOptions{Phases: []int{1, 2}})
+
+	if code != 0 || len(k.land.landed) != 1 || k.land.landed[0] != 2 {
+		t.Fatalf("exit %d landed %v", code, k.land.landed)
+	}
+	if got := stepEvents(k.f.load(k.w.Loop.RunID), "warning"); len(got) == 0 || !strings.Contains(got[0].Fields["reason"], "did not finish") {
+		t.Errorf("warnings %+v", got)
 	}
 }

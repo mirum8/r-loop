@@ -12,7 +12,7 @@ type Deferral struct {
 	Phases []int
 }
 
-func UnblockText(plan Plan, entries []Entry, list []Phase) string {
+func UnblockText(plan Plan, entries []Entry, list []Phase, donePath string) string {
 	numbers := phaseNumbers(list)
 	var b strings.Builder
 	fmt.Fprintf(&b, "resolve first: %d open entries in %s block this run's phases %s. Walk them now, as your prompt's \"Resolving blockers\" says.\n", len(entries), plan.Path, joinInts(numbers))
@@ -24,6 +24,7 @@ func UnblockText(plan Plan, entries []Entry, list []Phase) string {
 			}
 		}
 	}
+	fmt.Fprintf(&b, "\nWhen the walk is done, write an empty file at %s.\n", donePath)
 	return b.String()
 }
 

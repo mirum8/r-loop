@@ -50,26 +50,15 @@ func (w *Wiring) walk(ctx context.Context, blocking []core.Entry, list []core.Ph
 		return exit(2, "%v", err)
 	}
 	w.record(core.Event{Kind: "unblock", Fields: map[string]string{"entries": strconv.Itoa(len(blocking))}})
-	done := make(chan error, 1)
-	go func() {
-		done <- w.Dog.Notify(core.UnblockText(w.Plan, blocking, list), true, w.Config.Watchdog.UnblockTimeout)
-	}()
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
-	for waiting := true; waiting; {
-		select {
-		case err := <-done:
-			if err != nil {
-				w.record(core.Event{Kind: "warning", Fields: map[string]string{"reason": "resolve-first walk: " + err.Error()}})
-			}
-			waiting = false
-		case <-tick.C:
-			if w.Store.Aborted(w.Loop.RunID) {
-				return exit(4, "stopped during the ## Resolve first walk")
-			}
-		case <-ctx.Done():
-			return exit(4, "stopped during the ## Resolve first walk")
-		}
+	marker := filepath.Join(w.Store.Dir(w.Loop.RunID), "unblock.done")
+	if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+		return exit(2, "%v", err)
+	}
+	if err := w.Dog.Notify(core.UnblockText(w.Plan, blocking, list, marker), false, w.Config.Watchdog.UnblockTimeout); err != nil {
+		w.record(core.Event{Kind: "warning", Fields: map[string]string{"reason": "resolve-first walk: " + err.Error()}})
+	}
+	if err := w.awaitWalk(ctx, marker); err != nil {
+		return err
 	}
 	if w.Store.Aborted(w.Loop.RunID) {
 		return exit(4, "stopped during the ## Resolve first walk")
@@ -113,6 +102,28 @@ func (w *Wiring) walk(ctx context.Context, blocking []core.Entry, list []core.Ph
 	}
 	w.setPlan(pl)
 	return nil
+}
+
+func (w *Wiring) awaitWalk(ctx context.Context, marker string) error {
+	deadline := time.After(w.Config.Watchdog.UnblockTimeout)
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			return nil
+		}
+		if w.Store.Aborted(w.Loop.RunID) {
+			return exit(4, "stopped during the ## Resolve first walk")
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			w.record(core.Event{Kind: "warning", Fields: map[string]string{"reason": fmt.Sprintf("the ## Resolve first walk did not finish within %s", w.Config.Watchdog.UnblockTimeout)}})
+			return nil
+		case <-ctx.Done():
+			return exit(4, "stopped during the ## Resolve first walk")
+		}
+	}
 }
 
 func (w *Wiring) setPlan(pl core.Plan) {
