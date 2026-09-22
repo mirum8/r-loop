@@ -199,12 +199,12 @@ func (w *Wiring) validateProviders() error {
 			roles = append(roles, role{field: p + "fallback", provider: row.Fallback.Provider})
 		}
 		for _, rv := range row.Reviewers {
-			roles = append(roles, role{field: p + "reviewers", provider: rv.Provider, review: true})
+			roles = append(roles, role{field: p + "reviewers", provider: rv.Provider, review: native(rv)})
 		}
 	}
 	roles = append(roles, role{field: "land.fix.provider", provider: cfg.Land.Fix.Provider})
 	for _, rv := range cfg.Steps["implement"].Reviewers {
-		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, review: true})
+		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, review: native(rv)})
 	}
 	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider})
 	for _, r := range roles {
@@ -220,6 +220,10 @@ func (w *Wiring) validateProviders() error {
 		}
 	}
 	return nil
+}
+
+func native(rv config.Reviewer) bool {
+	return rv.Prompt == "" || rv.Prompt == "review"
 }
 
 func (w *Wiring) promptSources() ([]string, error) {
@@ -239,6 +243,30 @@ func (w *Wiring) promptSources() ([]string, error) {
 			return nil, err
 		}
 		lines = append(lines, fmt.Sprintf("prompt %s: %s", name, source))
+	}
+	seen := map[string]bool{"review": true}
+	for _, name := range w.sessionSteps() {
+		for _, rv := range w.Config.Steps[name].Reviewers {
+			if rv.Prompt != "" && !seen[rv.Prompt] {
+				seen[rv.Prompt] = true
+				_, source, err := w.Prompts.Render(rv.Prompt, vars)
+				if err != nil {
+					return nil, fmt.Errorf("steps.%s.reviewers: %w", name, err)
+				}
+				lines = append(lines, fmt.Sprintf("prompt %s: %s", rv.Prompt, source))
+			}
+			if rv.Requires != "" {
+				state := "found"
+				if _, err := os.Stat(filepath.Join(w.Repo.Root(), rv.Requires)); err != nil {
+					state = "missing, reviewer skipped"
+				}
+				id := rv.Name
+				if id == "" {
+					id = rv.Provider
+				}
+				lines = append(lines, fmt.Sprintf("reviewer %s requires %s: %s", id, rv.Requires, state))
+			}
+		}
 	}
 	return lines, nil
 }

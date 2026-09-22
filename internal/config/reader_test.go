@@ -74,7 +74,7 @@ func TestDefaults(t *testing.T) {
 	}
 	wantImpl := StepRow{Prompt: "implement", Check: "diff", Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium",
 		Fallback: Fallback{Provider: "claude"}, Timeout: 4 * time.Hour,
-		Reviewers: []Reviewer{{Provider: "claude"}}, Rounds: 3, ReviewTimeout: 45 * time.Minute}
+		Reviewers: []Reviewer{{Provider: "claude"}, {Name: "ui", Provider: "claude", Model: "opus", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}}, Rounds: 3, ReviewTimeout: 45 * time.Minute}
 	if !reflect.DeepEqual(cfg.Steps["implement"], wantImpl) {
 		t.Errorf("implement = %+v", cfg.Steps["implement"])
 	}
@@ -149,6 +149,46 @@ func TestMixedReviewerList(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Steps["implement"].Reviewers, want) {
 		t.Errorf("Reviewers = %+v", cfg.Steps["implement"].Reviewers)
 	}
+}
+
+func TestNamedReviewerWithPromptAndRequires(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  implement:\n    reviewers:\n      - claude\n      - name: ui\n        provider: claude\n        prompt: review-ui\n        requires: .claude/skills/test-app/SKILL.md\n")
+
+	cfg := d.load(t)
+
+	want := []Reviewer{{Provider: "claude"}, {Provider: "claude", Name: "ui", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}}
+	if !reflect.DeepEqual(cfg.Steps["implement"].Reviewers, want) {
+		t.Errorf("Reviewers = %+v", cfg.Steps["implement"].Reviewers)
+	}
+}
+
+func TestTwoReviewersWithTheSameNameRejected(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  implement:\n    reviewers:\n      - claude\n      - provider: claude\n        model: opus\n")
+
+	d.loadErr(t, `config.yaml:5: steps.implement.reviewers: two reviewers named "claude", give one a name`)
+}
+
+func TestReviewerNameMustBeAToken(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  implement:\n    reviewers:\n      - name: UI check\n        provider: claude\n")
+
+	d.loadErr(t, "config.yaml:4: steps.implement.reviewers.name must be lowercase letters, digits and dashes")
+}
+
+func TestReviewerRequiresMustStayInTheRepository(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  implement:\n    reviewers:\n      - name: ui\n        provider: claude\n        requires: ../skill.md\n")
+
+	d.loadErr(t, "config.yaml:4: steps.implement.reviewers.requires must be a path inside the repository")
+}
+
+func TestFallbackTakesNoReviewerKeys(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  implement:\n    fallback:\n      provider: claude\n      name: fb\n")
+
+	d.loadErr(t, `config.yaml:5: unknown key "steps.implement.fallback.name"`)
 }
 
 func TestReviewerBlockWithoutProviderRejected(t *testing.T) {
@@ -322,7 +362,7 @@ func TestOverrideLeavesFallbackAndReviewersUntouched(t *testing.T) {
 	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "claude"}) {
 		t.Errorf("Fallback = %+v", cfg.Steps["implement"].Fallback)
 	}
-	if !reflect.DeepEqual(cfg.Steps["implement"].Reviewers, []Reviewer{{Provider: "claude"}}) {
+	if !reflect.DeepEqual(cfg.Steps["implement"].Reviewers, []Reviewer{{Provider: "claude"}, {Name: "ui", Provider: "claude", Model: "opus", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}}) {
 		t.Errorf("Reviewers = %+v", cfg.Steps["implement"].Reviewers)
 	}
 }
@@ -371,6 +411,7 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 		"implement  codex  gpt-5.6-sol  medium  4h  diff  ← provider flag:--provider model default effort default",
 		"  review rounds 3 45m  ← default",
 		"  reviewer claude provider default provider default  ← default",
+		"  reviewer claude opus high (name ui, prompt review-ui, requires .claude/skills/test-app/SKILL.md)  ← default",
 		"  fallback gemini pro high  ← .r-loop/config.yaml:steps.implement.fallback",
 		"milestone  claude  opus  medium  1h  report  ← default",
 		"gatefix codex gpt-5.6-sol high  ← provider flag:--provider model default effort .r-loop/config.yaml:land.fix.effort",

@@ -1132,6 +1132,8 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 		"Rounds":          0,
 		"ReviewCommand":   "",
 		"FindingsPath":    "",
+		"ArtifactsDir":    "",
+		"RequiredPath":    "",
 		"FindingsFiles":   []FindingsFile(nil),
 		"PriorFindings":   "",
 		"PriorVerdicts":   "",

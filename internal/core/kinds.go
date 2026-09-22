@@ -21,6 +21,21 @@ type StepRow struct {
 
 type Reviewer struct {
 	Provider, Model, Effort string
+	Name, Prompt, Requires  string
+}
+
+func (r Reviewer) ID() string {
+	if r.Name != "" {
+		return r.Name
+	}
+	return r.Provider
+}
+
+func (r Reviewer) Template() string {
+	if r.Prompt != "" {
+		return r.Prompt
+	}
+	return "review"
 }
 
 type Fallback struct {

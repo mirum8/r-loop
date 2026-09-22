@@ -25,6 +25,12 @@ steps:
     fallback: claude
     reviewers:
       - claude
+      - name: ui
+        provider: claude
+        model: opus
+        effort: high
+        prompt: review-ui
+        requires: .claude/skills/test-app/SKILL.md
     rounds: 3
     reviewTimeout: 45m
   milestone:

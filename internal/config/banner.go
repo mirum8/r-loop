@@ -18,7 +18,7 @@ func Banner(cfg LoopConfig, extra ...string) string {
 		if row.Rounds > 0 && len(row.Reviewers) > 0 {
 			fmt.Fprintf(&b, "  review rounds %d %s  ← %s\n", row.Rounds, Duration(row.ReviewTimeout), p[k+"rounds"])
 			for _, rv := range row.Reviewers {
-				fmt.Fprintf(&b, "  reviewer %s  ← %s\n", roleLine(rv.Provider, rv.Model, rv.Effort), p[k+"reviewers"])
+				fmt.Fprintf(&b, "  reviewer %s%s  ← %s\n", roleLine(rv.Provider, rv.Model, rv.Effort), reviewerLabel(rv), p[k+"reviewers"])
 			}
 		}
 		if fb := row.Fallback; fb.Provider != "" {
@@ -41,6 +41,19 @@ func Banner(cfg LoopConfig, extra ...string) string {
 	fmt.Fprintf(&b, "watchdog: %s %s %s allow [%s]  ← %s\n", w.Provider, orDefault(w.Model), orDefault(w.Effort),
 		strings.Join(w.Allow, ", "), sources(p["watchdog.provider"], p["watchdog.model"], p["watchdog.effort"]))
 	return b.String()
+}
+
+func reviewerLabel(rv Reviewer) string {
+	var parts []string
+	for _, kv := range [][2]string{{"name", rv.Name}, {"prompt", rv.Prompt}, {"requires", rv.Requires}} {
+		if kv[1] != "" {
+			parts = append(parts, kv[0]+" "+kv[1])
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }
 
 func roleLine(provider, model, effort string) string {

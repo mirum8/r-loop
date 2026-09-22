@@ -14,7 +14,7 @@ import (
 var embedded embed.FS
 
 var names = map[string]bool{
-	"plan": true, "implement": true, "review": true, "fix": true,
+	"plan": true, "implement": true, "review": true, "review-ui": true, "fix": true,
 	"milestone": true, "watchdog": true, "gatefix": true, "gate": true,
 }
 

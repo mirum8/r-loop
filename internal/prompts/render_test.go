@@ -11,7 +11,7 @@ import (
 
 var _ core.Prompts = (*Renderer)(nil)
 
-var stepTemplates = []string{"plan", "implement", "review", "fix", "milestone", "gatefix", "gate"}
+var stepTemplates = []string{"plan", "implement", "review", "review-ui", "fix", "milestone", "gatefix", "gate"}
 
 func fullVars() map[string]any {
 	return map[string]any{
@@ -41,6 +41,8 @@ func fullVars() map[string]any {
 			{Reviewer: "claude", Path: "/runs/r1/phase-7/implement-findings-claude-r1.json"},
 			{Reviewer: "codex", Path: "/runs/r1/phase-7/implement-findings-codex-r1.json"},
 		},
+		"ArtifactsDir":    "/runs/r1/phase-7/implement-rv-ui-r1",
+		"RequiredPath":    "/repo/.claude/skills/test-app/SKILL.md",
 		"PriorFindings":   "",
 		"PriorVerdicts":   "",
 		"RoundTree":       "",
@@ -542,5 +544,29 @@ func TestAnUnattendedWatchdogNeverAsksTheMaintainer(t *testing.T) {
 	}
 	if strings.Contains(text, "the citation `maintainer`") {
 		t.Errorf("an unattended watchdog is told to cite the maintainer:\n%s", text)
+	}
+}
+
+func TestUIReviewPromptPointsAtTheTestSkillAndTheCaptureDir(t *testing.T) {
+	text := render(t, New(t.TempDir()), "review-ui", fullVars())
+
+	for _, want := range []string{
+		"`/repo/.claude/skills/test-app/SKILL.md`",
+		"`/test-app`",
+		"`frontend-design`",
+		"`/runs/r1/phase-7/implement-rv-ui-r1`",
+		"`/runs/r1/phase-7/implement-findings-codex-r1.json`",
+		"never an empty list",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Earlier rounds") {
+		t.Errorf("round 1 prompt names earlier rounds")
+	}
+	later := render(t, New(t.TempDir()), "review-ui", with("PriorFindings", "- /runs/r1/phase-7/implement-findings-ui-r1.json"))
+	if !strings.Contains(later, "implement-findings-ui-r1.json") {
+		t.Errorf("round 2 prompt lacks earlier findings:\n%s", later)
 	}
 }

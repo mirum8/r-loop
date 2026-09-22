@@ -179,7 +179,7 @@ func (m Model) Apply(ev core.Event) Model {
 		if ev.Fields["what"] == "resume" {
 			m.log(ev, toneDim, "resumed")
 		}
-	case "signal-rejected", "note", "report-skipped":
+	case "signal-rejected", "note", "report-skipped", "reviewer-skipped":
 		m.log(ev, toneDim, ev.Fields["reason"])
 	case "finished":
 		m.end("finished", ev.At)

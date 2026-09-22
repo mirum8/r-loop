@@ -247,6 +247,23 @@ func TestReviewerWithoutReviewCommandIsRefusedWithExit2(t *testing.T) {
 	}
 }
 
+func TestUIReviewerNeedsNoReviewCommandAndReportsItsSkill(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "providers:\n  bare:\n    kind: bare\n    doneSignal: sentinel\n    ask: mcp\nsteps:\n  implement:\n    reviewers:\n      - claude\n      - name: ui\n        provider: bare\n        prompt: review-ui\n        requires: .claude/skills/test-app/SKILL.md\n")
+	f.write(".claude/skills/test-app/SKILL.md", "# test-app\n")
+	f.commit()
+	f.fakeHerdr(1)
+
+	code := f.main(f.todo, "--dry-run", "--plain")
+
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, f.err.String())
+	}
+	if want := "reviewer ui requires .claude/skills/test-app/SKILL.md: found\n"; !strings.Contains(f.out.String(), want) {
+		t.Fatalf("%q missing from:\n%s", want, f.out.String())
+	}
+}
+
 func TestWatchdogProviderIsValidatedUnlessTheWatchdogIsOff(t *testing.T) {
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "watchdog:\n  provider: nosuch\n")
@@ -300,7 +317,7 @@ func TestWireBuildsTheGateFixKindAndTheMilestoneBoundary(t *testing.T) {
 	if g.GateTimeout.String() != "12m0s" || fix.Name != "gatefix" || fix.Prompt != "gatefix" || fix.Check != "diff" || g.Runner == nil || g.FixRounds != 1 {
 		t.Fatalf("gate=%+v", g)
 	}
-	if fix.Row.Provider != "codex" || fix.Row.Model != "gpt-x" || fix.Row.Effort != "medium" || fix.Row.Timeout.String() != "4h0m0s" || fix.Row.Rounds != 1 || len(fix.Row.Reviewers) != 1 || fix.Row.Reviewers[0].Provider != "claude" {
+	if fix.Row.Provider != "codex" || fix.Row.Model != "gpt-x" || fix.Row.Effort != "medium" || fix.Row.Timeout.String() != "4h0m0s" || fix.Row.Rounds != 1 || len(fix.Row.Reviewers) != 2 || fix.Row.Reviewers[0].Provider != "claude" || fix.Row.Reviewers[1].ID() != "ui" {
 		t.Fatalf("fix row=%+v", fix.Row)
 	}
 	if b := g.Boundary; b == nil || b.Kind.Name != "milestone" || b.Kind.Check != "report" || b.Kind.Row.Provider != "claude" || b.RunID != w.Loop.RunID || b.Topic != "topic" {
@@ -334,6 +351,8 @@ func TestDryRunPrintsBannerWithOverridesAndTheRunList(t *testing.T) {
 		"override: implement effort high (flag) replaces medium (default)\n",
 		"gatefix claude gpt-5.6-sol high  ← provider flag:--provider model default effort flag:--effort\n",
 		"prompt implement: embedded\n",
+		"prompt review-ui: embedded\n",
+		"reviewer ui requires .claude/skills/test-app/SKILL.md: missing, reviewer skipped\n",
 		"watchdog: claude opus high allow []  ← default\n",
 		"phase 2  PlanReader: phases and milestones  plan (review ×2) → implement (review ×3) → land\n",
 		"phase 31  Unattended mode  plan (review ×2) → implement (review ×3) → land\n",

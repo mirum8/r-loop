@@ -26,13 +26,14 @@ type reviewRig struct {
 func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
 	r := &reviewRig{rig: newRig(t), noReview: map[string]bool{}}
 	r.sm.Prompts = promptsFunc(func(name string, vars map[string]any) (string, string, error) {
-		if name != "review" && name != "fix" {
+		if name != "review" && name != "review-ui" && name != "fix" {
 			return "do phase 3", "embedded", nil
 		}
-		copied := make(map[string]any, len(vars))
+		copied := make(map[string]any, len(vars)+1)
 		for k, v := range vars {
 			copied[k] = v
 		}
+		copied["prompt"] = name
 		if name == "fix" {
 			r.fixes = append(r.fixes, copied)
 			if r.onFix != nil {
@@ -750,5 +751,192 @@ func TestRound2StartsWhenTheRound1ReviewerIgnoresTheInterrupt(t *testing.T) {
 		"SessionHost.Start pane-3 rloop-p3-implement-rv-claude-r2 claude []",
 	}) {
 		t.Fatalf("calls = %q", got)
+	}
+}
+
+var uiReviewer = Reviewer{Provider: "claude", Model: "opus", Effort: "high", Name: "ui", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}
+
+func writeSkill(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, ".claude", "skills", "test-app", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# test-app\n<!-- test-app-surface: web -->\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeNamedReview(t *testing.T, vars map[string]any, findings int) {
+	t.Helper()
+	name := "claude"
+	if strings.Contains(vars["FindingsPath"].(string), "-findings-ui-") {
+		name = "ui"
+	}
+	var items []string
+	for i := 1; i <= findings; i++ {
+		items = append(items, fmt.Sprintf(`{"id":"%s-r%d-%d","title":"t","detail":"d","files":["a.go"]}`, name, vars["Round"], i))
+	}
+	body := fmt.Sprintf(`{"reviewer":%q,"findings":[%s]}`, name, strings.Join(items, ","))
+	if err := os.WriteFile(vars["FindingsPath"].(string), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"ok","reason":"","at":"2026-09-18T10:05:00Z"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReviewerWhoseRequiredFileIsMissingIsSkippedAndRecorded(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, uiReviewer)
+	r.worker.Dir = t.TempDir()
+	r.repo.RootDir = t.TempDir()
+	r.behave = func(vars map[string]any) { writeNamedReview(t, vars, 0) }
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if len(r.reviews) != 1 || r.reviews[0]["prompt"] != "review" {
+		t.Fatalf("reviews = %+v", r.reviews)
+	}
+	if n := len(r.callsFrom("SessionHost.Split")); n != 1 {
+		t.Fatalf("splits = %d", n)
+	}
+	skipped := r.events("reviewer-skipped")
+	want := map[string]string{"step": "implement", "reviewer": "ui", "reason": "reviewer ui: no .claude/skills/test-app/SKILL.md"}
+	if len(skipped) != 1 || !reflect.DeepEqual(skipped[0].Fields, want) {
+		t.Fatalf("reviewer-skipped = %+v", skipped)
+	}
+}
+
+func TestOnlyReviewerSkippedEndsTheHalfWithoutARound(t *testing.T) {
+	r := newReviewRig(t, uiReviewer)
+	r.worker.Dir = t.TempDir()
+	r.repo.RootDir = t.TempDir()
+
+	out := r.run()
+
+	if out.State != StepOK || len(r.events("review-round")) != 0 || r.count("SessionHost.Split") != 0 {
+		t.Fatalf("outcome = %+v, calls = %q", out, r.shared.Calls())
+	}
+}
+
+func TestNamedUIReviewerRunsBesideTheSameProviderWithItsOwnPromptAndFiles(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, uiReviewer)
+	r.worker.Dir = t.TempDir()
+	skill := writeSkill(t, r.worker.Dir)
+	r.behave = func(vars map[string]any) { writeNamedReview(t, vars, 0) }
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	starts := r.callsFrom("SessionHost.Start pane-")[1:]
+	want := []string{
+		"SessionHost.Start pane-2 rloop-p3-implement-rv-claude-r1 claude []",
+		"SessionHost.Start pane-3 rloop-p3-implement-rv-ui-r1 claude [--model opus --effort high]",
+	}
+	if !reflect.DeepEqual(starts, want) {
+		t.Fatalf("starts = %q", starts)
+	}
+	dir := filepath.Join(r.runDir, "phase-3")
+	ui := r.reviews[1]
+	for k, v := range map[string]any{
+		"prompt":       "review-ui",
+		"FindingsPath": filepath.Join(dir, "implement-findings-ui-r1.json"),
+		"Sentinel":     filepath.Join(dir, "implement-rv-ui-r1-a1.sentinel"),
+		"ArtifactsDir": filepath.Join(dir, "implement-rv-ui-r1"),
+		"RequiredPath": skill,
+	} {
+		if ui[k] != v {
+			t.Errorf("%s = %v, want %v", k, ui[k], v)
+		}
+	}
+	finds := r.events("review-find")
+	if len(finds) != 2 || finds[1].Fields["reviewer"] != "ui" {
+		t.Fatalf("review-find = %+v", finds)
+	}
+}
+
+func TestUIReviewerFindsTheSkillInThePrimaryTreeAndNeedsNoNativeReviewCommand(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"}, Reviewer{Provider: "aider", Name: "ui", Prompt: "review-ui", Requires: uiReviewer.Requires})
+	r.noReview["aider"] = true
+	r.worker.Dir = t.TempDir()
+	r.repo.RootDir = t.TempDir()
+	skill := writeSkill(t, r.repo.RootDir)
+	r.behave = func(vars map[string]any) {
+		if vars["prompt"] == "review" {
+			writeReview(t, vars, "ok", 0)
+			return
+		}
+		writeNamedReview(t, vars, 0)
+	}
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if len(r.reviews) != 2 || r.reviews[1]["RequiredPath"] != skill {
+		t.Fatalf("reviews = %+v", r.reviews)
+	}
+}
+
+func TestUIFindingGoesToTheFixHalfAndReviewsAgainNextRound(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, uiReviewer)
+	r.worker.Dir = t.TempDir()
+	writeSkill(t, r.worker.Dir)
+	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
+		findings := 0
+		if vars["Round"] == 1 && vars["prompt"] == "review-ui" {
+			findings = 1
+		}
+		writeNamedReview(t, vars, findings)
+	}
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("ui-r1-1", "real", "P1", true, ""))
+	}
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	dir := filepath.Join(r.runDir, "phase-3")
+	files := r.fixes[0]["FindingsFiles"].([]FindingsFile)
+	if len(files) != 2 || files[1] != (FindingsFile{Reviewer: "ui", Path: filepath.Join(dir, "implement-findings-ui-r1.json")}) {
+		t.Fatalf("fix files = %+v", files)
+	}
+	if len(r.reviews) != 4 {
+		t.Fatalf("reviews = %d", len(r.reviews))
+	}
+	prior := "- " + filepath.Join(dir, "implement-findings-claude-r1.json") + "\n- " + filepath.Join(dir, "implement-findings-ui-r1.json")
+	if r.reviews[3]["prompt"] != "review-ui" || r.reviews[3]["PriorFindings"] != prior {
+		t.Fatalf("round 2 ui vars = %+v", r.reviews[3])
+	}
+	fixed := r.events("finding")
+	if len(fixed) != 1 || fixed[0].Fields["reviewer"] != "ui" || fixed[0].Fields["fixed"] != "true" {
+		t.Fatalf("finding = %+v", fixed)
+	}
+}
+
+func TestResumedReviewNamesEarlierFindingsByReviewerName(t *testing.T) {
+	r := newReviewRig(t, uiReviewer)
+	r.worker.Dir = t.TempDir()
+	writeSkill(t, r.worker.Dir)
+	r.worker.Ref.ReviewFrom = 2
+	r.worker.Ref.PrevRoundTree = "tree-r1"
+	r.behave = func(vars map[string]any) { writeNamedReview(t, vars, 0) }
+
+	r.run()
+
+	dir := filepath.Join(r.runDir, "phase-3")
+	if len(r.reviews) != 1 || r.reviews[0]["PriorFindings"] != "- "+filepath.Join(dir, "implement-findings-ui-r1.json") {
+		t.Fatalf("reviews = %+v", r.reviews)
 	}
 }

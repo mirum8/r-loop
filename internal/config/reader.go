@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -33,6 +34,7 @@ type Override struct {
 
 type Reviewer struct {
 	Provider, Model, Effort string
+	Name, Prompt, Requires  string
 }
 
 type Fallback struct {
@@ -101,6 +103,8 @@ type appliedOverride struct {
 }
 
 var remedyClasses = []string{"deps", "ports", "containers", "locks", "restart", "retry", "provider"}
+
+var reviewerName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 var checks = []string{"plan-file", "diff", "report"}
 
@@ -322,35 +326,46 @@ func (r *resolver) classes(path string) ([]string, error) {
 }
 
 func role(file, path string, n *yaml.Node) (provider, model, effort string, err error) {
+	rv, err := reviewer(file, path, n, false)
+	return rv.Provider, rv.Model, rv.Effort, err
+}
+
+func reviewer(file, path string, n *yaml.Node, named bool) (rv Reviewer, err error) {
 	if n.Kind == yaml.ScalarNode && !isNull(n) {
 		if n.Value == "" {
-			return "", "", "", errAt(file, n, "%s needs a provider name", path)
+			return rv, errAt(file, n, "%s needs a provider name", path)
 		}
-		return n.Value, "", "", nil
+		rv.Provider = n.Value
+		return rv, nil
 	}
 	if n.Kind != yaml.MappingNode {
-		return "", "", "", errAt(file, n, "%s must be a provider name or a block with provider, model and effort", path)
+		return rv, errAt(file, n, "%s must be a provider name or a block with provider, model and effort", path)
+	}
+	fields := map[string]*string{"provider": &rv.Provider, "model": &rv.Model, "effort": &rv.Effort}
+	if named {
+		fields["name"], fields["prompt"], fields["requires"] = &rv.Name, &rv.Prompt, &rv.Requires
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
 		if v.Kind != yaml.ScalarNode {
-			return "", "", "", errAt(file, v, "%s.%s must be a single value", path, k.Value)
+			return rv, errAt(file, v, "%s.%s must be a single value", path, k.Value)
 		}
-		switch k.Value {
-		case "provider":
-			provider = v.Value
-		case "model":
-			model = v.Value
-		case "effort":
-			effort = v.Value
-		default:
-			return "", "", "", errAt(file, k, "unknown key %q", path+"."+k.Value)
+		dst, ok := fields[k.Value]
+		if !ok {
+			return rv, errAt(file, k, "unknown key %q", path+"."+k.Value)
 		}
+		*dst = v.Value
 	}
-	if provider == "" {
-		return "", "", "", errAt(file, n, "%s needs a provider", path)
+	if rv.Provider == "" {
+		return rv, errAt(file, n, "%s needs a provider", path)
 	}
-	return provider, model, effort, nil
+	if rv.Name != "" && !reviewerName.MatchString(rv.Name) {
+		return rv, errAt(file, n, "%s.name must be lowercase letters, digits and dashes, got %q", path, rv.Name)
+	}
+	if r := rv.Requires; r != "" && (filepath.IsAbs(r) || !filepath.IsLocal(r)) {
+		return rv, errAt(file, n, "%s.requires must be a path inside the repository, got %q", path, r)
+	}
+	return rv, nil
 }
 
 func Load(projectDir, homeDir string, overrides []Override) (LoopConfig, error) {
@@ -469,12 +484,21 @@ func (r *resolver) row(name string) (StepRow, error) {
 	if err != nil {
 		return row, err
 	}
+	ids := map[string]bool{}
 	for _, it := range items {
-		pr, m, e, err := role(l.file, p+"reviewers", it)
+		rv, err := reviewer(l.file, p+"reviewers", it, true)
 		if err != nil {
 			return row, err
 		}
-		row.Reviewers = append(row.Reviewers, Reviewer{pr, m, e})
+		id := rv.Name
+		if id == "" {
+			id = rv.Provider
+		}
+		if ids[id] {
+			return row, errAt(l.file, it, "%sreviewers: two reviewers named %q, give one a name", p, id)
+		}
+		ids[id] = true
+		row.Reviewers = append(row.Reviewers, rv)
 	}
 	fb, fl := r.lookup(p + "fallback")
 	if fb == nil || isNull(fb) {

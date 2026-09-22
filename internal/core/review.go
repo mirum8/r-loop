@@ -28,16 +28,23 @@ type reviewRound struct {
 func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs Observer) Outcome {
 	sm := h.Sessions
 	row := ref.Kind.Row
-	args := make([]ProviderArgs, len(row.Reviewers))
-	urls := make([]string, len(row.Reviewers))
-	for i, rv := range row.Reviewers {
-		key := reviewerKey(ref.Key, rv.Provider)
+	rows, required, out := h.present(worker, row.Reviewers)
+	if out.State == StepFailed {
+		return out
+	}
+	if len(rows) == 0 {
+		return Outcome{State: StepOK, Session: worker}
+	}
+	args := make([]ProviderArgs, len(rows))
+	urls := make([]string, len(rows))
+	for i, rv := range rows {
+		key := reviewerKey(ref.Key, rv.ID())
 		a, url, err := sm.askArgs(key, rv.Provider, rv.Model, rv.Effort, filepath.Join(stepDir(worker), fmt.Sprintf("%s-a%d.mcp.json", key.Kind, key.Attempt)))
 		if err != nil {
-			return sm.fail(worker, "reviewer "+rv.Provider+": "+err.Error())
+			return sm.fail(worker, "reviewer "+rv.ID()+": "+err.Error())
 		}
-		if a.Review == "" {
-			return sm.fail(worker, "reviewer "+rv.Provider+" declares no native reviewer")
+		if a.Review == "" && rv.Template() == "review" {
+			return sm.fail(worker, "reviewer "+rv.ID()+" declares no native reviewer")
 		}
 		args[i], urls[i] = a, url
 	}
@@ -47,8 +54,8 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 	if start > 1 {
 		rd.prevTree = ref.PrevRoundTree
 		for n := 1; n < start; n++ {
-			for _, rv := range row.Reviewers {
-				rd.prior = append(rd.prior, filepath.Join(stepDir(worker), fmt.Sprintf("%s-findings-%s-r%d.json", ref.Key.Kind, rv.Provider, n)))
+			for _, rv := range rows {
+				rd.prior = append(rd.prior, filepath.Join(stepDir(worker), fmt.Sprintf("%s-findings-%s-r%d.json", ref.Key.Kind, rv.ID(), n)))
 			}
 			rd.verdicts = append(rd.verdicts, filepath.Join(stepDir(worker), fmt.Sprintf("%s-verdict-r%d.json", ref.Key.Kind, n)))
 		}
@@ -64,7 +71,7 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 		}
 		obs.Reviewing(worker, rd.n)
 		var out Outcome
-		if reviewers, out = h.open(worker, row.Reviewers, args, urls, reviewers, rd); out.State == StepFailed {
+		if reviewers, out = h.open(worker, rows, required, args, urls, reviewers, rd); out.State == StepFailed {
 			return out
 		}
 		worker.Reviewing.Store(true)
@@ -164,7 +171,7 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, reviewers []*Sessi
 	return fixed, Outcome{}
 }
 
-func (h ReviewHalf) open(worker *Session, rows []Reviewer, args []ProviderArgs, urls []string, prev []*Session, rd reviewRound) ([]*Session, Outcome) {
+func (h ReviewHalf) open(worker *Session, rows []Reviewer, required []string, args []ProviderArgs, urls []string, prev []*Session, rd reviewRound) ([]*Session, Outcome) {
 	sm := h.Sessions
 	for _, p := range prev {
 		if err := sm.Host.ClosePane(p.Pane); err != nil {
@@ -173,14 +180,14 @@ func (h ReviewHalf) open(worker *Session, rows []Reviewer, args []ProviderArgs, 
 	}
 	sessions := make([]*Session, len(rows))
 	for i, rv := range rows {
-		sessions[i] = h.reviewer(worker, rv, args[i], urls[i], rd)
+		sessions[i] = h.reviewer(worker, rv, required[i], args[i], urls[i], rd)
 		target, direction := worker.Pane, "right"
 		if i > 0 {
 			target, direction = sessions[i-1].Pane, "down"
 		}
 		pane, err := sm.Host.Split(target, direction, worker.Dir)
 		if err != nil {
-			return nil, sm.fail(worker, "reviewer "+rv.Provider+": "+err.Error())
+			return nil, sm.fail(worker, "reviewer "+rv.ID()+": "+err.Error())
 		}
 		sessions[i].Pane = pane
 	}
@@ -192,8 +199,8 @@ func (h ReviewHalf) open(worker *Session, rows []Reviewer, args []ProviderArgs, 
 			return nil, sm.fail(worker, "reviewer "+s.Reviewer+": "+err.Error())
 		}
 	}
-	for _, s := range sessions {
-		text, _, err := sm.Prompts.Render("review", s.Ref.Vars)
+	for i, s := range sessions {
+		text, _, err := sm.Prompts.Render(rows[i].Template(), s.Ref.Vars)
 		if err == nil {
 			err = sm.Host.Prompt(s.Agent, text, false, 0)
 		}
@@ -204,16 +211,54 @@ func (h ReviewHalf) open(worker *Session, rows []Reviewer, args []ProviderArgs, 
 	return sessions, Outcome{}
 }
 
-func reviewerKey(key StepKey, provider string) StepKey {
-	key.Kind += "-rv-" + provider
+func reviewerKey(key StepKey, id string) StepKey {
+	key.Kind += "-rv-" + id
 	return key
 }
 
-func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, args ProviderArgs, url string, rd reviewRound) *Session {
+func (h ReviewHalf) present(worker *Session, rows []Reviewer) ([]Reviewer, []string, Outcome) {
+	var kept []Reviewer
+	var required []string
+	for _, rv := range rows {
+		if rv.Requires == "" {
+			kept, required = append(kept, rv), append(required, "")
+			continue
+		}
+		path, err := h.find(worker, rv.Requires)
+		if err != nil {
+			return nil, nil, h.Sessions.fail(worker, "reviewer "+rv.ID()+": "+err.Error())
+		}
+		if path == "" {
+			if err := h.event(worker, "reviewer-skipped", map[string]string{"reviewer": rv.ID(), "reason": "reviewer " + rv.ID() + ": no " + rv.Requires}); err != nil {
+				return nil, nil, h.Sessions.fail(worker, "record: "+err.Error())
+			}
+			continue
+		}
+		kept, required = append(kept, rv), append(required, path)
+	}
+	return kept, required, Outcome{}
+}
+
+func (h ReviewHalf) find(worker *Session, rel string) (string, error) {
+	for _, dir := range []string{worker.Dir, h.Sessions.Repo.Root()} {
+		path := filepath.Join(dir, rel)
+		_, err := os.Stat(path)
+		if err == nil {
+			return path, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+	}
+	return "", nil
+}
+
+func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args ProviderArgs, url string, rd reviewRound) *Session {
 	key := worker.Ref.Key
 	dir := stepDir(worker)
-	base := fmt.Sprintf("%s-rv-%s-r%d", key.Kind, rv.Provider, rd.n)
-	vars := make(map[string]any, len(worker.Ref.Vars)+9)
+	id := rv.ID()
+	base := fmt.Sprintf("%s-rv-%s-r%d", key.Kind, id, rd.n)
+	vars := make(map[string]any, len(worker.Ref.Vars)+11)
 	for k, v := range worker.Ref.Vars {
 		vars[k] = v
 	}
@@ -222,9 +267,9 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, args ProviderArgs, ur
 		StartSHA:  worker.StartSHA,
 		StartTree: rd.tree,
 		Workspace: worker.Workspace,
-		Agent:     agentName(fmt.Sprintf("rloop-p%d-%s-rv-%s", key.Phase, key.Kind, rv.Provider), agentSuffix(rd.n, key.Attempt)),
+		Agent:     agentName(fmt.Sprintf("rloop-p%d-%s-rv-%s", key.Phase, key.Kind, id), agentSuffix(rd.n, key.Attempt)),
 		Sentinel:  filepath.Join(dir, fmt.Sprintf("%s-a%d.sentinel", base, key.Attempt)),
-		Reviewer:  rv.Provider,
+		Reviewer:  id,
 		owner:     worker,
 	}
 	delete(vars, "AskURL")
@@ -236,13 +281,15 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, args ProviderArgs, ur
 	vars["Round"] = rd.n
 	vars["Rounds"] = rd.rounds
 	vars["ReviewCommand"] = args.Review
-	vars["FindingsPath"] = filepath.Join(dir, fmt.Sprintf("%s-findings-%s-r%d.json", key.Kind, rv.Provider, rd.n))
+	vars["FindingsPath"] = filepath.Join(dir, fmt.Sprintf("%s-findings-%s-r%d.json", key.Kind, id, rd.n))
+	vars["ArtifactsDir"] = filepath.Join(dir, base)
+	vars["RequiredPath"] = required
 	vars["RoundTree"] = rd.prevTree
 	vars["PriorFindings"] = bullets(rd.prior)
 	vars["PriorVerdicts"] = bullets(rd.verdicts)
 	s.Ref = StepRef{
 		Key:      key,
-		Kind:     StepKind{Name: key.Kind, Prompt: "review", Check: "findings", Row: StepRow{Provider: rv.Provider, Model: rv.Model, Effort: rv.Effort, Timeout: worker.Ref.Kind.Row.ReviewTimeout}},
+		Kind:     StepKind{Name: key.Kind, Prompt: rv.Template(), Check: "findings", Row: StepRow{Provider: rv.Provider, Model: rv.Model, Effort: rv.Effort, Timeout: worker.Ref.Kind.Row.ReviewTimeout}},
 		Phase:    worker.Ref.Phase,
 		Worktree: worker.Ref.Worktree,
 		RunDir:   worker.Ref.RunDir,
