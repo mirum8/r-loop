@@ -164,6 +164,18 @@ func TestAZeroWindowSizeKeepsTheLastUsableWidth(t *testing.T) {
 	}
 }
 
+func TestAGoneWatchdogIsInTheErrorColour(t *testing.T) {
+	m := coloured(false)
+	m.Width = 120
+	m = m.Apply(core.Event{At: at(2), Kind: "watchdog-unreachable", Fields: map[string]string{"reason": "pane closed"}})
+
+	view := m.View()
+
+	if !regexp.MustCompile(`\x1b\[38;2;224;115;10[56][0-9;]*mwatchdog gone`).MatchString(view) {
+		t.Fatalf("view %q", view)
+	}
+}
+
 func TestErrorsAndHaltReasonsAreInTheErrorColourAndWarningsInAmber(t *testing.T) {
 	m := coloured(false)
 	m = m.Apply(core.Event{At: at(2), Kind: "warning", Fields: map[string]string{"reason": "round limit"}})

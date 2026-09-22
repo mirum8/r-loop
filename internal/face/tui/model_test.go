@@ -54,6 +54,7 @@ func recorded() []core.Event {
 		{At: at(22), Kind: "phase-start", Phase: 2, Fields: map[string]string{"phase": "2", "title": "config reader"}},
 		step(22, 2, "plan", "running", "claude", "opus", "high", "ws-3"),
 		{At: at(23), Kind: "question", Phase: 2, Step: "plan", Fields: map[string]string{"id": "q1", "text": "Which config format?"}},
+		{At: at(25), Kind: "question-answered", Phase: 2, Step: "plan", Fields: map[string]string{"id": "q1", "answer": "yaml", "by": "watchdog", "citation": "docs/spec.md:12"}},
 		{At: at(25), Kind: "human", Phase: 2, Step: "plan", Fields: map[string]string{"what": "answer", "id": "q1"}},
 		step(30, 2, "plan", "ok", "claude", "opus", "high", "ws-3"),
 		phaseState(30, 2, "planned"),
@@ -67,7 +68,7 @@ func recorded() []core.Event {
 }
 
 func newModel(events []core.Event) Model {
-	m := NewModel(Header{RunID: "20260918-140000", Todo: "docs/x/todo.md", Started: t0}, plan(), NewTheme(lipgloss.NewRenderer(io.Discard), false))
+	m := NewModel(Header{RunID: "20260918-140000", Todo: "docs/x/todo.md", Started: t0, Steps: []string{"plan", "implement", "land"}}, plan(), NewTheme(lipgloss.NewRenderer(io.Discard), false))
 	for _, ev := range events {
 		m = m.Apply(ev)
 	}
@@ -166,17 +167,131 @@ func TestAReviewRoundNamesTheRoundAndPausesTheBackstop(t *testing.T) {
 	}
 }
 
-func TestOnlyTheLastFiveWarningsAreKept(t *testing.T) {
+func TestOnlyTheLastSixFeedEntriesAreKept(t *testing.T) {
 	var events []core.Event
-	for i := 1; i <= 7; i++ {
+	for i := 1; i <= 8; i++ {
 		events = append(events, core.Event{At: at(i), Kind: "warning", Fields: map[string]string{"reason": "w" + strconv.Itoa(i)}})
 	}
 
 	m := newModel(events)
 
-	if len(m.Warnings) != 5 || !strings.HasSuffix(m.Warnings[0].Text, "w3") || !strings.HasSuffix(m.Warnings[4].Text, "w7") {
-		t.Fatalf("warnings %+v", m.Warnings)
+	if len(m.Feed) != 6 || !strings.HasSuffix(m.Feed[0].Text, "w3") || !strings.HasSuffix(m.Feed[5].Text, "w8") {
+		t.Fatalf("feed %+v", m.Feed)
 	}
+}
+
+func TestTheFeedNamesWhatHappenedInItsTone(t *testing.T) {
+	cases := []struct {
+		ev   core.Event
+		text string
+		tone tone
+	}{
+		{core.Event{Kind: "warning", Phase: 2, Step: "implement", Fields: map[string]string{"reason": "diff is large"}}, "phase 2 implement: diff is large", toneWarn},
+		{core.Event{Kind: "error", Fields: map[string]string{"reason": "bad flag"}}, "bad flag", toneError},
+		{core.Event{Kind: "watchdog-unreachable", Fields: map[string]string{"reason": "pane closed"}}, "watchdog gone: pane closed", toneError},
+		{core.Event{Kind: "stalled", Phase: 2, Step: "implement", Fields: map[string]string{"workspace": "ws-4"}}, "phase 2 implement: stalled", toneError},
+		{core.Event{Kind: "restart-refused", Phase: 2, Step: "implement", Fields: map[string]string{"reason": "restart limit 2 reached"}}, "restart limit 2 reached", toneError},
+		{core.Event{Kind: "restart", Phase: 2, Step: "implement"}, "phase 2 implement: restarted", toneDim},
+		{core.Event{Kind: "nudge", Phase: 2, Step: "implement"}, "nudged", toneDim},
+		{core.Event{Kind: "landed", Phase: 1, Fields: map[string]string{"merge": "0123456789abcdef", "gateSkipped": "true"}}, "phase 1: landed 0123456 · gate skipped", toneDim},
+		{core.Event{Kind: "gate-fix", Phase: 1, Step: "land", Fields: map[string]string{"round": "2"}}, "land gate fix r2", toneDim},
+		{core.Event{Kind: "assumption", Phase: 1, Step: "plan", Fields: map[string]string{"text": "yaml config"}}, "assumed: yaml config", toneDim},
+		{core.Event{Kind: "question", Phase: 2, Step: "implement", Fields: map[string]string{"id": "q2", "text": "Which port?"}}, "asked q2", toneDim},
+		{core.Event{Kind: "question-answered", Phase: 2, Step: "implement", Fields: map[string]string{"id": "q2", "by": "maintainer"}}, "q2 answered by maintainer", toneDim},
+		{core.Event{Kind: "human", Fields: map[string]string{"what": "resume"}}, "resumed", toneDim},
+		{core.Event{Kind: "signal-rejected", Fields: map[string]string{"reason": "step is not running"}}, "step is not running", toneDim},
+	}
+	for _, c := range cases {
+		c.ev.At = at(5)
+		m := newModel([]core.Event{c.ev})
+		if len(m.Feed) != 1 || !strings.HasSuffix(m.Feed[0].Text, c.text) || m.Feed[0].Tone != c.tone {
+			t.Errorf("%s: feed %+v, want %q tone %d", c.ev.Kind, m.Feed, c.text, c.tone)
+		}
+	}
+	for _, kind := range []string{"workspace-closed", "worktree-removed"} {
+		if m := newModel([]core.Event{{At: at(5), Kind: kind, Phase: 1}}); len(m.Feed) != 0 {
+			t.Errorf("%s logged: %+v", kind, m.Feed)
+		}
+	}
+	if m := newModel([]core.Event{{At: at(5), Kind: "human", Fields: map[string]string{"what": "answer", "id": "q1"}}}); len(m.Feed) != 0 {
+		t.Errorf("an answer is logged twice: %+v", m.Feed)
+	}
+}
+
+func TestAnOpenQuestionPointsAtTheWatchdogUntilItIsAnswered(t *testing.T) {
+	m := newModel(recorded())
+	m.Now = at(43)
+
+	view := m.View()
+
+	if !strings.Contains(view, "waiting    watchdog · q2 · 3m0s") {
+		t.Fatalf("view lacks the waiting line:\n%s", view)
+	}
+	if strings.Contains(view, "Which port?") || strings.Contains(view, "q1 ·") {
+		t.Fatalf("view shows question text or an answered question:\n%s", view)
+	}
+	m = m.Apply(core.Event{At: at(44), Kind: "question", Phase: 2, Step: "implement", Fields: map[string]string{"id": "q3", "text": "Which host?"}})
+	if !strings.Contains(m.View(), "watchdog · q2 · 3m0s (+1)") {
+		t.Fatalf("view does not count the second question:\n%s", m.View())
+	}
+
+	m = m.Apply(core.Event{At: at(45), Kind: "question-answered", Phase: 2, Step: "implement", Fields: map[string]string{"id": "q2", "by": "watchdog"}})
+	m = m.Apply(core.Event{At: at(45), Kind: "question-answered", Phase: 2, Step: "implement", Fields: map[string]string{"id": "q3", "by": "maintainer"}})
+
+	if strings.Contains(m.View(), "waiting    ") {
+		t.Fatalf("answered questions still shown:\n%s", m.View())
+	}
+}
+
+func TestAGoneWatchdogIsMarkedUntilResume(t *testing.T) {
+	history := append(recorded(), core.Event{At: at(50), Kind: "watchdog-unreachable", Fields: map[string]string{"reason": "pane closed"}})
+	m := newModel(history)
+
+	if !m.DogGone || !strings.Contains(m.View(), "watchdog gone") {
+		t.Fatalf("gone %v view:\n%s", m.DogGone, m.View())
+	}
+
+	m = replay(newModel(nil), history)
+	if m.DogGone || len(m.Questions) != 0 {
+		t.Fatalf("resume keeps gone=%v questions=%+v", m.DogGone, m.Questions)
+	}
+}
+
+func TestAFinishedRunDropsTheWatchdogMarker(t *testing.T) {
+	m := newModel(recorded())
+
+	m = m.Apply(core.Event{At: at(90), Kind: "finished"})
+
+	if header := strings.Split(m.View(), "\n")[0]; strings.Contains(header, "watchdog") {
+		t.Fatalf("header %q", header)
+	}
+}
+
+func TestTheStepsLineTracksDoneFailedLiveAndPendingKinds(t *testing.T) {
+	m := newModel(recorded())
+
+	if got := ansiStrip(m.pipeline(m.Live)); got != "plan ✓ › implement › land" {
+		t.Fatalf("pipeline %q", got)
+	}
+
+	fail := step(50, 2, "implement", "failed", "codex", "gpt-5", "medium", "ws-4")
+	retry := step(51, 2, "implement", "running", "codex", "gpt-5", "medium", "ws-5")
+	retry.Fields["attempt"] = "2"
+	retry.Fields["round"], retry.Fields["half"] = "1", "fix"
+	m = m.Apply(fail)
+	land := step(50, 2, "land", "running", "claude", "", "", "ws-6")
+	if got := ansiStrip(m.Apply(land).pipeline(m.Apply(land).Live)); got != "plan ✓ › implement × › land" {
+		t.Fatalf("after failure %q", got)
+	}
+
+	m = m.Apply(retry)
+	if got := m.Live.Label(); got != "implement a2 · review r1/2 fix" {
+		t.Fatalf("label %q", got)
+	}
+}
+
+func ansiStrip(s string) string {
+	return regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(s, "")
 }
 
 func TestBlockedPhaseAndSkippedDependents(t *testing.T) {
@@ -361,8 +476,8 @@ func TestResumeReplaysHistoryButNotTheOldEnding(t *testing.T) {
 
 	m := replay(newModel(nil), history)
 
-	if len(m.Warnings) != 1 || m.Phases[0].State != core.PhaseLanded || m.Phases[1].State != core.PhasePlanned {
-		t.Fatalf("warnings %+v phases %+v", m.Warnings, m.Phases)
+	if len(m.Feed) != 5 || m.Phases[0].State != core.PhaseLanded || m.Phases[1].State != core.PhasePlanned {
+		t.Fatalf("feed %+v phases %+v", m.Feed, m.Phases)
 	}
 	if m.Status != "" || m.Live != nil || m.Resume != "" {
 		t.Fatalf("stale ending: status %q live %+v", m.Status, m.Live)

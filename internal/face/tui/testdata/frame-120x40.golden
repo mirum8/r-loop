@@ -1,11 +1,17 @@
-  r-loop  20260918-140000  docs/x/todo.md                                                        started 14:00 · 43m0s
+  r-loop  20260918-140000  docs/x/todo.md                                        watchdog live · started 14:00 · 43m0s
 
   PHASES                    │  PHASE 2 · implement
-  ✓  1 scaffold             │  provider   codex · gpt-5 · medium
-  p  2 config reader        │  session    ws-4
-  ·  3 state store          │  state      waiting-input
-  ·  4 session manager      │  started    14:31:00   elapsed 12m0s
+  ✓  1 scaffold             │  steps      plan ✓ › implement › land
+  p  2 config reader        │  provider   codex · gpt-5 · medium
+  ·  3 state store          │  session    ws-4
+  ·  4 session manager      │  state      waiting-input
+                            │  waiting    watchdog · q2 · 3m0s
+                            │  started    14:31:00   elapsed 12m0s
                             │  backstop   paused
                             │
-                            │  WARNINGS
+                            │  EVENTS
+                            │     14:21  phase 1: landed abc
+                            │     14:23  phase 2 plan: asked q1
+                            │     14:25  phase 2 plan: q1 answered by watchdog
                             │  !  14:35  phase 2 implement: diff is large
+                            │     14:40  phase 2 implement: asked q2

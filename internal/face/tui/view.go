@@ -28,7 +28,7 @@ var glyphs = map[core.PhaseState]string{
 func (m Model) View() string {
 	th := m.theme
 	w := m.Width - 2*margin
-	lines := []string{fill(th.Header, m.header(w), w), ""}
+	lines := []string{m.header(w), ""}
 	rail := m.rail()
 	if m.Width < stackBelow {
 		lines = append(lines, rail...)
@@ -61,13 +61,27 @@ func (m Model) View() string {
 }
 
 func (m Model) header(w int) string {
+	th := m.theme
 	left := fmt.Sprintf("r-loop  %s  %s", m.RunID, m.Todo)
 	right := fmt.Sprintf("started %s · %s", m.Started.Format("15:04"), m.clock().Sub(m.Started).Truncate(time.Second))
-	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 2 {
-		return left
+	dog, dogStyle := "", th.Header
+	switch {
+	case m.DogGone:
+		dog, dogStyle = "watchdog gone", th.HeaderFailed
+	case m.RunID != "" && m.Status == "":
+		dog = "watchdog live"
 	}
-	return left + strings.Repeat(" ", gap) + right
+	if dog != "" {
+		right = " · " + right
+		if w-lipgloss.Width(left)-lipgloss.Width(dog+right) < 2 {
+			right = ""
+		}
+	}
+	gap := w - lipgloss.Width(left) - lipgloss.Width(dog+right)
+	if gap < 2 {
+		return fill(th.Header, left, w)
+	}
+	return th.Header.Render(left+strings.Repeat(" ", gap)) + dogStyle.Render(dog) + th.Header.Render(right)
 }
 
 func (m Model) rail() []string {
@@ -96,6 +110,9 @@ func (m Model) panel(w int) []string {
 	add := func(style lipgloss.Style, s string) { lines = append(lines, style.Render(ansi.Truncate(s, w, "…"))) }
 	if s := m.Live; s != nil {
 		add(th.Text, fmt.Sprintf("PHASE %d · %s", s.Phase, s.Label()))
+		if len(m.Steps) > 0 {
+			lines = append(lines, ansi.Truncate(th.Text.Render(fmt.Sprintf("%-10s ", "steps"))+m.pipeline(s), w, "…"))
+		}
 		provider := s.Provider
 		for _, part := range []string{s.Model, s.Effort} {
 			if part != "" {
@@ -105,6 +122,9 @@ func (m Model) panel(w int) []string {
 		add(th.Text, field("provider", provider))
 		add(th.Text, field("session", s.Workspace))
 		add(th.Text, field("state", s.State))
+		if q := m.waiting(s); q != "" {
+			add(th.Text, field("waiting", q))
+		}
 		add(th.Text, field("started", s.Started.Format("15:04:05")+"   elapsed "+s.Elapsed(m.clock()).String()))
 		backstop := "paused"
 		if left, paused := s.Remaining(m.clock()); !paused {
@@ -115,18 +135,56 @@ func (m Model) panel(w int) []string {
 		add(th.Label, "no step running")
 	}
 	lines = append(lines, "")
-	add(th.Label, "WARNINGS")
-	if len(m.Warnings) == 0 {
+	add(th.Label, "EVENTS")
+	if len(m.Feed) == 0 {
 		add(th.Idle, "none")
 	}
-	for _, warning := range m.Warnings {
-		if warning.Error {
-			add(th.Failed, "!  "+warning.Text)
-		} else {
-			add(th.Warn, "!  "+warning.Text)
+	for _, e := range m.Feed {
+		switch e.Tone {
+		case toneError:
+			add(th.Failed, "!  "+e.Text)
+		case toneWarn:
+			add(th.Warn, "!  "+e.Text)
+		default:
+			add(th.Idle, "   "+e.Text)
 		}
 	}
 	return lines
+}
+
+func (m Model) pipeline(s *Step) string {
+	th := m.theme
+	parts := make([]string, 0, len(m.Steps))
+	for _, kind := range m.Steps {
+		switch state := m.done[stepID{s.Phase, kind}]; {
+		case kind == s.Kind:
+			parts = append(parts, th.Current.Render(kind))
+		case state == string(core.StepOK):
+			parts = append(parts, th.Landed.Render(kind+" ✓"))
+		case state == string(core.StepFailed):
+			parts = append(parts, th.Failed.Render(kind+" ×"))
+		default:
+			parts = append(parts, th.Idle.Render(kind))
+		}
+	}
+	return strings.Join(parts, th.Idle.Render(" › "))
+}
+
+func (m Model) waiting(s *Step) string {
+	var open []Question
+	for _, q := range m.Questions {
+		if q.Phase == s.Phase && q.Step == s.Kind {
+			open = append(open, q)
+		}
+	}
+	if len(open) == 0 {
+		return ""
+	}
+	text := fmt.Sprintf("watchdog · %s · %s", open[0].ID, m.clock().Sub(open[0].At).Truncate(time.Second))
+	if len(open) > 1 {
+		text += fmt.Sprintf(" (+%d)", len(open)-1)
+	}
+	return text
 }
 
 func (m Model) footer(w int) []string {

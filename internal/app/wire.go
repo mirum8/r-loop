@@ -400,11 +400,16 @@ func (w *Wiring) startTUI() {
 	if started.IsZero() {
 		started = time.Now()
 	}
+	steps := make([]string, len(w.Loop.Kinds))
+	for i, k := range w.Loop.Kinds {
+		steps[i] = k.Name
+	}
 	w.TUI.Start(tui.Header{
 		RunID:   w.Loop.RunID,
 		Todo:    w.Opts.Todo,
 		Report:  w.Plain.Report,
 		Started: started,
+		Steps:   steps,
 	}, w.Plan.Phases, run.Events)
 }
 

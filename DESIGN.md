@@ -95,13 +95,19 @@ arrangement this identity's glance-first premise depends on.
 
 **What is built.** The layout the TUI actually draws is the one in the golden frames of Phase 22,
 `internal/face/tui/testdata/frame-120x40.golden` and `frame-70x30.golden`, and those frames are
-authoritative where this document or `docs/design/variants/layouts/rail.txt` differ: a header line,
-the phase rail beside the live-step panel with its warnings (stacked below 80 columns), and a
-status line for a notice or a finished run. Not implemented: the bordered frame, the watchdog feed,
-the raised panel (modal), the question banner and the key bar drawn in `rail.txt`, and the ASCII box
-fallback under **Shapes**. **Questions are no longer shown in the TUI** (spec ADR-73): step agents
-ask the watchdog, and the watchdog asks the maintainer in its own pane, so the TUI never waits on an
-answer; a step waiting on one shows only its `waiting-input` state and its paused backstop.
+authoritative where this document or `docs/design/variants/layouts/rail.txt` differ: a header line
+carrying the watchdog's health (`watchdog live` dim, `watchdog gone` in `error`), the phase rail
+beside the live-step panel (stacked below 80 columns), and a status line for a notice or a finished
+run. The panel names the step, a `steps` line with the phase's step kinds (done `✓` in `tertiary`,
+failed `×` in `error`, the live kind in `primary` without bold, pending dim), and below it an
+`EVENTS` feed of the last six things the run did — warnings amber, errors, stalls and a gone
+watchdog red, everything else (landings, restarts, nudges, questions asked and answered) dim. Not
+implemented: the bordered frame, the raised panel (modal), the question banner and the key bar drawn
+in `rail.txt`, and the ASCII box fallback under **Shapes**. **Question text is never shown in the
+TUI** (spec ADR-73): step agents ask the watchdog, and the watchdog asks the maintainer in its own
+pane, so the TUI never waits on an answer. A step waiting on one shows a dim `waiting  watchdog ·
+<id> · <age>` line — a pointer, not amber, because the driver cannot tell whether the watchdog is
+answering it from the code or asking you.
 
 ## Colors
 
