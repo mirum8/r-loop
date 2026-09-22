@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Source of truth
 
-- `docs/task-loop-driver/spec.html` — the spec (stories, domain model, invariants, 74 ADRs). Decisions are settled there; don't re-decide them.
+- `docs/task-loop-driver/spec.html` — the spec (stories, domain model, invariants, 75 ADRs). Decisions are settled there; don't re-decide them.
 - `docs/task-loop-driver/todo.md` — the implementation plan: 7 milestones, 30 phases, each with `Depends on:`, `Files:`, checklist items and a `Done when:` command. The `## Waves` block is generated from the `Depends on` edges — regenerate, never hand-edit.
 - `docs/task-loop-driver/tech-design.md` — contracts shared across phases of a milestone (types, enums, port signatures, run-dir layout, sentinel format, config resolution). Leaf items in `todo.md` repeat what they need, so an implementer working one phase can rely on that phase's block alone.
 - `docs/task-loop-driver/interview-notes.md` — the interview log behind the spec.

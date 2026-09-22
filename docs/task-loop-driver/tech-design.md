@@ -558,6 +558,37 @@ reviewer.
   P3/P4 UI findings are reported only (`finding` events). `gatefix` inherits the implement row's
   reviewers, the `ui` reviewer with them.
 
+## Milestone 9 — Free-text start
+
+Spec ADR-75. A run can start from free text. A short intake session turns the text into an argv,
+and the driver validates that argv before anything of a run exists.
+
+- **Trigger** — `parseFlags(args) (Options, []string, error)` returns the positionals. `Main`
+  starts the intake when there is no flag error and `freeForm(positional)` is true: more than one
+  positional, or one that does not end in `.md`. Otherwise `ParseArgs` runs as before.
+- **Row** — `config.Intake{Provider, Model, Effort}` comes from `intake.*` (default `claude sonnet
+  low`) and shares the role schema with `land.fix`. `applyOverrides` takes the row name
+  `config.IntakeRow` (`intake`), and its provenance path is `intake.<key>`. The banner line is
+  `intake: <provider> <model> <effort>  ← <sources>`. `validateProviders` adds
+  `role{field: "intake.provider"}`, and `newIntake` runs the same `checkRole` before herdr is
+  touched.
+- **Port use** — `core.Intake{Host, Prompts, Provider, Name, Root, Pane, Vars, Poll}`.
+  `Run(ctx, accepted <-chan []string) ([]string, error)` opens (splits `Pane` right, or opens a
+  `◆ intake` workspace at `Root`), then `Start`s, renders `intake`, and `Prompt`s. It then returns
+  on the first of: an accepted argv, `ctx.Done()`, or `State == AgentGone` (`ErrIntakeGone`). It
+  always closes what it opened.
+- **MCP** — `askmcp.Intake{Submit func([]string) (bool, string)}.Serve(ctx)` serves one loopback
+  URL `/mcp/intake/<token>` whose token lives only in memory. It has one tool,
+  `submit_args{argv}` → `{accepted, reason}`. For a provider that reads a file, the MCP config is
+  `<tmp>/intake.mcp.json`, in a temp dir that is removed afterwards.
+- **Validation** — in app, deterministic: `ParseArgs(argv)`, the plan path ends in `.md`,
+  `plan.Reader.Read`, `core.RunList`, `config.Load(root, home, overrides)`. The accepted argv goes
+  on a 1-buffered channel, and a second accept is refused. Exit codes: Ctrl-C (SIGINT) is 2, a gone
+  session is 4, and a start or prompt failure is 4. herdr unreachable is 4 and a missing herdr is
+  127, as in preflight.
+- **Prompt vars** — `Text` (the raw args joined), `Dir` (the working directory; argv paths are
+  relative to it), `Root`, `Usage` (the parser's `PrintDefaults`), `Unattended` (the typed flag).
+
 ## Issues files (ADR-69, ADR-70)
 
 - **Source** — `plan.Reader.Read` reads a file with no `### Phase` heading as an issues file

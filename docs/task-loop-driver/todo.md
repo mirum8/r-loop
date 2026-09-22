@@ -16,7 +16,8 @@ only the phases that depend on it, a red gate gets a fix round, answers come fro
 fallback, the gate fix and the watchdog each name their own model and effort, and `--model` and
 `--effort` override one row for one run beside `--provider`. ADR-74 added Milestone 8, Phase 32:
 a named `ui` reviewer on implement runs the project's `/test-app` skill whenever the repository
-has one.
+has one. ADR-75 added Milestone 9, Phase 33: free text on the command line goes to a short intake
+session whose proposed command line the driver validates.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -37,6 +38,7 @@ has one.
 - Wave 14: Phase 30
 - Wave 15: Phase 31
 - Wave 16: Phase 32
+- Wave 17: Phase 33
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -500,6 +502,20 @@ Contracts: `tech-design.md#milestone-8-the-ui-test-reviewer`
 - [x] every reviewer's prompt gets `ArtifactsDir` = `<RunDir>/phase-<N>/<kind>-rv-<name>-r<round>`; `review-ui` tells the agent to read the surface marker, stop with no findings when nothing the app renders changed, invoke the real `/test-app` (or follow `RequiredPath` when the Skill tool does not list it), let it deploy and tear down, check the changed flows and — for a web page or a terminal UI — how they render at three sizes, save captures under `ArtifactsDir`, and report a check that could not run as a finding
 - [x] the embedded implement row gains `{name: ui, provider: claude, model: opus, effort: high, prompt: review-ui, requires: .claude/skills/test-app/SKILL.md}`; the banner shows its name, prompt and requirement, and the dry run prints whether the requirement is found
 **Done when:** `go test ./...` is green and `go run ./cmd/r-loop docs/task-loop-driver/todo.md --dry-run --plain` lists `reviewer ui requires .claude/skills/test-app/SKILL.md`.
+
+## Milestone 9 — Free-text start
+Contracts: `tech-design.md#milestone-9-free-text-start`
+
+### Phase 33 — An intake session turns free text into a validated command line
+**Implements:** Run every remaining phase of a plan
+**Depends on:** Phase 32
+**Files:** `internal/app/wire.go` (modify) · `internal/app/intake.go` (new) · `internal/app/preflight.go` (modify) · `internal/core/intake.go` (new) · `internal/askmcp/intake.go` (new) · `internal/askmcp/server.go` (modify) · `internal/config/reader.go` (modify) · `internal/config/banner.go` (modify) · `internal/config/defaults.yaml` (modify) · `internal/prompts/render.go` (modify) · `internal/prompts/templates/intake.md` (new) · `internal/app/intake_test.go` (new) · `internal/core/intake_test.go` (new) · `internal/askmcp/intake_test.go` (new) · `internal/config/reader_test.go` (modify) · `internal/prompts/render_test.go` (modify) · `internal/app/app_test.go` (modify) · `README.md` (modify)
+**Risk:** none
+- [x] positional arguments that are anything but one path ending in `.md`, with every flag parsing, start an intake before `Wire`; one `.md` path, no positional, or a flag error keep today's path and exit 2 with one usage line
+- [x] an `intake:` block (`provider`, `model`, `effort`; default `claude sonnet low`) with provenance, shown in the banner; `--provider/--model/--effort intake=…` override it; an unknown key under it exits 2; the provider resolves through the registry and must have `ask: mcp`, checked before the intake starts and in preflight (`intake.provider: …`, exit 2), with no fallback to `watchdog.*`
+- [x] the intake is its own session, split beside the driver's pane or in a `◆ intake` workspace, named `rloop-intake-<pid>`. It gets the text, the working directory, the repository root and the flag reference generated from the parser, and its only MCP tool is `submit_args(argv)`. Its prompt confirms the full command with the maintainer before submitting (never asks with `--unattended`). The session is closed on accept, on Ctrl-C (exit 2) and when its agent is gone (exit 4)
+- [x] `submit_args` is validated by the driver: `ParseArgs`, a plan path ending in `.md`, the plan read, `RunList` and `config.Load` with the argv's overrides. A refusal returns the reason, and a second accept is refused. On accept stderr shows `r-loop: resolved: r-loop <argv, shell-quoted>`, and the run continues exactly as if that argv had been typed
+**Done when:** `go test ./...` is green and `go run ./cmd/r-loop docs/task-loop-driver/todo.md --dry-run --plain` prints `intake: claude sonnet low  ← default`.
 
 ## Open questions
 
