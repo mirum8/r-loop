@@ -251,7 +251,7 @@ func TestAWatchdogAnswerCitingTheRepositoryReachesTheAgent(t *testing.T) {
 func TestAGoneWatchdogHaltsTheRunAndTheQuestionIsNeverAnswered(t *testing.T) {
 	r := startAskRun(t, func(w *Wiring) *dogHost {
 		w.Dog.Sleep = func(time.Duration) {}
-		return &dogHost{blocked: "question "}
+		return &dogHost{blocked: "question ", state: core.AgentGone}
 	})
 
 	var code int

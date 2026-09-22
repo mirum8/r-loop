@@ -125,11 +125,18 @@ func (d *Watchdog) Notify(text string, wait bool, timeout time.Duration) error {
 		return nil
 	}
 	err := d.Host.Prompt(d.agent(), text, wait, timeout)
-	if !blocked(err) {
-		return err
+	for blocked(err) {
+		state, serr := d.Host.State(d.agent())
+		if serr != nil {
+			return serr
+		}
+		if state == AgentGone {
+			break
+		}
+		d.sleep(watchdogRetryAfter)
+		err = d.Host.Prompt(d.agent(), text, wait, timeout)
 	}
-	d.sleep(watchdogRetryAfter)
-	if err = d.Host.Prompt(d.agent(), text, wait, timeout); !blocked(err) {
+	if !blocked(err) {
 		return err
 	}
 	ev := Event{At: time.Now(), Kind: "watchdog-unreachable", Fields: map[string]string{"reason": err.Error()}}

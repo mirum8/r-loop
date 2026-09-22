@@ -218,12 +218,13 @@ func TestAnotherStepSignalDuringTheCheckIsRejected(t *testing.T) {
 
 func TestACheckTimeoutIsRecordedWithoutAHalt(t *testing.T) {
 	for name, err := range map[string]error{
-		"timeout": errors.New("herdr agent prompt: herdr: timeout: no answer within 10m0s"),
-		"blocked": errors.New("herdr agent prompt: herdr: agent_blocked: waiting on a permission"),
+		"timeout":          errors.New("herdr agent prompt: herdr: timeout: no answer within 10m0s"),
+		"blocked and gone": errors.New("herdr agent prompt: herdr: agent_blocked: waiting on a permission"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newCheckRig(t)
 			r.dogHost.err = err
+			r.dogHost.States = map[string]AgentState{"rloop-wd-run-1": AgentGone}
 
 			code := r.run(RunOptions{Phases: []string{"1"}})
 

@@ -26,6 +26,7 @@ type dogHost struct {
 	onPrompt func(text string)
 	question func(id string)
 	blocked  string
+	state    core.AgentState
 }
 
 func (h *dogHost) record(format string, args ...any) {
@@ -62,7 +63,12 @@ func (h *dogHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 	}
 	return nil
 }
-func (h *dogHost) State(agent string) (core.AgentState, error)            { return core.AgentWorking, nil }
+func (h *dogHost) State(agent string) (core.AgentState, error) {
+	if h.state != "" {
+		return h.state, nil
+	}
+	return core.AgentWorking, nil
+}
 func (h *dogHost) AgentPane(agent string) (string, error)                 { return h.stale[agent], nil }
 func (h *dogHost) Read(agent string, lines int) (string, error)           { return "", nil }
 func (h *dogHost) Interrupt(agent string) error                           { return nil }

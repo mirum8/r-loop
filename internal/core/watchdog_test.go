@@ -183,6 +183,7 @@ func TestWatchdogStopBeforeStartTouchesNothing(t *testing.T) {
 
 func TestUnreachableIsRecordedBeforeTheWatchdogIsDropped(t *testing.T) {
 	host := &blockedHost{}
+	host.States = map[string]AgentState{"rloop-wd-run-1": AgentGone}
 	store := &fakeStore{Err: errors.New("disk full")}
 	face := &fakeFace{}
 	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
@@ -194,7 +195,7 @@ func TestUnreachableIsRecordedBeforeTheWatchdogIsDropped(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "disk full") {
 		t.Errorf("err %v", err)
 	}
-	if host.prompts != 4 {
+	if host.prompts != 2 {
 		t.Errorf("prompts %d, want the watchdog kept after a failed record", host.prompts)
 	}
 	if len(face.Events) != 0 {
@@ -215,8 +216,9 @@ func (h *blockedHost) Prompt(agent, text string, wait bool, timeout time.Duratio
 	return errors.New("herdr agent prompt: herdr: agent_blocked: waiting on a permission")
 }
 
-func TestNotifyRetriesABlockedPromptOnceAfter30sThenRecordsWatchdogUnreachable(t *testing.T) {
+func TestNotifyRecordsWatchdogUnreachableWhenABlockedWatchdogIsGone(t *testing.T) {
 	host := &blockedHost{}
+	host.States = map[string]AgentState{"rloop-wd-run-1": AgentGone}
 	store := &fakeStore{}
 	face := &fakeFace{}
 	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
@@ -224,13 +226,16 @@ func TestNotifyRetriesABlockedPromptOnceAfter30sThenRecordsWatchdogUnreachable(t
 	var slept []time.Duration
 	dog.Sleep = func(d time.Duration) { slept = append(slept, d) }
 
-	dog.Notify("step started phase-2/implement", false, 0)
+	err := dog.Notify("step started phase-2/implement", false, 0)
 	dog.Notify("step ended phase-2/implement ok ", false, 0)
 
-	if host.prompts != 2 {
-		t.Errorf("prompts %d, want 2 then none once unreachable", host.prompts)
+	if err == nil || !strings.Contains(err.Error(), "agent_blocked") {
+		t.Errorf("err %v", err)
 	}
-	if !reflect.DeepEqual(slept, []time.Duration{30 * time.Second}) {
+	if host.prompts != 1 {
+		t.Errorf("prompts %d, want 1 then none once unreachable", host.prompts)
+	}
+	if len(slept) != 0 {
 		t.Errorf("slept %v", slept)
 	}
 	var kinds []string
@@ -244,6 +249,25 @@ func TestNotifyRetriesABlockedPromptOnceAfter30sThenRecordsWatchdogUnreachable(t
 	}
 	if len(face.Events) != 1 || face.Events[0].Kind != "watchdog-unreachable" {
 		t.Errorf("emitted %+v", face.Events)
+	}
+}
+
+func TestNotifyReturnsAStateErrorWithoutDroppingTheWatchdog(t *testing.T) {
+	host := &blockedHost{}
+	host.Err = errors.New("herdr: connection refused")
+	store := &fakeStore{}
+	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+
+	err := dog.Notify("step started phase-2/implement", false, 0)
+
+	if err == nil || !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("err %v", err)
+	}
+	if !dog.live() {
+		t.Error("watchdog dropped on a State error")
+	}
+	if len(store.Records["run-1"]) != 0 {
+		t.Errorf("recorded %+v", store.Records["run-1"])
 	}
 }
 
@@ -366,5 +390,48 @@ func TestWatchdogStartNeverTouchesAnotherRunsLiveWatchdog(t *testing.T) {
 		if rec.Kind == RecordEvent && rec.Event.Kind == "watchdog-stale-closed" {
 			t.Errorf("recorded %+v", rec.Event)
 		}
+	}
+}
+
+type askingHost struct {
+	fakeSessionHost
+	blockedFor int
+	prompts    int
+}
+
+func (h *askingHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	h.prompts++
+	if h.prompts <= h.blockedFor {
+		return errors.New("herdr agent prompt: herdr: agent_blocked: agent rloop-wd-run-1 is blocked and requires interactive input")
+	}
+	return nil
+}
+
+func TestNotifyWaitsOutAWatchdogAskingTheMaintainer(t *testing.T) {
+	host := &askingHost{blockedFor: 5}
+	host.States = map[string]AgentState{"rloop-wd-run-1": AgentBlocked}
+	store := &fakeStore{}
+	face := &fakeFace{}
+	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+	dog.Face = face
+	var slept []time.Duration
+	dog.Sleep = func(d time.Duration) { slept = append(slept, d) }
+
+	err := dog.Notify("question q2 from phase-10c/plan: which?", false, 0)
+
+	if err != nil {
+		t.Fatalf("err %v", err)
+	}
+	if host.prompts != 6 {
+		t.Errorf("prompts %d, want 6", host.prompts)
+	}
+	if !reflect.DeepEqual(slept, []time.Duration{30 * time.Second, 30 * time.Second, 30 * time.Second, 30 * time.Second, 30 * time.Second}) {
+		t.Errorf("slept %v", slept)
+	}
+	if !dog.live() {
+		t.Error("watchdog dropped while it was asking the maintainer")
+	}
+	if len(store.Records["run-1"]) != 0 || len(face.Events) != 0 {
+		t.Errorf("recorded %+v emitted %+v", store.Records["run-1"], face.Events)
 	}
 }
