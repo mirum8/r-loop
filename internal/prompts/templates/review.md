@@ -9,6 +9,15 @@ the uncommitted changes in {{.Worktree}}.
 The phase:
 
 {{.PhaseBlock}}
+{{- if eq .ReviewedKind "plan"}}
+
+Besides `{{.ReviewCommand}}`, judge the plan's proportion in both directions, and report each gap as a finding:
+
+- **Missing** — an open item, a spec invariant, or a reachable edge case or error path the plan does not handle or test. Name the input and where it comes from.
+- **Excess** — an element no obligation needs: an interface with one implementation, a config key nobody asked for, a helper or generic type for a single call site, a wrapper that only forwards, handling for a state the types already rule out, a hook for a later phase, code that re-creates what the repository already has. Name the element, say why nothing needs it, and give the simpler replacement that still meets every obligation.
+
+A simplification that would drop an obligation is not a finding. Taste is not a finding: report excess only when it adds a concept, not when it is written differently than you would. A cut listed under `## Left out` is challenged only with the obligation it breaks.
+{{- end}}
 {{- if .ItemGate}}
 
 Its open criteria:

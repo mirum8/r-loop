@@ -34,7 +34,15 @@ If you can run sub-agents, give each area to its own read-only explorer, in para
 
 ## 2. Design
 
-List the real choices the phase leaves open: where a piece lives, which existing abstraction it extends, the shape of a new type or signature, how an edge case or error behaves. For each, name at least two options, weigh them against the patterns you found and the spec, and pick one. A choice with only one reasonable answer is not a choice: take it and move on.
+Start with the obligations, before any design: every open item; every spec invariant or ADR the phase's code touches; and every edge case and error path that can reach this code, each with the concrete input and where it comes from — a caller at `path:line`, user input, a file on disk, another process. A case with no source you can name is not an obligation. This list is the floor: the plan meets every entry.
+
+Then choose the smallest design that meets the whole list. Smallest means fewest new concepts — types, interfaces, layers, config keys, dependencies — not fewest lines: a guard clause or one more test is cheap, a new abstraction is not.
+
+List the real choices the phase leaves open: where a piece lives, which existing abstraction it extends, the shape of a new type or signature, how an edge case or error behaves. For each, name at least two options, weigh them against the obligations, the patterns you found and the spec, and pick one. A choice with only one reasonable answer is not a choice: take it and move on.
+
+Every element the design adds names the obligation that needs it, and one without is cut: an interface with one implementation, a config key or option nobody asked for, a helper or generic type for a single call site, a wrapper that only forwards, handling for a state the types or an invariant already rule out, a hook for a later phase. Existing code that already does the job is called, not re-created. Two similar blocks are fine; extract a shared one when a third appears or when they must change together.
+
+Cutting never touches the floor: never drop an obligation, merge distinct errors or states into one, swallow an error, skip validation where input crosses a trust boundary, or leave an error path untested to make the plan shorter.
 
 ## 3. Decide
 
@@ -45,8 +53,9 @@ A fact the repository can answer is looked up, never asked. A choice the reposit
 `{{.PlanPath}}` starts with the line `status: planned`, followed by exactly these sections:
 
 - `## Summary` — what the phase builds and the approach, in a few sentences; for each choice from step 2, the option taken and in one line why it beat the other.
-- `## Changes` — per file, in build order: create or modify, the types, functions and signatures that change, and the existing code (`path:line`) it reuses or follows.
-- `## Tests` — the tests to write first, each by name with the behaviour it pins and the open items it covers, including the edge cases and error paths from step 2. Every open item above is covered.
+- `## Changes` — per file, in build order: create or modify, the types, functions and signatures that change, the existing code (`path:line`) it reuses or follows, and the obligations each change serves.
+- `## Tests` — the tests to write first, each by name with the behaviour it pins and the obligations it covers. Every obligation from step 2 is covered, each edge case and error path included.
+- `## Left out` — each element you considered and cut, with one line on why no obligation needs it, or `none`.
 - `## Assumptions` — each default taken, or `none`.
 {{- if .ItemGate}}
 - `## Gate` — one shell command in backticks that runs only the tests named in `## Tests`, from the repository root. The driver runs it at land: it must fail on the base code with only the new tests added, and pass once the phase is merged.
@@ -59,5 +68,5 @@ When the code already does what every open item asks, or the item is not code wo
 
 ## 5. Self-check
 
-Re-read the plan as the implementer would, then fix it until all of this holds: every open item has a test in `## Tests`; only the phase's files are named; every `path:line` cited exists; no line leaves a choice open — no "consider", "if needed", "TBD", "or" between options, or deferred decision.{{if .ItemGate}} `## Gate` runs exactly those tests and nothing else.{{end}}
+Re-read the plan as the implementer would, then fix it until all of this holds: every obligation has a change in `## Changes` and a test in `## Tests`; every change serves an obligation; only the phase's files are named; every `path:line` cited exists; no line leaves a choice open — no "consider", "if needed", "TBD", "or" between options, or deferred decision.{{if .ItemGate}} `## Gate` runs exactly those tests and nothing else.{{end}}
 {{template "sentinel" .}}

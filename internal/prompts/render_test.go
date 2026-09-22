@@ -326,6 +326,44 @@ func TestPlanNamesItsStructure(t *testing.T) {
 	}
 }
 
+func TestPlanTracesEveryElementToAnObligation(t *testing.T) {
+	text := render(t, New(t.TempDir()), "plan", fullVars())
+
+	for _, want := range []string{
+		"Start with the obligations",
+		"A case with no source you can name is not an obligation",
+		"fewest new concepts",
+		"Every element the design adds names the obligation that needs it",
+		"Cutting never touches the floor",
+		"## Left out",
+		"every change serves an obligation",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("plan missing %q", want)
+		}
+	}
+}
+
+func TestPlanReviewJudgesProportionBothWays(t *testing.T) {
+	r := New(t.TempDir())
+
+	planReview := render(t, r, "review", with("ReviewedKind", "plan"))
+	for _, want := range []string{
+		"**Missing**",
+		"**Excess**",
+		"the simpler replacement that still meets every obligation",
+		"A simplification that would drop an obligation is not a finding",
+		"Taste is not a finding",
+	} {
+		if !strings.Contains(planReview, want) {
+			t.Errorf("plan review missing %q", want)
+		}
+	}
+	if strings.Contains(render(t, r, "review", fullVars()), "**Excess**") {
+		t.Error("implement review carries the plan proportion check")
+	}
+}
+
 func TestImplementReadsThePlanAndProtectsTodo(t *testing.T) {
 	text := render(t, New(t.TempDir()), "implement", fullVars())
 
@@ -382,6 +420,8 @@ func TestFixAsksForVerdicts(t *testing.T) {
 		"- codex: `/runs/r1/phase-7/implement-findings-codex-r1.json`",
 		`{"findings":[{"id":"<id>","reviewer":"<name>","title":"…","verdict":"real|not-real|out-of-scope","severity":"P1|P2|P3|P4","fixed":true|false,"files":["…"],"evidence":"<path:line>"}]}`,
 		"Only a finding that is `real` at `P1` or `P2` may be fixed",
+		"Excess that adds a type, interface, config key, dependency or layer no obligation needs is `P2`",
+		"An excess finding is `real` only when its replacement still meets every obligation",
 		"a `path:line` you have read",
 		"Do not commit",
 		"exactly once",
