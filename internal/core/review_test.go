@@ -112,7 +112,7 @@ func writeReview(t *testing.T, vars map[string]any, outcome string, findings int
 	}
 }
 
-func TestReviewSplitsStartsThenPromptsAndReusesPanesWithFreshAgentsInRound2(t *testing.T) {
+func TestReviewSplitsStartsThenPromptsAndReplacesPanesWithFreshAgentsInRound2(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
 	r.behave = func(vars map[string]any) {
 		r.repo.TreeChanges = nil
@@ -155,10 +155,12 @@ func TestReviewSplitsStartsThenPromptsAndReusesPanesWithFreshAgentsInRound2(t *t
 		"Store.Append run-1 event",
 		"Repo.Snapshot " + wt,
 		"Store.Append run-1 event",
-		"SessionHost.Interrupt rloop-p3-implement-rv-claude-r1",
-		"SessionHost.Interrupt rloop-p3-implement-rv-codex-r1",
-		"SessionHost.Start pane-2 rloop-p3-implement-rv-claude-r2 claude []",
-		"SessionHost.Start pane-3 rloop-p3-implement-rv-codex-r2 codex []",
+		"SessionHost.ClosePane pane-2",
+		"SessionHost.ClosePane pane-3",
+		"SessionHost.Split pane-1 right " + wt,
+		"SessionHost.Split pane-4 down " + wt,
+		"SessionHost.Start pane-4 rloop-p3-implement-rv-claude-r2 claude []",
+		"SessionHost.Start pane-5 rloop-p3-implement-rv-codex-r2 codex []",
 		`SessionHost.Prompt rloop-p3-implement-rv-claude-r2 "review r2" false 0s`,
 		`SessionHost.Prompt rloop-p3-implement-rv-codex-r2 "review r2" false 0s`,
 		"Store.Append run-1 event",
@@ -167,7 +169,7 @@ func TestReviewSplitsStartsThenPromptsAndReusesPanesWithFreshAgentsInRound2(t *t
 		"Repo.TreeDiff tree-start tree-start",
 		"Store.Append run-1 event",
 	}
-	got := r.callsFrom("Repo.Snapshot", "Repo.TreeDiff", "Store.Append", "SessionHost.Split", "SessionHost.Start", "SessionHost.Prompt", "SessionHost.Interrupt")
+	got := r.callsFrom("Repo.Snapshot", "Repo.TreeDiff", "Store.Append", "SessionHost.Split", "SessionHost.Start", "SessionHost.Prompt", "SessionHost.ClosePane")
 	got = got[len(got)-len(want):]
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("calls =\n%s", strings.Join(got, "\n"))
@@ -700,5 +702,53 @@ func TestARoundWithFindingsReportsTheFixHalfToTheObserverBeforeTheFixPrompt(t *t
 	want := []string{"reviewing r1", "fixing r1 " + r.worker.Agent, "fix prompt r1", "reviewing r2"}
 	if !reflect.DeepEqual(log, want) {
 		t.Fatalf("log %v, want %v", log, want)
+	}
+}
+
+type occupiedPaneHost struct {
+	*scriptedHost
+	busy map[string]bool
+}
+
+func (h *occupiedPaneHost) Start(pane, name, kind string, args []string) (Agent, error) {
+	if h.busy[pane] {
+		return Agent{}, fmt.Errorf("agent_pane_busy: agent target pane %s is not an available shell", pane)
+	}
+	h.busy[pane] = true
+	return h.scriptedHost.Start(pane, name, kind, args)
+}
+
+func (h *occupiedPaneHost) ClosePane(pane string) error {
+	delete(h.busy, pane)
+	return h.scriptedHost.ClosePane(pane)
+}
+
+func TestRound2StartsWhenTheRound1ReviewerIgnoresTheInterrupt(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.sm.Host = &occupiedPaneHost{scriptedHost: r.host, busy: map[string]bool{}}
+	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
+		findings := 0
+		if vars["Round"] == 1 {
+			findings = 1
+		}
+		writeReview(t, vars, "ok", findings)
+	}
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("claude-r1-1", "real", "P2", true, ""))
+	}
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if got := r.callsFrom("SessionHost.Start pane-2", "SessionHost.Start pane-3", "SessionHost.ClosePane"); !reflect.DeepEqual(got, []string{
+		"SessionHost.Start pane-2 rloop-p3-implement-rv-claude-r1 claude []",
+		"SessionHost.ClosePane pane-2",
+		"SessionHost.Start pane-3 rloop-p3-implement-rv-claude-r2 claude []",
+	}) {
+		t.Fatalf("calls = %q", got)
 	}
 }

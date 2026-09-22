@@ -166,14 +166,14 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, reviewers []*Sessi
 
 func (h ReviewHalf) open(worker *Session, rows []Reviewer, args []ProviderArgs, urls []string, prev []*Session, rd reviewRound) ([]*Session, Outcome) {
 	sm := h.Sessions
+	for _, p := range prev {
+		if err := sm.Host.ClosePane(p.Pane); err != nil {
+			return nil, sm.fail(worker, "reviewer "+p.Reviewer+": "+err.Error())
+		}
+	}
 	sessions := make([]*Session, len(rows))
 	for i, rv := range rows {
 		sessions[i] = h.reviewer(worker, rv, args[i], urls[i], rd)
-		if prev != nil {
-			sessions[i].Pane = prev[i].Pane
-			sm.Host.Interrupt(prev[i].Agent)
-			continue
-		}
 		target, direction := worker.Pane, "right"
 		if i > 0 {
 			target, direction = sessions[i-1].Pane, "down"
