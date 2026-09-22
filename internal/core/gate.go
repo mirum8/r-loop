@@ -79,13 +79,15 @@ func (p *GateProbe) discover(ctx context.Context, phase Phase, st RunState) (str
 	if err := p.Sessions.Store.Append(p.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepQueued}); err != nil {
 		return "", fmt.Errorf("record: %w", err)
 	}
+	rec := stepRecorder{p.Sessions.Store, p.Face}
 	s, err := p.Sessions.Spawn(ctx, ref)
 	var out Outcome
 	if err != nil {
 		out = p.Sessions.Finish(s, Outcome{State: StepFailed, Reason: err.Error(), Session: s})
 	} else {
-		out = p.Sessions.Finish(s, p.Sessions.Wait(ctx, s, stepRecorder{p.Sessions.Store, p.Face}))
+		out = p.Sessions.Finish(s, p.Sessions.Wait(ctx, s, rec))
 	}
+	rec.finished(ref, out)
 	if err := p.Repo.ResetHard("HEAD"); err != nil {
 		return "", fmt.Errorf("restore: %w", err)
 	}

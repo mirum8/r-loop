@@ -224,7 +224,10 @@ func (g *LandGate) fix(ctx context.Context, phase Phase, command, output string)
 	if err := g.Store.Append(g.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepQueued}); err != nil {
 		return Outcome{State: StepFailed, Reason: "record: " + err.Error()}
 	}
-	return g.Runner.Run(ctx, ref, stepRecorder{g.Store, g.Face})
+	rec := stepRecorder{g.Store, g.Face}
+	out := g.Runner.Run(ctx, ref, rec)
+	rec.finished(ref, out)
+	return out
 }
 
 func (g *LandGate) emit(ev Event) {
@@ -251,6 +254,12 @@ func (r stepRecorder) Stalled(s *Session) { r.record(s, StepStalled, 0) }
 func (r stepRecorder) Resumed(s *Session) { r.record(s, StepRunning, 0) }
 
 func (r stepRecorder) Reviewing(s *Session, round int) { r.record(s, StepRunning, round) }
+
+func (r stepRecorder) finished(ref StepRef, out Outcome) {
+	ws, _ := sessionPlace(out.Session)
+	key := ref.Key
+	recordEvent(r.store, r.face, key.Run, Event{Kind: "step", Phase: key.Phase, Step: key.Kind, Fields: stepFields(ref, out.State, out.Reason, ws, 0)})
+}
 
 func (r stepRecorder) record(s *Session, state StepState, round int) {
 	key := s.Ref.Key

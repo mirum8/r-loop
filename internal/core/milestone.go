@@ -70,13 +70,15 @@ func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone
 	if err := b.Sessions.Store.Append(b.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepQueued}); err != nil {
 		return "record: " + err.Error()
 	}
+	rec := stepRecorder{b.Sessions.Store, b.Face}
 	s, err := b.Sessions.Spawn(ctx, ref)
 	var out Outcome
 	if err != nil {
 		out = b.Sessions.Finish(s, Outcome{State: StepFailed, Reason: err.Error(), Session: s})
 	} else {
-		out = b.Sessions.Finish(s, b.Sessions.Wait(ctx, s, stepRecorder{b.Sessions.Store, b.Face}))
+		out = b.Sessions.Finish(s, b.Sessions.Wait(ctx, s, rec))
 	}
+	rec.finished(ref, out)
 	if out.State != StepOK {
 		return fmt.Sprintf("%s: %s", out.State, out.Reason)
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -246,6 +247,24 @@ func TestGateProbeRecordsTheCommandOnceAndReusesIt(t *testing.T) {
 	evs := e.store.events("gate-discovered")
 	if len(evs) != 1 || evs[0].Fields["command"] != "test -f a.txt" {
 		t.Errorf("gate-discovered events = %+v", evs)
+	}
+}
+
+func TestGateProbeEmitsTheSessionsFinalStepState(t *testing.T) {
+	e := newLandEnv(t)
+	p, _ := e.probe("ok", "test -f a.txt")
+
+	if _, err := p.Command(context.Background(), phaseOne("")); err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+
+	var got []string
+	for _, ev := range e.store.events("step") {
+		got = append(got, ev.Step+" "+ev.Fields["state"])
+	}
+	want := []string{"gate running", "gate ok"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("step events %q, want %q", got, want)
 	}
 }
 
