@@ -102,15 +102,15 @@ func (s *loopStore) Dir(runID string) string { return s.dir }
 type fakeLander struct {
 	store  Store
 	log    *callLog
-	failOn int
+	failOn string
 }
 
 func (f *fakeLander) Land(ctx context.Context, ph Phase) (Landing, error) {
-	f.log.record("Land %d", ph.Number)
-	if ph.Number == f.failOn {
+	f.log.record("Land %s", ph.ID)
+	if ph.ID == f.failOn {
 		return Landing{}, errors.New("gate red")
 	}
-	l := Landing{Phase: ph.Number, MergeSHA: "merge-" + ph.Title}
+	l := Landing{Phase: ph.ID, MergeSHA: "merge-" + ph.Title}
 	f.store.Append("run-1", Record{Kind: RecordLanding, Landing: &l})
 	return l, nil
 }
@@ -137,12 +137,12 @@ func threePhasePlan() Plan {
 	return Plan{
 		Path: "docs/x/todo.md", Topic: "x",
 		Phases: []Phase{
-			{Number: 1, Title: "Core types", Items: item, Milestone: 1},
-			{Number: 2, Title: "Store", Items: item, Milestone: 1},
-			{Number: 3, Title: "Loop", DependsOn: []int{1}, Items: item, Milestone: 1},
-			{Number: 4, Title: "Done already", Items: []Item{{Text: "x", Done: true}}, Milestone: 1},
+			{ID: "1", Title: "Core types", Items: item, Milestone: 1},
+			{ID: "2", Title: "Store", Items: item, Milestone: 1},
+			{ID: "3", Title: "Loop", DependsOn: []string{"1"}, Items: item, Milestone: 1},
+			{ID: "4", Title: "Done already", Items: []Item{{Text: "x", Done: true}}, Milestone: 1},
 		},
-		Milestones: []Milestone{{Number: 1, Name: "Core", Phases: []int{1, 2, 3, 4}}},
+		Milestones: []Milestone{{Number: 1, Name: "Core", Phases: []string{"1", "2", "3", "4"}}},
 	}
 }
 
@@ -263,7 +263,7 @@ func TestCleanRunLandsEveryUntickedPhaseInOrder(t *testing.T) {
 	}
 	var states []string
 	for _, ev := range r.events("phase-state") {
-		if ev.Phase == 1 {
+		if ev.Phase == "1" {
 			states = append(states, ev.Fields["state"])
 		}
 	}
@@ -279,7 +279,7 @@ func TestCleanRunLandsEveryUntickedPhaseInOrder(t *testing.T) {
 func TestEveryStateChangeIsAStepEvent(t *testing.T) {
 	r := newLoopRig(t)
 
-	r.run(RunOptions{Phases: []int{2}})
+	r.run(RunOptions{Phases: []string{"2"}})
 
 	var got []string
 	for _, ev := range r.events("step") {
@@ -294,7 +294,7 @@ func TestEveryStateChangeIsAStepEvent(t *testing.T) {
 func TestStepEventsAreStoredWithProviderAndWorkspace(t *testing.T) {
 	r := newLoopRig(t)
 
-	r.run(RunOptions{Phases: []int{2}})
+	r.run(RunOptions{Phases: []string{"2"}})
 
 	var got []string
 	for _, rec := range r.store.Records["run-1"] {
@@ -315,7 +315,7 @@ func TestStepEventsCarryModelEffortBackstopAndRounds(t *testing.T) {
 	r.loop.Kinds[0].Row.Timeout = time.Hour
 	r.loop.Kinds[0].Row.Rounds = 2
 
-	r.run(RunOptions{Phases: []int{2}})
+	r.run(RunOptions{Phases: []string{"2"}})
 
 	f := r.events("step")[0].Fields
 	if f["model"] != "opus" || f["effort"] != "high" || f["backstop"] != "1h0m0s" || f["rounds"] != "2" {
@@ -326,13 +326,13 @@ func TestStepEventsCarryModelEffortBackstopAndRounds(t *testing.T) {
 func TestAReviewRoundIsARunningStepEventNamingTheRound(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.runDir = t.TempDir()
-	ref := StepRef{Key: StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}, Kind: r.loop.Kinds[1]}
+	ref := StepRef{Key: StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}, Kind: r.loop.Kinds[1]}
 	ref.Kind.Row.Rounds = 3
 
 	(&loopObserver{l: r.loop, ref: ref}).Reviewing(&Session{Workspace: "ws-9"}, 2)
 
 	ev := r.events("step")[0]
-	if ev.Phase != 2 || ev.Step != "implement" || ev.Fields["state"] != "running" || ev.Fields["round"] != "2" || ev.Fields["rounds"] != "3" || ev.Fields["workspace"] != "ws-9" || ev.Fields["half"] != "find" {
+	if ev.Phase != "2" || ev.Step != "implement" || ev.Fields["state"] != "running" || ev.Fields["round"] != "2" || ev.Fields["rounds"] != "3" || ev.Fields["workspace"] != "ws-9" || ev.Fields["half"] != "find" {
 		t.Errorf("event %+v", ev)
 	}
 }
@@ -340,7 +340,7 @@ func TestAReviewRoundIsARunningStepEventNamingTheRound(t *testing.T) {
 func TestAReviewRoundsFixHalfIsARunningStepEventNamingTheHalf(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.runDir = t.TempDir()
-	ref := StepRef{Key: StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}, Kind: r.loop.Kinds[1]}
+	ref := StepRef{Key: StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}, Kind: r.loop.Kinds[1]}
 	ref.Kind.Row.Rounds = 3
 
 	(&loopObserver{l: r.loop, ref: ref}).Fixing(&Session{Workspace: "ws-9"}, 2)
@@ -354,7 +354,7 @@ func TestAReviewRoundsFixHalfIsARunningStepEventNamingTheHalf(t *testing.T) {
 func TestAStepTagsItsWorkspaceWithItsLiveState(t *testing.T) {
 	r := newLoopRig(t)
 
-	r.run(RunOptions{Phases: []int{2}})
+	r.run(RunOptions{Phases: []string{"2"}})
 
 	want := []string{
 		"ws-1 map[rloop:◆ working rloop_wait:]", "ws-1 map[rloop:◆ done rloop_wait:]",
@@ -368,7 +368,7 @@ func TestAStepTagsItsWorkspaceWithItsLiveState(t *testing.T) {
 func TestReviewFixAndWaitingAreTaggedOnTheWorkspace(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.runDir = t.TempDir()
-	ref := StepRef{Key: StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}, Kind: r.loop.Kinds[1]}
+	ref := StepRef{Key: StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}, Kind: r.loop.Kinds[1]}
 	ref.Kind.Row.Rounds = 3
 	obs := &loopObserver{l: r.loop, ref: ref}
 	s := &Session{Workspace: "ws-9", Ref: ref}
@@ -399,7 +399,7 @@ func TestAFailingTagWarnsOnceAndTheRunContinues(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.Sessions.Host = tagFailHost{r.host}
 
-	code := r.run(RunOptions{Phases: []int{2}})
+	code := r.run(RunOptions{Phases: []string{"2"}})
 
 	var warnings []string
 	for _, ev := range r.events("warning") {
@@ -413,7 +413,7 @@ func TestAFailingTagWarnsOnceAndTheRunContinues(t *testing.T) {
 func TestStepRefUsesPhaseBranchWorktreeAndBase(t *testing.T) {
 	r := newLoopRig(t)
 
-	r.run(RunOptions{Phases: []int{2}})
+	r.run(RunOptions{Phases: []string{"2"}})
 
 	want := []string{".r-loop/wt/phase-2 r-loop/phase-2 main", ".r-loop/wt/phase-2 r-loop/phase-2 main"}
 	if got := r.calls("Repo.AddWorktree "); !reflect.DeepEqual(got, want) {
@@ -490,9 +490,9 @@ func TestFailedImplementBlocksThePhaseAndItsDependents(t *testing.T) {
 
 func TestLandingErrorBlocksThePhase(t *testing.T) {
 	r := newLoopRig(t)
-	r.lander.failOn = 2
+	r.lander.failOn = "2"
 
-	code := r.run(RunOptions{Phases: []int{2}})
+	code := r.run(RunOptions{Phases: []string{"2"}})
 
 	blocked := r.events("phase-blocked")
 	if code != 1 || len(blocked) != 1 || blocked[0].Fields["reason"] != "land: gate red" {
@@ -507,7 +507,7 @@ func TestLandingErrorBlocksThePhase(t *testing.T) {
 func TestQueuedIsRecordedBeforeTheStepSpawns(t *testing.T) {
 	r := newLoopRig(t)
 
-	r.run(RunOptions{Phases: []int{2}})
+	r.run(RunOptions{Phases: []string{"2"}})
 
 	var got []string
 	for _, rec := range r.store.Records["run-1"] {
@@ -554,7 +554,7 @@ func TestAbortBeforeLandingDoesNotLand(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.Runners = map[string]StepRunner{"plan-file": abortingRunner{store: r.store}}
 
-	code := r.run(RunOptions{Phases: []int{2}})
+	code := r.run(RunOptions{Phases: []string{"2"}})
 
 	if code != 1 {
 		t.Errorf("exit %d, want 1", code)
@@ -570,10 +570,10 @@ func TestAbortBeforeLandingDoesNotLand(t *testing.T) {
 func TestAssumptionsAreEmittedAfterThePlanStepAndReported(t *testing.T) {
 	r := newLoopRig(t)
 
-	r.run(RunOptions{Phases: []int{2}})
+	r.run(RunOptions{Phases: []string{"2"}})
 
 	got := r.events("assumption")
-	if len(got) != 1 || got[0].Phase != 2 || got[0].Fields["phase"] != "2" || got[0].Fields["text"] != "phase 2 keeps state in memory" {
+	if len(got) != 1 || got[0].Phase != "2" || got[0].Fields["phase"] != "2" || got[0].Fields["text"] != "phase 2 keeps state in memory" {
 		t.Fatalf("assumptions %+v", got)
 	}
 	if rep := r.report(t); !strings.Contains(rep, "## Assumptions\n\n### Phase 2\n\n- phase 2 keeps state in memory\n") {
@@ -583,9 +583,9 @@ func TestAssumptionsAreEmittedAfterThePlanStepAndReported(t *testing.T) {
 
 func TestResumeSkipsLandedPhasesAndOkStepsAndRerunsTheStoppedStep(t *testing.T) {
 	r := newLoopRig(t)
-	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: 1, Kind: "plan", Attempt: 1}, State: StepOK})
-	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: 1, Kind: "implement", Attempt: 1}, State: StepFailed})
-	r.store.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: 2, MergeSHA: "m2"}})
+	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: "1", Kind: "plan", Attempt: 1}, State: StepOK})
+	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: "1", Kind: "implement", Attempt: 1}, State: StepFailed})
+	r.store.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: "2", MergeSHA: "m2"}})
 
 	code := r.run(RunOptions{Resume: true})
 
@@ -610,7 +610,7 @@ func TestStallThatIgnoresTheNudgeFailsWithExit3(t *testing.T) {
 	r := newLoopRig(t)
 	r.host.behaviour["rloop-p2-plan"] = "stall"
 
-	code := r.run(RunOptions{Phases: []int{2}})
+	code := r.run(RunOptions{Phases: []string{"2"}})
 
 	if code != 3 {
 		t.Fatalf("exit %d, want 3", code)
@@ -669,7 +669,7 @@ func TestAbortMidStepStopsTheRunNamingTheLiveSession(t *testing.T) {
 func TestFromNarrowsTheRunList(t *testing.T) {
 	r := newLoopRig(t)
 
-	r.run(RunOptions{From: 2})
+	r.run(RunOptions{From: "2"})
 
 	if got := r.calls("Land "); !reflect.DeepEqual(got, []string{"2", "3"}) {
 		t.Errorf("landed %v", got)
@@ -679,28 +679,75 @@ func TestFromNarrowsTheRunList(t *testing.T) {
 func TestPhasesNarrowsTheRunList(t *testing.T) {
 	r := newLoopRig(t)
 
-	code := r.run(RunOptions{Phases: []int{3, 1}})
+	code := r.run(RunOptions{Phases: []string{"3", "1"}})
 
 	if got := r.calls("Land "); code != 0 || !reflect.DeepEqual(got, []string{"1", "3"}) {
 		t.Errorf("exit %d landed %v", code, got)
 	}
 }
 
+func letteredPlan() Plan {
+	var phases []Phase
+	for _, id := range []string{"1", "2", "2a", "2b", "3", "10", "10a"} {
+		phases = append(phases, Phase{ID: id, Items: []Item{{Text: "x"}}})
+	}
+	return Plan{Phases: phases}
+}
+
+func TestRunListSelectsLetteredPhases(t *testing.T) {
+	list, err := RunList(letteredPlan(), "todo.md", RunOptions{Phases: []string{"10a", "2b"}})
+
+	if err != nil || !reflect.DeepEqual(phaseIDs(list), []string{"2b", "10a"}) {
+		t.Errorf("list %v err %v", phaseIDs(list), err)
+	}
+}
+
+func TestRunListFromLetteredPhaseFollowsPlanOrder(t *testing.T) {
+	list, err := RunList(letteredPlan(), "todo.md", RunOptions{From: "2a"})
+
+	if err != nil || !reflect.DeepEqual(phaseIDs(list), []string{"2a", "2b", "3", "10", "10a"}) {
+		t.Errorf("list %v err %v", phaseIDs(list), err)
+	}
+}
+
+func TestComparePhaseIDsOrdersNumberThenSuffix(t *testing.T) {
+	ids := []string{"10a", "2", "10", "2b", "3", "2a", "1"}
+
+	slices.SortFunc(ids, ComparePhaseIDs)
+
+	if !reflect.DeepEqual(ids, []string{"1", "2", "2a", "2b", "3", "10", "10a"}) {
+		t.Errorf("sorted %v", ids)
+	}
+}
+
+func TestParseStepNameTakesLabels(t *testing.T) {
+	for step, want := range map[string]string{"phase-10a/implement": "10a", "phase-3/check": "3"} {
+		if phase, _, ok := ParseStepName(step); !ok || phase != want {
+			t.Errorf("%s: phase %q ok %v", step, phase, ok)
+		}
+	}
+	for _, step := range []string{"phase-0/plan", "phase-10ab/plan", "phase-10A/plan", "phase-3", "phase-3/", "phase-3/a/b", "3/plan"} {
+		if _, _, ok := ParseStepName(step); ok {
+			t.Errorf("%s parsed", step)
+		}
+	}
+}
+
 func TestPhasesNamingATickedOrAbsentPhaseIsExit2(t *testing.T) {
-	for _, n := range []int{4, 9} {
+	for _, n := range []string{"4", "9"} {
 		r := newLoopRig(t)
 
-		code := r.run(RunOptions{Phases: []int{1, n}})
+		code := r.run(RunOptions{Phases: []string{"1", n}})
 
 		if code != 2 {
-			t.Errorf("phase %d: exit %d, want 2", n, code)
+			t.Errorf("phase %s: exit %d, want 2", n, code)
 		}
 		errs := r.events("error")
-		if len(errs) != 1 || !strings.Contains(errs[0].Fields["reason"], "phase "+strconv.Itoa(n)) {
-			t.Errorf("phase %d: error events %+v", n, errs)
+		if len(errs) != 1 || !strings.Contains(errs[0].Fields["reason"], "phase "+n) {
+			t.Errorf("phase %s: error events %+v", n, errs)
 		}
 		if len(r.host.Opened) != 0 {
-			t.Errorf("phase %d: spawned %d sessions", n, len(r.host.Opened))
+			t.Errorf("phase %s: spawned %d sessions", n, len(r.host.Opened))
 		}
 	}
 }
@@ -736,7 +783,7 @@ func TestReportSectionsOfAFailedRun(t *testing.T) {
 
 func TestReportCountsHumanTouchesAndListsAutomaticDecisions(t *testing.T) {
 	ev := func(kind string, phase int, step string, fields map[string]string) Event {
-		return Event{Kind: kind, Phase: phase, Step: step, Fields: fields}
+		return Event{Kind: kind, Phase: strconv.Itoa(phase), Step: step, Fields: fields}
 	}
 	st := RunState{
 		ID: "run-1", Status: RunFinished,
@@ -753,12 +800,12 @@ func TestReportCountsHumanTouchesAndListsAutomaticDecisions(t *testing.T) {
 			ev("finding", 1, "implement", map[string]string{"step": "implement", "round": "1", "reviewer": "codex", "id": "codex-r1-1", "title": "nil map", "verdict": "real", "severity": "P1", "fixed": "true", "evidence": "x.go:3"}),
 		},
 		Questions: []Question{
-			{ID: "q1", Step: StepKey{Phase: 1, Kind: "implement"}, Text: "which db?", Answer: "sqlite", AnsweredBy: "watchdog", Citation: "docs/spec.html:4"},
-			{ID: "q2", Step: StepKey{Phase: 1, Kind: "implement"}, Text: "keep api?", Answer: "yes", AnsweredBy: "maintainer"},
+			{ID: "q1", Step: StepKey{Phase: "1", Kind: "implement"}, Text: "which db?", Answer: "sqlite", AnsweredBy: "watchdog", Citation: "docs/spec.html:4"},
+			{ID: "q2", Step: StepKey{Phase: "1", Kind: "implement"}, Text: "keep api?", Answer: "yes", AnsweredBy: "maintainer"},
 		},
-		Signals:  []Signal{{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Phase: 1, Kind: "implement"}, Reason: "drifting"}},
-		Remedies: []Remedy{{Step: StepKey{Phase: 1, Kind: "implement"}, Class: "lock", Command: "rm lock", Consent: "authorised"}},
-		Landed:   []Landing{{Phase: 2, MergeSHA: "abc", GateSkipped: true}},
+		Signals:  []Signal{{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Phase: "1", Kind: "implement"}, Reason: "drifting"}},
+		Remedies: []Remedy{{Step: StepKey{Phase: "1", Kind: "implement"}, Class: "lock", Command: "rm lock", Consent: "authorised"}},
+		Landed:   []Landing{{Phase: "2", MergeSHA: "abc", GateSkipped: true}},
 	}
 
 	rep := Report(st, threePhasePlan())
@@ -792,7 +839,7 @@ func TestReportCountsHumanTouchesAndListsAutomaticDecisions(t *testing.T) {
 func TestReportQuestionsNameTheAnswererCitationAndWaitAndSkipsListAskNonePerStep(t *testing.T) {
 	asked := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
 	ev := func(kind string, phase int, step string, fields map[string]string) Event {
-		return Event{Kind: kind, Phase: phase, Step: step, Fields: fields}
+		return Event{Kind: kind, Phase: strconv.Itoa(phase), Step: step, Fields: fields}
 	}
 	st := RunState{
 		ID: "run-1", Status: RunRunning,
@@ -802,9 +849,9 @@ func TestReportQuestionsNameTheAnswererCitationAndWaitAndSkipsListAskNonePerStep
 			ev("ask-none", 2, "implement", map[string]string{"provider": "gemini"}),
 		},
 		Questions: []Question{
-			{ID: "q1", Step: StepKey{Phase: 1, Kind: "implement"}, Text: "which db?", Answer: "postgres", AnsweredBy: "maintainer", AskedAt: asked, AnsweredAt: asked.Add(4 * time.Minute)},
-			{ID: "q2", Step: StepKey{Phase: 1, Kind: "implement-rv-codex"}, Text: "keep api?", Answer: "yes", AnsweredBy: "watchdog", Citation: "spec.html#adr-12", AskedAt: asked, AnsweredAt: asked.Add(30 * time.Second)},
-			{ID: "q3", Step: StepKey{Phase: 2, Kind: "plan"}, Text: "rename?", AskedAt: asked},
+			{ID: "q1", Step: StepKey{Phase: "1", Kind: "implement"}, Text: "which db?", Answer: "postgres", AnsweredBy: "maintainer", AskedAt: asked, AnsweredAt: asked.Add(4 * time.Minute)},
+			{ID: "q2", Step: StepKey{Phase: "1", Kind: "implement-rv-codex"}, Text: "keep api?", Answer: "yes", AnsweredBy: "watchdog", Citation: "spec.html#adr-12", AskedAt: asked, AnsweredAt: asked.Add(30 * time.Second)},
+			{ID: "q3", Step: StepKey{Phase: "2", Kind: "plan"}, Text: "rename?", AskedAt: asked},
 		},
 	}
 
@@ -829,12 +876,12 @@ func TestStepVarsFillsEveryTemplateVariable(t *testing.T) {
 	ph.Title = "RunLoop: phases, steps, halts and the report"
 	ph.Block = "### Phase 3 — RunLoop"
 	ph.Items = []Item{{Text: "loop", Done: false}, {Text: "done", Done: true}, {Text: "report"}}
-	ref := StepRef{Key: StepKey{Run: "run-1", Phase: 3, Kind: "plan", Attempt: 1}, Phase: ph, Worktree: ".r-loop/wt/phase-3", Branch: "r-loop/phase-3", Base: "main"}
+	ref := StepRef{Key: StepKey{Run: "run-1", Phase: "3", Kind: "plan", Attempt: 1}, Phase: ph, Worktree: ".r-loop/wt/phase-3", Branch: "r-loop/phase-3", Base: "main"}
 
 	vars := StepVars(ref, plan, "docs/x/todo.md", "/runs/run-1")
 
 	want := map[string]any{
-		"PhaseNumber": 3, "PhaseTitle": ph.Title, "PhaseBlock": "### Phase 3 — RunLoop",
+		"PhaseNumber": "3", "PhaseTitle": ph.Title, "PhaseBlock": "### Phase 3 — RunLoop",
 		"Criteria": "- [ ] loop\n- [ ] report", "TodoPath": "docs/x/todo.md", "SpecDir": "docs/x",
 		"PlanPath": ".task-plans/phase-3-runloop-phases-steps-halts-and-the-re.md",
 		"Branch":   "r-loop/phase-3", "Base": "main", "Worktree": ".r-loop/wt/phase-3", "Sentinel": "",
@@ -861,7 +908,7 @@ func TestStepVarsFillsEveryTemplateVariable(t *testing.T) {
 }
 
 func TestPlanPathIsTheKebabTitle(t *testing.T) {
-	ref := StepRef{Phase: Phase{Number: 7, Title: "Prompt  Renderer — v2!"}}
+	ref := StepRef{Phase: Phase{ID: "7", Title: "Prompt  Renderer — v2!"}}
 
 	got := StepVars(ref, Plan{}, "todo.md", "")["PlanPath"]
 
@@ -890,7 +937,7 @@ func TestLoopFallsBackToTheSingleRunner(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.Runners = nil
 
-	if code := r.run(RunOptions{Phases: []int{2}}); code != 0 {
+	if code := r.run(RunOptions{Phases: []string{"2"}}); code != 0 {
 		t.Errorf("exit %d", code)
 	}
 }
@@ -921,7 +968,7 @@ func TestReviewHookRunsOnlyForAnOkStepWithReviewersAndRounds(t *testing.T) {
 				return Outcome{State: StepOK, Session: s}
 			}}}
 
-			r.run(RunOptions{Phases: []int{2}})
+			r.run(RunOptions{Phases: []string{"2"}})
 
 			if calls != c.want {
 				t.Errorf("review called %d times, want %d", calls, c.want)
@@ -934,7 +981,7 @@ func TestAGateFixReviewRoundIsARunningStepEventNamingTheRound(t *testing.T) {
 	store := &fakeStore{}
 	face := &fakeFace{}
 	s := &Session{Workspace: "ws-5", Ref: StepRef{
-		Key:  StepKey{Run: "run-1", Phase: 3, Kind: "gatefix", Attempt: 1},
+		Key:  StepKey{Run: "run-1", Phase: "3", Kind: "gatefix", Attempt: 1},
 		Kind: StepKind{Name: "gatefix", Row: StepRow{Provider: "codex", Model: "gpt-5", Effort: "high", Timeout: time.Hour, Rounds: 1}},
 	}}
 
@@ -950,10 +997,10 @@ func TestTheFaceSeesTheNudgeAfterTheStall(t *testing.T) {
 	r := newLoopRig(t)
 	r.host.behaviour["rloop-p2-plan"] = "stall"
 
-	r.run(RunOptions{Phases: []int{2}})
+	r.run(RunOptions{Phases: []string{"2"}})
 
 	nudges := r.events("nudge")
-	if len(nudges) != 1 || nudges[0].Phase != 2 || nudges[0].Step != "plan" {
+	if len(nudges) != 1 || nudges[0].Phase != "2" || nudges[0].Step != "plan" {
 		t.Fatalf("nudge events %+v", nudges)
 	}
 	kinds := r.kinds()
@@ -977,7 +1024,7 @@ func TestAnItemThePlanFindsAlreadyDoneIsSkippedNotLanded(t *testing.T) {
 	r.loop.Plan.Phases[0].DoneWhen = "`go test ./...`"
 	r.host.behaviour["rloop-p2-plan"] = "already-done"
 
-	code := r.run(RunOptions{Phases: []int{1, 2}})
+	code := r.run(RunOptions{Phases: []string{"1", "2"}})
 
 	if code != 0 {
 		t.Fatalf("exit %d, want 0", code)
@@ -991,7 +1038,7 @@ func TestAnItemThePlanFindsAlreadyDoneIsSkippedNotLanded(t *testing.T) {
 		}
 	}
 	skips := r.events("item-skipped")
-	if len(skips) != 1 || skips[0].Phase != 2 || skips[0].Fields["reason"] != "already-done: do it: store/store.go:12" {
+	if len(skips) != 1 || skips[0].Phase != "2" || skips[0].Fields["reason"] != "already-done: do it: store/store.go:12" {
 		t.Fatalf("item-skipped = %+v", skips)
 	}
 	if rep := r.report(t); !strings.Contains(rep, "phase 2: item-skipped: already-done: do it: store/store.go:12") {
@@ -1002,11 +1049,11 @@ func TestAnItemThePlanFindsAlreadyDoneIsSkippedNotLanded(t *testing.T) {
 func TestAnAlreadyDonePlanOnResumeSkipsTheItemAgain(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.Sessions.ItemGates = true
-	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: 2, Kind: "plan", Attempt: 1}, State: StepOK})
-	plan := filepath.Join(r.repo.RootDir, ".r-loop/wt/phase-2", phasePlanPath(2, "Store"))
+	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: "2", Kind: "plan", Attempt: 1}, State: StepOK})
+	plan := filepath.Join(r.repo.RootDir, ".r-loop/wt/phase-2", phasePlanPath("2", "Store"))
 	writeFile(plan, "status: not-work\n\n## Evidence\n- a question: docs/spec.md:3\n")
 
-	code := r.run(RunOptions{Phases: []int{2}, Resume: true})
+	code := r.run(RunOptions{Phases: []string{"2"}, Resume: true})
 
 	if code != 0 || len(r.calls("Land ")) != 0 || len(r.events("item-skipped")) != 1 {
 		t.Fatalf("exit %d, lands %v, skips %+v", code, r.calls("Land "), r.events("item-skipped"))

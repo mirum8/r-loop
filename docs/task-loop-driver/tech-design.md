@@ -53,22 +53,26 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `StepKey.Attempt` increments and the new key starts at `queued`; the old attempt's record is
   never reopened. Any other transition returns `ErrIllegalTransition`. A step's review rounds are
   not states: a step stays `running` through them, and each round is recorded as events.
-- **Types** — `StepKey{Run string; Phase int; Kind string; Attempt int}` ·
-  `Phase{Number int; Title string; Implements []string; DependsOn []int; Files []string; Risk
-  string; Items []Item; DoneWhen string; Milestone int; Block string}` (`Block` is the raw
-  heading-to-next-heading text, followed — when any ticked `## Resolve first` entry's `Blocks:`
+- **Types** — `StepKey{Run string; Phase string; Kind string; Attempt int}` ·
+  `Phase{ID string; Title string; Implements []string; DependsOn []string; Files []string; Risk
+  string; Items []Item; DoneWhen string; Milestone int; Block string}` (`ID` is the heading label,
+  `\d+[a-z]?` lowercased with leading zeros dropped — `10`, or `10a` for a phase inserted after 10;
+  every phase reference below is that label, so the run dir is `phase-10a/`. Labels run in
+  document order, fail-closed: no duplicate, the first is `1`, a bare number is the previous
+  number + 1, a lettered label shares the previous number and sorts after it — `1, 2, 2a, 2b, 3`;
+  `Block` is the raw heading-to-next-heading text, followed — when any ticked `## Resolve first` entry's `Blocks:`
   names that phase or all — by a blank line, `Resolved first:`, a blank line and the full text of
   each such entry; the `plan` and `implement` prompts tell the agent to follow each `Resolved:`
   line and never ask about it again) · `Item{Text string; Done bool}` · `Milestone{Number int; Name
-  string; Phases []int}` · `Entry{Name, Body string; Ticked, HasBox bool; Owner, Blocks, Timebox,
-  Output, Resolved string; BlocksAll bool; BlocksPhases []int; Malformed []string}` ·
+  string; Phases []string}` · `Entry{Name, Body string; Ticked, HasBox bool; Owner, Blocks, Timebox,
+  Output, Resolved string; BlocksAll bool; BlocksPhases []string; Malformed []string}` ·
   `Signal{Seq int; Kind SignalKind; Source SignalSource; Step StepKey; Reason, Evidence string; At
   time.Time; Rejected bool; RejectReason string}` · `Question{ID string; Step StepKey; Text
   string; Options []string; Recommended string; AskedAt time.Time; Answer, AnsweredBy, Citation string; AnsweredAt
   time.Time}` · `Remedy{ID string; Step StepKey; Class, Command, Why, Consent string; ProposedAt,
-  DecidedAt time.Time}` · `Landing{Phase int; MergeSHA string; GateSkipped bool; GateOutput
+  DecidedAt time.Time}` · `Landing{Phase string; MergeSHA string; GateSkipped bool; GateOutput
   string; Added, Deleted int}` — the merge's diff size, measured by the land gate before the gate
-  runs; a failed measurement aborts the merge · `Event{At time.Time; Kind string; Phase int; Step string; Fields
+  runs; a failed measurement aborts the merge · `Event{At time.Time; Kind string; Phase string; Step string; Fields
   map[string]string}` — the one stream both faces render · `RunMeta{Todo string; ResolvedConfig
   []byte; Started time.Time}` · `Record{Kind string; At time.Time; Step *StepKey; State
   StepState; Run RunStatus; Reason string; Question *Question; Signal *Signal; Remedy *Remedy; Landing
@@ -77,7 +81,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   Events []Event; Warnings []string; Spans map[StepKey]StepSpan}` · `StepSpan{Started, Ended
   time.Time}` — a step's first `running` record (the moment `Watch.StepStarted` fires) to its `ok`/`failed` record, replayed from the step log.
 - **Ports** (interfaces in `internal/core`, each with a fake in `internal/core/fakes_test.go`):
-  - `PlanSource`: `Read(path) (Plan, error)` · `Tick(path, phase int) error` (the `Stamp` method was removed
+  - `PlanSource`: `Read(path) (Plan, error)` · `Tick(path, phase string) error` (the `Stamp` method was removed
     with ADR-72: the watchdog writes the stamp); `Plan{Path, Topic string; Phases []Phase; Milestones
     []Milestone; ResolveFirst []Entry}`.
   - `SessionHost`: `Reachable() error` · `Open(OpenSpec{CWD, Label string; Env
@@ -297,7 +301,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `Wait`, then the review half when `Row.Reviewers` is non-empty and `Row.Rounds > 0`, then the
   one commit. Until Milestone 4 lands the review half is a no-op, so wiring never changes when it
   does. `core.StepVars` fills every template variable, empty where unused.
-- **Run list** — unticked phases in numeric order, narrowed by `--from N` or `--phases n,n`; a
+- **Run list** — unticked phases in document order, narrowed by `--from N` (that label and every
+  phase after it) or `--phases n,n`, both taking labels such as `10a`; a
   listed phase ticked or absent is exit `2`. Phase state advances `planned → implemented →
   landed`.
 - **Outcomes** — `failed` → wait `watchdog.remedyWindow` for a `Restart` (skipped with no
@@ -595,7 +600,7 @@ and the driver validates that argv before anything of a run exists.
   (`internal/plan/backlog.go`) and sets `Plan.Backlog`. Item = column-0 `- [ ]`/`* [ ]`/`- `/`* `/
   `1. ` line plus the lines indented under it, or a `##`/`###` heading followed by prose; text
   before the first item is header. Done = `[x]`/`[X]`, `~~…~~`, `<!-- fixed: … -->`, or under a
-  `Done|Completed|Fixed|Shipped|Archive` heading. `Phase.Number` = the item's place among all items;
+  `Done|Completed|Fixed|Shipped|Archive` heading. `Phase.ID` = the item's place among all items, `"1"`..`"N"`;
   `Title` = its text verbatim; `Items` = its indented list lines, or the title when it has none;
   no `DependsOn`, `Files`, `DoneWhen`, `Milestone`. `Topic` = file name without extension. No items →
   error (exit 2).

@@ -165,7 +165,7 @@ func runFakeLoop(t *testing.T, n core.Notifier) (int, *events) {
 	}
 	face := &events{}
 	loop := &core.RunLoop{
-		Plan:     core.Plan{Phases: []core.Phase{{Number: 1, Items: []core.Item{{Text: "a"}}}}},
+		Plan:     core.Plan{Phases: []core.Phase{{ID: "1", Items: []core.Item{{Text: "a"}}}}},
 		TodoPath: "todo.md",
 		Kinds:    []core.StepKind{{Name: "implement", Check: "diff"}},
 		Sessions: &core.SessionManager{Repo: repo{}},

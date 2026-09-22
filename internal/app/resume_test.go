@@ -157,14 +157,14 @@ func writeTo(path, body string) {
 type landRecorder struct {
 	st     *store.Store
 	mu     sync.Mutex
-	landed []int
+	landed []string
 }
 
 func (l *landRecorder) Land(ctx context.Context, ph core.Phase) (core.Landing, error) {
 	l.mu.Lock()
-	l.landed = append(l.landed, ph.Number)
+	l.landed = append(l.landed, ph.ID)
 	l.mu.Unlock()
-	landing := core.Landing{Phase: ph.Number}
+	landing := core.Landing{Phase: ph.ID}
 	id, _, _ := l.st.Current()
 	return landing, l.st.Append(id, core.Record{Kind: core.RecordLanding, At: time.Now(), Landing: &landing})
 }
@@ -249,10 +249,10 @@ func TestResumeAfterFailedImplementRerunsOnlyImplementAsAttempt2OverItsWork(t *t
 	if got := sim.promptedAgents(); !slices.Equal(got, []string{"rloop-p1-implement-a2"}) {
 		t.Fatalf("prompted %v", got)
 	}
-	if st := f.load(id); st.Steps[core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 2}] != core.StepOK {
+	if st := f.load(id); st.Steps[core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 2}] != core.StepOK {
 		t.Fatalf("attempt 2 = %v", st.Steps)
 	}
-	if !slices.Equal(lander.landed, []int{1}) {
+	if !slices.Equal(lander.landed, []string{"1"}) {
 		t.Fatalf("landed %v", lander.landed)
 	}
 	if b := git(t, f.root, "show", "r-loop/phase-1:wip.txt"); b != "half done by rloop-p1-implement" {
@@ -349,7 +349,7 @@ func TestResumeRunsBothHaltedPhasesInOrderThenTheSkippedDependent(t *testing.T) 
 	if code != 1 {
 		t.Fatalf("first run exit %d", code)
 	}
-	if skipped := stepEvents(f.load(id), "phase-skipped"); len(skipped) != 1 || skipped[0].Phase != 3 {
+	if skipped := stepEvents(f.load(id), "phase-skipped"); len(skipped) != 1 || skipped[0].Phase != "3" {
 		t.Fatalf("skipped %+v", skipped)
 	}
 	f.write(".r-loop/wt/phase-2/notes.txt", "mine")
@@ -370,7 +370,7 @@ func TestResumeRunsBothHaltedPhasesInOrderThenTheSkippedDependent(t *testing.T) 
 	if got := sim.promptedAgents(); !slices.Equal(got, want) {
 		t.Fatalf("prompted %v, want %v", got, want)
 	}
-	if !slices.Equal(lander.landed, []int{1, 2, 3}) {
+	if !slices.Equal(lander.landed, []string{"1", "2", "3"}) {
 		t.Fatalf("landed %v", lander.landed)
 	}
 	out := f.out.String()
@@ -411,8 +411,8 @@ func TestResumeDuringAReviewContinuesAtTheRecordedRound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := core.StepKey{Run: id, Phase: 1, Kind: "plan", Attempt: 1}
-	impl := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
+	plan := core.StepKey{Run: id, Phase: "1", Kind: "plan", Attempt: 1}
+	impl := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
 	for _, r := range []core.Record{
 		ev(t0, "run-list", 0, "", map[string]string{"phases": "1"}),
 		{Kind: core.RecordStep, Step: &plan, State: core.StepOK},
@@ -488,7 +488,7 @@ func TestReplanRerunsPlanWithTheAddendumThenImplement(t *testing.T) {
 		t.Fatalf("failed work committed by %q", log)
 	}
 	st := f.load(id)
-	for _, k := range []core.StepKey{{Run: id, Phase: 1, Kind: "plan", Attempt: 2}, {Run: id, Phase: 1, Kind: "implement", Attempt: 2}} {
+	for _, k := range []core.StepKey{{Run: id, Phase: "1", Kind: "plan", Attempt: 2}, {Run: id, Phase: "1", Kind: "implement", Attempt: 2}} {
 		if st.Steps[k] != core.StepOK {
 			t.Fatalf("%v = %q", k, st.Steps[k])
 		}
@@ -584,7 +584,7 @@ func TestAbortEndsALiveRunNamingTheSessionAndClearsCurrent(t *testing.T) {
 	}
 	f.sim(w, sim)
 	done := make(chan int, 1)
-	go func() { done <- w.Execute(core.RunOptions{Phases: []int{1}}) }()
+	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
 	for deadline := time.Now().Add(5 * time.Second); !slices.Contains(sim.promptedAgents(), "rloop-p1-plan"); {
 		if time.Now().After(deadline) {
 			t.Fatal("plan never prompted")
@@ -667,7 +667,7 @@ func TestResumeAfterAbortRunsTheStoppedStep(t *testing.T) {
 	}
 	f.sim(w, sim)
 	done := make(chan int, 1)
-	go func() { done <- w.Execute(core.RunOptions{Phases: []int{1}}) }()
+	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
 	for !slices.Contains(sim.promptedAgents(), "rloop-p1-plan") {
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -687,7 +687,7 @@ func TestResumeAfterAbortRunsTheStoppedStep(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("code=%d err=%v\n%s", code, err, f.out)
 	}
-	if !slices.Equal(lander.landed, []int{1}) {
+	if !slices.Equal(lander.landed, []string{"1"}) {
 		t.Fatalf("landed %v", lander.landed)
 	}
 }
@@ -711,8 +711,8 @@ func TestClaimComparesAgainstTheStoppedStepsOwnTree(t *testing.T) {
 	}
 	st := store.New(f.root)
 	id, _ := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
-	plan := core.StepKey{Run: id, Phase: 1, Kind: "plan", Attempt: 1}
-	impl := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
+	plan := core.StepKey{Run: id, Phase: "1", Kind: "plan", Attempt: 1}
+	impl := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
 	for _, r := range []core.Record{
 		ev(t0, "run-list", 0, "", map[string]string{"phases": "1"}),
 		ev(t0, "step", 1, "plan", map[string]string{"state": "running", "attempt": "1", "workspace": "w1"}),
@@ -763,8 +763,8 @@ func (f *fixture) seedKilledImplement() (string, string) {
 	}
 	st := store.New(f.root)
 	id, _ := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
-	plan := core.StepKey{Run: id, Phase: 1, Kind: "plan", Attempt: 1}
-	impl := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
+	plan := core.StepKey{Run: id, Phase: "1", Kind: "plan", Attempt: 1}
+	impl := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
 	for _, r := range []core.Record{
 		ev(t0, "run-list", 0, "", map[string]string{"phases": "1"}),
 		{Kind: core.RecordStep, Step: &plan, State: core.StepOK},
@@ -796,7 +796,7 @@ func TestResumeClaimsTheLeftoversOfAStepKilledInItsWorkHalfAndBuildsOnThem(t *te
 	if got := sim.promptedAgents(); !slices.Equal(got, []string{"rloop-p1-implement-a2"}) {
 		t.Fatalf("prompted %v", got)
 	}
-	if !slices.Equal(lander.landed, []int{1}) {
+	if !slices.Equal(lander.landed, []string{"1"}) {
 		t.Fatalf("landed %v", lander.landed)
 	}
 	files := git(t, f.root, "show", "--name-only", "--format=%s", "r-loop/phase-1")
@@ -822,7 +822,7 @@ func TestResumeRefusesChangesUnderARunningStepWithNoBaseline(t *testing.T) {
 	}
 	st := store.New(f.root)
 	id, _ := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
-	impl := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
+	impl := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
 	for _, r := range []core.Record{
 		ev(t0, "run-list", 0, "", map[string]string{"phases": "1"}),
 		ev(t0, "baseline", 1, "plan", map[string]string{"step": "plan-a1", "tree": "whatever"}),
@@ -862,7 +862,7 @@ func TestResumeInterruptsTheKilledDriversStillWorkingStepAgentBeforeItClaims(t *
 		t.Fatalf("herdr calls:\n%s", calls)
 	}
 	stale := stepEvents(f.load(id), "stale-interrupted")
-	if len(stale) != 1 || stale[0].Phase != 1 || stale[0].Step != "implement" || stale[0].Fields["agent"] != "rloop-p1-implement" || stale[0].Fields["state"] != "working" {
+	if len(stale) != 1 || stale[0].Phase != "1" || stale[0].Step != "implement" || stale[0].Fields["agent"] != "rloop-p1-implement" || stale[0].Fields["state"] != "working" {
 		t.Fatalf("stale-interrupted events %+v", stale)
 	}
 	if !strings.Contains(f.out.String(), "interrupted previous session rloop-p1-implement: still working") {
@@ -928,7 +928,7 @@ func TestResumeClosesTheAttemptTheKilledDriverLeftRunningBeforeTheRerun(t *testi
 	if err != nil || code != 0 {
 		t.Fatalf("code=%d err=%v\n%s", code, err, f.out)
 	}
-	a1 := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
+	a1 := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
 	if got := f.load(id).Steps[a1]; got != core.StepFailed {
 		t.Fatalf("attempt 1 is %s", got)
 	}
@@ -942,7 +942,7 @@ func TestResumeClosesTheAttemptTheKilledDriverLeftRunningBeforeTheRerun(t *testi
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			t.Fatal(err)
 		}
-		if rec.Kind == core.RecordStep && rec.Step.Phase == 1 && rec.Step.Kind == "implement" {
+		if rec.Kind == core.RecordStep && rec.Step.Phase == "1" && rec.Step.Kind == "implement" {
 			trail = append(trail, fmt.Sprintf("a%d %s %s", rec.Step.Attempt, rec.State, rec.Reason))
 		}
 	}

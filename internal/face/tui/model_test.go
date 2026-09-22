@@ -22,27 +22,27 @@ func at(min int) time.Time { return t0.Add(time.Duration(min) * time.Minute) }
 
 func plan() []core.Phase {
 	return []core.Phase{
-		{Number: 1, Title: "scaffold"},
-		{Number: 2, Title: "config reader"},
-		{Number: 3, Title: "state store"},
-		{Number: 4, Title: "session manager"},
+		{ID: "1", Title: "scaffold"},
+		{ID: "2", Title: "config reader"},
+		{ID: "3", Title: "state store"},
+		{ID: "4", Title: "session manager"},
 	}
 }
 
 func step(min, phase int, kind, state, provider, model, effort, ws string) core.Event {
-	return core.Event{At: at(min), Kind: "step", Phase: phase, Step: kind, Fields: map[string]string{
+	return core.Event{At: at(min), Kind: "step", Phase: strconv.Itoa(phase), Step: kind, Fields: map[string]string{
 		"state": state, "attempt": "1", "provider": provider, "model": model, "effort": effort,
 		"backstop": "4h0m0s", "rounds": "2", "reason": "", "workspace": ws,
 	}}
 }
 
 func phaseState(min, phase int, state string) core.Event {
-	return core.Event{At: at(min), Kind: "phase-state", Phase: phase, Fields: map[string]string{"phase": strconv.Itoa(phase), "state": state}}
+	return core.Event{At: at(min), Kind: "phase-state", Phase: strconv.Itoa(phase), Fields: map[string]string{"phase": strconv.Itoa(phase), "state": state}}
 }
 
 func recorded() []core.Event {
 	return []core.Event{
-		{At: at(0), Kind: "phase-start", Phase: 1, Fields: map[string]string{"phase": "1", "title": "scaffold"}},
+		{At: at(0), Kind: "phase-start", Phase: "1", Fields: map[string]string{"phase": "1", "title": "scaffold"}},
 		step(0, 1, "plan", "running", "claude", "opus", "high", "ws-1"),
 		step(5, 1, "plan", "ok", "claude", "opus", "high", "ws-1"),
 		phaseState(5, 1, "planned"),
@@ -50,19 +50,19 @@ func recorded() []core.Event {
 		step(20, 1, "implement", "ok", "codex", "gpt-5", "medium", "ws-2"),
 		phaseState(20, 1, "implemented"),
 		phaseState(21, 1, "landed"),
-		{At: at(21), Kind: "landed", Phase: 1, Fields: map[string]string{"phase": "1", "merge": "abc", "gateSkipped": "false"}},
-		{At: at(22), Kind: "phase-start", Phase: 2, Fields: map[string]string{"phase": "2", "title": "config reader"}},
+		{At: at(21), Kind: "landed", Phase: "1", Fields: map[string]string{"phase": "1", "merge": "abc", "gateSkipped": "false"}},
+		{At: at(22), Kind: "phase-start", Phase: "2", Fields: map[string]string{"phase": "2", "title": "config reader"}},
 		step(22, 2, "plan", "running", "claude", "opus", "high", "ws-3"),
-		{At: at(23), Kind: "question", Phase: 2, Step: "plan", Fields: map[string]string{"id": "q1", "text": "Which config format?"}},
-		{At: at(25), Kind: "question-answered", Phase: 2, Step: "plan", Fields: map[string]string{"id": "q1", "answer": "yaml", "by": "watchdog", "citation": "docs/spec.md:12"}},
-		{At: at(25), Kind: "human", Phase: 2, Step: "plan", Fields: map[string]string{"what": "answer", "id": "q1"}},
+		{At: at(23), Kind: "question", Phase: "2", Step: "plan", Fields: map[string]string{"id": "q1", "text": "Which config format?"}},
+		{At: at(25), Kind: "question-answered", Phase: "2", Step: "plan", Fields: map[string]string{"id": "q1", "answer": "yaml", "by": "watchdog", "citation": "docs/spec.md:12"}},
+		{At: at(25), Kind: "human", Phase: "2", Step: "plan", Fields: map[string]string{"what": "answer", "id": "q1"}},
 		step(30, 2, "plan", "ok", "claude", "opus", "high", "ws-3"),
 		phaseState(30, 2, "planned"),
 		step(31, 2, "implement", "queued", "codex", "gpt-5", "medium", ""),
 		step(31, 2, "implement", "spawned", "codex", "gpt-5", "medium", "ws-4"),
 		step(31, 2, "implement", "running", "codex", "gpt-5", "medium", "ws-4"),
-		{At: at(35), Kind: "warning", Phase: 2, Step: "implement", Fields: map[string]string{"reason": "diff is large"}},
-		{At: at(40), Kind: "question", Phase: 2, Step: "implement", Fields: map[string]string{"id": "q2", "text": "Which port?"}},
+		{At: at(35), Kind: "warning", Phase: "2", Step: "implement", Fields: map[string]string{"reason": "diff is large"}},
+		{At: at(40), Kind: "question", Phase: "2", Step: "implement", Fields: map[string]string{"id": "q2", "text": "Which port?"}},
 		step(40, 2, "implement", "waiting-input", "codex", "gpt-5", "medium", "ws-4"),
 	}
 }
@@ -76,18 +76,17 @@ func newModel(events []core.Event) Model {
 }
 
 type plainView struct {
-	states map[int]string
+	states map[string]string
 	live   string
 }
 
 func readPlain(out string) plainView {
-	v := plainView{states: map[int]string{}}
+	v := plainView{states: map[string]string{}}
 	stateRe := regexp.MustCompile(`phase-state  phase=(\d+) state=(\S+)`)
 	stepRe := regexp.MustCompile(`^\S+  phase (\d+)  (\S+)  (\S+)  (\S+)`)
 	for _, line := range strings.Split(out, "\n") {
 		if m := stateRe.FindStringSubmatch(line); m != nil {
-			n, _ := strconv.Atoi(m[1])
-			v.states[n] = m[2]
+			v.states[m[1]] = m[2]
 		} else if m := stepRe.FindStringSubmatch(line); m != nil {
 			v.live = strings.Join(m[1:], " ")
 		}
@@ -106,17 +105,17 @@ func TestPlainFaceAndTUIModelShowTheSameRun(t *testing.T) {
 	m := newModel(recorded())
 
 	for _, row := range m.Phases {
-		if got, ok := want.states[row.Number]; ok && string(row.State) != got {
-			t.Errorf("phase %d: tui %s, plain %s", row.Number, row.State, got)
+		if got, ok := want.states[row.ID]; ok && string(row.State) != got {
+			t.Errorf("phase %s: tui %s, plain %s", row.ID, row.State, got)
 		}
-		if _, ok := want.states[row.Number]; !ok && row.State != core.PhaseUnticked {
-			t.Errorf("phase %d: tui %s, plain shows no state", row.Number, row.State)
+		if _, ok := want.states[row.ID]; !ok && row.State != core.PhaseUnticked {
+			t.Errorf("phase %s: tui %s, plain shows no state", row.ID, row.State)
 		}
 	}
 	if len(want.states) != 2 {
 		t.Fatalf("plain states %v", want.states)
 	}
-	live := strings.Join([]string{strconv.Itoa(m.Live.Phase), m.Live.Kind, m.Live.State, m.Live.Provider}, " ")
+	live := strings.Join([]string{m.Live.Phase, m.Live.Kind, m.Live.State, m.Live.Provider}, " ")
 	if live != want.live || live != "2 implement waiting-input codex" {
 		t.Errorf("live: tui %q, plain %q", live, want.live)
 	}
@@ -186,18 +185,18 @@ func TestTheFeedNamesWhatHappenedInItsTone(t *testing.T) {
 		text string
 		tone tone
 	}{
-		{core.Event{Kind: "warning", Phase: 2, Step: "implement", Fields: map[string]string{"reason": "diff is large"}}, "phase 2 implement: diff is large", toneWarn},
+		{core.Event{Kind: "warning", Phase: "2", Step: "implement", Fields: map[string]string{"reason": "diff is large"}}, "phase 2 implement: diff is large", toneWarn},
 		{core.Event{Kind: "error", Fields: map[string]string{"reason": "bad flag"}}, "bad flag", toneError},
 		{core.Event{Kind: "watchdog-unreachable", Fields: map[string]string{"reason": "pane closed"}}, "watchdog gone: pane closed", toneError},
-		{core.Event{Kind: "stalled", Phase: 2, Step: "implement", Fields: map[string]string{"workspace": "ws-4"}}, "phase 2 implement: stalled", toneError},
-		{core.Event{Kind: "restart-refused", Phase: 2, Step: "implement", Fields: map[string]string{"reason": "restart limit 2 reached"}}, "restart limit 2 reached", toneError},
-		{core.Event{Kind: "restart", Phase: 2, Step: "implement"}, "phase 2 implement: restarted", toneDim},
-		{core.Event{Kind: "nudge", Phase: 2, Step: "implement"}, "nudged", toneDim},
-		{core.Event{Kind: "landed", Phase: 1, Fields: map[string]string{"merge": "0123456789abcdef", "gateSkipped": "true"}}, "phase 1: landed 0123456 · gate skipped", toneDim},
-		{core.Event{Kind: "gate-fix", Phase: 1, Step: "land", Fields: map[string]string{"round": "2"}}, "land gate fix r2", toneDim},
-		{core.Event{Kind: "assumption", Phase: 1, Step: "plan", Fields: map[string]string{"text": "yaml config"}}, "assumed: yaml config", toneDim},
-		{core.Event{Kind: "question", Phase: 2, Step: "implement", Fields: map[string]string{"id": "q2", "text": "Which port?"}}, "asked q2", toneDim},
-		{core.Event{Kind: "question-answered", Phase: 2, Step: "implement", Fields: map[string]string{"id": "q2", "by": "maintainer"}}, "q2 answered by maintainer", toneDim},
+		{core.Event{Kind: "stalled", Phase: "2", Step: "implement", Fields: map[string]string{"workspace": "ws-4"}}, "phase 2 implement: stalled", toneError},
+		{core.Event{Kind: "restart-refused", Phase: "2", Step: "implement", Fields: map[string]string{"reason": "restart limit 2 reached"}}, "restart limit 2 reached", toneError},
+		{core.Event{Kind: "restart", Phase: "2", Step: "implement"}, "phase 2 implement: restarted", toneDim},
+		{core.Event{Kind: "nudge", Phase: "2", Step: "implement"}, "nudged", toneDim},
+		{core.Event{Kind: "landed", Phase: "1", Fields: map[string]string{"merge": "0123456789abcdef", "gateSkipped": "true"}}, "phase 1: landed 0123456 · gate skipped", toneDim},
+		{core.Event{Kind: "gate-fix", Phase: "1", Step: "land", Fields: map[string]string{"round": "2"}}, "land gate fix r2", toneDim},
+		{core.Event{Kind: "assumption", Phase: "1", Step: "plan", Fields: map[string]string{"text": "yaml config"}}, "assumed: yaml config", toneDim},
+		{core.Event{Kind: "question", Phase: "2", Step: "implement", Fields: map[string]string{"id": "q2", "text": "Which port?"}}, "asked q2", toneDim},
+		{core.Event{Kind: "question-answered", Phase: "2", Step: "implement", Fields: map[string]string{"id": "q2", "by": "maintainer"}}, "q2 answered by maintainer", toneDim},
 		{core.Event{Kind: "human", Fields: map[string]string{"what": "resume"}}, "resumed", toneDim},
 		{core.Event{Kind: "signal-rejected", Fields: map[string]string{"reason": "step is not running"}}, "step is not running", toneDim},
 	}
@@ -209,7 +208,7 @@ func TestTheFeedNamesWhatHappenedInItsTone(t *testing.T) {
 		}
 	}
 	for _, kind := range []string{"workspace-closed", "worktree-removed"} {
-		if m := newModel([]core.Event{{At: at(5), Kind: kind, Phase: 1}}); len(m.Feed) != 0 {
+		if m := newModel([]core.Event{{At: at(5), Kind: kind, Phase: "1"}}); len(m.Feed) != 0 {
 			t.Errorf("%s logged: %+v", kind, m.Feed)
 		}
 	}
@@ -230,13 +229,13 @@ func TestAnOpenQuestionPointsAtTheWatchdogUntilItIsAnswered(t *testing.T) {
 	if strings.Contains(view, "Which port?") || strings.Contains(view, "q1 ·") {
 		t.Fatalf("view shows question text or an answered question:\n%s", view)
 	}
-	m = m.Apply(core.Event{At: at(44), Kind: "question", Phase: 2, Step: "implement", Fields: map[string]string{"id": "q3", "text": "Which host?"}})
+	m = m.Apply(core.Event{At: at(44), Kind: "question", Phase: "2", Step: "implement", Fields: map[string]string{"id": "q3", "text": "Which host?"}})
 	if !strings.Contains(m.View(), "watchdog · q2 · 3m0s (+1)") {
 		t.Fatalf("view does not count the second question:\n%s", m.View())
 	}
 
-	m = m.Apply(core.Event{At: at(45), Kind: "question-answered", Phase: 2, Step: "implement", Fields: map[string]string{"id": "q2", "by": "watchdog"}})
-	m = m.Apply(core.Event{At: at(45), Kind: "question-answered", Phase: 2, Step: "implement", Fields: map[string]string{"id": "q3", "by": "maintainer"}})
+	m = m.Apply(core.Event{At: at(45), Kind: "question-answered", Phase: "2", Step: "implement", Fields: map[string]string{"id": "q2", "by": "watchdog"}})
+	m = m.Apply(core.Event{At: at(45), Kind: "question-answered", Phase: "2", Step: "implement", Fields: map[string]string{"id": "q3", "by": "maintainer"}})
 
 	if strings.Contains(m.View(), "waiting    ") {
 		t.Fatalf("answered questions still shown:\n%s", m.View())
@@ -296,7 +295,7 @@ func ansiStrip(s string) string {
 
 func TestBlockedPhaseAndSkippedDependents(t *testing.T) {
 	m := newModel([]core.Event{
-		{At: at(1), Kind: "phase-blocked", Phase: 2, Step: "implement", Fields: map[string]string{"phase": "2", "reason": "backstop"}},
+		{At: at(1), Kind: "phase-blocked", Phase: "2", Step: "implement", Fields: map[string]string{"phase": "2", "reason": "backstop"}},
 	})
 
 	if m.Phases[1].State != core.PhaseBlocked {
@@ -439,7 +438,7 @@ func TestFaceSendsEventsToTheProgramAndClosesOnQ(t *testing.T) {
 
 func TestSkippedDependentsAreBlocked(t *testing.T) {
 	m := newModel([]core.Event{
-		{At: at(1), Kind: "phase-skipped", Phase: 3, Fields: map[string]string{"phase": "3", "because": "2"}},
+		{At: at(1), Kind: "phase-skipped", Phase: "3", Fields: map[string]string{"phase": "3", "because": "2"}},
 	})
 
 	if m.Phases[2].State != core.PhaseBlocked {
@@ -450,7 +449,7 @@ func TestSkippedDependentsAreBlocked(t *testing.T) {
 func TestAnAbortedRunIsHaltedWithTheResumeLine(t *testing.T) {
 	m := newModel(recorded())
 
-	m = m.Apply(core.Event{At: at(90), Kind: "aborted", Phase: 2, Step: "implement"})
+	m = m.Apply(core.Event{At: at(90), Kind: "aborted", Phase: "2", Step: "implement"})
 
 	if m.Status != "halted" || !strings.Contains(m.View(), "resume: r-loop resume") {
 		t.Fatalf("status %q view:\n%s", m.Status, m.View())

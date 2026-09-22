@@ -108,7 +108,7 @@ func filesOutsidePlan(ctx CheckContext) string {
 	return reason
 }
 
-func landedRun(ctx CheckContext) (RunState, map[int]bool, bool) {
+func landedRun(ctx CheckContext) (RunState, map[string]bool, bool) {
 	if ctx.Store == nil {
 		return RunState{}, nil, false
 	}
@@ -116,7 +116,7 @@ func landedRun(ctx CheckContext) (RunState, map[int]bool, bool) {
 	if err != nil {
 		return RunState{}, nil, false
 	}
-	landed := map[int]bool{}
+	landed := map[string]bool{}
 	for _, l := range st.Landed {
 		landed[l.Phase] = true
 	}
@@ -178,7 +178,7 @@ func planTouched(ctx CheckContext) string {
 		return ""
 	}
 	todo := todoRel(ctx)
-	own := phasePlanPath(ctx.Step.Phase.Number, ctx.Step.Phase.Title)
+	own := phasePlanPath(ctx.Step.Phase.ID, ctx.Step.Phase.Title)
 	for _, p := range changed {
 		if (todo != "" && p == todo) || (strings.HasPrefix(p, ".task-plans/") && p != own) {
 			return "plan file changed during " + stepName(ctx.Step.Key) + ": " + p
@@ -236,5 +236,5 @@ func foreignTestEdit(ctx CheckContext) string {
 }
 
 func stepName(key StepKey) string {
-	return fmt.Sprintf("phase-%d/%s", key.Phase, key.Kind)
+	return fmt.Sprintf("phase-%s/%s", key.Phase, key.Kind)
 }

@@ -10,7 +10,7 @@ var ErrMergeConflict = errors.New("merge conflict")
 
 type PlanSource interface {
 	Read(path string) (Plan, error)
-	Tick(path string, phase int) error
+	Tick(path, phase string) error
 }
 
 type OpenSpec struct {

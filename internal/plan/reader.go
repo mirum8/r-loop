@@ -16,19 +16,19 @@ var (
 	headingRe    = regexp.MustCompile(`^#{1,3}[ \t]`)
 	anyHeadingRe = regexp.MustCompile(`^#{1,6}[ \t]`)
 	phaseStartRe = regexp.MustCompile(`^###[ \t]+Phase\b`)
-	phaseRe      = regexp.MustCompile(`^###[ \t]+Phase[ \t]+(\d+)[ \t]+(?:—|-)[ \t]+(.*)$`)
+	phaseRe      = regexp.MustCompile(`^###[ \t]+Phase[ \t]+(\d+[a-zA-Z]?)[ \t]+(?:—|-)[ \t]+(.*)$`)
 	milestoneRe  = regexp.MustCompile(`^##[ \t]+Milestone[ \t]+(\d+)[ \t]+(?:—|-)[ \t]+(.*)$`)
 	builtRe      = regexp.MustCompile(`<!--\s*built:.*?-->`)
 	itemRe       = regexp.MustCompile(`^- \[([ xX])\][ \t]?(.*)$`)
 	backtickRe   = regexp.MustCompile("`([^`]+)`")
-	numberRe     = regexp.MustCompile(`\d+`)
+	phaseRefRe   = regexp.MustCompile(`\b\d+[a-zA-Z]?\b`)
 )
 
 type Reader struct{}
 
 type dependsRef struct {
 	line  int
-	phase int
+	phase string
 }
 
 func (Reader) Read(path string) (core.Plan, error) {
@@ -53,7 +53,7 @@ func (Reader) Read(path string) (core.Plan, error) {
 	}
 	milestone := 0
 	var deps []dependsRef
-	seen := map[int]bool{}
+	seen := map[string]bool{}
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimRight(lines[i], "\r\n")
 		if m := milestoneRe.FindStringSubmatch(line); m != nil {
@@ -68,12 +68,12 @@ func (Reader) Read(path string) (core.Plan, error) {
 		if m == nil {
 			return core.Plan{}, fmt.Errorf("%s line %d: phase heading without its dash: %q", path, i+1, line)
 		}
-		n, _ := strconv.Atoi(m[1])
+		n := label(m[1])
 		if seen[n] {
-			return core.Plan{}, fmt.Errorf("%s line %d: duplicate phase %d", path, i+1, n)
+			return core.Plan{}, fmt.Errorf("%s line %d: duplicate phase %s", path, i+1, n)
 		}
-		if n != len(p.Phases)+1 {
-			return core.Plan{}, fmt.Errorf("%s line %d: phase %d skips phase %d", path, i+1, n, len(p.Phases)+1)
+		if err := followsPrevious(p.Phases, n); err != nil {
+			return core.Plan{}, fmt.Errorf("%s line %d: %v", path, i+1, err)
 		}
 		seen[n] = true
 
@@ -97,18 +97,39 @@ func (Reader) Read(path string) (core.Plan, error) {
 
 	for _, d := range deps {
 		if !seen[d.phase] {
-			return core.Plan{}, fmt.Errorf("%s line %d: depends on phase %d, which does not exist", path, d.line, d.phase)
+			return core.Plan{}, fmt.Errorf("%s line %d: depends on phase %s, which does not exist", path, d.line, d.phase)
 		}
 	}
 	for i, ph := range p.Phases {
-		if resolved := resolvedFor(p.ResolveFirst, ph.Number); resolved != "" {
+		if resolved := resolvedFor(p.ResolveFirst, ph.ID); resolved != "" {
 			p.Phases[i].Block = strings.TrimRight(ph.Block, "\n") + "\n\nResolved first:\n\n" + resolved
 		}
 	}
 	return p, nil
 }
 
-func resolvedFor(entries []core.Entry, phase int) string {
+func followsPrevious(phases []core.Phase, n string) error {
+	num, suffix := core.SplitPhaseID(n)
+	if len(phases) == 0 {
+		if n != "1" {
+			return fmt.Errorf("phase %s skips phase 1", n)
+		}
+		return nil
+	}
+	prev := phases[len(phases)-1].ID
+	prevNum, _ := core.SplitPhaseID(prev)
+	switch {
+	case suffix == "" && num != prevNum+1:
+		return fmt.Errorf("phase %s skips phase %d", n, prevNum+1)
+	case suffix != "" && num != prevNum:
+		return fmt.Errorf("phase %s skips phase %d", n, num)
+	case suffix != "" && core.ComparePhaseIDs(n, prev) <= 0:
+		return fmt.Errorf("phase %s is out of order after phase %s", n, prev)
+	}
+	return nil
+}
+
+func resolvedFor(entries []core.Entry, phase string) string {
 	var b strings.Builder
 	for _, e := range entries {
 		if e.Ticked && (e.BlocksAll || slices.Contains(e.BlocksPhases, phase)) {
@@ -118,10 +139,10 @@ func resolvedFor(entries []core.Entry, phase int) string {
 	return b.String()
 }
 
-func parsePhase(path string, number int, title string, block []string, headingLine int) (core.Phase, []dependsRef, error) {
+func parsePhase(path, id, title string, block []string, headingLine int) (core.Phase, []dependsRef, error) {
 	title = builtRe.ReplaceAllString(title, "")
 	title = strings.ReplaceAll(title, "✅", "")
-	ph := core.Phase{Number: number, Title: strings.TrimSpace(title), Block: strings.Join(block, "")}
+	ph := core.Phase{ID: id, Title: strings.TrimSpace(title), Block: strings.Join(block, "")}
 
 	var refs []dependsRef
 	for j := 1; j < len(block); j++ {
@@ -170,7 +191,7 @@ func field(line, label string) string {
 	return strings.TrimSpace(strings.TrimPrefix(line, label))
 }
 
-func parseDepends(rest string) ([]int, error) {
+func parseDepends(rest string) ([]string, error) {
 	if rest == "" || rest == "—" || rest == "-" || strings.EqualFold(rest, "none") {
 		return nil, nil
 	}
@@ -178,13 +199,25 @@ func parseDepends(rest string) ([]int, error) {
 	if idx < 0 {
 		return nil, fmt.Errorf("depends on names no phase: %q", rest)
 	}
-	var out []int
-	for _, s := range numberRe.FindAllString(rest[idx:], -1) {
-		n, _ := strconv.Atoi(s)
-		out = append(out, n)
-	}
+	out := phaseRefs(rest[idx:])
 	if len(out) == 0 {
 		return nil, fmt.Errorf("depends on names no phase: %q", rest)
 	}
 	return out, nil
+}
+
+func label(s string) string {
+	s = strings.ToLower(s)
+	if trimmed := strings.TrimLeft(s, "0"); trimmed != "" && trimmed[0] >= '0' && trimmed[0] <= '9' {
+		return trimmed
+	}
+	return s
+}
+
+func phaseRefs(s string) []string {
+	var out []string
+	for _, ref := range phaseRefRe.FindAllString(s, -1) {
+		out = append(out, label(ref))
+	}
+	return out
 }

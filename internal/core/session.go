@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -120,13 +119,13 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 		return s, fmt.Errorf("spawn: %w", err)
 	}
 	key := ref.Key
-	stepDir := filepath.Join(ref.RunDir, "phase-"+strconv.Itoa(key.Phase))
+	stepDir := filepath.Join(ref.RunDir, "phase-"+key.Phase)
 	base := fmt.Sprintf("%s-a%d", key.Kind, key.Attempt)
 	if s.StartTree, err = m.baseline(s, base); err != nil {
 		return s, fmt.Errorf("spawn: %w", err)
 	}
 	s.Sentinel = filepath.Join(stepDir, base+".sentinel")
-	s.Agent = fmt.Sprintf("rloop-p%d-%s", key.Phase, key.Kind)
+	s.Agent = fmt.Sprintf("rloop-p%s-%s", key.Phase, key.Kind)
 	if key.Attempt > 1 {
 		s.Agent += fmt.Sprintf("-a%d", key.Attempt)
 	}
@@ -139,7 +138,7 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 	ws, err := m.Host.Open(OpenSpec{CWD: s.Dir, Label: stepLabel(key), Env: map[string]string{
 		"R_LOOP_SENTINEL": s.Sentinel,
 		"R_LOOP_RUN":      key.Run,
-		"R_LOOP_PHASE":    strconv.Itoa(key.Phase),
+		"R_LOOP_PHASE":    key.Phase,
 		"R_LOOP_STEP":     key.Kind,
 	}})
 	s.Workspace, s.Pane = ws.ID, ws.RootPane
@@ -153,7 +152,7 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 }
 
 func stepLabel(key StepKey) string {
-	label := fmt.Sprintf("◆ p%d %s", key.Phase, key.Kind)
+	label := fmt.Sprintf("◆ p%s %s", key.Phase, key.Kind)
 	if key.Attempt > 1 {
 		label += fmt.Sprintf("·a%d", key.Attempt)
 	}
@@ -427,7 +426,7 @@ func (m *SessionManager) Finish(s *Session, out Outcome) Outcome {
 		out.State = recorded
 	}
 	if out.State == StepOK && !done && !s.Ref.InPrimary && !s.Ref.KeepUncommitted {
-		if _, err := m.Repo.CommitAll(s.Dir, fmt.Sprintf("r-loop: phase %d %s", key.Phase, key.Kind)); err != nil {
+		if _, err := m.Repo.CommitAll(s.Dir, fmt.Sprintf("r-loop: phase %s %s", key.Phase, key.Kind)); err != nil {
 			out.State, out.Reason = StepFailed, "commit: "+err.Error()
 		}
 	}

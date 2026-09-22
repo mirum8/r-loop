@@ -169,7 +169,7 @@ func TestIntakeRefusesAnInvalidArgvThenReturnsTheConfirmedOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err %v host errs %v", err, host.errs)
 	}
-	if opts.Todo != "docs/topic/todo.md" || !reflect.DeepEqual(opts.Phases, []int{2}) || !opts.DryRun || opts.Plain {
+	if opts.Todo != "docs/topic/todo.md" || !reflect.DeepEqual(opts.Phases, []string{"2"}) || !opts.DryRun || opts.Plain {
 		t.Fatalf("opts %+v", opts)
 	}
 	for i, want := range []string{"phase 1 is ticked or absent", "must end in .md", `unknown step "nope"`} {

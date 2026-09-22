@@ -18,14 +18,14 @@ type MilestoneBoundary struct {
 	RunDir   string
 	RunID    string
 	Face     Face
-	landed   map[int]bool
+	landed   map[string]bool
 }
 
 func (b *MilestoneBoundary) After(ctx context.Context, phase Phase) {
 	if b.landed == nil {
-		b.landed = map[int]bool{}
+		b.landed = map[string]bool{}
 	}
-	b.landed[phase.Number] = true
+	b.landed[phase.ID] = true
 	m, ok := b.closed(phase)
 	if !ok {
 		return
@@ -34,7 +34,7 @@ func (b *MilestoneBoundary) After(ctx context.Context, phase Phase) {
 		if err := b.restore(); err != nil {
 			reason += "; restore: " + err.Error()
 		}
-		recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "report-skipped", Phase: phase.Number, Step: b.Kind.Name, Fields: map[string]string{"milestone": strconv.Itoa(m.Number), "reason": reason}})
+		recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "report-skipped", Phase: phase.ID, Step: b.Kind.Name, Fields: map[string]string{"milestone": strconv.Itoa(m.Number), "reason": reason}})
 	}
 }
 
@@ -58,7 +58,7 @@ func (b *MilestoneBoundary) closed(phase Phase) (Milestone, bool) {
 
 func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone) string {
 	ref := StepRef{
-		Key:       StepKey{Run: b.RunID, Phase: phase.Number, Kind: b.Kind.Name, Attempt: 1},
+		Key:       StepKey{Run: b.RunID, Phase: phase.ID, Kind: b.Kind.Name, Attempt: 1},
 		Kind:      b.Kind,
 		Phase:     phase,
 		InPrimary: true,

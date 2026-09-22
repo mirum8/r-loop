@@ -20,7 +20,7 @@ func (w *Wiring) unblock(ctx context.Context, opts core.RunOptions) (core.RunOpt
 	if err != nil {
 		return opts, false, w.halt(exit(2, "%v", err))
 	}
-	blocking := w.Plan.Blocking(phaseNumbers(list))
+	blocking := w.Plan.Blocking(phaseIDs(list))
 	if len(blocking) > 0 && !w.Opts.Unattended {
 		if err := w.walk(ctx, blocking, list); err != nil {
 			return opts, false, w.halt(err)
@@ -28,7 +28,7 @@ func (w *Wiring) unblock(ctx context.Context, opts core.RunOptions) (core.RunOpt
 	}
 	kept, deferrals := core.DeferBlocked(w.Plan, list)
 	for _, d := range deferrals {
-		w.record(core.Event{Kind: "entry-deferred", Fields: map[string]string{"entry": d.Entry, "phases": joinInts(d.Phases)}})
+		w.record(core.Event{Kind: "entry-deferred", Fields: map[string]string{"entry": d.Entry, "phases": joinIDs(d.Phases)}})
 	}
 	if err := recordRunList(w.Store, w.Loop.RunID, kept); err != nil {
 		return opts, false, w.halt(exit(2, "%v", err))
@@ -40,7 +40,7 @@ func (w *Wiring) unblock(ctx context.Context, opts core.RunOptions) (core.RunOpt
 		}
 		return opts, true, nil
 	}
-	opts.From, opts.Phases = 0, phaseNumbers(kept)
+	opts.From, opts.Phases = "", phaseIDs(kept)
 	return opts, false, nil
 }
 
@@ -161,18 +161,14 @@ func (w *Wiring) halt(err error) error {
 	return err
 }
 
-func phaseNumbers(list []core.Phase) []int {
-	numbers := make([]int, len(list))
+func phaseIDs(list []core.Phase) []string {
+	ids := make([]string, len(list))
 	for i, ph := range list {
-		numbers[i] = ph.Number
+		ids[i] = ph.ID
 	}
-	return numbers
+	return ids
 }
 
-func joinInts(ns []int) string {
-	parts := make([]string, len(ns))
-	for i, n := range ns {
-		parts[i] = strconv.Itoa(n)
-	}
-	return strings.Join(parts, ", ")
+func joinIDs(ids []string) string {
+	return strings.Join(ids, ", ")
 }

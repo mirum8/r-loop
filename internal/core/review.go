@@ -267,7 +267,7 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 		StartSHA:  worker.StartSHA,
 		StartTree: rd.tree,
 		Workspace: worker.Workspace,
-		Agent:     agentName(fmt.Sprintf("rloop-p%d-%s-rv-%s", key.Phase, key.Kind, id), agentSuffix(rd.n, key.Attempt)),
+		Agent:     agentName(fmt.Sprintf("rloop-p%s-%s-rv-%s", key.Phase, key.Kind, id), agentSuffix(rd.n, key.Attempt)),
 		Sentinel:  filepath.Join(dir, fmt.Sprintf("%s-a%d.sentinel", base, key.Attempt)),
 		Reviewer:  id,
 		owner:     worker,
@@ -346,7 +346,7 @@ func (h ReviewHalf) event(worker *Session, kind string, fields map[string]string
 }
 
 func stepDir(s *Session) string {
-	return filepath.Join(s.Ref.RunDir, "phase-"+strconv.Itoa(s.Ref.Key.Phase))
+	return filepath.Join(s.Ref.RunDir, "phase-"+s.Ref.Key.Phase)
 }
 
 func agentName(prefix, suffix string) string {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -61,7 +62,7 @@ func newCheckRig(t *testing.T) *checkRig {
 }
 
 func (r *checkRig) signal(kind SignalKind, step string, reason string) (bool, string) {
-	return r.watch.Handle(Signal{Kind: kind, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: 1, Kind: step}, Reason: reason})
+	return r.watch.Handle(Signal{Kind: kind, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: "1", Kind: step}, Reason: reason})
 }
 
 func (r *checkRig) planWarnings(t *testing.T) string {
@@ -90,7 +91,7 @@ func indexOf(calls []string, prefix string) int {
 func TestPhaseCheckCreatesTheWorktreeThenWaitsOnTheCheckPromptBeforeThePlanSpawns(t *testing.T) {
 	r := newCheckRig(t)
 
-	if code := r.run(RunOptions{Phases: []int{1}}); code != 0 {
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 
@@ -126,7 +127,7 @@ func TestAWarnDuringTheCheckIsShownBeforeThePlanStepAndReachesThePlanPrompt(t *t
 		}
 	}
 
-	if code := r.run(RunOptions{Phases: []int{1}}); code != 0 {
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 
@@ -151,7 +152,7 @@ func TestAWarnDuringTheCheckIsShownBeforeThePlanStepAndReachesThePlanPrompt(t *t
 func TestACleanCheckLeavesPhaseWarningsEmptyAndReportsNoDisagreement(t *testing.T) {
 	r := newCheckRig(t)
 
-	if code := r.run(RunOptions{Phases: []int{1}}); code != 0 {
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 
@@ -173,7 +174,7 @@ func TestAHaltDuringTheCheckIsRejectedAndThePhaseStillRuns(t *testing.T) {
 		}
 	}
 
-	code := r.run(RunOptions{Phases: []int{1}})
+	code := r.run(RunOptions{Phases: []string{"1"}})
 
 	if code != 0 {
 		t.Fatalf("exit %d", code)
@@ -208,7 +209,7 @@ func TestAnotherStepSignalDuringTheCheckIsRejected(t *testing.T) {
 		}
 	}
 
-	r.run(RunOptions{Phases: []int{1}})
+	r.run(RunOptions{Phases: []string{"1"}})
 
 	if accepted || reason != "phase-1/check is the only step during the phase check" {
 		t.Errorf("accepted %t reason %q", accepted, reason)
@@ -224,12 +225,12 @@ func TestACheckTimeoutIsRecordedWithoutAHalt(t *testing.T) {
 			r := newCheckRig(t)
 			r.dogHost.err = err
 
-			code := r.run(RunOptions{Phases: []int{1}})
+			code := r.run(RunOptions{Phases: []string{"1"}})
 
 			if code != 0 {
 				t.Fatalf("exit %d", code)
 			}
-			if got := r.events("phase-check-timeout"); len(got) != 1 || got[0].Phase != 1 {
+			if got := r.events("phase-check-timeout"); len(got) != 1 || got[0].Phase != "1" {
 				t.Errorf("timeout events %+v", got)
 			}
 			if !slices.Contains(r.calls("Land "), "1") {
@@ -246,19 +247,19 @@ func TestWithoutAWatchdogTheCheckIsSkippedAndThePhaseRuns(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.Watcher = &Watch{Store: r.store, Face: r.face}
 
-	code := r.run(RunOptions{Phases: []int{1}})
+	code := r.run(RunOptions{Phases: []string{"1"}})
 
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	if got := r.events("phase-check-skipped"); len(got) != 1 || got[0].Phase != 1 {
+	if got := r.events("phase-check-skipped"); len(got) != 1 || got[0].Phase != "1" {
 		t.Errorf("skipped events %+v", got)
 	}
 }
 
 func TestReportPhaseCheckLinesFollowWhatThePhaseDid(t *testing.T) {
 	ev := func(kind string, phase int, f map[string]string) Event {
-		return Event{Kind: kind, Phase: phase, Fields: f}
+		return Event{Kind: kind, Phase: strconv.Itoa(phase), Fields: f}
 	}
 	st := RunState{Events: []Event{
 		ev("phase-check", 1, map[string]string{"result": "no disagreement"}),

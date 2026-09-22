@@ -29,8 +29,8 @@ func (c *PhaseCheck) Run(ctx context.Context, ph Phase, base string) CheckOutcom
 	if !c.Dog.live() {
 		return CheckOutcome{Kind: phaseCheckSkipped, Reason: "watchdog unreachable"}
 	}
-	wt := fmt.Sprintf(".r-loop/wt/phase-%d", ph.Number)
-	if err := c.Repo.AddWorktree(wt, fmt.Sprintf("r-loop/phase-%d", ph.Number), base); err != nil {
+	wt := fmt.Sprintf(".r-loop/wt/phase-%s", ph.ID)
+	if err := c.Repo.AddWorktree(wt, fmt.Sprintf("r-loop/phase-%s", ph.ID), base); err != nil {
 		return CheckOutcome{Kind: phaseCheckSkipped, Reason: "worktree: " + err.Error()}
 	}
 	if err := c.Dog.Notify(checkText(ph, filepath.Join(c.Repo.Root(), wt), base), true, c.Timeout); err != nil {
@@ -47,5 +47,5 @@ func checkText(ph Phase, worktree, base string) string {
 	if risk == "" {
 		risk = "none"
 	}
-	return fmt.Sprintf("check phase %d worktree %s base %s\nFiles: %s\nRisk: %s\n\n%s", ph.Number, worktree, base, files, risk, ph.Block)
+	return fmt.Sprintf("check phase %s worktree %s base %s\nFiles: %s\nRisk: %s\n\n%s", ph.ID, worktree, base, files, risk, ph.Block)
 }

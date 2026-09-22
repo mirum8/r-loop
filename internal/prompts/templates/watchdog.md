@@ -12,7 +12,7 @@ You watch an r-loop run from the run directory `{{.RunDir}}`, against the plan a
 
 ## Your tools
 
-- `signal(kind, step, reason, evidence)` — `warn` or `halt` about a step (`phase-<N>/<kind>`), with a `path:line` as evidence.
+- `signal(kind, step, reason, evidence)` — `warn` or `halt` about a step (`phase-<N>/<kind>`), with a `path:line` as evidence. `<N>` is the phase's heading label as written, such as `10` or `10a`.
 - `propose_remedy(class, command, why, maintainer_said?)` — propose a remedy of class `deps`, `ports`, `containers`, `locks`, `restart`, `retry` or `provider`; the driver records the consent and never runs the command itself. Allow-listed, authorised without asking: {{if .Allow}}{{range $i, $c := .Allow}}{{if $i}}, {{end}}`{{$c}}`{{end}}{{else}}none{{end}}. Any other class needs `maintainer_said`: the maintainer's reply, quoted, after you asked them here.
 - `restart_step(step, addendum?, provider?, maintainer_said?)` — queue a new attempt of a `failed` or `stalled` step after an authorised remedy, optionally with a note for the next attempt. A provider that is not the row's fallback needs `maintainer_said`.
 - `answer_question(id, answer, citation)` — answer a step's open question. The citation is a `path:line` in the primary tree, or `maintainer` when the maintainer gave you the answer here. An empty or invalid citation is refused, and the question stays open with you.

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -41,8 +42,8 @@ func TestReadFixturePhaseCountAndTopic(t *testing.T) {
 		t.Fatalf("phases = %d, want 31", len(p.Phases))
 	}
 	for i, ph := range p.Phases {
-		if ph.Number != i+1 {
-			t.Fatalf("phase %d has number %d", i, ph.Number)
+		if ph.ID != strconv.Itoa(i+1) {
+			t.Fatalf("phase %d has id %q", i, ph.ID)
 		}
 	}
 	if p.Path != "testdata/todo.md" {
@@ -83,8 +84,8 @@ func TestReadFixturePhaseOneEveryField(t *testing.T) {
 	if ph.Block != text[start:end] {
 		t.Errorf("Block = %q\nwant %q", ph.Block, text[start:end])
 	}
-	if ph.Number != 1 {
-		t.Errorf("Number = %d", ph.Number)
+	if ph.ID != "1" {
+		t.Errorf("Number = %s", ph.ID)
 	}
 	if ph.Title != "Module skeleton, core types, ports and the boundary test" {
 		t.Errorf("Title = %q", ph.Title)
@@ -143,7 +144,7 @@ func TestReadFixtureOtherFields(t *testing.T) {
 	if last.Risk != "security" {
 		t.Errorf("Risk = %q", last.Risk)
 	}
-	if !reflect.DeepEqual(last.DependsOn, []int{30}) {
+	if !reflect.DeepEqual(last.DependsOn, []string{"30"}) {
 		t.Errorf("DependsOn = %v", last.DependsOn)
 	}
 	if !reflect.DeepEqual(last.Implements, []string{"Leave a run to finish on its own", "Pre-authorise the blockers worth fixing automatically"}) {
@@ -152,7 +153,7 @@ func TestReadFixtureOtherFields(t *testing.T) {
 	if strings.Contains(last.Block, "Open questions") {
 		t.Errorf("Block runs past the next ## heading")
 	}
-	if !reflect.DeepEqual(p.Phases[10].DependsOn, []int{6, 7, 8, 9, 10}) {
+	if !reflect.DeepEqual(p.Phases[10].DependsOn, []string{"6", "7", "8", "9", "10"}) {
 		t.Errorf("Phase 11 DependsOn = %v", p.Phases[10].DependsOn)
 	}
 	if p.Phases[1].Items[0].Done {
@@ -164,13 +165,13 @@ func TestReadFixtureMilestones(t *testing.T) {
 	p := readFixture(t)
 
 	want := []core.Milestone{
-		{Number: 1, Name: "Core, plan file, config and state", Phases: []int{1, 2, 3, 4, 5}},
-		{Number: 2, Name: "Sessions and providers", Phases: []int{6, 7, 8, 9, 10, 11}},
-		{Number: 3, Name: "The serial loop, landing and the plain face", Phases: []int{12, 13, 14, 15, 16, 17}},
-		{Number: 4, Name: "The review half", Phases: []int{18, 19}},
-		{Number: 5, Name: "The ask channel", Phases: []int{20, 21}},
-		{Number: 6, Name: "The TUI", Phases: []int{22, 23}},
-		{Number: 7, Name: "The watchdog", Phases: []int{24, 25, 26, 27, 28, 29, 30, 31}},
+		{Number: 1, Name: "Core, plan file, config and state", Phases: []string{"1", "2", "3", "4", "5"}},
+		{Number: 2, Name: "Sessions and providers", Phases: []string{"6", "7", "8", "9", "10", "11"}},
+		{Number: 3, Name: "The serial loop, landing and the plain face", Phases: []string{"12", "13", "14", "15", "16", "17"}},
+		{Number: 4, Name: "The review half", Phases: []string{"18", "19"}},
+		{Number: 5, Name: "The ask channel", Phases: []string{"20", "21"}},
+		{Number: 6, Name: "The TUI", Phases: []string{"22", "23"}},
+		{Number: 7, Name: "The watchdog", Phases: []string{"24", "25", "26", "27", "28", "29", "30", "31"}},
 	}
 	if !reflect.DeepEqual(p.Milestones, want) {
 		t.Errorf("Milestones = %+v", p.Milestones)
@@ -185,9 +186,9 @@ func TestReadFixtureUnticked(t *testing.T) {
 
 	got := p.Unticked()
 
-	want := make([]int, 0, 30)
+	want := make([]string, 0, 30)
 	for n := 2; n <= 31; n++ {
-		want = append(want, n)
+		want = append(want, strconv.Itoa(n))
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Unticked = %v", got)
@@ -227,7 +228,7 @@ func TestHeadingDashesAndSpacing(t *testing.T) {
 	if !p.Phases[1].Items[0].Done {
 		t.Errorf("[X] should be done")
 	}
-	if !reflect.DeepEqual(p.Unticked(), []int{1}) {
+	if !reflect.DeepEqual(p.Unticked(), []string{"1"}) {
 		t.Errorf("Unticked = %v", p.Unticked())
 	}
 }
@@ -256,7 +257,7 @@ func TestDependsOnForms(t *testing.T) {
 			t.Errorf("phase %d DependsOn = %v", i+1, p.Phases[i].DependsOn)
 		}
 	}
-	if !reflect.DeepEqual(p.Phases[4].DependsOn, []int{2, 4, 3}) {
+	if !reflect.DeepEqual(p.Phases[4].DependsOn, []string{"2", "4", "3"}) {
 		t.Errorf("phase 5 DependsOn = %v", p.Phases[4].DependsOn)
 	}
 }
@@ -323,6 +324,35 @@ func TestFailClosed(t *testing.T) {
 			name:    "heading without dash",
 			content: "### Phase 1 — A\n\n### Phase 2 B\n",
 			want:    []string{"line 3", "### Phase 2 B"},
+		},		{
+			name:    "duplicate lettered phase",
+			content: "### Phase 1 — A\n### Phase 1a — B\n### Phase 1A — C\n",
+			want:    []string{"line 3", "duplicate phase 1a"},
+		},
+		{
+			name:    "lettered phases out of order",
+			content: "### Phase 1 — A\n### Phase 1b — B\n### Phase 1a — C\n",
+			want:    []string{"line 3", "phase 1a is out of order after phase 1b"},
+		},
+		{
+			name:    "lettered phase without its number",
+			content: "### Phase 1 — A\n### Phase 2a — B\n",
+			want:    []string{"line 2", "phase 2a skips phase 2"},
+		},
+		{
+			name:    "lettered first phase",
+			content: "### Phase 1a — A\n",
+			want:    []string{"line 1", "phase 1a skips phase 1"},
+		},
+		{
+			name:    "number after a lettered phase skips",
+			content: "### Phase 1 — A\n### Phase 1a — B\n### Phase 3 — C\n",
+			want:    []string{"line 3", "phase 3 skips phase 2"},
+		},
+		{
+			name:    "depends on a missing lettered phase",
+			content: "### Phase 1 — A\n### Phase 2 — B\n**Depends on:** Phase 1a\n",
+			want:    []string{"line 3", "phase 1a"},
 		},
 	}
 	for _, tc := range cases {
@@ -361,5 +391,71 @@ func TestDoneWhenStopsAtNestedHeading(t *testing.T) {
 	}
 	if p.Phases[0].DoneWhen != "`go test`\nis green." {
 		t.Errorf("DoneWhen = %q", p.Phases[0].DoneWhen)
+	}
+}
+
+func TestLetteredPhaseHeadingsParse(t *testing.T) {
+	path := writePlan(t, strings.Join([]string{
+		"## Milestone 1 — Core",
+		"### Phase 1 — A",
+		"### Phase 2 — B",
+		"### Phase 2a — B, first insert",
+		"### Phase 2b — B, second insert",
+		"**Depends on:** Phase 2a",
+		"### Phase 3 — C",
+		"**Depends on:** Phase 2b, Phase 2",
+		"",
+	}, "\n"))
+
+	p, err := Reader{}.Read(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	var titles, ids []string
+	for _, ph := range p.Phases {
+		titles = append(titles, ph.Title)
+		ids = append(ids, ph.ID)
+	}
+	if !reflect.DeepEqual(titles, []string{"A", "B", "B, first insert", "B, second insert", "C"}) {
+		t.Errorf("titles = %q", titles)
+	}
+	if !reflect.DeepEqual(ids, []string{"1", "2", "2a", "2b", "3"}) {
+		t.Errorf("ids = %q", ids)
+	}
+	if !reflect.DeepEqual(p.Phases[3].DependsOn, []string{"2a"}) {
+		t.Errorf("phase 2b DependsOn = %q", p.Phases[3].DependsOn)
+	}
+	if !reflect.DeepEqual(p.Phases[4].DependsOn, []string{"2b", "2"}) {
+		t.Errorf("phase 3 DependsOn = %q", p.Phases[4].DependsOn)
+	}
+	if !reflect.DeepEqual(p.Milestones[0].Phases, []string{"1", "2", "2a", "2b", "3"}) {
+		t.Errorf("milestone phases = %q", p.Milestones[0].Phases)
+	}
+}
+
+func TestLetteredPhaseMayFollowItsNumberWithoutEarlierLetters(t *testing.T) {
+	path := writePlan(t, "### Phase 1 — A\n### Phase 2 — B\n### Phase 2b — C\n### Phase 3 — D\n")
+
+	p, err := Reader{}.Read(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Phases) != 4 || p.Phases[2].ID != "2b" {
+		t.Errorf("phases = %+v", p.Phases)
+	}
+}
+
+func TestUppercasePhaseLabelIsLowercased(t *testing.T) {
+	path := writePlan(t, "### Phase 1 — A\n### Phase 1A — B\n### Phase 2 — C\n**Depends on:** Phase 1A\n")
+
+	p, err := Reader{}.Read(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Phases[1].ID != "1a" || !reflect.DeepEqual(p.Phases[2].DependsOn, []string{"1a"}) {
+		t.Errorf("ID = %q, DependsOn = %q", p.Phases[1].ID, p.Phases[2].DependsOn)
 	}
 }

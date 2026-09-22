@@ -127,20 +127,20 @@ func StatusLines(run core.RunState, pl core.Plan, now time.Time, deadPID int) []
 }
 
 func phaseLines(run core.RunState, pl core.Plan) []string {
-	state := map[int]string{}
+	state := map[string]string{}
 	unticked := pl.Unticked()
 	listed := recordedRunList(run)
 	for _, ph := range pl.Phases {
-		state[ph.Number] = string(core.PhaseLanded)
+		state[ph.ID] = string(core.PhaseLanded)
 		switch {
-		case !slices.Contains(unticked, ph.Number):
-		case len(listed) > 0 && !slices.Contains(listed, ph.Number):
-			state[ph.Number] = "not in this run"
+		case !slices.Contains(unticked, ph.ID):
+		case len(listed) > 0 && !slices.Contains(listed, ph.ID):
+			state[ph.ID] = "not in this run"
 		default:
-			state[ph.Number] = string(core.PhaseUnticked)
+			state[ph.ID] = string(core.PhaseUnticked)
 		}
 	}
-	blocked := map[int]string{}
+	blocked := map[string]string{}
 	for _, e := range run.Events {
 		switch e.Kind {
 		case "phase-start":
@@ -155,12 +155,12 @@ func phaseLines(run core.RunState, pl core.Plan) []string {
 	}
 	var lines []string
 	for _, ph := range pl.Phases {
-		n := ph.Number
+		n := ph.ID
 		if reason, ok := blocked[n]; ok {
-			lines = append(lines, fmt.Sprintf("phase %d %s %s", n, core.PhaseBlocked, reason))
+			lines = append(lines, fmt.Sprintf("phase %s %s %s", n, core.PhaseBlocked, reason))
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("phase %d %s", n, state[n]))
+		lines = append(lines, fmt.Sprintf("phase %s %s", n, state[n]))
 	}
 	return lines
 }

@@ -66,7 +66,7 @@ func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
 	ref.Kind.Row.Reviewers = reviewers
 	ref.Kind.Row.Rounds = 2
 	ref.Kind.Row.ReviewTimeout = time.Hour
-	ref.Vars = map[string]any{"PhaseNumber": 3, "PhaseBlock": "### Phase 3"}
+	ref.Vars = map[string]any{"PhaseNumber": "3", "PhaseBlock": "### Phase 3"}
 	s, err := r.sm.Spawn(context.Background(), ref)
 	if err != nil {
 		t.Fatal(err)
@@ -610,7 +610,7 @@ func TestAnAskNoneReviewerRecordsAskNoneOnceNamingTheReviewer(t *testing.T) {
 			rv = append(rv, e)
 		}
 	}
-	if len(rv) != 1 || rv[0].Step != "implement-rv-codex" || rv[0].Phase != 3 || rv[0].Fields["provider"] != "codex" {
+	if len(rv) != 1 || rv[0].Step != "implement-rv-codex" || rv[0].Phase != "3" || rv[0].Fields["provider"] != "codex" {
 		t.Fatalf("ask-none events = %+v", r.events("ask-none"))
 	}
 	if _, ok := r.reviews[0]["AskURL"]; ok || r.count("AskChannel.StepURL") != 0 {

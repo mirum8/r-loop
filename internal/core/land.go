@@ -50,7 +50,7 @@ type LandGate struct {
 func (g *LandGate) Land(ctx context.Context, phase Phase) (Landing, error) {
 	landing, command, output, err := g.attempt(ctx, phase)
 	for round := 1; errors.Is(err, ErrGate) && round <= g.FixRounds && g.Runner != nil; round++ {
-		g.emit(Event{Kind: "gate-fix", Phase: phase.Number, Step: "land", Fields: map[string]string{"phase": strconv.Itoa(phase.Number), "round": strconv.Itoa(round)}})
+		g.emit(Event{Kind: "gate-fix", Phase: phase.ID, Step: "land", Fields: map[string]string{"phase": phase.ID, "round": strconv.Itoa(round)}})
 		out := g.fix(ctx, phase, command, output)
 		if out.State != StepOK {
 			return Landing{}, fmt.Errorf("%w: gate-fix round %d ended %s: %s", ErrGate, round, out.State, out.Reason)
@@ -70,7 +70,7 @@ func (g *LandGate) Land(ctx context.Context, phase Phase) (Landing, error) {
 }
 
 func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, string, error) {
-	n := phase.Number
+	n := phase.ID
 	itemGate := g.Suite != nil && phase.DoneWhen == ""
 	var suite string
 	if itemGate {
@@ -79,7 +79,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 			return Landing{}, "", "", err
 		}
 	}
-	if err := g.Repo.MergeNoFF(fmt.Sprintf("r-loop/phase-%d", n)); err != nil {
+	if err := g.Repo.MergeNoFF(fmt.Sprintf("r-loop/phase-%s", n)); err != nil {
 		return Landing{}, "", "", err
 	}
 	landing := Landing{Phase: n}
@@ -100,7 +100,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 	}
 	if command == "" {
 		landing.GateSkipped = true
-		g.emit(Event{Kind: "gate-skipped", Phase: n, Step: "land", Fields: map[string]string{"phase": strconv.Itoa(n)}})
+		g.emit(Event{Kind: "gate-skipped", Phase: n, Step: "land", Fields: map[string]string{"phase": n}})
 	} else {
 		code, output, err := g.Repo.Run("", command, g.GateTimeout)
 		if err == nil && code != 0 {
@@ -114,7 +114,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 	if err := g.Plan.Tick(g.TodoPath, n); err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), g.Repo.ResetHard("HEAD"))
 	}
-	sha, err := g.Repo.Commit(fmt.Sprintf("phase %d: %s", n, phase.Title))
+	sha, err := g.Repo.Commit(fmt.Sprintf("phase %s: %s", n, phase.Title))
 	if err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("commit: %w", err), g.Repo.ResetHard("HEAD"))
 	}
@@ -129,7 +129,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 }
 
 func (g *LandGate) itemCommand(phase Phase) (string, error) {
-	rel := phasePlanPath(phase.Number, phase.Title)
+	rel := phasePlanPath(phase.ID, phase.Title)
 	data, err := os.ReadFile(filepath.Join(g.Repo.Root(), rel))
 	if err != nil {
 		return "", fmt.Errorf("%w: no plan names the item's tests: %v", ErrNoGate, err)
@@ -142,7 +142,7 @@ func (g *LandGate) itemCommand(phase Phase) (string, error) {
 }
 
 func (g *LandGate) redAtBase(phase Phase, item string) (string, error) {
-	n := phase.Number
+	n := phase.ID
 	changed, err := g.Repo.ChangedFiles("", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("changed files: %w", err)
@@ -155,9 +155,9 @@ func (g *LandGate) redAtBase(phase Phase, item string) (string, error) {
 		}
 	}
 	if len(tests) == 0 {
-		return "phase adds or changes no test file", fmt.Errorf("%w: phase %d adds or changes no test file", ErrGate, n)
+		return "phase adds or changes no test file", fmt.Errorf("%w: phase %s adds or changes no test file", ErrGate, n)
 	}
-	red := fmt.Sprintf(".r-loop/wt/phase-%d-red", n)
+	red := fmt.Sprintf(".r-loop/wt/phase-%s-red", n)
 	remove := "git worktree remove --force " + shellQuote(red) + " 2>/dev/null; rm -rf " + shellQuote(red)
 	setup := []string{"git worktree add --detach " + shellQuote(red) + " HEAD >/dev/null"}
 	for _, p := range tests {
@@ -198,7 +198,7 @@ func (g *LandGate) todoRel() string {
 }
 
 func (g *LandGate) fix(ctx context.Context, phase Phase, command, output string) Outcome {
-	n := phase.Number
+	n := phase.ID
 	base, err := g.Repo.HeadBranch()
 	if err != nil {
 		return Outcome{State: StepFailed, Reason: "head branch: " + err.Error()}
@@ -212,8 +212,8 @@ func (g *LandGate) fix(ctx context.Context, phase Phase, command, output string)
 		Key:      StepKey{Run: g.RunID, Phase: n, Kind: g.FixKind.Name, Attempt: prior + 1},
 		Kind:     g.FixKind,
 		Phase:    phase,
-		Worktree: fmt.Sprintf(".r-loop/wt/phase-%d", n),
-		Branch:   fmt.Sprintf("r-loop/phase-%d", n),
+		Worktree: fmt.Sprintf(".r-loop/wt/phase-%s", n),
+		Branch:   fmt.Sprintf("r-loop/phase-%s", n),
 		Base:     base,
 		RunDir:   g.Store.Dir(g.RunID),
 	}

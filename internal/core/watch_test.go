@@ -1,6 +1,7 @@
 package core
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func newWatch(store *fakeStore) *Watch {
 }
 
 func implementRef(phase, attempt int) StepRef {
-	return StepRef{Key: StepKey{Run: "run-1", Phase: phase, Kind: "implement", Attempt: attempt}, Phase: Phase{Number: phase}}
+	return StepRef{Key: StepKey{Run: "run-1", Phase: strconv.Itoa(phase), Kind: "implement", Attempt: attempt}, Phase: Phase{ID: strconv.Itoa(phase)}}
 }
 
 func receive(t *testing.T, w *Watch) Signal {
@@ -71,7 +72,7 @@ func TestAcceptedWarnIsRecordedAndForwarded(t *testing.T) {
 	w.StepStarted(implementRef(2, 1), &Session{})
 	defer w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
 
-	got, err := w.Accept(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Phase: 2, Kind: "implement"}, Reason: "drifting"})
+	got, err := w.Accept(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Phase: "2", Kind: "implement"}, Reason: "drifting"})
 
 	if err != nil || got.Rejected {
 		t.Fatalf("accept %+v, %v", got, err)
@@ -92,7 +93,7 @@ func TestAcceptedHaltIsRecordedAndForwarded(t *testing.T) {
 	w.StepStarted(implementRef(2, 1), &Session{})
 	defer w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
 
-	got, _ := w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Phase: 2, Kind: "implement"}, Reason: "rewriting the spec"})
+	got, _ := w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Phase: "2", Kind: "implement"}, Reason: "rewriting the spec"})
 
 	if got.Rejected {
 		t.Fatalf("rejected %+v", got)
@@ -112,7 +113,7 @@ func TestSignalForAStepThatEndedWithinAPollIsAccepted(t *testing.T) {
 	w.StepStarted(implementRef(2, 1), &Session{})
 	w.StepEnded(implementRef(2, 1), Outcome{State: StepFailed})
 
-	got, _ := w.Accept(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Phase: 2, Kind: "implement"}, Reason: "late"})
+	got, _ := w.Accept(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Phase: "2", Kind: "implement"}, Reason: "late"})
 
 	if got.Rejected {
 		t.Fatalf("rejected %+v", got)
@@ -128,7 +129,7 @@ func TestOkAndApproveKindsAreRejectedAndRecorded(t *testing.T) {
 			w.StepStarted(implementRef(2, 1), &Session{})
 			defer w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
 
-			got, err := w.Accept(Signal{Kind: kind, Source: SourceDriver, Step: StepKey{Phase: 2, Kind: "implement"}, Reason: "looks fine"})
+			got, err := w.Accept(Signal{Kind: kind, Source: SourceDriver, Step: StepKey{Phase: "2", Kind: "implement"}, Reason: "looks fine"})
 
 			if err != nil || !got.Rejected || !strings.Contains(got.RejectReason, string(kind)) {
 				t.Fatalf("accept %+v, %v", got, err)
@@ -162,7 +163,7 @@ func TestARejectedWatchdogSignalTurnsIntoAHalt(t *testing.T) {
 	w.StepStarted(implementRef(2, 1), &Session{})
 	defer w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
 
-	got, _ := w.Accept(Signal{Kind: "ok", Source: SourceWatchdog, Step: StepKey{Phase: 2, Kind: "implement"}, Reason: "done"})
+	got, _ := w.Accept(Signal{Kind: "ok", Source: SourceWatchdog, Step: StepKey{Phase: "2", Kind: "implement"}, Reason: "done"})
 
 	fwd := receive(t, w)
 	if fwd.Kind != SignalHalt || fwd.Reason != "watchdog signal rejected: "+got.RejectReason || fwd.Step != implementRef(2, 1).Key {
@@ -175,12 +176,12 @@ func TestARejectedWatchdogSignalTurnsIntoAHalt(t *testing.T) {
 
 func TestASignalForALandedPhaseIsRejected(t *testing.T) {
 	store := &fakeStore{}
-	store.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: 1, MergeSHA: "abc"}})
+	store.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: "1", MergeSHA: "abc"}})
 	w := newWatch(store)
 	w.StepStarted(implementRef(2, 1), &Session{})
 	defer w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
 
-	got, _ := w.Accept(Signal{Kind: SignalHalt, Source: SourceDriver, Step: StepKey{Phase: 1, Kind: "implement"}, Reason: "stale"})
+	got, _ := w.Accept(Signal{Kind: SignalHalt, Source: SourceDriver, Step: StepKey{Phase: "1", Kind: "implement"}, Reason: "stale"})
 
 	if !got.Rejected || got.RejectReason != "phase 1 has landed" {
 		t.Fatalf("accept %+v", got)
@@ -200,7 +201,7 @@ func TestASignalForAnOkStepIsRejected(t *testing.T) {
 	w.StepStarted(implementRef(2, 1), &Session{})
 	w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
 
-	got, _ := w.Accept(Signal{Kind: SignalWarn, Source: SourceDriver, Step: StepKey{Phase: 2, Kind: "implement"}, Reason: "late"})
+	got, _ := w.Accept(Signal{Kind: SignalWarn, Source: SourceDriver, Step: StepKey{Phase: "2", Kind: "implement"}, Reason: "late"})
 
 	if !got.Rejected || got.RejectReason != "phase-2/implement is ok" {
 		t.Fatalf("accept %+v", got)
@@ -213,7 +214,7 @@ func TestASignalForAnUnknownStepIsRejected(t *testing.T) {
 	w.StepStarted(implementRef(2, 1), &Session{})
 	defer w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
 
-	got, _ := w.Accept(Signal{Kind: SignalWarn, Source: SourceDriver, Step: StepKey{Phase: 3, Kind: "plan"}, Reason: "?"})
+	got, _ := w.Accept(Signal{Kind: SignalWarn, Source: SourceDriver, Step: StepKey{Phase: "3", Kind: "plan"}, Reason: "?"})
 
 	if !got.Rejected || got.RejectReason != "phase-3/plan is not running" {
 		t.Fatalf("accept %+v", got)
@@ -228,7 +229,7 @@ func TestASignalForAStepThatEndedLongerAgoThanAPollIsRejected(t *testing.T) {
 	w.StepEnded(implementRef(2, 1), Outcome{State: StepFailed})
 	now = now.Add(2 * time.Minute)
 
-	got, _ := w.Accept(Signal{Kind: SignalWarn, Source: SourceDriver, Step: StepKey{Phase: 2, Kind: "implement"}, Reason: "late"})
+	got, _ := w.Accept(Signal{Kind: SignalWarn, Source: SourceDriver, Step: StepKey{Phase: "2", Kind: "implement"}, Reason: "late"})
 
 	if !got.Rejected || got.RejectReason != "phase-2/implement is not running" {
 		t.Fatalf("accept %+v", got)
@@ -320,9 +321,9 @@ func TestARejectedWatchdogSignalBetweenStepsHaltsTheNextStep(t *testing.T) {
 	w.StepStarted(implementRef(2, 1), &Session{})
 	w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
 
-	w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Phase: 2, Kind: "implement"}, Reason: "too late"})
+	w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Phase: "2", Kind: "implement"}, Reason: "too late"})
 	noSignal(t, w)
-	next := StepRef{Key: StepKey{Run: "run-1", Phase: 3, Kind: "plan", Attempt: 1}}
+	next := StepRef{Key: StepKey{Run: "run-1", Phase: "3", Kind: "plan", Attempt: 1}}
 	w.StepStarted(next, &Session{})
 	defer w.StepEnded(next, Outcome{State: StepOK})
 
@@ -360,7 +361,7 @@ func TestAnAcceptedHaltForTheHeldStepClosesItsRemedyWindow(t *testing.T) {
 	rem := newRemedies(w, store, "restart")
 	go func() { <-w.Restarts() }()
 
-	if ok, reason := w.Handle(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: 2, Kind: "implement"}, Reason: "wrong turn"}); !ok {
+	if ok, reason := w.Handle(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: "2", Kind: "implement"}, Reason: "wrong turn"}); !ok {
 		t.Fatalf("halt rejected: %s", reason)
 	}
 	if fwd := receive(t, w); fwd.Kind != SignalHalt || fwd.Step != key {

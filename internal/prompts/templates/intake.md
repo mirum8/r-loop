@@ -20,7 +20,7 @@ The plan is a phased `todo.md` (`### Phase N — Title` blocks), or an issues ba
 {{.Usage}}
 ```
 
-`<step>` is a pipeline step (`plan`, `implement`, `milestone`, `gate`) or `intake`. `--from` and `--phases` pick among the plan's unticked phases.
+`<step>` is a pipeline step (`plan`, `implement`, `milestone`, `gate`) or `intake`. `--from` and `--phases` pick among the plan's unticked phases by heading label: `10`, or `10a` for `### Phase 10a`.
 
 ## How to work
 

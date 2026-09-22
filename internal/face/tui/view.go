@@ -90,7 +90,7 @@ func (m Model) rail() []string {
 	for _, r := range m.Phases {
 		style := th.Text
 		switch {
-		case r.Number == m.Current:
+		case r.ID == m.Current:
 			style = th.Live
 		case r.State == core.PhaseBlocked:
 			style = th.Failed
@@ -99,7 +99,7 @@ func (m Model) rail() []string {
 		case r.State == core.PhaseUnticked:
 			style = th.Idle
 		}
-		lines = append(lines, fill(style, fmt.Sprintf("%s %2d %s", glyphs[r.State], r.Number, r.Title), railWidth))
+		lines = append(lines, fill(style, fmt.Sprintf("%s %2s %s", glyphs[r.State], r.ID, r.Title), railWidth))
 	}
 	return lines
 }
@@ -109,7 +109,7 @@ func (m Model) panel(w int) []string {
 	var lines []string
 	add := func(style lipgloss.Style, s string) { lines = append(lines, style.Render(ansi.Truncate(s, w, "…"))) }
 	if s := m.Live; s != nil {
-		add(th.Text, fmt.Sprintf("PHASE %d · %s", s.Phase, s.Label()))
+		add(th.Text, fmt.Sprintf("PHASE %s · %s", s.Phase, s.Label()))
 		if len(m.Steps) > 0 {
 			lines = append(lines, ansi.Truncate(th.Text.Render(fmt.Sprintf("%-10s ", "steps"))+m.pipeline(s), w, "…"))
 		}

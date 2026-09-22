@@ -16,7 +16,7 @@ func newRemedies(w *Watch, store Store, allow ...string) *Remedies {
 
 func failedImplement(t *testing.T, store Store) (*Watch, StepKey) {
 	t.Helper()
-	key := StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}
+	key := StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}
 	w := &Watch{Store: store, Now: func() time.Time { return remedyT0 }}
 	w.StepStarted(StepRef{Key: key}, nil)
 	w.StepEnded(StepRef{Key: key}, Outcome{State: StepFailed, Reason: "backstop"})
@@ -76,7 +76,7 @@ func TestAProposalWithNoHeldOrLiveStepIsRefused(t *testing.T) {
 
 func TestAProposalAttachesToTheLiveStepWhenNothingIsHeld(t *testing.T) {
 	store := &fakeStore{}
-	key := StepKey{Run: "run-1", Phase: 3, Kind: "plan", Attempt: 1}
+	key := StepKey{Run: "run-1", Phase: "3", Kind: "plan", Attempt: 1}
 	w := &Watch{Store: store}
 	w.StepStarted(StepRef{Key: key}, nil)
 	defer w.StepEnded(StepRef{Key: key}, Outcome{State: StepOK})
@@ -169,7 +169,7 @@ func TestTheRemedyWindowIsOpenWhenTheWatchdogHearsStepEnded(t *testing.T) {
 	w.Dog = &Watchdog{Host: host, Store: r.store, RunID: "run-1"}
 	r.loop.Watcher = w
 
-	r.run(RunOptions{Phases: []int{2}})
+	r.run(RunOptions{Phases: []string{"2"}})
 
 	select {
 	case held := <-host.held:
@@ -203,7 +203,7 @@ func TestARetryNeedsAnAddendumAndAProviderRemedyNeedsAProvider(t *testing.T) {
 
 func TestARestartOfAnOkStepIsRefused(t *testing.T) {
 	store := &fakeStore{}
-	key := StepKey{Run: "run-1", Phase: 1, Kind: "plan", Attempt: 1}
+	key := StepKey{Run: "run-1", Phase: "1", Kind: "plan", Attempt: 1}
 	w := &Watch{Store: store}
 	w.StepStarted(StepRef{Key: key}, nil)
 	w.StepEnded(StepRef{Key: key}, Outcome{State: StepOK})
@@ -294,7 +294,7 @@ func TestAnAuthorisedRestartRerunsTheStepAsANewAttemptWithTheAddendum(t *testing
 		decided <- reason
 	}()
 
-	code := r.run(RunOptions{Phases: []int{2}})
+	code := r.run(RunOptions{Phases: []string{"2"}})
 
 	if code != 0 {
 		t.Fatalf("exit %d, want 0", code)

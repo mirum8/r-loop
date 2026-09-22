@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,8 +31,8 @@ import (
 
 type Options struct {
 	Todo          string
-	From          int
-	Phases        []int
+	From          string
+	Phases        []string
 	Overrides     []config.Override
 	Unattended    bool
 	Plain, DryRun bool
@@ -100,26 +99,39 @@ func (o overrides) Set(arg string) error {
 	return nil
 }
 
-type phaseList struct{ dst *[]int }
+type phaseList struct{ dst *[]string }
 
 func (p phaseList) String() string { return "" }
 
 func (p phaseList) Set(arg string) error {
 	for _, s := range strings.Split(arg, ",") {
-		n, err := strconv.Atoi(strings.TrimSpace(s))
-		if err != nil {
+		id := strings.ToLower(strings.TrimSpace(s))
+		if !core.ValidPhaseID(id) {
 			return fmt.Errorf("--phases %q: want n,n", arg)
 		}
-		*p.dst = append(*p.dst, n)
+		*p.dst = append(*p.dst, id)
 	}
+	return nil
+}
+
+type phaseFrom struct{ dst *string }
+
+func (p phaseFrom) String() string { return "" }
+
+func (p phaseFrom) Set(arg string) error {
+	id := strings.ToLower(strings.TrimSpace(arg))
+	if !core.ValidPhaseID(id) {
+		return fmt.Errorf("--from %q: want a phase label such as 10 or 10a", arg)
+	}
+	*p.dst = id
 	return nil
 }
 
 func flagSet(o *Options) *flag.FlagSet {
 	fs := flag.NewFlagSet("r-loop", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fs.IntVar(&o.From, "from", 0, "run the unticked phases numbered N and up")
-	fs.Var(phaseList{&o.Phases}, "phases", "run only these unticked phases, comma-separated `n,n`")
+	fs.Var(phaseFrom{&o.From}, "from", "run the unticked phases from `N` on, in plan order; N is a heading label such as 10 or 10a")
+	fs.Var(phaseList{&o.Phases}, "phases", "run only these unticked phases, comma-separated `n,n`; labels such as 10a work")
 	for _, key := range []string{"provider", "model", "effort"} {
 		fs.Var(overrides{key, &o.Overrides}, key, "set one row's "+key+" for this run, `<step>=<"+key+">`; repeatable")
 	}

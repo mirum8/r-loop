@@ -88,7 +88,7 @@ func TestTheWatchdogWalksABlockerAndTheDriverCommitsOnlyThePlan(t *testing.T) {
 			"- [x] **Pick the database** — which one backs the store?\n      Owner: me. Blocks: Phase 1. Timebox: an hour. Output: a line in the spec.\n      Resolved: 2026-09-21 — Postgres; the team already runs it.\n      Alternative: SQLite. Outstanding: a line in the spec.\n")
 	})
 
-	code := k.w.Execute(core.RunOptions{Phases: []int{1, 2, 3}})
+	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2", "3"}})
 
 	if code != 0 {
 		t.Fatalf("exit %d\n%s%s", code, k.f.out, k.f.err)
@@ -128,19 +128,19 @@ func TestTheWatchdogWalksABlockerAndTheDriverCommitsOnlyThePlan(t *testing.T) {
 func TestAnEntryLeftOpenSkipsItsPhasesAndTheirDependents(t *testing.T) {
 	k := startWalk(t, nil)
 
-	code := k.w.Execute(core.RunOptions{Phases: []int{1, 2, 3}})
+	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2", "3"}})
 
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, k.f.out)
 	}
-	if len(k.land.landed) != 1 || k.land.landed[0] != 2 {
+	if len(k.land.landed) != 1 || k.land.landed[0] != "2" {
 		t.Fatalf("landed %v, want only 2", k.land.landed)
 	}
 	run := k.f.load(k.w.Loop.RunID)
 	if got := stepEvents(run, "entry-deferred"); len(got) != 1 || got[0].Fields["phases"] != "1, 3" {
 		t.Errorf("entry-deferred %+v", got)
 	}
-	if got := recordedRunList(run); len(got) != 1 || got[0] != 2 {
+	if got := recordedRunList(run); len(got) != 1 || got[0] != "2" {
 		t.Errorf("run list %v", got)
 	}
 	if rep := core.Report(run, k.w.Plan); !strings.Contains(rep, "- Pick the database still open: phase 1, 3 skipped\n") {
@@ -156,7 +156,7 @@ func TestAnEditOutsideResolveFirstIsUndoneAndStopsTheRun(t *testing.T) {
 	k = startWalk(t, func(w *Wiring) { k.edit("- [ ] b", "- [x] b") })
 	head := git(t, k.f.root, "rev-parse", "HEAD")
 
-	code := k.w.Execute(core.RunOptions{Phases: []int{1, 2, 3}})
+	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2", "3"}})
 
 	if code != 4 || !strings.Contains(k.f.err.String(), "outside ## Resolve first; the edit was undone") {
 		t.Fatalf("exit %d: %s", code, k.f.err)
@@ -176,7 +176,7 @@ func TestAChangeOutsideThePlanStopsTheRun(t *testing.T) {
 	var k *walk
 	k = startWalk(t, func(w *Wiring) { k.f.write("docs/topic/spec.md", "a measurement") })
 
-	code := k.w.Execute(core.RunOptions{Phases: []int{1, 2}})
+	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2"}})
 
 	if code != 4 || !strings.Contains(k.f.err.String(), "the watchdog left changes outside the plan: docs/topic/spec.md") {
 		t.Fatalf("exit %d: %s", code, k.f.err)
@@ -186,7 +186,7 @@ func TestAChangeOutsideThePlanStopsTheRun(t *testing.T) {
 func TestAStopDuringTheWalkHaltsTheRun(t *testing.T) {
 	k := startWalk(t, func(w *Wiring) { w.Store.MarkAbort(w.Loop.RunID) })
 
-	code := k.w.Execute(core.RunOptions{Phases: []int{1, 2}})
+	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2"}})
 
 	if code != 4 || !strings.Contains(k.f.err.String(), "stopped during the ## Resolve first walk") || len(k.land.landed) != 0 {
 		t.Fatalf("exit %d landed %v: %s", code, k.land.landed, k.f.err)
@@ -196,12 +196,12 @@ func TestAStopDuringTheWalkHaltsTheRun(t *testing.T) {
 func TestUnattendedSkipsTheBlockedPhasesWithoutAWalk(t *testing.T) {
 	k := startWalk(t, nil, "--unattended")
 
-	code := k.w.Execute(core.RunOptions{Phases: []int{1, 2, 3}})
+	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2", "3"}})
 
 	if code != 0 || k.dog.prompted("resolve first:") {
 		t.Fatalf("exit %d, walked %v", code, k.dog.prompted("resolve first:"))
 	}
-	if len(k.land.landed) != 1 || k.land.landed[0] != 2 {
+	if len(k.land.landed) != 1 || k.land.landed[0] != "2" {
 		t.Errorf("landed %v", k.land.landed)
 	}
 }
@@ -209,7 +209,7 @@ func TestUnattendedSkipsTheBlockedPhasesWithoutAWalk(t *testing.T) {
 func TestARunWhoseEveryPhaseIsBlockedFinishesWithNothingToRun(t *testing.T) {
 	k := startWalk(t, nil)
 
-	code := k.w.Execute(core.RunOptions{Phases: []int{1, 3}})
+	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "3"}})
 
 	if code != 0 || len(k.land.landed) != 0 {
 		t.Fatalf("exit %d landed %v", code, k.land.landed)
@@ -223,7 +223,7 @@ func TestAWatchdogThatFailsToStartBlocksTheRunWithoutTryingAnotherProvider(t *te
 	k := startWalk(t, nil)
 	k.dog.startErr = errors.New("usage limit")
 
-	code := k.w.Execute(core.RunOptions{Phases: []int{2}})
+	code := k.w.Execute(core.RunOptions{Phases: []string{"2"}})
 
 	if code != 4 || !strings.Contains(k.f.err.String(), "watchdog did not start: ") || !strings.Contains(k.f.err.String(), "usage limit") {
 		t.Fatalf("exit %d: %s", code, k.f.err)
@@ -256,7 +256,7 @@ func TestTheDriverWaitsForTheWalkToFinishNotForThePromptToReturn(t *testing.T) {
 	})
 	k.hang = true
 
-	code := k.w.Execute(core.RunOptions{Phases: []int{1, 2}})
+	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2"}})
 
 	if code != 0 {
 		t.Fatalf("exit %d\n%s%s", code, k.f.out, k.f.err)
@@ -274,9 +274,9 @@ func TestAWalkThatNeverFinishesTimesOutAndSkipsTheBlockedPhases(t *testing.T) {
 	k.hang = true
 	k.w.Config.Watchdog.UnblockTimeout = 200 * time.Millisecond
 
-	code := k.w.Execute(core.RunOptions{Phases: []int{1, 2}})
+	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2"}})
 
-	if code != 0 || len(k.land.landed) != 1 || k.land.landed[0] != 2 {
+	if code != 0 || len(k.land.landed) != 1 || k.land.landed[0] != "2" {
 		t.Fatalf("exit %d landed %v", code, k.land.landed)
 	}
 	if got := stepEvents(k.f.load(k.w.Loop.RunID), "warning"); len(got) == 0 || !strings.Contains(got[0].Fields["reason"], "did not finish") {

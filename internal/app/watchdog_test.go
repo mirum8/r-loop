@@ -115,7 +115,7 @@ func TestExecuteStartsTheWatchdogAndAHaltThroughItsMCPSurfaceExits5(t *testing.T
 	dog := &dogHost{}
 	w.Dog.Host = dog
 	done := make(chan int, 1)
-	go func() { done <- w.Execute(core.RunOptions{Phases: []int{1}}) }()
+	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
 	for deadline := time.Now().Add(10 * time.Second); !dog.prompted("step started phase-1/implement"); {
 		if time.Now().After(deadline) {
 			t.Fatalf("implement never reported to the watchdog: %q", dog.Calls())
@@ -177,7 +177,7 @@ func TestExecuteRegistersProposeRemedyAndRestartStepOnTheWatchdogSurface(t *test
 	dog := &dogHost{}
 	w.Dog.Host = dog
 	done := make(chan int, 1)
-	go func() { done <- w.Execute(core.RunOptions{Phases: []int{1}}) }()
+	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
 	for deadline := time.Now().Add(10 * time.Second); !dog.prompted("step started phase-1/implement"); {
 		if time.Now().After(deadline) {
 			t.Fatalf("implement never reported to the watchdog: %q", dog.Calls())
@@ -234,7 +234,7 @@ func TestExecuteSendsThePhaseCheckToTheWatchdogBeforeThePlanStep(t *testing.T) {
 	dog := &dogHost{}
 	w.Dog.Host = dog
 
-	if code := w.Execute(core.RunOptions{Phases: []int{1}}); code != 0 {
+	if code := w.Execute(core.RunOptions{Phases: []string{"1"}}); code != 0 {
 		t.Fatalf("exit %d\n%s", code, f.out)
 	}
 
@@ -267,7 +267,7 @@ func TestAWatchdogThatFailsToStartExits4NamingTheHerdrCode(t *testing.T) {
 	dog := &dogHost{startErr: herdr.Error{Code: "pane_not_found", Message: "no such pane"}}
 	w.Dog.Host = dog
 
-	code := w.Execute(core.RunOptions{Phases: []int{1}})
+	code := w.Execute(core.RunOptions{Phases: []string{"1"}})
 
 	if code != 4 {
 		t.Fatalf("exit %d, want 4", code)
@@ -293,7 +293,7 @@ func TestAWatchdogAskFlagWithTheConfigPathEmbeddedStillGetsItsConfig(t *testing.
 	dog := &dogHost{}
 	w.Dog.Host = dog
 
-	if code := w.Execute(core.RunOptions{Phases: []int{1}}); code != 0 {
+	if code := w.Execute(core.RunOptions{Phases: []string{"1"}}); code != 0 {
 		t.Fatalf("exit %d\n%s", code, f.out)
 	}
 

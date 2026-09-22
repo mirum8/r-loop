@@ -32,7 +32,7 @@ func newRouterRig(t *testing.T, poll time.Duration) *routerRig {
 }
 
 func routedQuestion() Question {
-	return Question{ID: "q1", Step: StepKey{Run: "run-1", Phase: 3, Kind: "implement", Attempt: 1}, Text: "which db?", Options: []string{"sqlite", "postgres"}, Recommended: "sqlite"}
+	return Question{ID: "q1", Step: StepKey{Run: "run-1", Phase: "3", Kind: "implement", Attempt: 1}, Text: "which db?", Options: []string{"sqlite", "postgres"}, Recommended: "sqlite"}
 }
 
 func (r *routerRig) route(t *testing.T) <-chan bool {
@@ -87,7 +87,7 @@ func TestACitedAnswerReachesTheSessionWithItsCitationLogged(t *testing.T) {
 		t.Fatalf("events %+v", r.face.Events)
 	}
 	ev := evs[0]
-	if ev.Kind != "question-answered" || ev.Phase != 3 || ev.Step != "implement" || ev.Fields["by"] != "watchdog" || ev.Fields["citation"] != "docs/x/spec.html:2" || ev.Fields["answer"] != "sqlite" {
+	if ev.Kind != "question-answered" || ev.Phase != "3" || ev.Step != "implement" || ev.Fields["by"] != "watchdog" || ev.Fields["citation"] != "docs/x/spec.html:2" || ev.Fields["answer"] != "sqlite" {
 		t.Errorf("event %+v", ev)
 	}
 }
@@ -238,7 +238,7 @@ func loopQuestion(t *testing.T, router *QuestionRouter, r *eventsRig) (*Session,
 	t.Helper()
 	w := &Watch{Store: r.store, Router: router}
 	r.loop.Watcher = w
-	s := &Session{Ref: StepRef{Key: StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}}}
+	s := &Session{Ref: StepRef{Key: StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}}}
 	w.StepStarted(s.Ref, s)
 	r.loop.runDir = r.store.dir
 	r.loop.setLive(s)

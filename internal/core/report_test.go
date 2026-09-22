@@ -12,7 +12,7 @@ func TestReportCountsAndListsAResolveFirstAnswer(t *testing.T) {
 			{Kind: "human", Step: "resolve first", Fields: map[string]string{"what": "answer", "id": "r1", "by": "maintainer", "entry": "Pick the database", "answer": "Postgres"}},
 		},
 		Questions: []Question{
-			{ID: "q1", Step: StepKey{Phase: 1, Kind: "implement"}, Text: "keep api?", Answer: "yes", AnsweredBy: "maintainer"},
+			{ID: "q1", Step: StepKey{Phase: "1", Kind: "implement"}, Text: "keep api?", Answer: "yes", AnsweredBy: "maintainer"},
 		},
 	}
 

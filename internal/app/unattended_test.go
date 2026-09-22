@@ -217,7 +217,7 @@ func TestAnUnattendedFourPhaseRunFinishesWithNoHumanTouch(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d, want 1\n%s", code, f.out)
 	}
-	if !slices.Equal(lander.landed, []int{1, 4}) {
+	if !slices.Equal(lander.landed, []string{"1", "4"}) {
 		t.Errorf("landed %v", lander.landed)
 	}
 	started := sim.startedAgents()
@@ -239,7 +239,7 @@ func TestAnUnattendedFourPhaseRunFinishesWithNoHumanTouch(t *testing.T) {
 		t.Errorf("the agent received %q", host.answer)
 	}
 	st := f.load(w.Loop.RunID)
-	if nudges := stepEvents(st, "nudge"); len(nudges) != 1 || nudges[0].Phase != 1 {
+	if nudges := stepEvents(st, "nudge"); len(nudges) != 1 || nudges[0].Phase != "1" {
 		t.Errorf("nudges %+v", nudges)
 	}
 	report, err := os.ReadFile(filepath.Join(w.Store.Dir(w.Loop.RunID), "report.md"))

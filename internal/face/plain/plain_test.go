@@ -14,7 +14,7 @@ func TestStepEventLine(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}
 
-	f.Emit(core.Event{At: at, Kind: "step", Phase: 4, Step: "implement", Fields: map[string]string{
+	f.Emit(core.Event{At: at, Kind: "step", Phase: "4", Step: "implement", Fields: map[string]string{
 		"state": "failed", "provider": "codex", "reason": "evidence missing: diff",
 	}})
 
@@ -32,7 +32,7 @@ func TestStepEventLineDuringAReviewNamesTheRoundAndHalf(t *testing.T) {
 		var out bytes.Buffer
 		f := &Face{Out: &out}
 
-		f.Emit(core.Event{At: at, Kind: "step", Phase: 4, Step: "implement", Fields: map[string]string{
+		f.Emit(core.Event{At: at, Kind: "step", Phase: "4", Step: "implement", Fields: map[string]string{
 			"state": "running", "provider": "codex", "round": "2", "rounds": "3", "half": half,
 		}})
 
@@ -46,7 +46,7 @@ func TestWarningLine(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}
 
-	f.Emit(core.Event{At: at, Kind: "warning", Phase: 4, Step: "implement", Fields: map[string]string{"reason": "diff is large"}})
+	f.Emit(core.Event{At: at, Kind: "warning", Phase: "4", Step: "implement", Fields: map[string]string{"reason": "diff is large"}})
 
 	if want := "!  phase 4 implement: diff is large\n"; out.String() != want {
 		t.Fatalf("got %q, want %q", out.String(), want)
@@ -57,7 +57,7 @@ func TestNudgeLineNamesTheStep(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}
 
-	f.Emit(core.Event{At: at, Kind: "nudge", Phase: 4, Step: "implement"})
+	f.Emit(core.Event{At: at, Kind: "nudge", Phase: "4", Step: "implement"})
 
 	if want := "14:03:09  phase 4  implement  nudge\n"; out.String() != want {
 		t.Fatalf("got %q, want %q", out.String(), want)
@@ -79,7 +79,7 @@ func TestOtherEventsAreOneLine(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}
 
-	f.Emit(core.Event{At: at, Kind: "phase-blocked", Phase: 4, Step: "implement", Fields: map[string]string{"phase": "4", "reason": "backstop"}})
+	f.Emit(core.Event{At: at, Kind: "phase-blocked", Phase: "4", Step: "implement", Fields: map[string]string{"phase": "4", "reason": "backstop"}})
 
 	if want := "14:03:09  phase 4  phase-blocked  phase=4 reason=backstop\n"; out.String() != want {
 		t.Fatalf("got %q, want %q", out.String(), want)
@@ -90,7 +90,7 @@ func TestStepEventWithoutDetailHasNoTrailingSpace(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}
 
-	f.Emit(core.Event{At: at, Kind: "step", Phase: 4, Step: "plan", Fields: map[string]string{"state": "running", "provider": "claude"}})
+	f.Emit(core.Event{At: at, Kind: "step", Phase: "4", Step: "plan", Fields: map[string]string{"state": "running", "provider": "claude"}})
 
 	if want := "14:03:09  phase 4  plan  running  claude\n"; out.String() != want {
 		t.Fatalf("got %q, want %q", out.String(), want)

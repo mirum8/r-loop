@@ -86,14 +86,14 @@ func newRig(t *testing.T) *rig {
 
 func (r *rig) ref(attempt int) StepRef {
 	return StepRef{
-		Key:      StepKey{Run: "run-1", Phase: 3, Kind: "implement", Attempt: attempt},
+		Key:      StepKey{Run: "run-1", Phase: "3", Kind: "implement", Attempt: attempt},
 		Kind:     StepKind{Name: "implement", Prompt: "implement", Check: "diff", Row: StepRow{Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium", Timeout: time.Hour}},
-		Phase:    Phase{Number: 3, Title: "Plan reader"},
+		Phase:    Phase{ID: "3", Title: "Plan reader"},
 		Worktree: "/repo/.r-loop/wt/phase-3",
 		Branch:   "r-loop/phase-3",
 		Base:     "main",
 		RunDir:   r.runDir,
-		Vars:     map[string]any{"PhaseNumber": 3},
+		Vars:     map[string]any{"PhaseNumber": "3"},
 	}
 }
 
@@ -203,7 +203,7 @@ func TestSpawnRendersTheStepVariablesPlusTheSentinel(t *testing.T) {
 
 	s := r.spawn(t, 1)
 
-	want := map[string]any{"PhaseNumber": 3, "Sentinel": s.Sentinel}
+	want := map[string]any{"PhaseNumber": "3", "Sentinel": s.Sentinel}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("vars = %v", got)
 	}
@@ -311,7 +311,7 @@ func TestAnAskNoneProviderGetsNoAskFlagAndRecordsAskNoneOnce(t *testing.T) {
 		t.Fatalf("ask url = %q", s.Ref.AskURL)
 	}
 	events := r.events("ask-none")
-	if len(events) != 1 || events[0].Fields["provider"] != "codex" || events[0].Phase != 3 || events[0].Step != "implement" {
+	if len(events) != 1 || events[0].Fields["provider"] != "codex" || events[0].Phase != "3" || events[0].Step != "implement" {
 		t.Fatalf("ask-none events = %+v", events)
 	}
 }

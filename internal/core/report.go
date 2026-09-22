@@ -47,11 +47,11 @@ func writeSection(b *strings.Builder, title string, lines []string) {
 	}
 }
 
-func where(phase int, step string) string {
+func where(phase, step string) string {
 	if step == "" {
-		return fmt.Sprintf("phase %d", phase)
+		return fmt.Sprintf("phase %s", phase)
 	}
-	return fmt.Sprintf("phase %d %s", phase, step)
+	return fmt.Sprintf("phase %s %s", phase, step)
 }
 
 func decisions(st RunState) []string {
@@ -100,8 +100,8 @@ func skippedLine(ev Event) string {
 }
 
 func phaseCheckLines(st RunState) []string {
-	var phases []int
-	result, outcome := map[int]string{}, map[int]string{}
+	var phases []string
+	result, outcome := map[string]string{}, map[string]string{}
 	for _, ev := range st.Events {
 		p := ev.Phase
 		switch ev.Kind {
@@ -119,14 +119,14 @@ func phaseCheckLines(st RunState) []string {
 				outcome[p] = "halted"
 			}
 		case "aborted", "halt":
-			if p > 0 {
+			if p != "" {
 				outcome[p] = "halted"
 			}
 		}
 	}
 	var out []string
 	for _, p := range phases {
-		line := fmt.Sprintf("phase %d phase check: %s", p, result[p])
+		line := fmt.Sprintf("phase %s phase check: %s", p, result[p])
 		if outcome[p] != "" {
 			line += " — " + outcome[p]
 		}
@@ -138,7 +138,7 @@ func phaseCheckLines(st RunState) []string {
 func landedLines(st RunState) []string {
 	var out []string
 	for _, l := range st.Landed {
-		line := fmt.Sprintf("phase %d %s", l.Phase, l.MergeSHA)
+		line := fmt.Sprintf("phase %s %s", l.Phase, l.MergeSHA)
 		if l.GateSkipped {
 			line += " gate skipped"
 		}
@@ -173,8 +173,8 @@ func place(f map[string]string) string {
 }
 
 func assumptions(b *strings.Builder, st RunState) {
-	var phases []int
-	byPhase := map[int][]string{}
+	var phases []string
+	byPhase := map[string][]string{}
 	for _, ev := range st.Events {
 		if ev.Kind != "assumption" {
 			continue
@@ -189,7 +189,7 @@ func assumptions(b *strings.Builder, st RunState) {
 	}
 	b.WriteString("\n## Assumptions\n")
 	for _, p := range phases {
-		fmt.Fprintf(b, "\n### Phase %d\n\n", p)
+		fmt.Fprintf(b, "\n### Phase %s\n\n", p)
 		for _, a := range byPhase[p] {
 			b.WriteString("- " + a + "\n")
 		}
@@ -298,7 +298,7 @@ func skipLines(st RunState) []string {
 			continue
 		}
 		line := ev.Kind
-		if ev.Phase > 0 {
+		if ev.Phase != "" {
 			line = where(ev.Phase, "") + ": " + ev.Kind
 		}
 		if r := ev.Fields["reason"]; r != "" {

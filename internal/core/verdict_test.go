@@ -437,13 +437,13 @@ func TestLoopEmitsTheRoundLimitWarningAndFiresOnWarnWithoutHalting(t *testing.T)
 		"diff":      fixedRunner{Outcome{State: StepOK, Warning: warning}},
 	}
 
-	code := r.run(RunOptions{Phases: []int{2}})
+	code := r.run(RunOptions{Phases: []string{"2"}})
 
 	if code != 0 {
 		t.Fatalf("code = %d", code)
 	}
 	warnings := r.events("warning")
-	if len(warnings) != 1 || warnings[0].Step != "implement" || warnings[0].Phase != 2 || warnings[0].Fields["reason"] != warning {
+	if len(warnings) != 1 || warnings[0].Step != "implement" || warnings[0].Phase != "2" || warnings[0].Fields["reason"] != warning {
 		t.Fatalf("warnings = %+v", warnings)
 	}
 	if hooks := r.hooks(); !reflect.DeepEqual(hooks, []string{"warn-hook warning", "done-hook finished"}) {

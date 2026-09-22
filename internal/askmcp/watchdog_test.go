@@ -100,9 +100,9 @@ func TestWatchdogURLHasItsOwnPrivateToken(t *testing.T) {
 
 func TestSignalOnTheWatchdogPathReachesItsHandlerAsAWatchdogSignalForTheLatestAttempt(t *testing.T) {
 	st := &memStore{steps: map[core.StepKey]core.StepState{
-		{Run: "run-7", Phase: 3, Kind: "implement", Attempt: 1}: core.StepFailed,
-		{Run: "run-7", Phase: 3, Kind: "implement", Attempt: 2}: core.StepRunning,
-		{Run: "run-7", Phase: 4, Kind: "implement", Attempt: 5}: core.StepRunning,
+		{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 1}: core.StepFailed,
+		{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 2}: core.StepRunning,
+		{Run: "run-7", Phase: "4", Kind: "implement", Attempt: 5}: core.StepRunning,
 	}}
 	s := serveWatchdog(t, st)
 	var got core.Signal
@@ -117,7 +117,7 @@ func TestSignalOnTheWatchdogPathReachesItsHandlerAsAWatchdogSignalForTheLatestAt
 	if out["accepted"] != true {
 		t.Fatalf("out = %+v", out)
 	}
-	want := core.Signal{Kind: core.SignalHalt, Source: core.SourceWatchdog, Step: core.StepKey{Run: "run-7", Phase: 3, Kind: "implement", Attempt: 2}, Reason: "rewriting the plan", Evidence: "git diff"}
+	want := core.Signal{Kind: core.SignalHalt, Source: core.SourceWatchdog, Step: core.StepKey{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 2}, Reason: "rewriting the plan", Evidence: "git diff"}
 	if got != want {
 		t.Fatalf("signal = %+v", got)
 	}
@@ -125,7 +125,7 @@ func TestSignalOnTheWatchdogPathReachesItsHandlerAsAWatchdogSignalForTheLatestAt
 
 func TestPhaseCheckStepMapsToAttemptZero(t *testing.T) {
 	st := &memStore{steps: map[core.StepKey]core.StepState{
-		{Run: "run-7", Phase: 4, Kind: "check", Attempt: 3}: core.StepRunning,
+		{Run: "run-7", Phase: "4", Kind: "check", Attempt: 3}: core.StepRunning,
 	}}
 	s := serveWatchdog(t, st)
 	var got core.Signal
@@ -139,7 +139,7 @@ func TestPhaseCheckStepMapsToAttemptZero(t *testing.T) {
 	if out["accepted"] != false || out["reason"] != "phase check may only warn" {
 		t.Fatalf("out = %+v", out)
 	}
-	if got.Step != (core.StepKey{Run: "run-7", Phase: 4, Kind: "check", Attempt: 0}) {
+	if got.Step != (core.StepKey{Run: "run-7", Phase: "4", Kind: "check", Attempt: 0}) {
 		t.Fatalf("step = %+v", got.Step)
 	}
 }
@@ -313,7 +313,7 @@ func TestWatchdogToolsOnAStepPathAre404(t *testing.T) {
 		called = true
 		return true, ""
 	}})
-	stepURL := s.StepURL(core.StepKey{Run: "run-7", Phase: 3, Kind: "implement", Attempt: 1})
+	stepURL := s.StepURL(core.StepKey{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 1})
 	cs := connect(t, stepURL)
 
 	tools, err := cs.ListTools(context.Background(), nil)
@@ -363,7 +363,7 @@ func TestAWrongWatchdogTokenIs404(t *testing.T) {
 
 func TestAnOversizedBodyOnAStepPathIsRefusedWithoutBeingReadWhole(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
-	stepURL := s.StepURL(core.StepKey{Run: "run-7", Phase: 3, Kind: "implement", Attempt: 1})
+	stepURL := s.StepURL(core.StepKey{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 1})
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask_watchdog","arguments":{"question":"` + strings.Repeat("x", 5<<20) + `"}}}`
 
 	resp, err := http.Post(stepURL, "application/json", strings.NewReader(body))

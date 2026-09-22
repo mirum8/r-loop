@@ -288,9 +288,9 @@ type mcpHaltWatch struct {
 
 func (m *mcpHaltWatch) StepStarted(ref StepRef, s *Session) {
 	m.Watch.StepStarted(ref, s)
-	if ref.Key.Phase == 1 && ref.Key.Kind == "implement" {
+	if ref.Key.Phase == "1" && ref.Key.Kind == "implement" {
 		go func() {
-			ok, reason := m.handler(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: 1, Kind: "implement"}, Reason: "off the plan"})
+			ok, reason := m.handler(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: "1", Kind: "implement"}, Reason: "off the plan"})
 			if ok {
 				reason = "accepted"
 			}

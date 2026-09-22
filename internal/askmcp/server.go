@@ -155,7 +155,7 @@ func (s *Server) WatchdogURL() string {
 }
 
 func (s *Server) StepURL(key core.StepKey) string {
-	path := fmt.Sprintf("/%d/%s/%d", key.Phase, key.Kind, key.Attempt)
+	path := fmt.Sprintf("/%s/%s/%d", key.Phase, key.Kind, key.Attempt)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.steps[path] = key

@@ -3,7 +3,6 @@ package plan
 import (
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	"r-loop/internal/core"
@@ -165,10 +164,7 @@ func parseEntry(lines []string) core.Entry {
 	e.Kind = classify(head, e.Owner)
 
 	if idx := strings.Index(e.Blocks, "Phase"); idx >= 0 {
-		for _, s := range numberRe.FindAllString(e.Blocks[idx:], -1) {
-			n, _ := strconv.Atoi(s)
-			e.BlocksPhases = append(e.BlocksPhases, n)
-		}
+		e.BlocksPhases = phaseRefs(e.Blocks[idx:])
 	}
 	e.BlocksAll = len(e.BlocksPhases) == 0
 	if e.Ticked && e.Resolved == "" {

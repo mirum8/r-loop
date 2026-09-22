@@ -25,11 +25,11 @@ func (f *Face) Emit(ev core.Event) {
 		if r := ev.Fields["round"]; r != "" {
 			detail = strings.TrimSpace(fmt.Sprintf("review r%s/%s %s", r, ev.Fields["rounds"], ev.Fields["half"]))
 		}
-		line := fmt.Sprintf("%s  phase %d  %s  %s  %s  %s", ev.At.Format("15:04:05"), ev.Phase, ev.Step,
+		line := fmt.Sprintf("%s  phase %s  %s  %s  %s  %s", ev.At.Format("15:04:05"), ev.Phase, ev.Step,
 			ev.Fields["state"], ev.Fields["provider"], detail)
 		fmt.Fprintln(f.Out, strings.TrimRight(line, " "))
 	case "nudge":
-		fmt.Fprintf(f.Out, "%s  phase %d  %s  nudge\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step)
+		fmt.Fprintf(f.Out, "%s  phase %s  %s  nudge\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step)
 	case "warning", "error":
 		fmt.Fprintf(f.Out, "!  %s%s\n", where(ev.Phase, ev.Step), ev.Fields["reason"])
 	default:
@@ -43,8 +43,8 @@ func (f *Face) Emit(ev core.Event) {
 			pairs[i] = k + "=" + ev.Fields[k]
 		}
 		phase := ""
-		if ev.Phase > 0 {
-			phase = fmt.Sprintf("phase %d  ", ev.Phase)
+		if ev.Phase != "" {
+			phase = fmt.Sprintf("phase %s  ", ev.Phase)
 		}
 		fmt.Fprintf(f.Out, "%s  %s%s  %s\n", ev.At.Format("15:04:05"), phase, ev.Kind, strings.Join(pairs, " "))
 	}
@@ -58,9 +58,9 @@ func (f *Face) Close() {
 	}
 }
 
-func where(phase int, step string) string {
-	if phase == 0 {
+func where(phase, step string) string {
+	if phase == "" {
 		return ""
 	}
-	return fmt.Sprintf("phase %d %s: ", phase, step)
+	return fmt.Sprintf("phase %s %s: ", phase, step)
 }

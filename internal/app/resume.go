@@ -71,7 +71,7 @@ func (w *Wiring) resume(run core.RunState, replan bool) (core.RunOptions, error)
 	id, env := run.ID, w.Env
 	if recorded := recordedRunList(run); len(recorded) > 0 {
 		unticked := w.Plan.Unticked()
-		w.Opts.Phases = slices.DeleteFunc(recorded, func(n int) bool { return !slices.Contains(unticked, n) })
+		w.Opts.Phases = slices.DeleteFunc(recorded, func(n string) bool { return !slices.Contains(unticked, n) })
 		if len(w.Opts.Phases) == 0 {
 			return core.RunOptions{}, exit(2, "nothing to resume: run %s landed every phase", id)
 		}
@@ -114,26 +114,26 @@ func (w *Wiring) resume(run core.RunState, replan bool) (core.RunOptions, error)
 	return core.RunOptions{Phases: w.Opts.Phases, Resume: true, Replan: replan}, nil
 }
 
-func recordedRunList(run core.RunState) []int {
-	var phases []int
+func recordedRunList(run core.RunState) []string {
+	var phases []string
 	for _, e := range run.Events {
 		if e.Kind != "run-list" {
 			continue
 		}
 		phases = nil
 		for _, s := range strings.Split(e.Fields["phases"], ",") {
-			if n, err := strconv.Atoi(s); err == nil {
-				phases = append(phases, n)
+			if core.ValidPhaseID(s) {
+				phases = append(phases, s)
 			}
 		}
 	}
 	return phases
 }
 
-func haltedPhases(run core.RunState, list []core.Phase) []int {
-	var out []int
+func haltedPhases(run core.RunState, list []core.Phase) []string {
+	var out []string
 	for _, ph := range list {
-		n := ph.Number
+		n := ph.ID
 		if slices.ContainsFunc(run.Landed, func(l core.Landing) bool { return l.Phase == n }) {
 			continue
 		}
@@ -147,12 +147,12 @@ func haltedPhases(run core.RunState, list []core.Phase) []int {
 	return out
 }
 
-func (w *Wiring) stopStale(run core.RunState, phase int) error {
+func (w *Wiring) stopStale(run core.RunState, phase string) error {
 	kind, attempt := lastStep(run, phase)
 	if kind == "" {
 		return nil
 	}
-	agent := fmt.Sprintf("rloop-p%d-%s", phase, kind)
+	agent := fmt.Sprintf("rloop-p%s-%s", phase, kind)
 	if a, _ := strconv.Atoi(attempt); a > 1 {
 		agent += "-a" + attempt
 	}
@@ -175,7 +175,7 @@ func (w *Wiring) stopStale(run core.RunState, phase int) error {
 	return nil
 }
 
-func (w *Wiring) closeInterrupted(run core.RunState, phase int) error {
+func (w *Wiring) closeInterrupted(run core.RunState, phase string) error {
 	var open []core.StepKey
 	for key, state := range run.Steps {
 		if key.Phase == phase && state != core.StepOK && state != core.StepFailed {
@@ -191,8 +191,8 @@ func (w *Wiring) closeInterrupted(run core.RunState, phase int) error {
 	return nil
 }
 
-func (w *Wiring) claim(run core.RunState, phase int) error {
-	rel := fmt.Sprintf(".r-loop/wt/phase-%d", phase)
+func (w *Wiring) claim(run core.RunState, phase string) error {
+	rel := fmt.Sprintf(".r-loop/wt/phase-%s", phase)
 	dir := filepath.Join(w.Repo.Root(), rel)
 	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -220,7 +220,7 @@ func (w *Wiring) claim(run core.RunState, phase int) error {
 	return exit(2, "unclaimed changes in %s: %s; commit or discard them, then resume", rel, strings.Join(changed, ", "))
 }
 
-func leftoversOfRunningStep(run core.RunState, phase int) bool {
+func leftoversOfRunningStep(run core.RunState, phase string) bool {
 	kind, attempt := lastStep(run, phase)
 	if kind == "" {
 		return false
@@ -235,7 +235,7 @@ func leftoversOfRunningStep(run core.RunState, phase int) bool {
 	})
 }
 
-func lastStep(run core.RunState, phase int) (string, string) {
+func lastStep(run core.RunState, phase string) (string, string) {
 	kind, attempt := "", ""
 	for _, e := range run.Events {
 		if e.Kind == "step" && e.Phase == phase {
@@ -245,7 +245,7 @@ func lastStep(run core.RunState, phase int) (string, string) {
 	return kind, attempt
 }
 
-func recordedTree(run core.RunState, phase int) string {
+func recordedTree(run core.RunState, phase string) string {
 	kind, attempt := lastStep(run, phase)
 	tree := ""
 	for _, e := range run.Events {
@@ -260,13 +260,13 @@ func recordedTree(run core.RunState, phase int) string {
 	return tree
 }
 
-func previousSession(run core.RunState, phase int) (string, string) {
+func previousSession(run core.RunState, phase string) (string, string) {
 	agent, ws := "", ""
 	for _, e := range run.Events {
 		if e.Kind != "step" || e.Phase != phase || e.Fields["workspace"] == "" {
 			continue
 		}
-		agent, ws = fmt.Sprintf("rloop-p%d-%s", phase, e.Step), e.Fields["workspace"]
+		agent, ws = fmt.Sprintf("rloop-p%s-%s", phase, e.Step), e.Fields["workspace"]
 		if a, _ := strconv.Atoi(e.Fields["attempt"]); a > 1 {
 			agent += "-a" + strconv.Itoa(a)
 		}

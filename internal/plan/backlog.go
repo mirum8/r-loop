@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"r-loop/internal/core"
@@ -47,7 +48,7 @@ func readBacklog(path string, lines []string) (core.Plan, error) {
 	topic := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	p := core.Plan{Path: path, Topic: topic, Backlog: true}
 	for i, it := range items {
-		ph := core.Phase{Number: i + 1, Title: it.title, Block: it.block}
+		ph := core.Phase{ID: strconv.Itoa(i + 1), Title: it.title, Block: it.block}
 		for _, b := range it.body {
 			if m := indentListRe.FindStringSubmatch(b); m != nil {
 				ph.Items = append(ph.Items, core.Item{Text: strings.TrimSpace(m[1]), Done: it.done})
@@ -159,14 +160,15 @@ func proseFollows(lines []string, from int) bool {
 	return false
 }
 
-func tickBacklog(path string, lines []string, phase int) error {
+func tickBacklog(path string, lines []string, phase string) error {
 	items := parseBacklog(lines)
-	if phase < 1 || phase > len(items) {
-		return fmt.Errorf("%s: no item %d", path, phase)
+	n, err := strconv.Atoi(phase)
+	if err != nil || n < 1 || n > len(items) || strconv.Itoa(n) != phase {
+		return fmt.Errorf("%s: no item %s", path, phase)
 	}
-	it := items[phase-1]
+	it := items[n-1]
 	if it.done {
-		return fmt.Errorf("%s item %d: %w", path, phase, ErrNothingToTick)
+		return fmt.Errorf("%s item %s: %w", path, phase, ErrNothingToTick)
 	}
 	raw := lines[it.line]
 	body := strings.TrimRight(raw, "\r\n")
@@ -176,6 +178,6 @@ func tickBacklog(path string, lines []string, phase int) error {
 		at := m[2]
 		body = body[:at] + "[x]" + body[at+3:]
 	}
-	lines[it.line] = fmt.Sprintf("%s  <!-- fixed: r-loop/phase-%d -->%s", body, phase, eol)
+	lines[it.line] = fmt.Sprintf("%s  <!-- fixed: r-loop/phase-%s -->%s", body, phase, eol)
 	return writeLines(path, lines)
 }

@@ -45,7 +45,7 @@ func TestReadIssuesDraftFile(t *testing.T) {
 	if !reflect.DeepEqual(titles, want) {
 		t.Fatalf("titles = %q", titles)
 	}
-	if got := p.Unticked(); !reflect.DeepEqual(got, []int{1, 3, 4}) {
+	if got := p.Unticked(); !reflect.DeepEqual(got, []string{"1", "3", "4"}) {
 		t.Errorf("Unticked = %v, want [1 3 4]", got)
 	}
 	wantItems := []core.Item{
@@ -63,7 +63,7 @@ func TestReadIssuesDraftFile(t *testing.T) {
 	}
 	for _, ph := range p.Phases {
 		if ph.DoneWhen != "" || ph.Files != nil || ph.DependsOn != nil {
-			t.Errorf("phase %d carries plan fields: %+v", ph.Number, ph)
+			t.Errorf("phase %s carries plan fields: %+v", ph.ID, ph)
 		}
 	}
 }
@@ -137,10 +137,10 @@ func TestReadBacklogWithNoItemsFails(t *testing.T) {
 func TestTickBacklogMarksTheItemLine(t *testing.T) {
 	path := writeBacklog(t, "# B\n\n- [ ] [#1] first\r\n      - crit\r\n\n- second, no box\n")
 
-	if err := (Reader{}).Tick(path, 1); err != nil {
+	if err := (Reader{}).Tick(path, "1"); err != nil {
 		t.Fatalf("Tick 1: %v", err)
 	}
-	if err := (Reader{}).Tick(path, 2); err != nil {
+	if err := (Reader{}).Tick(path, "2"); err != nil {
 		t.Fatalf("Tick 2: %v", err)
 	}
 
@@ -155,7 +155,7 @@ func TestTickBacklogMarksTheItemLine(t *testing.T) {
 	if len(p.Unticked()) != 0 {
 		t.Errorf("Unticked after tick = %v", p.Unticked())
 	}
-	if err := (Reader{}).Tick(path, 1); !errors.Is(err, ErrNothingToTick) {
+	if err := (Reader{}).Tick(path, "1"); !errors.Is(err, ErrNothingToTick) {
 		t.Errorf("second tick err = %v, want ErrNothingToTick", err)
 	}
 }
@@ -163,7 +163,7 @@ func TestTickBacklogMarksTheItemLine(t *testing.T) {
 func TestTickBacklogKeepsNumberingOfLaterItems(t *testing.T) {
 	path := writeBacklog(t, "- [x] done  <!-- fixed: x -->\n- [ ] a\n- [ ] b\n")
 
-	if err := (Reader{}).Tick(path, 3); err != nil {
+	if err := (Reader{}).Tick(path, "3"); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 

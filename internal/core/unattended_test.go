@@ -95,7 +95,7 @@ func TestAFallbackRestartRunsOnTheFallbacksModelAndEffortAndTheReportNamesAllThr
 		decided <- reason
 	}()
 
-	code := r.run(RunOptions{Phases: []int{2}})
+	code := r.run(RunOptions{Phases: []string{"2"}})
 
 	if code != 0 {
 		t.Fatalf("exit %d", code)

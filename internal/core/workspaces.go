@@ -12,8 +12,8 @@ type stepWorkspace struct {
 
 func everyWorkspace(string, int) bool { return true }
 
-func (l *RunLoop) removeWorktree(phase int) {
-	wt, branch := fmt.Sprintf(".r-loop/wt/phase-%d", phase), fmt.Sprintf("r-loop/phase-%d", phase)
+func (l *RunLoop) removeWorktree(phase string) {
+	wt, branch := fmt.Sprintf(".r-loop/wt/phase-%s", phase), fmt.Sprintf("r-loop/phase-%s", phase)
 	l.emit(Event{Kind: "worktree-removed", Phase: phase, Fields: map[string]string{"worktree": wt, "branch": branch}})
 	repo := l.Sessions.Repo
 	if err := repo.RemoveWorktree(wt); err != nil {
@@ -25,7 +25,7 @@ func (l *RunLoop) removeWorktree(phase int) {
 	}
 }
 
-func (l *RunLoop) closeWorkspaces(phase int, match func(kind string, attempt int) bool) {
+func (l *RunLoop) closeWorkspaces(phase string, match func(kind string, attempt int) bool) {
 	st, err := l.Store.Load(l.RunID)
 	if err != nil {
 		l.emit(Event{Kind: "warning", Phase: phase, Fields: map[string]string{"reason": "close workspaces: " + err.Error()}})
@@ -39,7 +39,7 @@ func (l *RunLoop) closeWorkspaces(phase int, match func(kind string, attempt int
 	}
 }
 
-func openWorkspaces(st RunState, phase int, match func(kind string, attempt int) bool) []stepWorkspace {
+func openWorkspaces(st RunState, phase string, match func(kind string, attempt int) bool) []stepWorkspace {
 	closed := map[string]bool{}
 	for _, ev := range st.Events {
 		if ev.Kind == "workspace-closed" {

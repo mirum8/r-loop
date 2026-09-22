@@ -124,7 +124,7 @@ func startAskRun(t *testing.T, dog func(w *Wiring) *dogHost) *askRun {
 	clock := &fakeClock{now: time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)}
 	w.Loop.Sessions.Now = clock.Now
 	r := &askRun{f: f, w: w, host: host, clock: clock, code: make(chan int, 1)}
-	go func() { r.code <- w.Execute(core.RunOptions{Phases: []int{1}}) }()
+	go func() { r.code <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
 	t.Cleanup(func() {
 		host.mu.Lock()
 		if host.cmd != nil && host.cmd.Process != nil {
@@ -140,7 +140,7 @@ func (r *askRun) implement() core.StepState {
 	if err != nil {
 		return ""
 	}
-	return st.Steps[core.StepKey{Run: r.w.Loop.RunID, Phase: 1, Kind: "implement", Attempt: 1}]
+	return st.Steps[core.StepKey{Run: r.w.Loop.RunID, Phase: "1", Kind: "implement", Attempt: 1}]
 }
 
 func (r *askRun) waitFor(t *testing.T, cond func() bool) {
@@ -287,7 +287,7 @@ func TestExecuteServesTheAskChannelToTheLoopAndTheSessions(t *testing.T) {
 	}
 	f.sim(w, newSim())
 
-	if code := w.Execute(core.RunOptions{Phases: []int{1}}); code != 0 {
+	if code := w.Execute(core.RunOptions{Phases: []string{"1"}}); code != 0 {
 		t.Fatalf("exit %d\n%s", code, f.out)
 	}
 

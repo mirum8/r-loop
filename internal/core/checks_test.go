@@ -1,6 +1,7 @@
 package core
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,25 +21,25 @@ func landedStore(t *testing.T) *fakeStore {
 		{1, 10 * time.Minute, 100, 20, checksT0},
 		{2, 20 * time.Minute, 200, 50, checksT0.Add(time.Hour)},
 	} {
-		plan := StepKey{Run: "run-1", Phase: l.phase, Kind: "plan", Attempt: 1}
-		impl := StepKey{Run: "run-1", Phase: l.phase, Kind: "implement", Attempt: 1}
+		plan := StepKey{Run: "run-1", Phase: strconv.Itoa(l.phase), Kind: "plan", Attempt: 1}
+		impl := StepKey{Run: "run-1", Phase: strconv.Itoa(l.phase), Kind: "implement", Attempt: 1}
 		store.Append("run-1", Record{Kind: RecordStep, At: l.start, Step: &plan, State: StepQueued})
 		store.Append("run-1", Record{Kind: RecordStep, At: l.start.Add(time.Minute), Step: &plan, State: StepOK})
 		store.Append("run-1", Record{Kind: RecordStep, At: l.start.Add(2 * time.Minute), Step: &impl, State: StepQueued})
 		store.Append("run-1", Record{Kind: RecordStep, At: l.start.Add(5 * time.Minute), Step: &impl, State: StepRunning})
 		store.Append("run-1", Record{Kind: RecordStep, At: l.start.Add(5*time.Minute + l.impl), Step: &impl, State: StepOK})
-		store.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: l.phase, MergeSHA: "m", Added: l.added, Deleted: l.deleted}})
+		store.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: strconv.Itoa(l.phase), MergeSHA: "m", Added: l.added, Deleted: l.deleted}})
 	}
 	return store
 }
 
 func phaseThree() Phase {
-	return Phase{Number: 3, Title: "Third thing", Files: []string{"internal/core/checks.go", "internal/core/checks_test.go", "internal/web/"}}
+	return Phase{ID: "3", Title: "Third thing", Files: []string{"internal/core/checks.go", "internal/core/checks_test.go", "internal/web/"}}
 }
 
 func checkCtx(store *fakeStore, repo *fakeRepo, kind string, attempt int, elapsed time.Duration) CheckContext {
 	ref := StepRef{
-		Key:      StepKey{Run: "run-1", Phase: 3, Kind: kind, Attempt: attempt},
+		Key:      StepKey{Run: "run-1", Phase: "3", Kind: kind, Attempt: attempt},
 		Phase:    phaseThree(),
 		Worktree: ".r-loop/wt/phase-3",
 		Base:     "main",
@@ -152,10 +153,10 @@ func TestStepOvertimeQuietWithinTheFactor(t *testing.T) {
 
 func TestStepOvertimeQuietBeforeTwoPhasesHaveLanded(t *testing.T) {
 	store := &fakeStore{}
-	impl := StepKey{Run: "run-1", Phase: 1, Kind: "implement", Attempt: 1}
+	impl := StepKey{Run: "run-1", Phase: "1", Kind: "implement", Attempt: 1}
 	store.Append("run-1", Record{Kind: RecordStep, At: checksT0, Step: &impl, State: StepRunning})
 	store.Append("run-1", Record{Kind: RecordStep, At: checksT0.Add(time.Minute), Step: &impl, State: StepOK})
-	store.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: 1}})
+	store.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: "1"}})
 	ctx := checkCtx(store, &fakeRepo{}, "implement", 1, 10*time.Hour)
 
 	noWarning(t, shipped(t, "step-overtime").Run(ctx))
@@ -184,7 +185,7 @@ func TestDiffOversizeQuietWithinTheFactor(t *testing.T) {
 
 func TestDiffOversizeQuietBeforeTwoPhasesHaveLanded(t *testing.T) {
 	store := &fakeStore{}
-	store.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: 1, Added: 1}})
+	store.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: "1", Added: 1}})
 	repo := &fakeRepo{RootDir: "/repo", Added: 10000}
 	ctx := checkCtx(store, repo, "implement", 1, time.Minute)
 

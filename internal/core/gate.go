@@ -47,7 +47,7 @@ func (p *GateProbe) Command(ctx context.Context, phase Phase) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrNoGate, err)
 	}
-	recordEvent(p.Sessions.Store, p.Face, p.RunID, Event{Kind: gateDiscovered, Phase: phase.Number, Step: p.Kind.Name, Fields: map[string]string{"command": command}})
+	recordEvent(p.Sessions.Store, p.Face, p.RunID, Event{Kind: gateDiscovered, Phase: phase.ID, Step: p.Kind.Name, Fields: map[string]string{"command": command}})
 	p.command = command
 	return command, nil
 }
@@ -63,9 +63,9 @@ func (p *GateProbe) discover(ctx context.Context, phase Phase, st RunState) (str
 	if err != nil {
 		return "", err
 	}
-	prior, _ := latestAttempt(st, p.RunID, phase.Number, p.Kind.Name)
+	prior, _ := latestAttempt(st, p.RunID, phase.ID, p.Kind.Name)
 	ref := StepRef{
-		Key:       StepKey{Run: p.RunID, Phase: phase.Number, Kind: p.Kind.Name, Attempt: prior + 1},
+		Key:       StepKey{Run: p.RunID, Phase: phase.ID, Kind: p.Kind.Name, Attempt: prior + 1},
 		Kind:      p.Kind,
 		Phase:     phase,
 		InPrimary: true,

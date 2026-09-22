@@ -556,7 +556,7 @@ to be written and never writes it either.</p>
 <table>
   <tr><th>Entity</th><th>What it is</th><th>Ours or a copy</th><th>Identified across systems by</th></tr>
   <tr><td><code>Run</code></td><td>One invocation of the driver over one todo</td><td>ours</td><td>run id, and the repo's git common directory</td></tr>
-  <tr><td><code>Step</code></td><td>One unit of work inside a phase, of one <code>StepKind</code> — by default plan or implement — with a work half and, when configured, a review half of one or more rounds</td><td>ours</td><td><code>(run id, phase number, step kind)</code></td></tr>
+  <tr><td><code>Step</code></td><td>One unit of work inside a phase, of one <code>StepKind</code> — by default plan or implement — with a work half and, when configured, a review half of one or more rounds</td><td>ours</td><td><code>(run id, phase label, step kind)</code></td></tr>
   <tr><td><code>StepKind</code></td><td>A named step in the phase pipeline: its prompt, its config row and the evidence check that judges it</td><td>ours</td><td>its name in the <code>pipeline</code> list of <code>.r-loop/config.yaml</code></td></tr>
   <tr><td><code>Session</code></td><td>A herdr workspace with the step's agent live in its root pane and, during a review round, one reviewer agent per configured reviewer in panes to its right</td><td>ours</td><td>herdr workspace id and agent name</td></tr>
   <tr><td><code>Provider</code></td><td>A named agent the driver can start, and how to start it</td><td>ours</td><td>its name in <code>providers.*</code>, and the herdr <code>kind</code> it maps to</td></tr>
@@ -567,7 +567,7 @@ to be written and never writes it either.</p>
   <tr><td><code>Question</code></td><td>Something a session asked and the answer it received, with who answered it</td><td>ours</td><td>the step that asked, plus a sequence number</td></tr>
   <tr><td><code>Signal</code></td><td>A warning or a halt call — from a deterministic driver check or from the watchdog</td><td>ours</td><td>the step it is about, plus a sequence number</td></tr>
   <tr><td><code>Remedy</code></td><td>A proposed repair: its class, the exact command, how it was authorised, what it returned</td><td>ours</td><td>the signal that prompted it</td></tr>
-  <tr><td><code>Phase</code></td><td>A <code>### Phase N</code> block with its <code>Files:</code>, <code>Risk:</code> and <code>Done when:</code></td><td><strong>copy</strong> — owned by the todo, written by <code>/r:spec-design</code>; r-loop parses the format itself (<a href="#adr-43">ADR-43</a>)</td><td>phase number within its todo</td></tr>
+  <tr><td><code>Phase</code></td><td>A <code>### Phase N</code> block with its <code>Files:</code>, <code>Risk:</code> and <code>Done when:</code></td><td><strong>copy</strong> — owned by the todo, written by <code>/r:spec-design</code>; r-loop parses the format itself (<a href="#adr-43">ADR-43</a>)</td><td>its heading label within its todo — a string, <code>10</code>, or <code>10a</code> for a phase inserted after 10 once 11 was built; plan order is document order, and the run directory, worktree and branch carry the label (<code>phase-10a</code>)</td></tr>
   <tr><td><code>PhasePlan</code></td><td>The phase plan at <code>.task-plans/&lt;slug&gt;.md</code></td><td><strong>copy</strong> — written by the planning step, read by the implement step</td><td>its path, which travels with the branch</td></tr>
   <tr><td><code>Verdict</code></td><td>What the reviewers reported in one round about a step's plan or diff, and the verdict the step's own session gave each finding</td><td><strong>copy</strong> — written by the reviewer agents and the step's own session</td><td>the step that produced it</td></tr>
 </table>
@@ -3288,7 +3288,7 @@ named reason on stderr; there is nothing paginated.</p>
 <table>
   <tr><th>Command</th><th>Purpose</th><th>Input</th><th>Output</th></tr>
   <tr><td><code>r-loop &lt;todo&gt;</code></td><td>Run every unticked phase in order</td>
-      <td>path to the plan; <code>--from N</code>, <code>--phases n,n</code>,
+      <td>path to the plan; <code>--from N</code>, <code>--phases n,n</code> (phase labels such as <code>10</code> or <code>10a</code>),
           <code>--provider &lt;step&gt;=&lt;name&gt;</code>, <code>--model &lt;step&gt;=&lt;model&gt;</code>,
           <code>--effort &lt;step&gt;=&lt;effort&gt;</code>,
           <code>--unattended</code>,

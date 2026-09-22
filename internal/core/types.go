@@ -1,22 +1,25 @@
 package core
 
 import (
-	"sort"
+	"cmp"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
 
 type StepKey struct {
 	Run     string
-	Phase   int
+	Phase   string
 	Kind    string
 	Attempt int
 }
 
 type Phase struct {
-	Number     int
+	ID         string
 	Title      string
 	Implements []string
-	DependsOn  []int
+	DependsOn  []string
 	Files      []string
 	Risk       string
 	Items      []Item
@@ -33,7 +36,7 @@ type Item struct {
 type Milestone struct {
 	Number int
 	Name   string
-	Phases []int
+	Phases []string
 }
 
 const (
@@ -48,7 +51,7 @@ type Entry struct {
 	Owner, Blocks, Timebox, Output, Resolved string
 	Alternative, Outstanding                 string
 	BlocksAll                                bool
-	BlocksPhases                             []int
+	BlocksPhases                             []string
 	Malformed                                []string
 }
 
@@ -104,7 +107,7 @@ type Remedy struct {
 }
 
 type Landing struct {
-	Phase       int
+	Phase       string
 	MergeSHA    string
 	GateSkipped bool
 	GateOutput  string
@@ -115,7 +118,7 @@ type Landing struct {
 type Event struct {
 	At     time.Time
 	Kind   string
-	Phase  int
+	Phase  string
 	Step   string
 	Fields map[string]string
 }
@@ -185,21 +188,56 @@ func (st *RunState) Span(key StepKey, state StepState, at time.Time) {
 	st.Spans[key] = sp
 }
 
-func (p Plan) Unticked() []int {
-	var out []int
+func (p Plan) Unticked() []string {
+	var out []string
 	for _, ph := range p.Phases {
 		for _, it := range ph.Items {
 			if !it.Done {
-				out = append(out, ph.Number)
+				out = append(out, ph.ID)
 				break
 			}
 		}
 	}
-	sort.Ints(out)
 	return out
 }
 
-func (p Plan) Blocking(phases []int) []Entry {
+var phaseIDRe = regexp.MustCompile(`^[1-9][0-9]*[a-z]?$`)
+
+func ValidPhaseID(id string) bool {
+	return phaseIDRe.MatchString(id)
+}
+
+func ParseStepName(step string) (phase, kind string, ok bool) {
+	rest, found := strings.CutPrefix(step, "phase-")
+	if !found {
+		return "", "", false
+	}
+	phase, kind, found = strings.Cut(rest, "/")
+	if !found || !ValidPhaseID(phase) || kind == "" || strings.ContainsAny(kind, "/ \t\n") {
+		return "", "", false
+	}
+	return phase, kind, true
+}
+
+func ComparePhaseIDs(a, b string) int {
+	na, sa := SplitPhaseID(a)
+	nb, sb := SplitPhaseID(b)
+	if c := cmp.Compare(na, nb); c != 0 {
+		return c
+	}
+	return strings.Compare(sa, sb)
+}
+
+func SplitPhaseID(id string) (int, string) {
+	i := len(id)
+	for i > 0 && (id[i-1] < '0' || id[i-1] > '9') {
+		i--
+	}
+	n, _ := strconv.Atoi(id[:i])
+	return n, id[i:]
+}
+
+func (p Plan) Blocking(phases []string) []Entry {
 	var out []Entry
 	for _, e := range p.ResolveFirst {
 		if e.Ticked {
@@ -212,7 +250,7 @@ func (p Plan) Blocking(phases []int) []Entry {
 	return out
 }
 
-func meets(a, b []int) bool {
+func meets(a, b []string) bool {
 	for _, x := range a {
 		for _, y := range b {
 			if x == y {

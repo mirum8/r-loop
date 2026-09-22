@@ -54,12 +54,12 @@ const todoText = "# Plan\n\n## Milestone 1 — The core\n\n### Phase 1 — First
 
 type tickPlan struct {
 	root  string
-	ticks []int
+	ticks []string
 }
 
 func (p *tickPlan) Read(path string) (core.Plan, error) { return core.Plan{}, nil }
 
-func (p *tickPlan) Tick(path string, phase int) error {
+func (p *tickPlan) Tick(path, phase string) error {
 	p.ticks = append(p.ticks, phase)
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(p.root, path)
@@ -68,8 +68,8 @@ func (p *tickPlan) Tick(path string, phase int) error {
 	if err != nil {
 		return err
 	}
-	box := fmt.Sprintf("- [ ] p%d ", phase)
-	return os.WriteFile(path, []byte(strings.ReplaceAll(string(data), box, fmt.Sprintf("- [x] p%d ", phase))), 0o644)
+	box := fmt.Sprintf("- [ ] p%s ", phase)
+	return os.WriteFile(path, []byte(strings.ReplaceAll(string(data), box, fmt.Sprintf("- [x] p%s ", phase))), 0o644)
 }
 
 type memStore struct {
@@ -238,11 +238,11 @@ func (e *landEnv) assertUntouched(head string) {
 }
 
 func phaseOne(doneWhen string) core.Phase {
-	return core.Phase{Number: 1, Title: "First", Milestone: 1, DoneWhen: doneWhen, Items: []core.Item{{Text: "p1 item"}}}
+	return core.Phase{ID: "1", Title: "First", Milestone: 1, DoneWhen: doneWhen, Items: []core.Item{{Text: "p1 item"}}}
 }
 
 func phaseTwo(doneWhen string) core.Phase {
-	return core.Phase{Number: 2, Title: "Second", Milestone: 1, DoneWhen: doneWhen, Items: []core.Item{{Text: "p2 item"}}}
+	return core.Phase{ID: "2", Title: "Second", Milestone: 1, DoneWhen: doneWhen, Items: []core.Item{{Text: "p2 item"}}}
 }
 
 func TestLandGatePassesOnlyBecauseItRunsAfterTheMerge(t *testing.T) {
@@ -255,7 +255,7 @@ func TestLandGatePassesOnlyBecauseItRunsAfterTheMerge(t *testing.T) {
 		t.Fatalf("Land: %v", err)
 	}
 	head := e.head()
-	if landing.MergeSHA != head || landing.Phase != 1 || landing.GateSkipped {
+	if landing.MergeSHA != head || landing.Phase != "1" || landing.GateSkipped {
 		t.Errorf("landing = %+v, head %s", landing, head)
 	}
 	if !strings.Contains(landing.GateOutput, "gate green") {
@@ -350,7 +350,7 @@ func fixingRunner(e *landEnv, refs *[]core.StepRef) runnerFunc {
 		*refs = append(*refs, ref)
 		wt := filepath.Join(e.root, ref.Worktree)
 		writeFile(e.t, filepath.Join(wt, fmt.Sprintf("fix%d.txt", ref.Key.Attempt)), "fixed\n")
-		if _, err := e.repo.CommitAll(wt, fmt.Sprintf("r-loop: phase %d gatefix", ref.Key.Phase)); err != nil {
+		if _, err := e.repo.CommitAll(wt, fmt.Sprintf("r-loop: phase %s gatefix", ref.Key.Phase)); err != nil {
 			return core.Outcome{State: core.StepFailed, Reason: err.Error()}
 		}
 		return core.Outcome{State: core.StepOK}
@@ -374,7 +374,7 @@ func TestLandGateRedFixedByOneGateFixRoundThenLands(t *testing.T) {
 		t.Fatalf("gate-fix runs = %d, want 1", len(refs))
 	}
 	ref := refs[0]
-	if ref.Key != (core.StepKey{Run: "run1", Phase: 1, Kind: "gatefix", Attempt: 1}) {
+	if ref.Key != (core.StepKey{Run: "run1", Phase: "1", Kind: "gatefix", Attempt: 1}) {
 		t.Errorf("key = %+v", ref.Key)
 	}
 	if ref.Kind.Prompt != "gatefix" || ref.Kind.Check != "diff" || ref.InPrimary {
@@ -389,7 +389,7 @@ func TestLandGateRedFixedByOneGateFixRoundThenLands(t *testing.T) {
 	if out, _ := ref.Vars["GateOutput"].(string); !strings.Contains(out, "missing fix1") {
 		t.Errorf("GateOutput = %q", out)
 	}
-	if ref.Vars["PhaseNumber"] != 1 || ref.Vars["TodoPath"] != e.todo {
+	if ref.Vars["PhaseNumber"] != "1" || ref.Vars["TodoPath"] != e.todo {
 		t.Errorf("vars = %v", ref.Vars)
 	}
 	fixes := e.store.events("gate-fix")
@@ -433,7 +433,7 @@ func TestLandGateSecondRedGateGetsASecondRound(t *testing.T) {
 func TestLandGateFixOnResumeIsANewAttempt(t *testing.T) {
 	e := newLandEnv(t)
 	e.phaseWork(1, "feature.txt", "new\n")
-	e.store.Append("run1", core.Record{Kind: core.RecordStep, Step: &core.StepKey{Run: "run1", Phase: 1, Kind: "gatefix", Attempt: 1}, State: core.StepFailed})
+	e.store.Append("run1", core.Record{Kind: core.RecordStep, Step: &core.StepKey{Run: "run1", Phase: "1", Kind: "gatefix", Attempt: 1}, State: core.StepFailed})
 	var refs []core.StepRef
 	g := e.gate()
 	g.FixRounds = 1
@@ -540,7 +540,7 @@ func TestLandGateWithoutDoneWhenRecordsASkip(t *testing.T) {
 		t.Errorf("landing = %+v", landing)
 	}
 	skips := e.store.events("gate-skipped")
-	if len(skips) != 1 || skips[0].Phase != 1 {
+	if len(skips) != 1 || skips[0].Phase != "1" {
 		t.Errorf("gate-skipped events = %+v", skips)
 	}
 	if len(e.face.events) == 0 || e.face.events[0].Kind != "gate-skipped" {
@@ -660,7 +660,7 @@ func (e *landEnv) boundaryGate(outcome string) (*core.LandGate, *reportHost, *re
 	plan := core.Plan{
 		Path:       e.todo,
 		Topic:      "demo",
-		Milestones: []core.Milestone{{Number: 1, Name: "The core", Phases: []int{1, 2}}},
+		Milestones: []core.Milestone{{Number: 1, Name: "The core", Phases: []string{"1", "2"}}},
 		Phases:     []core.Phase{phaseOne(""), phaseTwo("")},
 	}
 	g := e.gate()
@@ -786,7 +786,7 @@ func TestGateFixAndMilestoneSessionsStoreTheirLiveStepMetadata(t *testing.T) {
 	var got []string
 	for _, ev := range e.store.events("step") {
 		f := ev.Fields
-		got = append(got, fmt.Sprintf("%d %s %s %s %s %s", ev.Phase, ev.Step, f["state"], f["attempt"], f["provider"], f["workspace"]))
+		got = append(got, fmt.Sprintf("%s %s %s %s %s %s", ev.Phase, ev.Step, f["state"], f["attempt"], f["provider"], f["workspace"]))
 	}
 	want := []string{
 		"1 gatefix running 1 codex w9",

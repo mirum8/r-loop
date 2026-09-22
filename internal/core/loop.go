@@ -52,8 +52,8 @@ func (nopWatcher) Route(ctx context.Context, q Question) (answered bool) { retur
 const invariantQuestion = "invariant: a question never kills a step"
 
 type RunOptions struct {
-	From   int
-	Phases []int
+	From   string
+	Phases []string
 	Resume bool
 	Replan bool
 }
@@ -79,12 +79,12 @@ type RunLoop struct {
 	mu       sync.Mutex
 	runDir   string
 	live     *Session
-	pending  map[int]bool
-	blocked  []int
+	pending  map[string]bool
+	blocked  []string
 	restarts map[string]int
 	open     map[*Session]int
 	asked    map[string]openAsk
-	warnings map[int]string
+	warnings map[string]string
 	halted   *Signal
 	serving  bool
 	tagWarn  sync.Once
@@ -105,7 +105,7 @@ func (l *RunLoop) watcher() Watcher {
 type nopLander struct{}
 
 func (nopLander) Land(ctx context.Context, phase Phase) (Landing, error) {
-	return Landing{Phase: phase.Number}, nil
+	return Landing{Phase: phase.ID}, nil
 }
 
 func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
@@ -125,7 +125,7 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 		}
 		l.emit(Event{Kind: "human", Fields: map[string]string{"what": "resume"}})
 	}
-	l.pending = map[int]bool{}
+	l.pending = map[string]bool{}
 	l.restarts = map[string]int{}
 	for _, ev := range prior.Events {
 		if ev.Kind == "restart" {
@@ -138,17 +138,17 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 		l.ServeQuestions(qctx)
 	}
 	for _, ph := range list {
-		if !landed(prior, ph.Number) {
-			l.pending[ph.Number] = true
+		if !landed(prior, ph.ID) {
+			l.pending[ph.ID] = true
 		}
 	}
 	l.setRun(RunRunning, "")
-	first, firstPhase, firstStep, firstReason := 0, 0, "", ""
+	first, firstPhase, firstStep, firstReason := 0, "", "", ""
 	for _, ph := range list {
-		if !l.pending[ph.Number] {
+		if !l.pending[ph.ID] {
 			continue
 		}
-		delete(l.pending, ph.Number)
+		delete(l.pending, ph.ID)
 		step, out, aborted := l.runPhase(ctx, ph, prior, base, opts.Replan)
 		if aborted {
 			return 1
@@ -158,7 +158,7 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 		}
 		code := l.block(ph, step, out)
 		if first == 0 {
-			first, firstPhase, firstStep, firstReason = code, ph.Number, step, out.Reason
+			first, firstPhase, firstStep, firstReason = code, ph.ID, step, out.Reason
 		}
 	}
 	if h := l.halted; h != nil && first != 5 {
@@ -167,12 +167,12 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 	if len(l.blocked) == 0 && l.halted == nil {
 		l.setRun(RunFinished, "")
 		l.emit(Event{Kind: "finished"})
-		l.fire(l.Hooks.OnDone, "finished", 0, "", "")
+		l.fire(l.Hooks.OnDone, "finished", "", "", "")
 		return 0
 	}
 	l.setRun(RunHalted, firstReason)
-	slices.Sort(l.blocked)
-	l.emit(Event{Kind: "halt", Fields: map[string]string{"blocked": joinInts(l.blocked), "resume": "r-loop resume"}})
+	slices.SortFunc(l.blocked, ComparePhaseIDs)
+	l.emit(Event{Kind: "halt", Fields: map[string]string{"blocked": joinIDs(l.blocked), "resume": "r-loop resume"}})
 	l.fire(l.Hooks.OnHalt, "halted", firstPhase, firstStep, firstReason)
 	return first
 }
@@ -186,25 +186,24 @@ func RunList(plan Plan, todoPath string, opts RunOptions) ([]Phase, error) {
 	unticked := plan.Unticked()
 	for _, n := range opts.Phases {
 		if !slices.Contains(unticked, n) {
-			return nil, fmt.Errorf("phase %d is ticked or absent from %s", n, todoPath)
+			return nil, fmt.Errorf("phase %s is ticked or absent from %s", n, todoPath)
 		}
 	}
 	var list []Phase
 	for _, ph := range plan.Phases {
-		n := ph.Number
+		n := ph.ID
 		switch {
 		case !slices.Contains(unticked, n):
 		case len(opts.Phases) > 0 && !slices.Contains(opts.Phases, n):
-		case n < opts.From:
+		case opts.From != "" && ComparePhaseIDs(n, opts.From) < 0:
 		default:
 			list = append(list, ph)
 		}
 	}
-	slices.SortFunc(list, func(a, b Phase) int { return a.Number - b.Number })
 	return list, nil
 }
 
-func landed(st RunState, phase int) bool {
+func landed(st RunState, phase string) bool {
 	for _, l := range st.Landed {
 		if l.Phase == phase {
 			return true
@@ -213,7 +212,7 @@ func landed(st RunState, phase int) bool {
 	return false
 }
 
-func latestAttempt(st RunState, run string, phase int, kind string) (int, StepState) {
+func latestAttempt(st RunState, run, phase, kind string) (int, StepState) {
 	attempt, state := 0, StepState("")
 	for key, s := range st.Steps {
 		if key.Run == run && key.Phase == phase && key.Kind == kind && key.Attempt > attempt {
@@ -224,9 +223,9 @@ func latestAttempt(st RunState, run string, phase int, kind string) (int, StepSt
 }
 
 func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base string, replan bool) (string, Outcome, bool) {
-	n := ph.Number
-	l.emit(Event{Kind: "phase-start", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "title": ph.Title}})
-	last := &Session{Dir: filepath.Join(l.Sessions.Repo.Root(), fmt.Sprintf(".r-loop/wt/phase-%d", n))}
+	n := ph.ID
+	l.emit(Event{Kind: "phase-start", Phase: n, Fields: map[string]string{"phase": n, "title": ph.Title}})
+	last := &Session{Dir: filepath.Join(l.Sessions.Repo.Root(), fmt.Sprintf(".r-loop/wt/phase-%s", n))}
 	l.checkPhase(ctx, ph, base)
 	stopped := l.stoppedKind(prior, n)
 	replan = replan && stopped != "" && stopped != "plan" && slices.ContainsFunc(l.Kinds, func(k StepKind) bool { return k.Name == "plan" })
@@ -264,7 +263,7 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 		if kind.Name == "plan" && out.Session != nil {
 			planPath, _ := ref.Vars["PlanPath"].(string)
 			for _, a := range PlanAssumptions(planPath, os.DirFS(out.Session.Dir)) {
-				l.emit(Event{Kind: "assumption", Phase: n, Step: kind.Name, Fields: map[string]string{"phase": strconv.Itoa(n), "text": a}})
+				l.emit(Event{Kind: "assumption", Phase: n, Step: kind.Name, Fields: map[string]string{"phase": n, "text": a}})
 			}
 		}
 		if l.itemSkipped(ph, kind, last.Dir) {
@@ -284,8 +283,8 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	if err != nil {
 		return "land", Outcome{State: StepFailed, Reason: "land: " + err.Error(), Session: last}, false
 	}
-	l.emit(Event{Kind: "phase-state", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "state": string(PhaseLanded)}})
-	l.emit(Event{Kind: "landed", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "merge": landing.MergeSHA, "gateSkipped": strconv.FormatBool(landing.GateSkipped)}})
+	l.emit(Event{Kind: "phase-state", Phase: n, Fields: map[string]string{"phase": n, "state": string(PhaseLanded)}})
+	l.emit(Event{Kind: "landed", Phase: n, Fields: map[string]string{"phase": n, "merge": landing.MergeSHA, "gateSkipped": strconv.FormatBool(landing.GateSkipped)}})
 	l.closeWorkspaces(n, everyWorkspace)
 	l.removeWorktree(n)
 	return "", Outcome{State: StepOK}, false
@@ -295,16 +294,16 @@ func (l *RunLoop) itemSkipped(ph Phase, kind StepKind, dir string) bool {
 	if kind.Name != "plan" || !l.Sessions.ItemGates || ph.DoneWhen != "" {
 		return false
 	}
-	status, evidence := PlanSkip(phasePlanPath(ph.Number, ph.Title), os.DirFS(dir))
+	status, evidence := PlanSkip(phasePlanPath(ph.ID, ph.Title), os.DirFS(dir))
 	if status == "" {
 		return false
 	}
-	l.emit(Event{Kind: "item-skipped", Phase: ph.Number, Step: kind.Name, Fields: map[string]string{"phase": strconv.Itoa(ph.Number), "status": status, "reason": status + ": " + evidence}})
+	l.emit(Event{Kind: "item-skipped", Phase: ph.ID, Step: kind.Name, Fields: map[string]string{"phase": ph.ID, "status": status, "reason": status + ": " + evidence}})
 	return true
 }
 
 func (l *RunLoop) checkPhase(ctx context.Context, ph Phase, base string) {
-	n := ph.Number
+	n := ph.ID
 	out := l.watcher().BeforePhase(ctx, ph, base)
 	var warnings []string
 	for drained := false; !drained; {
@@ -328,14 +327,14 @@ func (l *RunLoop) checkPhase(ctx context.Context, ph Phase, base string) {
 	}
 	l.mu.Lock()
 	if l.warnings == nil {
-		l.warnings = map[int]string{}
+		l.warnings = map[string]string{}
 	}
 	l.warnings[n] = strings.Join(lines, "\n")
 	l.mu.Unlock()
 	if out.Kind == "" {
 		return
 	}
-	f := map[string]string{"phase": strconv.Itoa(n)}
+	f := map[string]string{"phase": n}
 	if out.Reason != "" {
 		f["reason"] = out.Reason
 	}
@@ -348,7 +347,7 @@ func (l *RunLoop) checkPhase(ctx context.Context, ph Phase, base string) {
 	l.emit(Event{Kind: out.Kind, Phase: n, Fields: f})
 }
 
-func (l *RunLoop) stoppedKind(prior RunState, phase int) string {
+func (l *RunLoop) stoppedKind(prior RunState, phase string) string {
 	for _, kind := range l.Kinds {
 		if attempt, state := latestAttempt(prior, l.RunID, phase, kind.Name); attempt > 0 && state != StepOK {
 			return kind.Name
@@ -357,7 +356,7 @@ func (l *RunLoop) stoppedKind(prior RunState, phase int) string {
 	return ""
 }
 
-func blockReason(prior RunState, phase int) string {
+func blockReason(prior RunState, phase string) string {
 	reason := ""
 	for _, e := range prior.Events {
 		if e.Kind == "step" && e.Phase == phase && e.Fields["state"] == string(StepFailed) {
@@ -367,7 +366,7 @@ func blockReason(prior RunState, phase int) string {
 	return reason
 }
 
-func recordedRound(prior RunState, phase int, kind string, attempt int) (int, string) {
+func recordedRound(prior RunState, phase, kind string, attempt int) (int, string) {
 	round := 0
 	trees := map[int]string{}
 	for _, e := range prior.Events {
@@ -406,7 +405,7 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 		return StepRef{}, false, false
 	}
 	key := ref.Key
-	step := fmt.Sprintf("phase-%d/%s", key.Phase, key.Kind)
+	step := fmt.Sprintf("phase-%s/%s", key.Phase, key.Kind)
 	if h, ok := l.watcher().(remedyHolder); ok {
 		defer h.Release(key)
 	}
@@ -497,7 +496,7 @@ func (l *RunLoop) drainHalts(key StepKey, out *Outcome) bool {
 
 func (l *RunLoop) haltEnded(sig Signal) {
 	reason := "watchdog: " + sig.Reason
-	l.emit(Event{Kind: "warning", Phase: sig.Step.Phase, Step: sig.Step.Kind, Fields: map[string]string{"reason": fmt.Sprintf("halt for phase-%d/%s after it ended: %s", sig.Step.Phase, sig.Step.Kind, sig.Reason), "source": string(sig.Source)}})
+	l.emit(Event{Kind: "warning", Phase: sig.Step.Phase, Step: sig.Step.Kind, Fields: map[string]string{"reason": fmt.Sprintf("halt for phase-%s/%s after it ended: %s", sig.Step.Phase, sig.Step.Kind, sig.Reason), "source": string(sig.Source)}})
 	if l.halted == nil {
 		l.halted = &sig
 	}
@@ -505,29 +504,29 @@ func (l *RunLoop) haltEnded(sig Signal) {
 		return
 	}
 	for _, ph := range l.Plan.Phases {
-		if ph.Number == sig.Step.Phase {
-			delete(l.pending, ph.Number)
+		if ph.ID == sig.Step.Phase {
+			delete(l.pending, ph.ID)
 			l.block(ph, sig.Step.Kind, Outcome{State: StepFailed, Reason: reason, Halted: true})
 		}
 	}
 }
 
-func (l *RunLoop) advance(phase int, kind string) {
+func (l *RunLoop) advance(phase, kind string) {
 	state := map[string]PhaseState{"plan": PhasePlanned, "implement": PhaseImplemented}[kind]
 	if state == "" {
 		return
 	}
-	l.emit(Event{Kind: "phase-state", Phase: phase, Fields: map[string]string{"phase": strconv.Itoa(phase), "state": string(state)}})
+	l.emit(Event{Kind: "phase-state", Phase: phase, Fields: map[string]string{"phase": phase, "state": string(state)}})
 }
 
 func (l *RunLoop) ref(ph Phase, kind StepKind, attempt int, base string) StepRef {
-	n := ph.Number
+	n := ph.ID
 	ref := StepRef{
 		Key:      StepKey{Run: l.RunID, Phase: n, Kind: kind.Name, Attempt: attempt},
 		Kind:     kind,
 		Phase:    ph,
-		Worktree: fmt.Sprintf(".r-loop/wt/phase-%d", n),
-		Branch:   fmt.Sprintf("r-loop/phase-%d", n),
+		Worktree: fmt.Sprintf(".r-loop/wt/phase-%s", n),
+		Branch:   fmt.Sprintf("r-loop/phase-%s", n),
 		Base:     base,
 		RunDir:   l.runDir,
 	}
@@ -748,7 +747,7 @@ func (l *RunLoop) withdrawStep(key StepKey, state StepState) {
 }
 
 func (l *RunLoop) withdraw(q Question, state StepState) {
-	text := fmt.Sprintf("r-loop: phase-%d/%s has ended; this question is withdrawn.", q.Step.Phase, q.Step.Kind)
+	text := fmt.Sprintf("r-loop: phase-%s/%s has ended; this question is withdrawn.", q.Step.Phase, q.Step.Kind)
 	q.Answer, q.AnsweredBy, q.AnsweredAt = "step "+string(state), "withdrawn", time.Now()
 	l.recordQuestion(q)
 	l.Ask.Answer(q.ID, text, "withdrawn", "")
@@ -826,21 +825,21 @@ func (l *RunLoop) recordQuestion(q Question) {
 	}
 }
 
-func (l *RunLoop) abort(phase int, step string) {
+func (l *RunLoop) abort(phase, step string) {
 	l.setRun(RunHalted, ReasonAborted)
 	l.announceAbort(phase, step)
 }
 
-func (l *RunLoop) announceAbort(phase int, step string) {
+func (l *RunLoop) announceAbort(phase, step string) {
 	ws, wt := sessionPlace(l.liveSession())
 	l.emit(Event{Kind: "aborted", Phase: phase, Step: step, Fields: map[string]string{"workspace": ws, "worktree": wt}})
 }
 
 func (l *RunLoop) block(ph Phase, step string, out Outcome) int {
-	n := ph.Number
+	n := ph.ID
 	l.blocked = append(l.blocked, n)
 	ws, wt := sessionPlace(out.Session)
-	l.emit(Event{Kind: "phase-blocked", Phase: n, Step: step, Fields: map[string]string{"phase": strconv.Itoa(n), "reason": out.Reason, "workspace": ws, "worktree": wt}})
+	l.emit(Event{Kind: "phase-blocked", Phase: n, Step: step, Fields: map[string]string{"phase": n, "reason": out.Reason, "workspace": ws, "worktree": wt}})
 	l.fire(l.Hooks.OnWarn, "blocked", n, step, out.Reason)
 	for _, d := range l.dependents(n) {
 		if !l.pending[d] {
@@ -848,7 +847,7 @@ func (l *RunLoop) block(ph Phase, step string, out Outcome) int {
 		}
 		delete(l.pending, d)
 		l.blocked = append(l.blocked, d)
-		l.emit(Event{Kind: "phase-skipped", Phase: d, Fields: map[string]string{"phase": strconv.Itoa(d), "because": strconv.Itoa(n)}})
+		l.emit(Event{Kind: "phase-skipped", Phase: d, Fields: map[string]string{"phase": d, "because": n}})
 	}
 	if out.Halted {
 		return 5
@@ -859,33 +858,32 @@ func (l *RunLoop) block(ph Phase, step string, out Outcome) int {
 	return 1
 }
 
-func (l *RunLoop) dependents(n int) []int {
+func (l *RunLoop) dependents(n string) []string {
 	return Dependents(l.Plan, n)
 }
 
-func Dependents(plan Plan, n int) []int {
-	reached := map[int]bool{n: true}
+func Dependents(plan Plan, n string) []string {
+	reached := map[string]bool{n: true}
 	for changed := true; changed; {
 		changed = false
 		for _, ph := range plan.Phases {
-			if reached[ph.Number] {
+			if reached[ph.ID] {
 				continue
 			}
 			for _, d := range ph.DependsOn {
 				if reached[d] {
-					reached[ph.Number], changed = true, true
+					reached[ph.ID], changed = true, true
 					break
 				}
 			}
 		}
 	}
-	var out []int
+	var out []string
 	for _, ph := range plan.Phases {
-		if reached[ph.Number] && ph.Number != n {
-			out = append(out, ph.Number)
+		if reached[ph.ID] && ph.ID != n {
+			out = append(out, ph.ID)
 		}
 	}
-	slices.Sort(out)
 	return out
 }
 
@@ -1070,18 +1068,14 @@ func (l *RunLoop) reportPath() string {
 	return filepath.Join(l.runDir, "report.md")
 }
 
-func (l *RunLoop) fire(hook, status string, phase int, step, reason string) {
+func (l *RunLoop) fire(hook, status, phase, step, reason string) {
 	if l.Notifier == nil {
 		return
-	}
-	p := ""
-	if phase > 0 {
-		p = strconv.Itoa(phase)
 	}
 	l.Notifier.Fire(hook, map[string]string{
 		"R_LOOP_RUN":    l.RunID,
 		"R_LOOP_STATUS": status,
-		"R_LOOP_PHASE":  p,
+		"R_LOOP_PHASE":  phase,
 		"R_LOOP_STEP":   step,
 		"R_LOOP_REASON": reason,
 		"R_LOOP_TODO":   l.TodoPath,
@@ -1089,12 +1083,8 @@ func (l *RunLoop) fire(hook, status string, phase int, step, reason string) {
 	})
 }
 
-func joinInts(ns []int) string {
-	parts := make([]string, len(ns))
-	for i, n := range ns {
-		parts[i] = strconv.Itoa(n)
-	}
-	return strings.Join(parts, ", ")
+func joinIDs(ids []string) string {
+	return strings.Join(ids, ", ")
 }
 
 func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
@@ -1108,17 +1098,17 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 	msName, msPhases := "", ""
 	for _, m := range plan.Milestones {
 		if m.Number == ph.Milestone {
-			msName, msPhases = m.Name, joinInts(m.Phases)
+			msName, msPhases = m.Name, joinIDs(m.Phases)
 		}
 	}
 	return map[string]any{
-		"PhaseNumber":     ph.Number,
+		"PhaseNumber":     ph.ID,
 		"PhaseTitle":      ph.Title,
 		"PhaseBlock":      ph.Block,
 		"Criteria":        strings.Join(criteria, "\n"),
 		"TodoPath":        todoPath,
 		"SpecDir":         filepath.Dir(todoPath),
-		"PlanPath":        phasePlanPath(ph.Number, ph.Title),
+		"PlanPath":        phasePlanPath(ph.ID, ph.Title),
 		"Branch":          ref.Branch,
 		"Base":            ref.Base,
 		"Worktree":        ref.Worktree,
@@ -1146,8 +1136,8 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 	}
 }
 
-func phasePlanPath(n int, title string) string {
-	prefix := fmt.Sprintf(".task-plans/phase-%d", n)
+func phasePlanPath(n, title string) string {
+	prefix := fmt.Sprintf(".task-plans/phase-%s", n)
 	slug := kebab(title)
 	if room := 60 - len(prefix) - len("-.md"); len(slug) > room {
 		slug = strings.TrimRight(slug[:room], "-")

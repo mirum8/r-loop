@@ -41,7 +41,7 @@ func (r *QuestionRouter) Route(ctx context.Context, q Question) bool {
 	}
 	r.open[q.ID] = done
 	r.mu.Unlock()
-	text := fmt.Sprintf("question %s from phase-%d/%s: %s options: %s recommended: %s", q.ID, q.Step.Phase, q.Step.Kind, q.Text, strings.Join(q.Options, ", "), q.Recommended)
+	text := fmt.Sprintf("question %s from phase-%s/%s: %s options: %s recommended: %s", q.ID, q.Step.Phase, q.Step.Kind, q.Text, strings.Join(q.Options, ", "), q.Recommended)
 	if err := r.Dog.Notify(text, false, 0); err != nil {
 		r.close(q.ID)
 		return false

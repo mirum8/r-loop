@@ -46,7 +46,7 @@ func TestNoResolveFirstSection(t *testing.T) {
 	if p.ResolveFirst != nil {
 		t.Errorf("ResolveFirst = %+v, want nil", p.ResolveFirst)
 	}
-	if got := p.Blocking([]int{1, 2, 3}); len(got) != 0 {
+	if got := p.Blocking([]string{"1", "2", "3"}); len(got) != 0 {
 		t.Errorf("Blocking = %+v, want none", got)
 	}
 }
@@ -57,7 +57,7 @@ func TestEmptyResolveFirstSection(t *testing.T) {
 	if len(p.ResolveFirst) != 0 {
 		t.Errorf("ResolveFirst = %+v, want empty", p.ResolveFirst)
 	}
-	if got := p.Blocking([]int{1, 2, 3}); len(got) != 0 {
+	if got := p.Blocking([]string{"1", "2", "3"}); len(got) != 0 {
 		t.Errorf("Blocking = %+v, want none", got)
 	}
 }
@@ -92,7 +92,7 @@ func TestEntryFieldsSlicedByLabel(t *testing.T) {
 		Blocks:       "Phase 2",
 		Timebox:      "one afternoon",
 		Output:       "a line in the spec's Risks",
-		BlocksPhases: []int{2},
+		BlocksPhases: []string{"2"},
 	}
 	if got := p.ResolveFirst[0]; !reflect.DeepEqual(got, want) {
 		t.Errorf("entry 0:\n got %+v\nwant %+v", got, want)
@@ -128,10 +128,10 @@ func TestBoxlessEntryIsOutstanding(t *testing.T) {
 	if e.HasBox || e.Ticked {
 		t.Errorf("HasBox = %v, Ticked = %v, want both false", e.HasBox, e.Ticked)
 	}
-	if got := p.Blocking([]int{2}); len(got) != 1 || got[0].Name != "Legacy blocker" {
+	if got := p.Blocking([]string{"2"}); len(got) != 1 || got[0].Name != "Legacy blocker" {
 		t.Errorf("Blocking([2]) = %+v, want the legacy entry", got)
 	}
-	if got := p.Blocking([]int{1, 3}); len(got) != 0 {
+	if got := p.Blocking([]string{"1", "3"}); len(got) != 0 {
 		t.Errorf("Blocking([1 3]) = %+v, want none", got)
 	}
 }
@@ -146,13 +146,13 @@ func TestBlocksNamingTwoPhases(t *testing.T) {
 `+phasesTail)
 
 	e := onlyEntry(t, p)
-	if !reflect.DeepEqual(e.BlocksPhases, []int{1, 3}) || e.BlocksAll {
+	if !reflect.DeepEqual(e.BlocksPhases, []string{"1", "3"}) || e.BlocksAll {
 		t.Errorf("BlocksPhases = %v, BlocksAll = %v", e.BlocksPhases, e.BlocksAll)
 	}
-	if got := p.Blocking([]int{2}); len(got) != 0 {
+	if got := p.Blocking([]string{"2"}); len(got) != 0 {
 		t.Errorf("Blocking([2]) = %+v, want none", got)
 	}
-	if got := p.Blocking([]int{2, 3}); len(got) != 1 {
+	if got := p.Blocking([]string{"2", "3"}); len(got) != 1 {
 		t.Errorf("Blocking([2 3]) = %+v, want the entry", got)
 	}
 }
@@ -170,7 +170,7 @@ func TestBlocksWithProseOnlyBlocksAll(t *testing.T) {
 	if !e.BlocksAll || e.BlocksPhases != nil {
 		t.Errorf("BlocksAll = %v, BlocksPhases = %v", e.BlocksAll, e.BlocksPhases)
 	}
-	if got := p.Blocking([]int{3}); len(got) != 1 {
+	if got := p.Blocking([]string{"3"}); len(got) != 1 {
 		t.Errorf("Blocking([3]) = %+v, want the entry", got)
 	}
 }
@@ -187,7 +187,7 @@ func TestMissingBlocksBlocksAll(t *testing.T) {
 	if e := onlyEntry(t, p); !e.BlocksAll {
 		t.Errorf("BlocksAll = false, want true")
 	}
-	if got := p.Blocking([]int{1}); len(got) != 1 {
+	if got := p.Blocking([]string{"1"}); len(got) != 1 {
 		t.Errorf("Blocking([1]) = %+v, want the entry", got)
 	}
 }
@@ -208,7 +208,7 @@ func TestTickedWithoutResolved(t *testing.T) {
 	if !reflect.DeepEqual(e.Malformed, []string{"ticked without Resolved"}) {
 		t.Errorf("Malformed = %v", e.Malformed)
 	}
-	if got := p.Blocking([]int{1, 2, 3}); len(got) != 0 {
+	if got := p.Blocking([]string{"1", "2", "3"}); len(got) != 0 {
 		t.Errorf("Blocking = %+v, want none: a tick counts as resolved", got)
 	}
 }
@@ -223,7 +223,7 @@ func TestInformsLabelIsMalformedNotBlocks(t *testing.T) {
 `+phasesTail)
 
 	e := onlyEntry(t, p)
-	if e.Blocks != "Phase 1" || !reflect.DeepEqual(e.BlocksPhases, []int{1}) {
+	if e.Blocks != "Phase 1" || !reflect.DeepEqual(e.BlocksPhases, []string{"1"}) {
 		t.Errorf("Blocks = %q, BlocksPhases = %v", e.Blocks, e.BlocksPhases)
 	}
 	if e.Timebox != "an hour" {
@@ -232,7 +232,7 @@ func TestInformsLabelIsMalformedNotBlocks(t *testing.T) {
 	if !reflect.DeepEqual(e.Malformed, []string{"unknown label Informs:"}) {
 		t.Errorf("Malformed = %v", e.Malformed)
 	}
-	if got := p.Blocking([]int{2, 3}); len(got) != 0 {
+	if got := p.Blocking([]string{"2", "3"}); len(got) != 0 {
 		t.Errorf("Blocking([2 3]) = %+v, want none", got)
 	}
 }
@@ -253,7 +253,7 @@ func TestUnknownLabelBeforeAnyKnownLabelIsMalformed(t *testing.T) {
 `+phasesTail)
 
 	e := onlyEntry(t, p)
-	if e.Blocks != "Phase 1" || !reflect.DeepEqual(e.BlocksPhases, []int{1}) {
+	if e.Blocks != "Phase 1" || !reflect.DeepEqual(e.BlocksPhases, []string{"1"}) {
 		t.Errorf("Blocks = %q, BlocksPhases = %v", e.Blocks, e.BlocksPhases)
 	}
 	if !reflect.DeepEqual(e.Malformed, []string{"unknown label Informs:"}) {
@@ -361,5 +361,28 @@ func TestEntriesAreSortedAsDecisionPersonOrUnclassified(t *testing.T) {
 	last := p.ResolveFirst[5]
 	if last.Alternative != "cron" || last.Outstanding != "the spec's Risks line" {
 		t.Errorf("alternative %q outstanding %q", last.Alternative, last.Outstanding)
+	}
+}
+
+func TestBlocksNamingLetteredPhase(t *testing.T) {
+	p := readEntries(t, `# Plan
+
+## Resolve first
+- [ ] **Insert** — which?
+      Owner: platform. Blocks: Phase 1a. Timebox: an hour.
+
+### Phase 1 — One
+- [ ] a
+
+### Phase 1a — One, inserted
+- [ ] b
+`)
+
+	e := onlyEntry(t, p)
+	if !reflect.DeepEqual(e.BlocksPhases, []string{"1a"}) || e.BlocksAll {
+		t.Errorf("BlocksPhases = %v, BlocksAll = %v", e.BlocksPhases, e.BlocksAll)
+	}
+	if got := p.Blocking([]string{"1"}); len(got) != 0 {
+		t.Errorf("Blocking([1]) = %+v, want none", got)
 	}
 }

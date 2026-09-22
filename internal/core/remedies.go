@@ -83,9 +83,8 @@ func (r *Remedies) decide(step StepKey, class, command, why string, consent func
 }
 
 func (r *Remedies) Restart(step, addendum, provider, maintainerSaid string) (bool, string) {
-	var phase int
-	var kind string
-	if _, err := fmt.Sscanf(step, "phase-%d/%s", &phase, &kind); err != nil || fmt.Sprintf("phase-%d/%s", phase, kind) != step {
+	phase, kind, ok := ParseStepName(step)
+	if !ok {
 		return false, fmt.Sprintf("step %q is not phase-<N>/<kind>", step)
 	}
 	if state, ok := r.Watch.latest(phase, kind); ok && state != StepFailed && state != StepStalled {

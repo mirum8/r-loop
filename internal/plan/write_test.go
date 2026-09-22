@@ -45,7 +45,7 @@ func TestTickRewritesOnlyThatPhase(t *testing.T) {
 	path := writePlan(t, tickPlan)
 	before := fileLines(t, path)
 
-	if err := (Reader{}).Tick(path, 1); err != nil {
+	if err := (Reader{}).Tick(path, "1"); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 
@@ -72,7 +72,7 @@ func TestTickRewritesOnlyThatPhase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := p.Unticked(); len(got) != 1 || got[0] != 2 {
+	if got := p.Unticked(); len(got) != 1 || got[0] != "2" {
 		t.Errorf("Unticked = %v, want [2]", got)
 	}
 }
@@ -80,7 +80,7 @@ func TestTickRewritesOnlyThatPhase(t *testing.T) {
 func TestTickNothingOpen(t *testing.T) {
 	path := writePlan(t, tickPlan)
 
-	err := Reader{}.Tick(path, 3)
+	err := Reader{}.Tick(path, "3")
 
 	if !errors.Is(err, ErrNothingToTick) {
 		t.Errorf("err = %v, want ErrNothingToTick", err)
@@ -93,7 +93,7 @@ func TestTickNothingOpen(t *testing.T) {
 func TestTickUnknownPhase(t *testing.T) {
 	path := writePlan(t, tickPlan)
 
-	if err := (Reader{}).Tick(path, 9); err == nil {
+	if err := (Reader{}).Tick(path, "9"); err == nil {
 		t.Errorf("Tick(9) = nil, want an error")
 	}
 }
@@ -101,11 +101,23 @@ func TestTickUnknownPhase(t *testing.T) {
 func TestTickZeroPaddedPhaseHeading(t *testing.T) {
 	path := writePlan(t, "### Phase 01 — One\n- [ ] a\n")
 
-	if err := (Reader{}).Tick(path, 1); err != nil {
+	if err := (Reader{}).Tick(path, "1"); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 
 	if b, _ := os.ReadFile(path); string(b) != "### Phase 01 — One\n- [x] a\n" {
+		t.Errorf("got %q", b)
+	}
+}
+
+func TestTickLetteredPhaseLeavesItsNumberAlone(t *testing.T) {
+	path := writePlan(t, "### Phase 2 — Two\n- [ ] a\n\n### Phase 2a — Two, inserted\n- [ ] b\n")
+
+	if err := (Reader{}).Tick(path, "2a"); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if b, _ := os.ReadFile(path); string(b) != "### Phase 2 — Two\n- [ ] a\n\n### Phase 2a — Two, inserted\n- [x] b\n" {
 		t.Errorf("got %q", b)
 	}
 }

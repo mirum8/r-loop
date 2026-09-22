@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,8 @@ const (
 	signalsFile   = "signals.jsonl"
 	remediesFile  = "remedies.jsonl"
 )
+
+var legacyPhaseRe = regexp.MustCompile(`"Phase":(\d+)`)
 
 var recordFiles = []string{eventsFile, questionsFile, signalsFile, remediesFile}
 
@@ -153,7 +156,7 @@ func (s *Store) readRecords(runID, name string) ([]core.Record, string, error) {
 			continue
 		}
 		var rec core.Record
-		if err := json.Unmarshal(line, &rec); err != nil {
+		if err := json.Unmarshal(legacyPhase(line), &rec); err != nil {
 			if i == len(lines)-1 && !bytes.HasSuffix(b, []byte("\n")) {
 				return recs, fmt.Sprintf("%s: skipped truncated last line %d", name, i+1), nil
 			}
@@ -162,6 +165,16 @@ func (s *Store) readRecords(runID, name string) ([]core.Record, string, error) {
 		recs = append(recs, rec)
 	}
 	return recs, "", nil
+}
+
+func legacyPhase(line []byte) []byte {
+	return legacyPhaseRe.ReplaceAllFunc(line, func(m []byte) []byte {
+		n := m[len(`"Phase":`):]
+		if string(n) == "0" {
+			n = nil
+		}
+		return []byte(`"Phase":"` + string(n) + `"`)
+	})
 }
 
 func apply(st *core.RunState, order *[]core.StepKey, rec core.Record) error {

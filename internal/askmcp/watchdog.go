@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
-	"strconv"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -63,8 +61,6 @@ type decisionOutput struct {
 }
 
 var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true}
-
-var stepName = regexp.MustCompile(`^phase-(\d+)/([^/\s]+)$`)
 
 func (s *Server) Handle(h WatchdogHandlers) {
 	s.mu.Lock()
@@ -160,15 +156,11 @@ func (s *Server) record(tool, step string, fields map[string]string) error {
 }
 
 func (s *Server) resolve(step string) (core.StepKey, error) {
-	m := stepName.FindStringSubmatch(step)
-	if m == nil {
+	phase, kind, ok := core.ParseStepName(step)
+	if !ok {
 		return core.StepKey{}, fmt.Errorf("step %q: %w", step, errMalformedStep)
 	}
-	phase, err := strconv.Atoi(m[1])
-	if err != nil || phase <= 0 {
-		return core.StepKey{}, fmt.Errorf("step %q: %w", step, errMalformedStep)
-	}
-	key := core.StepKey{Run: s.RunID, Phase: phase, Kind: m[2]}
+	key := core.StepKey{Run: s.RunID, Phase: phase, Kind: kind}
 	if key.Kind == "check" || s.Store == nil {
 		return key, nil
 	}

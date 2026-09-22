@@ -47,7 +47,7 @@ type Watch struct {
 	tickers  map[StepKey]*ticking
 	seq      int
 	halt     *Signal
-	checking int
+	checking string
 }
 
 type endedStep struct {
@@ -139,7 +139,7 @@ func (w *Watch) target() (StepKey, bool) {
 	return StepKey{}, false
 }
 
-func (w *Watch) latest(phase int, kind string) (StepState, bool) {
+func (w *Watch) latest(phase, kind string) (StepState, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	var key *StepKey
@@ -160,11 +160,11 @@ func (w *Watch) BeforePhase(ctx context.Context, ph Phase, base string) CheckOut
 	}
 	w.init()
 	w.mu.Lock()
-	w.checking = ph.Number
+	w.checking = ph.ID
 	w.mu.Unlock()
 	defer func() {
 		w.mu.Lock()
-		w.checking = 0
+		w.checking = ""
 		w.mu.Unlock()
 	}()
 	return w.PhaseCheck.Run(ctx, ph, base)
@@ -210,7 +210,7 @@ func (w *Watch) StepStarted(ref StepRef, s *Session) {
 				dir = s.Dir
 			}
 		}
-		w.Dog.Notify(fmt.Sprintf("step started phase-%d/%s agent %s worktree %s base %s", key.Phase, key.Kind, agent, dir, ref.Base), false, 0)
+		w.Dog.Notify(fmt.Sprintf("step started phase-%s/%s agent %s worktree %s base %s", key.Phase, key.Kind, agent, dir, ref.Base), false, 0)
 	}
 }
 
@@ -229,7 +229,7 @@ func (w *Watch) StepEnded(ref StepRef, out Outcome) {
 		<-t.done
 	}
 	if w.Dog != nil {
-		w.Dog.Notify(fmt.Sprintf("step ended phase-%d/%s %s %s", ref.Key.Phase, ref.Key.Kind, out.State, out.Reason), false, 0)
+		w.Dog.Notify(fmt.Sprintf("step ended phase-%s/%s %s %s", ref.Key.Phase, ref.Key.Kind, out.State, out.Reason), false, 0)
 	}
 }
 
@@ -344,16 +344,16 @@ func (w *Watch) rejection(sig *Signal, runID string) string {
 	if sig.Kind != SignalWarn && sig.Kind != SignalHalt {
 		return fmt.Sprintf("kind %q is not warn or halt", sig.Kind)
 	}
-	if sig.Step.Phase <= 0 {
+	if sig.Step.Phase == "" {
 		return fmt.Sprintf("step %q is not phase-<N>/<kind>", sig.Step.Kind)
 	}
 	w.mu.Lock()
 	checking := w.checking
 	w.mu.Unlock()
-	if checking != 0 {
+	if checking != "" {
 		switch {
 		case sig.Step.Phase != checking || sig.Step.Kind != "check":
-			return fmt.Sprintf("phase-%d/check is the only step during the phase check", checking)
+			return fmt.Sprintf("phase-%s/check is the only step during the phase check", checking)
 		case sig.Kind == SignalHalt:
 			return phaseCheckHalt
 		}
@@ -362,11 +362,11 @@ func (w *Watch) rejection(sig *Signal, runID string) string {
 	if st, err := w.Store.Load(runID); err == nil {
 		for _, l := range st.Landed {
 			if l.Phase == sig.Step.Phase {
-				return fmt.Sprintf("phase %d has landed", l.Phase)
+				return fmt.Sprintf("phase %s has landed", l.Phase)
 			}
 		}
 	}
-	name := fmt.Sprintf("phase-%d/%s", sig.Step.Phase, sig.Step.Kind)
+	name := fmt.Sprintf("phase-%s/%s", sig.Step.Phase, sig.Step.Kind)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.live != nil && sameStep(sig.Step, *w.live) {

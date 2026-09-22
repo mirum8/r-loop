@@ -439,6 +439,25 @@ func TestUsageErrorsExit2WithOneLine(t *testing.T) {
 	}
 }
 
+func TestParseArgsTakesPhaseLabels(t *testing.T) {
+	opts, err := ParseArgs([]string{"todo.md", "--from", "10A", "--phases", "10c, 2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if opts.From != "10a" || strings.Join(opts.Phases, ",") != "10c,2" {
+		t.Fatalf("opts=%+v", opts)
+	}
+}
+
+func TestParseArgsRejectsANonLabelPhase(t *testing.T) {
+	for _, args := range [][]string{{"todo.md", "--from", "x"}, {"todo.md", "--phases", "1,10ab"}, {"todo.md", "--from", "0"}} {
+		if _, err := ParseArgs(args); err == nil {
+			t.Errorf("%v: want an error", args)
+		}
+	}
+}
+
 func TestParseArgsReadsEveryFlag(t *testing.T) {
 	opts, err := ParseArgs([]string{"--from", "3", "todo.md", "--phases", "4,5", "--provider", "plan=codex", "--provider", "implement=claude",
 		"--model", "plan=o3", "--effort", "plan=low", "--unattended", "--plain", "--dry-run"})
@@ -446,7 +465,7 @@ func TestParseArgsReadsEveryFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if opts.Todo != "todo.md" || opts.From != 3 || len(opts.Phases) != 2 || opts.Phases[1] != 5 || len(opts.Overrides) != 4 ||
+	if opts.Todo != "todo.md" || opts.From != "3" || len(opts.Phases) != 2 || opts.Phases[1] != "5" || len(opts.Overrides) != 4 ||
 		!opts.Unattended || !opts.Plain || !opts.DryRun {
 		t.Fatalf("opts=%+v", opts)
 	}

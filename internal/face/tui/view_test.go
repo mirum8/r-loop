@@ -90,9 +90,9 @@ func TestFrameAt70x30StacksTheRailAboveThePanel(t *testing.T) {
 func TestRailGlyphPerPhaseState(t *testing.T) {
 	m := newModel([]core.Event{
 		phaseState(1, 1, "landed"), phaseState(1, 2, "planned"), phaseState(1, 3, "implemented"),
-		{At: at(2), Kind: "phase-blocked", Phase: 4, Fields: map[string]string{"phase": "4", "reason": "x"}},
+		{At: at(2), Kind: "phase-blocked", Phase: "4", Fields: map[string]string{"phase": "4", "reason": "x"}},
 	})
-	m.Phases = append(m.Phases, Row{Number: 5, Title: "later", State: core.PhaseUnticked})
+	m.Phases = append(m.Phases, Row{ID: "5", Title: "later", State: core.PhaseUnticked})
 
 	view := m.View()
 
@@ -110,7 +110,7 @@ func coloured(noColor bool) Model {
 		r.SetColorProfile(termenv.ANSI)
 	}
 	m := NewModel(Header{RunID: "r1", Todo: "todo.md", Started: t0}, plan(), NewTheme(r, noColor))
-	return m.Apply(core.Event{At: at(1), Kind: "phase-blocked", Phase: 4, Fields: map[string]string{"phase": "4", "reason": "x"}})
+	return m.Apply(core.Event{At: at(1), Kind: "phase-blocked", Phase: "4", Fields: map[string]string{"phase": "4", "reason": "x"}})
 }
 
 func TestBlockedGlyphIsInTheErrorColour(t *testing.T) {
@@ -123,7 +123,7 @@ func TestBlockedGlyphIsInTheErrorColour(t *testing.T) {
 
 func TestNoColorFallsBackToBoldDimAndInverse(t *testing.T) {
 	m := coloured(true)
-	m = m.Apply(core.Event{At: at(2), Kind: "phase-start", Phase: 2, Fields: map[string]string{"phase": "2"}})
+	m = m.Apply(core.Event{At: at(2), Kind: "phase-start", Phase: "2", Fields: map[string]string{"phase": "2"}})
 
 	view := m.View()
 

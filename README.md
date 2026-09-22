@@ -99,6 +99,8 @@ r-loop --version
 | `--plain` | Print plain text lines instead of the full-screen TUI. Plain is also used when stdin or stdout is not a terminal. |
 | `--dry-run` | Check the plan, config, prompts and tools, print the banner and the run list, then stop. |
 
+A phase is named by its heading label: `10`, or `10a` for a phase inserted after 10 (`--phases 10a,10b`, `--from 10a`). Order is the order of the headings in the plan.
+
 `<step>` is a row name under `steps:` in the config: `plan`, `implement`, `milestone` or `gate`,
 or `intake` (see below). The three step flags change only that step, not its reviewers.
 

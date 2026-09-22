@@ -105,17 +105,17 @@ func TestServeWritesAPrivateTokenAndReturnsTheBaseURL(t *testing.T) {
 func TestStepURLNamesThePhaseKindAndAttempt(t *testing.T) {
 	s, base, _ := serve(t)
 
-	if got := s.StepURL(core.StepKey{Run: "run-7", Phase: 3, Kind: "implement", Attempt: 2}); got != base+"/3/implement/2" {
+	if got := s.StepURL(core.StepKey{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 2}); got != base+"/3/implement/2" {
 		t.Fatalf("step url = %q", got)
 	}
-	if got := s.StepURL(core.StepKey{Run: "run-7", Phase: 3, Kind: "implement-rv-codex", Attempt: 1}); got != base+"/3/implement-rv-codex/1" {
+	if got := s.StepURL(core.StepKey{Run: "run-7", Phase: "3", Kind: "implement-rv-codex", Attempt: 1}); got != base+"/3/implement-rv-codex/1" {
 		t.Fatalf("reviewer url = %q", got)
 	}
 }
 
 func TestAskUserBlocksUntilAnsweredAndReturnsTheAnswer(t *testing.T) {
 	s, _, _ := serve(t)
-	key := core.StepKey{Run: "run-7", Phase: 3, Kind: "plan", Attempt: 1}
+	key := core.StepKey{Run: "run-7", Phase: "3", Kind: "plan", Attempt: 1}
 	cs := connect(t, s.StepURL(key))
 
 	done := ask(cs, map[string]any{"question": "Which store?", "options": []string{"jsonl", "sqlite"}, "recommended": "jsonl"})
@@ -139,7 +139,7 @@ func TestAskUserBlocksUntilAnsweredAndReturnsTheAnswer(t *testing.T) {
 
 func TestAnswerRejectsAnUnknownOrAlreadyAnsweredID(t *testing.T) {
 	s, _, _ := serve(t)
-	cs := connect(t, s.StepURL(core.StepKey{Run: "run-7", Phase: 1, Kind: "implement", Attempt: 1}))
+	cs := connect(t, s.StepURL(core.StepKey{Run: "run-7", Phase: "1", Kind: "implement", Attempt: 1}))
 
 	if err := s.Answer("q9", "x", "person", ""); err == nil {
 		t.Fatal("answered an unknown id")
@@ -157,7 +157,7 @@ func TestAnswerRejectsAnUnknownOrAlreadyAnsweredID(t *testing.T) {
 
 func TestAWrongTokenOrUnknownPathIs404(t *testing.T) {
 	s, base, _ := serve(t)
-	good := s.StepURL(core.StepKey{Run: "run-7", Phase: 3, Kind: "plan", Attempt: 1})
+	good := s.StepURL(core.StepKey{Run: "run-7", Phase: "3", Kind: "plan", Attempt: 1})
 	wrong := strings.Replace(good, "/mcp/", "/mcp/0", 1)
 	for _, url := range []string{wrong, base, base + "/3/plan", base + "/x/plan/1", base + "/3/plan/one", base + "/3/plan/1/extra", base + "/999/bogus/1", base + "/3/plan/2", base + "/3/plan-rv-codex/1"} {
 		resp, err := http.Post(url, "application/json", strings.NewReader(`{}`))
@@ -173,8 +173,8 @@ func TestAWrongTokenOrUnknownPathIs404(t *testing.T) {
 
 func TestTwoConcurrentQuestionsGetDistinctIDsAndTheirOwnAnswers(t *testing.T) {
 	s, _, _ := serve(t)
-	planKey := core.StepKey{Run: "run-7", Phase: 2, Kind: "plan", Attempt: 1}
-	rvKey := core.StepKey{Run: "run-7", Phase: 5, Kind: "implement-rv-claude", Attempt: 1}
+	planKey := core.StepKey{Run: "run-7", Phase: "2", Kind: "plan", Attempt: 1}
+	rvKey := core.StepKey{Run: "run-7", Phase: "5", Kind: "implement-rv-claude", Attempt: 1}
 	planDone := ask(connect(t, s.StepURL(planKey)), map[string]any{"question": "plan?"})
 	rvDone := ask(connect(t, s.StepURL(rvKey)), map[string]any{"question": "review?"})
 
@@ -202,7 +202,7 @@ func TestTwoConcurrentQuestionsGetDistinctIDsAndTheirOwnAnswers(t *testing.T) {
 
 func TestCancellingTheContextReturnsAnErrorAndNoAnswer(t *testing.T) {
 	s, _, cancel := serve(t)
-	cs := connect(t, s.StepURL(core.StepKey{Run: "run-7", Phase: 3, Kind: "plan", Attempt: 1}))
+	cs := connect(t, s.StepURL(core.StepKey{Run: "run-7", Phase: "3", Kind: "plan", Attempt: 1}))
 	done := ask(cs, map[string]any{"question": "Which store?", "recommended": "jsonl"})
 	next(t, s)
 
@@ -229,7 +229,7 @@ func TestAResumedServerContinuesTheRunsQuestionSequence(t *testing.T) {
 	if _, err := s.Serve(ctx); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, s.StepURL(core.StepKey{Run: "run-7", Phase: 3, Kind: "plan", Attempt: 2}))
+	cs := connect(t, s.StepURL(core.StepKey{Run: "run-7", Phase: "3", Kind: "plan", Attempt: 2}))
 
 	done := ask(cs, map[string]any{"question": "again?"})
 
@@ -244,7 +244,7 @@ func TestAResumedServerContinuesTheRunsQuestionSequence(t *testing.T) {
 
 func TestARepeatedAskFromTheSameStepReusesTheOpenQuestionAndGetsItsAnswer(t *testing.T) {
 	s, _, _ := serve(t)
-	key := core.StepKey{Run: "run-7", Phase: 3, Kind: "implement-rv-claude", Attempt: 1}
+	key := core.StepKey{Run: "run-7", Phase: "3", Kind: "implement-rv-claude", Attempt: 1}
 	args := map[string]any{"question": "Which store?", "options": []string{"jsonl", "sqlite"}}
 	callCtx, hangUp := context.WithCancel(context.Background())
 	gone := make(chan error, 1)
@@ -276,8 +276,8 @@ func TestARepeatedAskFromTheSameStepReusesTheOpenQuestionAndGetsItsAnswer(t *tes
 
 func TestTheSameQuestionFromAnotherStepOrWithOtherOptionsIsNew(t *testing.T) {
 	s, _, _ := serve(t)
-	key := core.StepKey{Run: "run-7", Phase: 3, Kind: "implement", Attempt: 1}
-	other := core.StepKey{Run: "run-7", Phase: 3, Kind: "implement-rv-claude", Attempt: 1}
+	key := core.StepKey{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 1}
+	other := core.StepKey{Run: "run-7", Phase: "3", Kind: "implement-rv-claude", Attempt: 1}
 	calls := []<-chan result{ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which store?", "options": []string{"jsonl", "sqlite"}})}
 	next(t, s)
 

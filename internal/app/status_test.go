@@ -2,6 +2,7 @@ package app
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -53,11 +54,11 @@ func (f *fixture) seedRun(recs ...core.Record) string {
 }
 
 func ev(at time.Time, kind string, phase int, step string, fields map[string]string) core.Record {
-	return core.Record{Kind: core.RecordEvent, At: at, Event: &core.Event{At: at, Kind: kind, Phase: phase, Step: step, Fields: fields}}
+	return core.Record{Kind: core.RecordEvent, At: at, Event: &core.Event{At: at, Kind: kind, Phase: strconv.Itoa(phase), Step: step, Fields: fields}}
 }
 
 func stepRec(phase int, kind string, attempt int, state core.StepState) core.Record {
-	return core.Record{Kind: core.RecordStep, Step: &core.StepKey{Phase: phase, Kind: kind, Attempt: attempt}, State: state}
+	return core.Record{Kind: core.RecordStep, Step: &core.StepKey{Phase: strconv.Itoa(phase), Kind: kind, Attempt: attempt}, State: state}
 }
 
 func TestStatusPlainPrintsRunPhasesLiveStepQuestionAndWarning(t *testing.T) {
@@ -75,8 +76,8 @@ func TestStatusPlainPrintsRunPhasesLiveStepQuestionAndWarning(t *testing.T) {
 		stepRec(4, "implement", 1, core.StepSpawned),
 		stepRec(4, "implement", 1, core.StepRunning),
 		ev(t0.Add(2*time.Minute), "step", 4, "implement", map[string]string{"state": "running", "attempt": "1", "provider": "codex", "workspace": "w7"}),
-		core.Record{Kind: core.RecordQuestion, Question: &core.Question{ID: "q1", Step: core.StepKey{Phase: 4, Kind: "implement"}, Text: "which db?"}},
-		core.Record{Kind: core.RecordQuestion, Question: &core.Question{ID: "q2", Step: core.StepKey{Phase: 4, Kind: "implement"}, Text: "keep api?", Answer: "yes", AnsweredBy: "maintainer"}},
+		core.Record{Kind: core.RecordQuestion, Question: &core.Question{ID: "q1", Step: core.StepKey{Phase: "4", Kind: "implement"}, Text: "which db?"}},
+		core.Record{Kind: core.RecordQuestion, Question: &core.Question{ID: "q2", Step: core.StepKey{Phase: "4", Kind: "implement"}, Text: "keep api?", Answer: "yes", AnsweredBy: "maintainer"}},
 		ev(t0, "warning", 4, "implement", map[string]string{"reason": "diff grew past 3x the estimate"}),
 	)
 

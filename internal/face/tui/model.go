@@ -25,13 +25,13 @@ type Header struct {
 }
 
 type Row struct {
-	Number int
-	Title  string
-	State  core.PhaseState
+	ID    string
+	Title string
+	State core.PhaseState
 }
 
 type Step struct {
-	Phase                                           int
+	Phase                                           string
 	Kind, State, Provider, Model, Effort, Workspace string
 	Half                                            string
 	Started, Ended                                  time.Time
@@ -87,20 +87,20 @@ type Entry struct {
 
 type Question struct {
 	ID    string
-	Phase int
+	Phase string
 	Step  string
 	At    time.Time
 }
 
 type stepID struct {
-	phase int
+	phase string
 	kind  string
 }
 
 type Model struct {
 	Header
 	Phases    []Row
-	Current   int
+	Current   string
 	Live      *Step
 	done      map[stepID]string
 	Questions []Question
@@ -126,7 +126,7 @@ func NewModel(h Header, phases []core.Phase, th Theme) Model {
 		if landed(ph) {
 			state = core.PhaseLanded
 		}
-		m.Phases = append(m.Phases, Row{Number: ph.Number, Title: ph.Title, State: state})
+		m.Phases = append(m.Phases, Row{ID: ph.ID, Title: ph.Title, State: state})
 	}
 	return m
 }
@@ -200,21 +200,21 @@ func replay(m Model, history []core.Event) Model {
 	for _, ev := range history {
 		m = m.Apply(ev)
 	}
-	m.Status, m.Blocked, m.Resume, m.Current, m.Live = "", "", "", 0, nil
+	m.Status, m.Blocked, m.Resume, m.Current, m.Live = "", "", "", "", nil
 	m.ended = time.Time{}
 	m.Questions, m.DogGone = nil, false
 	return m
 }
 
-func (m *Model) setPhase(n int, state core.PhaseState) {
+func (m *Model) setPhase(n string, state core.PhaseState) {
 	m.Phases = append([]Row(nil), m.Phases...)
 	for i := range m.Phases {
-		if m.Phases[i].Number == n {
+		if m.Phases[i].ID == n {
 			m.Phases[i].State = state
 		}
 	}
 	if n == m.Current && (state == core.PhaseLanded || state == core.PhaseBlocked) {
-		m.Current = 0
+		m.Current = ""
 	}
 }
 
@@ -260,8 +260,8 @@ func (m *Model) step(ev core.Event) {
 
 func (m *Model) log(ev core.Event, t tone, text string) {
 	line := ev.At.Format("15:04") + "  "
-	if ev.Phase > 0 {
-		line += strings.TrimRight(fmt.Sprintf("phase %d %s", ev.Phase, ev.Step), " ") + ": "
+	if ev.Phase != "" {
+		line += strings.TrimRight(fmt.Sprintf("phase %s %s", ev.Phase, ev.Step), " ") + ": "
 	}
 	m.Feed = append(append([]Entry(nil), m.Feed...), Entry{Text: line + text, Tone: t})
 	if len(m.Feed) > keptFeed {
@@ -293,7 +293,7 @@ func landedText(f map[string]string) string {
 func (m *Model) end(status string, at time.Time) {
 	m.Status = status
 	m.ended = at
-	m.Current = 0
+	m.Current = ""
 	m.Notice = ""
 }
 

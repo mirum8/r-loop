@@ -90,9 +90,9 @@ func (b *baselineRig) manager() *SessionManager {
 
 func (b *baselineRig) ref(kind, check string, attempt int) StepRef {
 	return StepRef{
-		Key:      StepKey{Run: "run-1", Phase: 1, Kind: kind, Attempt: attempt},
+		Key:      StepKey{Run: "run-1", Phase: "1", Kind: kind, Attempt: attempt},
 		Kind:     StepKind{Name: kind, Prompt: kind, Check: check, Row: StepRow{Provider: "codex", Timeout: time.Hour}},
-		Phase:    Phase{Number: 1, Title: "Greeting package"},
+		Phase:    Phase{ID: "1", Title: "Greeting package"},
 		Worktree: b.worktree,
 		Branch:   "r-loop/phase-1",
 		Base:     "main",
@@ -228,7 +228,7 @@ func TestTheBaselineIsRecordedBeforeSpawnedOnlyForTheFirstAttempt(t *testing.T) 
 	b.attempt(t, b.manager(), b.ref("implement", "diff", 2), "failed", nothing)
 
 	baselines := b.events("baseline")
-	if len(baselines) != 1 || baselines[0].Step != "implement" || baselines[0].Phase != 1 || !reflect.DeepEqual(baselines[0].Fields, map[string]string{"step": "implement-a1", "tree": "tree-a"}) {
+	if len(baselines) != 1 || baselines[0].Step != "implement" || baselines[0].Phase != "1" || !reflect.DeepEqual(baselines[0].Fields, map[string]string{"step": "implement-a1", "tree": "tree-a"}) {
 		t.Fatalf("baselines = %+v", baselines)
 	}
 	var order []string

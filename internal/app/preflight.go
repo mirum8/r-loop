@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -34,7 +33,7 @@ func Preflight(w *Wiring) error {
 		w.banner(env.Stdout, prompts)
 		fmt.Fprintln(env.Stdout, "run list:")
 		for _, ph := range list {
-			fmt.Fprintf(env.Stdout, "phase %d  %s  %s\n", ph.Number, ph.Title, pipeline(w.Loop.Kinds, w.Plan.Backlog))
+			fmt.Fprintf(env.Stdout, "phase %s  %s  %s\n", ph.ID, ph.Title, pipeline(w.Loop.Kinds, w.Plan.Backlog))
 		}
 		w.criteriaWarnings(env.Stdout, list)
 		w.blockingEntries(env.Stdout, list)
@@ -81,21 +80,18 @@ func amber(out io.Writer) lipgloss.Style {
 }
 
 func (w *Wiring) blockingEntries(out io.Writer, list []core.Phase) {
-	numbers := make([]int, len(list))
-	for i, ph := range list {
-		numbers[i] = ph.Number
-	}
+	ids := phaseIDs(list)
 	then := "the watchdog will walk it"
 	if w.Opts.Unattended {
 		then = "unattended: its phases are skipped"
 	}
-	for _, e := range w.Plan.Blocking(numbers) {
+	for _, e := range w.Plan.Blocking(ids) {
 		scope := "every phase"
 		if !e.BlocksAll {
 			var hit []string
 			for _, n := range e.BlocksPhases {
-				if slices.Contains(numbers, n) {
-					hit = append(hit, strconv.Itoa(n))
+				if slices.Contains(ids, n) {
+					hit = append(hit, n)
 				}
 			}
 			scope = "phase " + strings.Join(hit, ", ")
@@ -110,7 +106,7 @@ func (w *Wiring) criteriaWarnings(out io.Writer, list []core.Phase) {
 	}
 	for _, ph := range list {
 		if len(ph.Items) == 1 && ph.Items[0].Text == ph.Title {
-			fmt.Fprintln(out, amber(out).Render(fmt.Sprintf("warning: phase %d has no acceptance criteria; the plan tests only its title — /r:issues-draft writes them", ph.Number)))
+			fmt.Fprintln(out, amber(out).Render(fmt.Sprintf("warning: phase %s has no acceptance criteria; the plan tests only its title — /r:issues-draft writes them", ph.ID)))
 		}
 	}
 }
@@ -138,12 +134,8 @@ func (w *Wiring) commitHint(dirty []string) string {
 }
 
 func recordRunList(st *store.Store, id string, list []core.Phase) error {
-	numbers := make([]string, len(list))
-	for i, ph := range list {
-		numbers[i] = strconv.Itoa(ph.Number)
-	}
 	at := time.Now()
-	return st.Append(id, core.Record{Kind: core.RecordEvent, At: at, Event: &core.Event{At: at, Kind: "run-list", Fields: map[string]string{"phases": strings.Join(numbers, ",")}}})
+	return st.Append(id, core.Record{Kind: core.RecordEvent, At: at, Event: &core.Event{At: at, Kind: "run-list", Fields: map[string]string{"phases": strings.Join(phaseIDs(list), ",")}}})
 }
 
 func (w *Wiring) checks() ([]core.Phase, []string, error) {

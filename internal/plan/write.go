@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
 var ErrNothingToTick = errors.New("nothing to tick")
 
-func (Reader) Tick(path string, phase int) error {
+func (Reader) Tick(path, phase string) error {
 	lines, err := readLines(path)
 	if err != nil {
 		return err
@@ -21,13 +20,13 @@ func (Reader) Tick(path string, phase int) error {
 	}
 	start := -1
 	for i, l := range lines {
-		if m := phaseRe.FindStringSubmatch(strings.TrimRight(l, "\r\n")); m != nil && atoi(m[1]) == phase {
+		if m := phaseRe.FindStringSubmatch(strings.TrimRight(l, "\r\n")); m != nil && label(m[1]) == phase {
 			start = i
 			break
 		}
 	}
 	if start < 0 {
-		return fmt.Errorf("%s: no phase %d", path, phase)
+		return fmt.Errorf("%s: no phase %s", path, phase)
 	}
 	ticked := 0
 	for i := start + 1; i < len(lines) && !headingRe.MatchString(lines[i]); i++ {
@@ -37,7 +36,7 @@ func (Reader) Tick(path string, phase int) error {
 		}
 	}
 	if ticked == 0 {
-		return fmt.Errorf("%s phase %d: %w", path, phase, ErrNothingToTick)
+		return fmt.Errorf("%s phase %s: %w", path, phase, ErrNothingToTick)
 	}
 	return writeLines(path, lines)
 }
@@ -71,9 +70,4 @@ func writeLines(path string, lines []string) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
-}
-
-func atoi(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
 }

@@ -26,7 +26,7 @@ func (r *loopRig) seedStep(key StepKey, state StepState, workspace string) {
 func TestALandedPhaseClosesEveryWorkspaceItsStepsOpened(t *testing.T) {
 	r := newLoopRig(t)
 
-	r.run(RunOptions{Phases: []int{2}})
+	r.run(RunOptions{Phases: []string{"2"}})
 
 	if got := r.calls("SessionHost.Close "); !reflect.DeepEqual(got, []string{"ws-1", "ws-2"}) {
 		t.Fatalf("closed %v", got)
@@ -48,7 +48,7 @@ func TestABlockedPhaseLeavesItsWorkspacesStanding(t *testing.T) {
 	r := newLoopRig(t)
 	r.host.behaviour["rloop-p1-implement"] = "fail"
 
-	r.run(RunOptions{Phases: []int{1}})
+	r.run(RunOptions{Phases: []string{"1"}})
 
 	if got := r.calls("SessionHost.Close "); len(got) != 0 {
 		t.Fatalf("closed %v", got)
@@ -57,10 +57,10 @@ func TestABlockedPhaseLeavesItsWorkspacesStanding(t *testing.T) {
 
 func TestANewAttemptClosesTheEarlierAttemptsWorkspaceOnce(t *testing.T) {
 	r := newLoopRig(t)
-	r.seedStep(StepKey{Run: "run-1", Phase: 1, Kind: "plan", Attempt: 1}, StepOK, "ws-plan")
-	r.seedStep(StepKey{Run: "run-1", Phase: 1, Kind: "implement", Attempt: 1}, StepFailed, "ws-old")
+	r.seedStep(StepKey{Run: "run-1", Phase: "1", Kind: "plan", Attempt: 1}, StepOK, "ws-plan")
+	r.seedStep(StepKey{Run: "run-1", Phase: "1", Kind: "implement", Attempt: 1}, StepFailed, "ws-old")
 
-	r.run(RunOptions{Resume: true, Phases: []int{1}})
+	r.run(RunOptions{Resume: true, Phases: []string{"1"}})
 
 	calls := r.shared.Calls()
 	if closeOld, open := indexOf(calls, "SessionHost.Close ws-old"), indexOf(calls, "SessionHost.Open"); closeOld < 0 || open < closeOld {
@@ -75,7 +75,7 @@ func TestAWorkspaceThatWillNotCloseIsAWarningNotAFailure(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.Sessions.Host = closeFailHost{r.host}
 
-	code := r.run(RunOptions{Phases: []int{2}})
+	code := r.run(RunOptions{Phases: []string{"2"}})
 
 	if code != 0 {
 		t.Fatalf("exit %d", code)
@@ -89,7 +89,7 @@ func TestAWorkspaceThatWillNotCloseIsAWarningNotAFailure(t *testing.T) {
 func TestALandedPhaseRemovesItsWorktreeAndBranchAfterClosingItsWorkspaces(t *testing.T) {
 	r := newLoopRig(t)
 
-	r.run(RunOptions{Phases: []int{2}})
+	r.run(RunOptions{Phases: []string{"2"}})
 
 	calls := r.shared.Calls()
 	lastClose, remove, del := indexOf(calls, "SessionHost.Close ws-2"), indexOf(calls, "Repo.RemoveWorktree .r-loop/wt/phase-2"), indexOf(calls, "Repo.DeleteBranch r-loop/phase-2")
@@ -106,7 +106,7 @@ func TestABlockedPhaseKeepsItsWorktreeAndBranch(t *testing.T) {
 	r := newLoopRig(t)
 	r.host.behaviour["rloop-p1-implement"] = "fail"
 
-	r.run(RunOptions{Phases: []int{1}})
+	r.run(RunOptions{Phases: []string{"1"}})
 
 	if n := len(r.calls("Repo.RemoveWorktree")) + len(r.calls("Repo.DeleteBranch")); n != 0 {
 		t.Fatalf("calls %v", r.shared.Calls())
@@ -118,7 +118,7 @@ func TestASkippedItemClosesItsWorkspacesButKeepsItsUnmergedBranch(t *testing.T) 
 	r.loop.Sessions.ItemGates = true
 	r.host.behaviour["rloop-p2-plan"] = "already-done"
 
-	r.run(RunOptions{Phases: []int{2}})
+	r.run(RunOptions{Phases: []string{"2"}})
 
 	if got := r.calls("SessionHost.Close "); !reflect.DeepEqual(got, []string{"ws-1"}) {
 		t.Fatalf("closed %v", got)
@@ -141,7 +141,7 @@ func TestAWorktreeThatWillNotGoIsAWarningAndKeepsTheBranch(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.Sessions.Repo = removeFailRepo{r.repo}
 
-	code := r.run(RunOptions{Phases: []int{2}})
+	code := r.run(RunOptions{Phases: []string{"2"}})
 
 	if code != 0 || len(r.calls("Repo.DeleteBranch")) != 0 {
 		t.Fatalf("exit %d, calls %v", code, r.shared.Calls())

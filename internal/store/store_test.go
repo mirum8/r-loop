@@ -125,15 +125,15 @@ func TestAppendUnknownKindFails(t *testing.T) {
 func TestLoadReplaysAMixedLog(t *testing.T) {
 	s, _ := newStore(t)
 	id, _ := s.Create(core.RunMeta{Todo: "docs/todo.md", Started: t0})
-	plan := core.StepKey{Run: id, Phase: 1, Kind: "plan", Attempt: 1}
-	impl := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
+	plan := core.StepKey{Run: id, Phase: "1", Kind: "plan", Attempt: 1}
+	impl := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
 	asked := core.Question{ID: "q1", Step: impl, Text: "which port?", AskedAt: t0}
 	answered := asked
 	answered.Answer, answered.AnsweredBy, answered.AnsweredAt = "8080", "human", t0.Add(time.Minute)
 	signal := core.Signal{Seq: 1, Kind: core.SignalWarn, Source: core.SourceWatchdog, Step: impl, Reason: "slow", At: t0}
 	remedy := core.Remedy{ID: "r1", Step: impl, Class: "retry", Command: "go mod tidy", ProposedAt: t0}
-	landing := core.Landing{Phase: 1, MergeSHA: "abc123"}
-	event := core.Event{At: t0, Kind: "review-round", Phase: 1, Step: "plan", Fields: map[string]string{"round": "1"}}
+	landing := core.Landing{Phase: "1", MergeSHA: "abc123"}
+	event := core.Event{At: t0, Kind: "review-round", Phase: "1", Step: "plan", Fields: map[string]string{"round": "1"}}
 	records := []core.Record{
 		{Kind: core.RecordRun, At: t0, Run: core.RunRunning},
 		{Kind: core.RecordStep, At: t0, Step: &plan, State: core.StepQueued},
@@ -180,9 +180,9 @@ func TestLoadReplaysAMixedLog(t *testing.T) {
 func TestLoadSpansAStepFromRunningToItsTerminalRecord(t *testing.T) {
 	s, _ := newStore(t)
 	id, _ := s.Create(core.RunMeta{Todo: "docs/todo.md", Started: t0})
-	done := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
-	failed := core.StepKey{Run: id, Phase: 2, Kind: "implement", Attempt: 1}
-	live := core.StepKey{Run: id, Phase: 3, Kind: "implement", Attempt: 1}
+	done := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
+	failed := core.StepKey{Run: id, Phase: "2", Kind: "implement", Attempt: 1}
+	live := core.StepKey{Run: id, Phase: "3", Kind: "implement", Attempt: 1}
 	for _, rec := range []core.Record{
 		{Kind: core.RecordStep, At: t0, Step: &done, State: core.StepQueued},
 		{Kind: core.RecordStep, At: t0.Add(time.Minute), Step: &done, State: core.StepRunning},
@@ -214,8 +214,8 @@ func TestLoadSpansAStepFromRunningToItsTerminalRecord(t *testing.T) {
 func TestLoadLastStepPrefersTheLastNonTerminalStep(t *testing.T) {
 	s, _ := newStore(t)
 	id, _ := s.Create(core.RunMeta{Todo: "todo.md"})
-	impl := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
-	next := core.StepKey{Run: id, Phase: 2, Kind: "plan", Attempt: 1}
+	impl := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
+	next := core.StepKey{Run: id, Phase: "2", Kind: "plan", Attempt: 1}
 	s.Append(id, core.Record{Kind: core.RecordStep, Step: &impl, State: core.StepRunning})
 	s.Append(id, core.Record{Kind: core.RecordStep, Step: &next, State: core.StepFailed})
 
@@ -229,8 +229,8 @@ func TestLoadLastStepPrefersTheLastNonTerminalStep(t *testing.T) {
 func TestLoadLastStepFallsBackToTheLastStep(t *testing.T) {
 	s, _ := newStore(t)
 	id, _ := s.Create(core.RunMeta{Todo: "todo.md"})
-	plan := core.StepKey{Run: id, Phase: 1, Kind: "plan", Attempt: 1}
-	impl := core.StepKey{Run: id, Phase: 1, Kind: "implement", Attempt: 1}
+	plan := core.StepKey{Run: id, Phase: "1", Kind: "plan", Attempt: 1}
+	impl := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
 	s.Append(id, core.Record{Kind: core.RecordStep, Step: &plan, State: core.StepOK})
 	s.Append(id, core.Record{Kind: core.RecordStep, Step: &impl, State: core.StepFailed})
 
@@ -436,3 +436,27 @@ func TestEnsureExcludedOutsideGitFails(t *testing.T) {
 }
 
 var _ core.Store = (*Store)(nil)
+
+func TestLoadReadsIntegerPhasesOfAnOlderRun(t *testing.T) {
+	s, _ := newStore(t)
+	id, _ := s.Create(core.RunMeta{Todo: "todo.md"})
+	os.WriteFile(filepath.Join(s.Dir(id), "events.jsonl"), []byte(strings.Join([]string{
+		`{"Kind":"step","Step":{"Run":"r","Phase":3,"Kind":"implement","Attempt":1},"State":"running"}`,
+		`{"Kind":"landing","Landing":{"Phase":2,"MergeSHA":"m"}}`,
+		`{"Kind":"event","Event":{"Kind":"halt","Phase":0,"Fields":{"reason":"\"Phase\":7"}}}`,
+		"",
+	}, "\n")), 0o644)
+
+	st, err := s.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key := core.StepKey{Run: "r", Phase: "3", Kind: "implement", Attempt: 1}
+	if st.Steps[key] != core.StepRunning || st.Landed[0].Phase != "2" {
+		t.Fatalf("Load = %+v", st)
+	}
+	if ev := st.Events[0]; ev.Phase != "" || ev.Fields["reason"] != `"Phase":7` {
+		t.Fatalf("event = %+v", ev)
+	}
+}

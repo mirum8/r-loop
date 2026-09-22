@@ -33,7 +33,7 @@ type fakePlanSource struct {
 	callLog
 	Plan  Plan
 	Err   error
-	Ticks []int
+	Ticks []string
 }
 
 func (f *fakePlanSource) Read(path string) (Plan, error) {
@@ -41,8 +41,8 @@ func (f *fakePlanSource) Read(path string) (Plan, error) {
 	return f.Plan, f.Err
 }
 
-func (f *fakePlanSource) Tick(path string, phase int) error {
-	f.record("PlanSource.Tick %s %d", path, phase)
+func (f *fakePlanSource) Tick(path, phase string) error {
+	f.record("PlanSource.Tick %s %s", path, phase)
 	f.Ticks = append(f.Ticks, phase)
 	return f.Err
 }
@@ -390,8 +390,8 @@ func (f *fakeAskChannel) Serve(ctx context.Context) (string, error) {
 }
 
 func (f *fakeAskChannel) StepURL(key StepKey) string {
-	f.record("AskChannel.StepURL %s/%d/%s/%d", key.Run, key.Phase, key.Kind, key.Attempt)
-	return fmt.Sprintf("%s/%s/%d/%s/%d", f.BaseURL, key.Run, key.Phase, key.Kind, key.Attempt)
+	f.record("AskChannel.StepURL %s/%s/%s/%d", key.Run, key.Phase, key.Kind, key.Attempt)
+	return fmt.Sprintf("%s/%s/%s/%s/%d", f.BaseURL, key.Run, key.Phase, key.Kind, key.Attempt)
 }
 
 func (f *fakeAskChannel) Questions() <-chan Question {
