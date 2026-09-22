@@ -153,7 +153,6 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 			return 1
 		}
 		if out.State == StepOK {
-			l.closeWorkspaces(ph.Number, func(string, int) bool { return true })
 			continue
 		}
 		code := l.block(ph, step, out)
@@ -236,6 +235,7 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 		if state == StepOK && !rerunPlan {
 			l.advance(n, kind.Name)
 			if l.itemSkipped(ph, kind, last.Dir) {
+				l.closeWorkspaces(n, everyWorkspace)
 				return "", Outcome{State: StepOK}, false
 			}
 			continue
@@ -267,6 +267,7 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 			}
 		}
 		if l.itemSkipped(ph, kind, last.Dir) {
+			l.closeWorkspaces(n, everyWorkspace)
 			return "", Outcome{State: StepOK}, false
 		}
 	}
@@ -284,6 +285,8 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	}
 	l.emit(Event{Kind: "phase-state", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "state": string(PhaseLanded)}})
 	l.emit(Event{Kind: "landed", Phase: n, Fields: map[string]string{"phase": strconv.Itoa(n), "merge": landing.MergeSHA, "gateSkipped": strconv.FormatBool(landing.GateSkipped)}})
+	l.closeWorkspaces(n, everyWorkspace)
+	l.removeWorktree(n)
 	return "", Outcome{State: StepOK}, false
 }
 

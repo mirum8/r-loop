@@ -166,6 +166,11 @@ func (f *fakeRepo) RemoveWorktree(dir string) error {
 	return f.Err
 }
 
+func (f *fakeRepo) DeleteBranch(branch string) error {
+	f.record("Repo.DeleteBranch %s", branch)
+	return f.Err
+}
+
 func (f *fakeRepo) Dirty(dir string) ([]string, error) {
 	f.record("Repo.Dirty %s", dir)
 	return f.DirtyFiles, f.Err

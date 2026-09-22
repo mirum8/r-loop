@@ -85,3 +85,69 @@ func TestAWorkspaceThatWillNotCloseIsAWarningNotAFailure(t *testing.T) {
 		t.Fatalf("warnings %+v", warnings)
 	}
 }
+
+func TestALandedPhaseRemovesItsWorktreeAndBranchAfterClosingItsWorkspaces(t *testing.T) {
+	r := newLoopRig(t)
+
+	r.run(RunOptions{Phases: []int{2}})
+
+	calls := r.shared.Calls()
+	lastClose, remove, del := indexOf(calls, "SessionHost.Close ws-2"), indexOf(calls, "Repo.RemoveWorktree .r-loop/wt/phase-2"), indexOf(calls, "Repo.DeleteBranch r-loop/phase-2")
+	if lastClose < 0 || remove < lastClose || del < remove {
+		t.Fatalf("calls %v", calls)
+	}
+	removed := r.events("worktree-removed")
+	if len(removed) != 1 || removed[0].Fields["worktree"] != ".r-loop/wt/phase-2" || removed[0].Fields["branch"] != "r-loop/phase-2" {
+		t.Fatalf("worktree-removed %+v", removed)
+	}
+}
+
+func TestABlockedPhaseKeepsItsWorktreeAndBranch(t *testing.T) {
+	r := newLoopRig(t)
+	r.host.behaviour["rloop-p1-implement"] = "fail"
+
+	r.run(RunOptions{Phases: []int{1}})
+
+	if n := len(r.calls("Repo.RemoveWorktree")) + len(r.calls("Repo.DeleteBranch")); n != 0 {
+		t.Fatalf("calls %v", r.shared.Calls())
+	}
+}
+
+func TestASkippedItemClosesItsWorkspacesButKeepsItsUnmergedBranch(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Sessions.ItemGates = true
+	r.host.behaviour["rloop-p2-plan"] = "already-done"
+
+	r.run(RunOptions{Phases: []int{2}})
+
+	if got := r.calls("SessionHost.Close "); !reflect.DeepEqual(got, []string{"ws-1"}) {
+		t.Fatalf("closed %v", got)
+	}
+	if n := len(r.calls("Repo.RemoveWorktree")) + len(r.calls("Repo.DeleteBranch")); n != 0 {
+		t.Fatalf("calls %v", r.shared.Calls())
+	}
+}
+
+type removeFailRepo struct {
+	*loopRepo
+}
+
+func (r removeFailRepo) RemoveWorktree(dir string) error {
+	r.loopRepo.RemoveWorktree(dir)
+	return errors.New("worktree is locked")
+}
+
+func TestAWorktreeThatWillNotGoIsAWarningAndKeepsTheBranch(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Sessions.Repo = removeFailRepo{r.repo}
+
+	code := r.run(RunOptions{Phases: []int{2}})
+
+	if code != 0 || len(r.calls("Repo.DeleteBranch")) != 0 {
+		t.Fatalf("exit %d, calls %v", code, r.shared.Calls())
+	}
+	warnings := r.events("warning")
+	if len(warnings) != 1 || warnings[0].Fields["reason"] != "remove worktree .r-loop/wt/phase-2: worktree is locked" {
+		t.Fatalf("warnings %+v", warnings)
+	}
+}

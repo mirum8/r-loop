@@ -1401,7 +1401,7 @@ change is visible as an edit to one small type.</figcaption>
 the watchdog, <code>rloop-wd-&lt;runID&gt;</code>, beside it by splitting its own pane
 (<code>HERDR_PANE_ID</code>) with <code>herdr pane split</code> — or, started outside a herdr
 pane, in a workspace of its own that closes with the run; every step session gets its own workspace,
-and a step's reviewers open as panes inside it. A step's workspace stays standing while its phase is blocked, and closes when a later attempt of the step starts or the phase lands. It runs for the length of the run and exits with it, creating no daemon: the sessions
+and a step's reviewers open as panes inside it. A step's workspace stays standing while its phase is blocked, and closes when a later attempt of the step starts or the phase lands; a landed phase's worktree and branch are removed after it. It runs for the length of the run and exits with it, creating no daemon: the sessions
 belong to herdr's server, which is running anyway, and the worktrees belong to git. A run started in
 a plain terminal instead dies with that terminal — the pane is what makes it survivable, and that is
 a documented instruction rather than something the driver enforces.</p>

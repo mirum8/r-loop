@@ -58,6 +58,7 @@ type Repo interface {
 	HeadSHA(dir string) (string, error)
 	AddWorktree(dir, branch, base string) error
 	RemoveWorktree(dir string) error
+	DeleteBranch(branch string) error
 	Dirty(dir string) ([]string, error)
 	CommitAll(dir, message string) (string, error)
 	DiffNonEmpty(dir, ref string) (bool, error)

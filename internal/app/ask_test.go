@@ -171,7 +171,7 @@ func (r *askRun) finish(t *testing.T) core.RunState {
 }
 
 func (r *askRun) answerFile() string {
-	b, _ := os.ReadFile(filepath.Join(r.f.root, ".r-loop/wt/phase-1/answer.txt"))
+	b, _ := exec.Command("git", "-C", r.f.root, "show", "r-loop/phase-1:answer.txt").Output()
 	return string(b)
 }
 

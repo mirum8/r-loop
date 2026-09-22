@@ -233,7 +233,6 @@ func TestResumeAfterFailedImplementRerunsOnlyImplementAsAttempt2OverItsWork(t *t
 	if code != 1 {
 		t.Fatalf("first run exit %d\n%s", code, f.err)
 	}
-	wt := filepath.Join(f.root, ".r-loop/wt/phase-1")
 
 	sim := newSim()
 	code, lander, err := f.resume(sim)
@@ -250,10 +249,10 @@ func TestResumeAfterFailedImplementRerunsOnlyImplementAsAttempt2OverItsWork(t *t
 	if !slices.Equal(lander.landed, []int{1}) {
 		t.Fatalf("landed %v", lander.landed)
 	}
-	if b, _ := os.ReadFile(filepath.Join(wt, "wip.txt")); string(b) != "half done by rloop-p1-implement" {
+	if b := git(t, f.root, "show", "r-loop/phase-1:wip.txt"); b != "half done by rloop-p1-implement" {
 		t.Fatalf("attempt 1 work lost: %q", b)
 	}
-	if log := git(t, wt, "log", "--format=%s", "-1"); log != "r-loop: phase 1 implement" {
+	if log := git(t, f.root, "log", "--format=%s", "-1", "r-loop/phase-1"); log != "r-loop: phase 1 implement" {
 		t.Fatalf("last commit %q", log)
 	}
 	out := f.out.String()
@@ -479,8 +478,7 @@ func TestReplanRerunsPlanWithTheAddendumThenImplement(t *testing.T) {
 	if strings.Contains(sim.text("rloop-p1-implement-a2"), "Note from the previous attempt:") {
 		t.Fatal("implement got the addendum")
 	}
-	wt := filepath.Join(f.root, ".r-loop/wt/phase-1")
-	if log := git(t, wt, "log", "--format=%s", "--", "wip.txt"); log != "r-loop: phase 1 implement" {
+	if log := git(t, f.root, "log", "--format=%s", "r-loop/phase-1", "--", "wip.txt"); log != "r-loop: phase 1 implement" {
 		t.Fatalf("failed work committed by %q", log)
 	}
 	st := f.load(id)
@@ -781,7 +779,7 @@ func (f *fixture) seedKilledImplement() (string, string) {
 
 func TestResumeClaimsTheLeftoversOfAStepKilledInItsWorkHalfAndBuildsOnThem(t *testing.T) {
 	f := newResumeFixture(t, noReviewConfig)
-	id, wt := f.seedKilledImplement()
+	id, _ := f.seedKilledImplement()
 	sim := newSim()
 
 	code, lander, err := f.resume(sim)
@@ -795,7 +793,7 @@ func TestResumeClaimsTheLeftoversOfAStepKilledInItsWorkHalfAndBuildsOnThem(t *te
 	if !slices.Equal(lander.landed, []int{1}) {
 		t.Fatalf("landed %v", lander.landed)
 	}
-	files := git(t, wt, "show", "--name-only", "--format=%s", "HEAD")
+	files := git(t, f.root, "show", "--name-only", "--format=%s", "r-loop/phase-1")
 	if !strings.Contains(files, "r-loop: phase 1 implement") || !strings.Contains(files, "wip.txt") || !strings.Contains(files, "code.txt") {
 		t.Fatalf("implement commit:\n%s", files)
 	}

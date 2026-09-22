@@ -95,7 +95,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
     stale one of the same run at its start, and its own at the run's end).
   - `Repo`: `Root() string` · `Clean() ([]string, error)` · `HeadBranch() (string, error)` ·
     `HeadSHA(dir) (string, error)` · `AddWorktree(dir, branch, base string) error` ·
-    `RemoveWorktree(dir) error` · `Dirty(dir) ([]string, error)` · `CommitAll(dir, message)
+    `RemoveWorktree(dir) error` · `DeleteBranch(branch) error` · `Dirty(dir) ([]string, error)` · `CommitAll(dir, message)
     (string, error)` · `DiffNonEmpty(dir, ref) (bool, error)` · `ChangedFiles(dir, ref)
     ([]string, error)` · `DiffStat(dir, ref) (added, deleted int, err error)` — **all three
     compare the working tree, untracked files included, against `ref`** · `Snapshot(dir)
@@ -265,7 +265,10 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   later attempt of the same step starts (resume or watchdog restart), and closes every workspace
   the phase's steps opened once the phase lands or its item is skipped. Each close appends a
   `workspace-closed` event before the `Close` call, so no workspace is closed twice; a failed close
-  is a warning, never a failure.
+  is a warning, never a failure. After a land, and after its workspaces close, the loop appends `worktree-removed`
+  and runs `RemoveWorktree(.r-loop/wt/phase-<N>)` then `DeleteBranch(r-loop/phase-<N>)`
+  (`git branch -d`, which refuses an unmerged branch); either failing is a warning. A skipped item
+  never merged, so it keeps its worktree and branch.
 - **One commit per step** — after the author half (and, when configured, every review round) ends
   `ok`, the driver runs `CommitAll(worktree, "r-loop: phase <N> <kind>")` once, and only then
   records the step `ok`. A step that ends any other way commits nothing: its work stays

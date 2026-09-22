@@ -1,12 +1,28 @@
 package core
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 )
 
 type stepWorkspace struct {
 	kind, id string
+}
+
+func everyWorkspace(string, int) bool { return true }
+
+func (l *RunLoop) removeWorktree(phase int) {
+	wt, branch := fmt.Sprintf(".r-loop/wt/phase-%d", phase), fmt.Sprintf("r-loop/phase-%d", phase)
+	l.emit(Event{Kind: "worktree-removed", Phase: phase, Fields: map[string]string{"worktree": wt, "branch": branch}})
+	repo := l.Sessions.Repo
+	if err := repo.RemoveWorktree(wt); err != nil {
+		l.emit(Event{Kind: "warning", Phase: phase, Fields: map[string]string{"reason": "remove worktree " + wt + ": " + err.Error()}})
+		return
+	}
+	if err := repo.DeleteBranch(branch); err != nil {
+		l.emit(Event{Kind: "warning", Phase: phase, Fields: map[string]string{"reason": "delete branch " + branch + ": " + err.Error()}})
+	}
 }
 
 func (l *RunLoop) closeWorkspaces(phase int, match func(kind string, attempt int) bool) {

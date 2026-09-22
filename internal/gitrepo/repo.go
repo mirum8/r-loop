@@ -150,6 +150,11 @@ func (r *Repo) RemoveWorktree(dir string) error {
 	return err
 }
 
+func (r *Repo) DeleteBranch(branch string) error {
+	_, err := r.git("", "branch", "-d", branch)
+	return err
+}
+
 func (r *Repo) Dirty(dir string) ([]string, error) {
 	out, err := r.git(dir, "status", "--porcelain", "-z", "--untracked-files=all")
 	if err != nil {

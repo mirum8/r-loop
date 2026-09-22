@@ -490,3 +490,23 @@ func TestDiffStatCountsSymlinkNotTarget(t *testing.T) {
 		t.Fatalf("DiffStat = %d, %d, %v; want 2, 0", added, deleted, err)
 	}
 }
+
+func TestDeleteBranchDeletesAMergedBranchAndRefusesAnUnmergedOne(t *testing.T) {
+	r, dir := newRepo(t)
+	git(t, dir, "branch", "r-loop/phase-1")
+	git(t, dir, "checkout", "-q", "-b", "r-loop/phase-2")
+	write(t, filepath.Join(dir, "wip.txt"), "wip\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "wip")
+	git(t, dir, "checkout", "-q", "main")
+
+	if err := r.DeleteBranch("r-loop/phase-1"); err != nil {
+		t.Fatalf("DeleteBranch merged: %v", err)
+	}
+	if err := r.DeleteBranch("r-loop/phase-2"); err == nil {
+		t.Fatal("DeleteBranch deleted an unmerged branch")
+	}
+	if got := git(t, dir, "branch", "--list", "r-loop/*"); got != "r-loop/phase-2" {
+		t.Fatalf("branches = %q", got)
+	}
+}
