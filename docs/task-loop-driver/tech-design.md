@@ -260,8 +260,12 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   Reviewing(s, round)}` — `Reviewing` a review round's find half; an observer that also has
   `Fixing(s, round)` is told when the fix half starts — and returns on a sentinel, a gone agent, the
   backstop, a stall unanswered after its nudge (`failed(stalled: no response to nudge)`, ADR-62) or
-  the context ending (`failed(interrupted: <ctx error>)`). `Stop` is `Interrupt`; the driver never
-  closes a step's workspace.
+  the context ending (`failed(interrupted: <ctx error>)`). `Stop` is `Interrupt`. A step's workspace
+  stays standing while its phase is blocked or aborted, for inspection; the loop closes it when a
+  later attempt of the same step starts (resume or watchdog restart), and closes every workspace
+  the phase's steps opened once the phase lands or its item is skipped. Each close appends a
+  `workspace-closed` event before the `Close` call, so no workspace is closed twice; a failed close
+  is a warning, never a failure.
 - **One commit per step** — after the author half (and, when configured, every review round) ends
   `ok`, the driver runs `CommitAll(worktree, "r-loop: phase <N> <kind>")` once, and only then
   records the step `ok`. A step that ends any other way commits nothing: its work stays
@@ -369,8 +373,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Shape** — a review half runs after a step's author half ends `ok` and before the step's
   commit, inside the step's own workspace: the author stays in the root pane, and each reviewer
   gets a pane split to its right (`Split(rootPane, "right", worktree)`, stacked when there are several).
-  The panes are made in round 1 and reused; **each round starts a fresh reviewer agent** in its
-  pane, after interrupting the previous round's. The author is the same agent session through
+  **Each round starts a fresh reviewer agent** in a fresh pane: from round 2 on, the previous
+  round's reviewer panes are closed (`ClosePane`) and split again in the same places, since an
+  interrupted agent (Claude Code at an idle prompt) need not exit and would leave its pane busy. The author is the same agent session through
   every round. A reviewer gets its own ask URL
   (`<base>/<phase>/<kind>-rv-<provider>/<attempt>`) and, for a `{mcpConfig}` flag,
   `<RunDir>/phase-<N>/<kind>-rv-<provider>-a<attempt>.mcp.json`. Preflight refuses a provider with

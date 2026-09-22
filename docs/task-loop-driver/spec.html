@@ -1401,7 +1401,7 @@ change is visible as an edit to one small type.</figcaption>
 the watchdog, <code>rloop-wd-&lt;runID&gt;</code>, beside it by splitting its own pane
 (<code>HERDR_PANE_ID</code>) with <code>herdr pane split</code> — or, started outside a herdr
 pane, in a workspace of its own that closes with the run; every step session gets its own workspace,
-and a step's reviewers open as panes inside it. It runs for the length of the run and exits with it, creating no daemon: the sessions
+and a step's reviewers open as panes inside it. A step's workspace stays standing while its phase is blocked, and closes when a later attempt of the step starts or the phase lands. It runs for the length of the run and exits with it, creating no daemon: the sessions
 belong to herdr's server, which is running anyway, and the worktrees belong to git. A run started in
 a plain terminal instead dies with that terminal — the pane is what makes it survivable, and that is
 a documented instruction rather than something the driver enforces.</p>
@@ -1475,7 +1475,7 @@ a documented instruction rather than something the driver enforces.</p>
 </svg>
 <figcaption>Notice that a phase opens at most three workspaces, and that each review lives inside the
 workspace of the step it reviews: the reviewer pane opens to the right of the session that did the
-work, reports into files, and a fresh reviewer takes the same pane in the next round. The session on
+work, reports into files, and a fresh reviewer takes a fresh pane in the same place the next round. The session on
 the left never changes, so the agent verifying a finding is the one that made the choice it is about
 (<a href="#adr-56">ADR-56</a>). Only the land step has no workspace — it is the one operation that
 must not be left to an agent (<a href="#adr-9">ADR-9</a>).</figcaption>
@@ -2667,7 +2667,7 @@ confirm they were fixed rather than look again.</p>
 default, 0 to turn review off — and <code>reviewTimeout</code> per round, covering the reviewers and
 the fix pass together. A round is clean when its reviewers report nothing or its verdicts hold
 nothing real at P1 or P2, and a clean round ends the review. Each round starts a fresh reviewer
-agent in the same pane, handed every earlier round's findings and verdicts and the change since the
+agent in a fresh pane in the same place, handed every earlier round's findings and verdicts and the change since the
 last round; a finding dismissed with evidence is not raised again without new evidence. The step's
 own session stays the same across rounds. Reaching the limit after a round that fixed something is
 a warning — its last fixes are unreviewed — never a halt.</p>

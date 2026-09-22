@@ -153,6 +153,7 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 			return 1
 		}
 		if out.State == StepOK {
+			l.closeWorkspaces(ph.Number, func(string, int) bool { return true })
 			continue
 		}
 		code := l.block(ph, step, out)
@@ -547,6 +548,9 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 	}
 	l.setLive(nil)
 	key := ref.Key
+	if key.Attempt > 1 {
+		l.closeWorkspaces(key.Phase, func(kind string, attempt int) bool { return kind == key.Kind && attempt < key.Attempt })
+	}
 	if err := l.Store.Append(l.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepQueued}); err != nil {
 		return Outcome{State: StepFailed, Reason: "record: " + err.Error()}, false
 	}
