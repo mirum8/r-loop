@@ -82,6 +82,7 @@ r-loop <free text> [flags]
 r-loop status [--plain]
 r-loop resume [--replan] [--unattended] [--plain]
 r-loop abort
+r-loop --create-config
 r-loop --version
 ```
 
@@ -148,6 +149,9 @@ Each key is taken from the first place that has it:
 2. `.r-loop/config.yaml` in the project
 3. `~/.config/r-loop/config.yaml`
 4. the built-in defaults
+
+`r-loop --create-config` writes the built-in defaults to `~/.config/r-loop/config.yaml` as a
+starting point. It refuses to overwrite an existing file.
 
 The banner (see `--dry-run`) prints every value and where it came from. Use block-style YAML
 only. Flow style (`[a, b]`, `{a: b}`) and unknown keys are errors (exit 2).

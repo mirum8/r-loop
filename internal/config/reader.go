@@ -654,3 +654,22 @@ func (r *resolver) resolveFix(cfg *LoopConfig) error {
 	cfg.Land.Fix = GateFix{resolved["provider"], resolved["model"], resolved["effort"]}
 	return nil
 }
+
+func Create(homeDir string) (string, error) {
+	path := filepath.Join(homeDir, ".config", "r-loop", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if errors.Is(err, fs.ErrExist) {
+		return "", fmt.Errorf("%s already exists", path)
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.Write(defaultsYAML); err != nil {
+		f.Close()
+		return "", err
+	}
+	return path, f.Close()
+}

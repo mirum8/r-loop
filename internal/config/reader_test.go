@@ -578,3 +578,32 @@ func TestUnknownIntakeKeyRejected(t *testing.T) {
 
 	d.loadErr(t, `unknown key "intake.timeout"`)
 }
+
+func TestCreateWritesTheDefaultsAsTheMachineFile(t *testing.T) {
+	d := newDirs(t)
+
+	path, err := Create(d.home)
+
+	if err != nil || path != filepath.Join(d.home, ".config", "r-loop", "config.yaml") {
+		t.Fatalf("path=%q err=%v", path, err)
+	}
+	cfg, err := Load(d.project, d.home, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provenance["steps.plan.model"] != "~/.config/r-loop/config.yaml:steps.plan.model" {
+		t.Fatalf("provenance=%q", cfg.Provenance["steps.plan.model"])
+	}
+}
+
+func TestCreateRefusesToOverwrite(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "pipeline:\n  - plan\n")
+
+	_, err := Create(d.home)
+
+	data, _ := os.ReadFile(filepath.Join(d.home, ".config", "r-loop", "config.yaml"))
+	if err == nil || !strings.Contains(err.Error(), "already exists") || string(data) != "pipeline:\n  - plan\n" {
+		t.Fatalf("err=%v data=%q", err, data)
+	}
+}

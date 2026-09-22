@@ -179,6 +179,10 @@ func Main(args []string, env Env) int {
 			return Resume(args[1:], env)
 		case "abort":
 			return Abort(args[1:], env)
+		case "--create-config":
+			if len(args) == 1 {
+				return CreateConfig(env)
+			}
 		}
 	}
 	opts, positional, err := parseFlags(args)
@@ -204,6 +208,15 @@ func Main(args []string, env Env) int {
 		return 0
 	}
 	return w.Execute(core.RunOptions{From: opts.From, Phases: opts.Phases})
+}
+
+func CreateConfig(env Env) int {
+	path, err := config.Create(env.Home)
+	if err != nil {
+		return fail(env, err)
+	}
+	fmt.Fprintf(env.Stdout, "wrote %s\n", path)
+	return 0
 }
 
 func fail(env Env, err error) int {

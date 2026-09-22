@@ -613,3 +613,34 @@ func TestNoWatchdogIsAUsageError(t *testing.T) {
 		t.Fatal("--no-watchdog accepted")
 	}
 }
+
+func TestCreateConfigWritesTheDefaultsToTheMachineFile(t *testing.T) {
+	f := newFixture(t)
+
+	code := f.main("--create-config")
+
+	path := filepath.Join(f.env.Home, ".config", "r-loop", "config.yaml")
+	if code != 0 || f.out.String() != "wrote "+path+"\n" {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, f.out.String(), f.err.String())
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateConfigOverAnExistingFileExits2(t *testing.T) {
+	f := newFixture(t)
+	path := filepath.Join(f.env.Home, ".config", "r-loop", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("pipeline:\n  - plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code := f.main("--create-config")
+
+	if code != 2 || !strings.Contains(f.err.String(), "already exists") {
+		t.Fatalf("code=%d stderr=%q", code, f.err.String())
+	}
+}
