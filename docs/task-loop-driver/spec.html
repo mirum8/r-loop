@@ -3123,7 +3123,9 @@ off the allow-list, an empty quote comes back <code>ask</code>. The TUI's questi
 <code>Face.Ask</code>, <code>r-loop answer</code>, <code>watchdog.answerWindow</code> and
 <code>unattended.questionTimeout</code> are removed. The driver never answers a question itself: a
 watchdog that is gone when a step asks, or goes while it holds a question, halts the run with a
-driver signal <code>the watchdog is gone</code>, and <code>r-loop resume</code> starts a new one.
+driver signal <code>the watchdog is gone</code>, and <code>r-loop resume</code> starts a new one. A
+watchdog found gone with no question open halts the run the same way at once, rather than at the
+next question: no further step or phase starts without it.
 With <code>--unattended</code> the watchdog never asks: it answers from the repository or takes the
 agent's recommended option, citing the <code>path:line</code> that supports it.
 <code>watchdog.fallback</code> is removed too: a watchdog that does not start on its own row blocks
@@ -3460,7 +3462,7 @@ from, and the only way a watchdog's threshold can be tuned from rows rather than
       were blocked, the code is that of the first</td></tr>
   <tr><td><code>2</code></td><td>usage, git state, or a config the reader rejected</td></tr>
   <tr><td><code>3</code></td><td>the first block began as a stall: the step went quiet, was nudged, and stayed quiet — never an open question, which has no timer</td></tr>
-  <tr><td><code>5</code></td><td>the first block was a watchdog halt, or the watchdog was gone when a step asked it; its reason is in the run report</td></tr>
+  <tr><td><code>5</code></td><td>the first block was a watchdog halt, or the watchdog is gone; its reason is in the run report</td></tr>
   <tr><td><code>4</code></td><td>preflight refused — herdr unreachable, an unclean tree, an open <code>## Resolve first</code> entry, or a watchdog that did not start</td></tr>
   <tr><td><code>127</code></td><td>a required binary is missing</td></tr>
 </table>

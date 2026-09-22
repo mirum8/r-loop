@@ -148,6 +148,9 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 		if !l.pending[ph.ID] {
 			continue
 		}
+		if l.dogGone(ph.ID) {
+			break
+		}
 		delete(l.pending, ph.ID)
 		step, out, aborted := l.runPhase(ctx, ph, prior, base, opts.Replan)
 		if aborted {
@@ -494,6 +497,17 @@ func (l *RunLoop) drainHalts(key StepKey, out *Outcome) bool {
 	}
 }
 
+func (l *RunLoop) dogGone(phase string) bool {
+	g, ok := l.watcher().(interface{ Gone() bool })
+	if !ok || !g.Gone() {
+		return false
+	}
+	if l.halted == nil {
+		l.halted = &Signal{Kind: SignalHalt, Source: SourceDriver, Step: StepKey{Run: l.RunID, Phase: phase}, Reason: watchdogGone}
+	}
+	return true
+}
+
 func (l *RunLoop) haltEnded(sig Signal) {
 	reason := "watchdog: " + sig.Reason
 	l.emit(Event{Kind: "warning", Phase: sig.Step.Phase, Step: sig.Step.Kind, Fields: map[string]string{"reason": fmt.Sprintf("halt for phase-%s/%s after it ended: %s", sig.Step.Phase, sig.Step.Kind, sig.Reason), "source": string(sig.Source)}})
@@ -548,6 +562,9 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 	if l.Store.Aborted(l.RunID) {
 		l.abort(ref.Key.Phase, ref.Key.Kind)
 		return Outcome{}, true
+	}
+	if l.dogGone(ref.Key.Phase) {
+		return Outcome{State: StepFailed, Reason: "watchdog: " + watchdogGone, Halted: true}, false
 	}
 	l.setLive(nil)
 	key := ref.Key

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -512,4 +513,102 @@ func emittedKinds(face *fakeFace) []string {
 		kinds = append(kinds, ev.Kind)
 	}
 	return kinds
+}
+
+type goneHost struct {
+	fakeSessionHost
+	gone atomic.Bool
+}
+
+func (h *goneHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	if h.gone.Load() {
+		return errors.New("herdr agent prompt: herdr: agent_blocked: waiting on a permission")
+	}
+	return h.fakeSessionHost.Prompt(agent, text, wait, timeout)
+}
+
+func (h *goneHost) State(agent string) (AgentState, error) {
+	if h.gone.Load() {
+		return AgentGone, nil
+	}
+	return h.fakeSessionHost.State(agent)
+}
+
+func goneRig(t *testing.T) (*loopRig, *goneHost, *Watchdog) {
+	r := newLoopRig(t)
+	host := &goneHost{}
+	dog := newWatchdog(host, &r.store.fakeStore, ProviderArgs{Kind: "claude"})
+	w := &Watch{Store: r.store, Face: r.face, Dog: dog}
+	dog.OnGone = w.WatchdogGone
+	r.loop.Watcher = w
+	return r, host, dog
+}
+
+type goneLander struct {
+	*fakeLander
+	host *goneHost
+	dog  *Watchdog
+}
+
+func (g *goneLander) Land(ctx context.Context, ph Phase) (Landing, error) {
+	l, err := g.fakeLander.Land(ctx, ph)
+	g.host.gone.Store(true)
+	g.dog.Notify("phase landed", false, 0)
+	return l, err
+}
+
+func TestAWatchdogGoneBeforeTheFirstPhaseHaltsTheRunWithoutStartingIt(t *testing.T) {
+	r, host, dog := goneRig(t)
+	host.gone.Store(true)
+	dog.Notify("run started", false, 0)
+
+	code := r.run(RunOptions{})
+
+	if code != 5 {
+		t.Fatalf("exit %d, want 5", code)
+	}
+	if got := r.events("phase-start"); len(got) != 0 {
+		t.Errorf("started %+v", got)
+	}
+	st, _ := r.store.Load("run-1")
+	if len(st.Steps) != 0 || len(st.Signals) != 0 {
+		t.Errorf("steps %+v signals %+v", st.Steps, st.Signals)
+	}
+	if halts := r.events("halt"); len(halts) != 1 {
+		t.Errorf("halts %+v", halts)
+	}
+}
+
+func TestAWatchdogGoneBetweenPhasesHaltsTheRunBeforeTheNextPhase(t *testing.T) {
+	r, host, dog := goneRig(t)
+	r.loop.Lander = &goneLander{fakeLander: r.lander, host: host, dog: dog}
+
+	code := r.run(RunOptions{})
+
+	if code != 5 {
+		t.Fatalf("exit %d, want 5", code)
+	}
+	var started []string
+	for _, ev := range r.events("phase-start") {
+		started = append(started, ev.Phase)
+	}
+	if !reflect.DeepEqual(started, []string{"1"}) {
+		t.Errorf("started phases %v, want only 1", started)
+	}
+	if got := r.calls("Land "); !reflect.DeepEqual(got, []string{"1"}) {
+		t.Errorf("landed %v", got)
+	}
+}
+
+func TestAStoppedWatchdogDoesNotHaltTheRun(t *testing.T) {
+	r, _, dog := goneRig(t)
+	if err := dog.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	code := r.run(RunOptions{})
+
+	if code != 0 {
+		t.Errorf("exit %d, want 0", code)
+	}
 }

@@ -356,3 +356,31 @@ func answeringDog(w *Wiring, answer, citation string) *dogHost {
 		}
 	}}
 }
+
+func TestAWatchdogFoundGoneHaltsTheRunWithoutWaitingForAQuestion(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	sim := newSim()
+	sim.hang["rloop-p1-implement"] = true
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, sim)
+	w.Dog.Host = &dogHost{blocked: "step started ", state: core.AgentGone}
+	w.Dog.Sleep = func(time.Duration) {}
+	done := make(chan int, 1)
+	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
+
+	select {
+	case code := <-done:
+		if code != 5 {
+			t.Errorf("exit %d, want 5\n%s", code, f.out)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("run kept going with the watchdog gone")
+	}
+	st := f.load(w.Loop.RunID)
+	if len(st.Signals) != 1 || st.Signals[0].Source != core.SourceDriver || st.Signals[0].Kind != core.SignalHalt || st.Signals[0].Reason != "the watchdog is gone" {
+		t.Errorf("signals %+v", st.Signals)
+	}
+}

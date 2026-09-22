@@ -486,7 +486,10 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   queued notices. A prompt refused with `agent_blocked` is retried every 30 s while the agent
   exists; the first refusal records and emits `Event{Kind: "watchdog-waiting"}`, the next
   accepted prompt `Event{Kind: "watchdog-resumed"}`, and one `Host.State` of `gone` records
-  `Event{Kind: "watchdog-unreachable"}`. `Stop` drains the outbox, giving up on a blocked prompt.
+  `Event{Kind: "watchdog-unreachable"}` and fires `OnGone` (wired to `Watch.WatchdogGone`): the
+  live step gets one driver `halt` `the watchdog is gone`, and with none live the loop starts no
+  further step or phase, so the run halts with exit `5` at once. `Stop` drains the outbox, giving
+  up on a blocked prompt, and never fires `OnGone`.
 - **Second MCP surface** — `<base>/watchdog/<wdToken>`; tools `signal(kind, step, reason,
   evidence) → {accepted, reason?}` · `propose_remedy(class, command, why, maintainer_said?) →
   {decision: authorised|refused|ask, reason?}` ·

@@ -26,6 +26,7 @@ type Watchdog struct {
 	Allow                                  []string
 	Unattended                             bool
 	Sleep                                  func(time.Duration)
+	OnGone                                 func()
 
 	mu        sync.Mutex
 	send      sync.Mutex
@@ -210,6 +211,9 @@ func (d *Watchdog) prompt(text string, wait bool, timeout time.Duration) error {
 	}
 	if rerr := d.emit("watchdog-unreachable", map[string]string{"reason": err.Error()}, func() { d.gone = true }); rerr != nil {
 		return rerr
+	}
+	if d.OnGone != nil {
+		d.OnGone()
 	}
 	return err
 }

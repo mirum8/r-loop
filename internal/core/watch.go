@@ -48,6 +48,8 @@ type Watch struct {
 	seq      int
 	halt     *Signal
 	checking string
+	gone     bool
+	goneHalt bool
 }
 
 type endedStep struct {
@@ -177,9 +179,37 @@ func (w *Watch) Route(ctx context.Context, q Question) bool {
 	if ctx.Err() == nil {
 		key := q.Step
 		key.Kind, _, _ = strings.Cut(key.Kind, "-rv-")
-		w.Accept(Signal{Kind: SignalHalt, Source: SourceDriver, Step: key, Reason: watchdogGone})
+		w.haltGone(key)
 	}
 	return false
+}
+
+func (w *Watch) WatchdogGone() {
+	w.init()
+	w.mu.Lock()
+	w.gone = true
+	live := w.live
+	w.mu.Unlock()
+	if live != nil {
+		w.haltGone(*live)
+	}
+}
+
+func (w *Watch) Gone() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.gone
+}
+
+func (w *Watch) haltGone(key StepKey) {
+	w.mu.Lock()
+	if w.goneHalt {
+		w.mu.Unlock()
+		return
+	}
+	w.goneHalt = w.gone
+	w.mu.Unlock()
+	w.Accept(Signal{Kind: SignalHalt, Source: SourceDriver, Step: key, Reason: watchdogGone})
 }
 
 func (w *Watch) StepStarted(ref StepRef, s *Session) {
@@ -199,8 +229,12 @@ func (w *Watch) StepStarted(ref StepRef, s *Session) {
 		default:
 		}
 	}
+	gone := w.gone
 	w.mu.Unlock()
 	go w.tick(ref, s, started, t)
+	if gone {
+		w.haltGone(key)
+	}
 	if w.Dog != nil {
 		dir := ref.Worktree
 		agent := ""

@@ -422,6 +422,7 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 		return err
 	}
 	w.Watch.Dog = w.Dog
+	w.Dog.OnGone = w.Watch.WatchdogGone
 	w.Watch.PhaseCheck = &core.PhaseCheck{Dog: w.Dog, Repo: w.Loop.Sessions.Repo, Timeout: wd.CheckTimeout}
 	w.Router.Dog = w.Dog
 	w.Watch.Router = w.Router
