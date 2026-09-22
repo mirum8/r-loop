@@ -265,6 +265,15 @@ func TestCloseRunsWorkspaceCloseWithoutGroup(t *testing.T) {
 	assertArgv(t, argv(), []string{"workspace", "close", "w3A"})
 }
 
+func TestTagReportsTokensAndClearsEmptyOnes(t *testing.T) {
+	c, argv := fake(t, "")
+
+	if err := c.Tag("w3A", map[string]string{"rloop_wait": "", "rloop": "◆ review r1/2"}); err != nil {
+		t.Fatalf("Tag: %v", err)
+	}
+	assertArgv(t, argv(), []string{"workspace", "report-metadata", "w3A", "--source", "r-loop", "--token", "rloop=◆ review r1/2", "--clear-token", "rloop_wait"})
+}
+
 func TestClosePaneRunsPaneClose(t *testing.T) {
 	c, argv := fake(t, `{"id":"cli:pane:close","result":{"type":"ok"}}`)
 

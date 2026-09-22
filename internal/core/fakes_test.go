@@ -50,6 +50,9 @@ func (f *fakePlanSource) Tick(path string, phase int) error {
 type fakeSessionHost struct {
 	callLog
 	Opened  []OpenSpec
+	Agents  []string
+	Started map[string]OpenSpec
+	roots   map[string]OpenSpec
 	States  map[string]AgentState
 	Panes   map[string]string
 	Screens map[string]string
@@ -66,11 +69,20 @@ func (f *fakeSessionHost) Open(spec OpenSpec) (Workspace, error) {
 	f.record("SessionHost.Open %s %s %v", spec.CWD, spec.Label, spec.Env)
 	f.Opened = append(f.Opened, spec)
 	f.next++
-	return Workspace{ID: fmt.Sprintf("ws-%d", f.next), RootPane: fmt.Sprintf("pane-%d", f.next)}, f.Err
+	ws := Workspace{ID: fmt.Sprintf("ws-%d", f.next), RootPane: fmt.Sprintf("pane-%d", f.next)}
+	if f.roots == nil {
+		f.roots, f.Started = map[string]OpenSpec{}, map[string]OpenSpec{}
+	}
+	f.roots[ws.RootPane] = spec
+	return ws, f.Err
 }
 
 func (f *fakeSessionHost) Start(pane, name, kind string, args []string) (Agent, error) {
 	f.record("SessionHost.Start %s %s %s %v", pane, name, kind, args)
+	if spec, ok := f.roots[pane]; ok {
+		f.Agents = append(f.Agents, name)
+		f.Started[name] = spec
+	}
 	return Agent{Name: name, Pane: pane}, f.Err
 }
 
@@ -104,6 +116,11 @@ func (f *fakeSessionHost) Interrupt(agent string) error {
 
 func (f *fakeSessionHost) Close(workspaceID string) error {
 	f.record("SessionHost.Close %s", workspaceID)
+	return f.Err
+}
+
+func (f *fakeSessionHost) Tag(workspaceID string, tokens map[string]string) error {
+	f.record("SessionHost.Tag %s %v", workspaceID, tokens)
 	return f.Err
 }
 

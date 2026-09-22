@@ -623,13 +623,14 @@ func (h *reportHost) Prompt(agent, text string, wait bool, timeout time.Duration
 	return os.WriteFile(sentinel, data, 0o644)
 }
 
-func (h *reportHost) State(agent string) (core.AgentState, error)       { return core.AgentWorking, nil }
-func (h *reportHost) AgentPane(agent string) (string, error)            { return "", nil }
-func (h *reportHost) Read(agent string, lines int) (string, error)      { return "", nil }
-func (h *reportHost) Interrupt(agent string) error                      { return nil }
-func (h *reportHost) Close(workspaceID string) error                    { return nil }
-func (h *reportHost) ClosePane(pane string) error                       { return nil }
-func (h *reportHost) Split(pane, direction, cwd string) (string, error) { return "", nil }
+func (h *reportHost) State(agent string) (core.AgentState, error)            { return core.AgentWorking, nil }
+func (h *reportHost) AgentPane(agent string) (string, error)                 { return "", nil }
+func (h *reportHost) Read(agent string, lines int) (string, error)           { return "", nil }
+func (h *reportHost) Interrupt(agent string) error                           { return nil }
+func (h *reportHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
+func (h *reportHost) Close(workspaceID string) error                         { return nil }
+func (h *reportHost) ClosePane(pane string) error                            { return nil }
+func (h *reportHost) Split(pane, direction, cwd string) (string, error)      { return "", nil }
 
 type reportPrompts struct {
 	mu   sync.Mutex

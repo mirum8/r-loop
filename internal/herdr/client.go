@@ -243,6 +243,24 @@ func (c Client) ClosePane(pane string) error {
 	return c.call(&out, "pane", "close", pane)
 }
 
+func (c Client) Tag(workspaceID string, tokens map[string]string) error {
+	args := []string{"workspace", "report-metadata", workspaceID, "--source", "r-loop"}
+	keys := make([]string, 0, len(tokens))
+	for k := range tokens {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if tokens[k] == "" {
+			args = append(args, "--clear-token", k)
+		} else {
+			args = append(args, "--token", k+"="+tokens[k])
+		}
+	}
+	_, err := c.exec(args...)
+	return err
+}
+
 func (c Client) Close(workspaceID string) error {
 	var out struct{}
 	return c.call(&out, "workspace", "close", workspaceID)

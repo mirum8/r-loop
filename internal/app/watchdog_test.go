@@ -62,11 +62,12 @@ func (h *dogHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 	}
 	return nil
 }
-func (h *dogHost) State(agent string) (core.AgentState, error)  { return core.AgentWorking, nil }
-func (h *dogHost) AgentPane(agent string) (string, error)       { return h.stale[agent], nil }
-func (h *dogHost) Read(agent string, lines int) (string, error) { return "", nil }
-func (h *dogHost) Interrupt(agent string) error                 { return nil }
-func (h *dogHost) Close(workspaceID string) error               { return nil }
+func (h *dogHost) State(agent string) (core.AgentState, error)            { return core.AgentWorking, nil }
+func (h *dogHost) AgentPane(agent string) (string, error)                 { return h.stale[agent], nil }
+func (h *dogHost) Read(agent string, lines int) (string, error)           { return "", nil }
+func (h *dogHost) Interrupt(agent string) error                           { return nil }
+func (h *dogHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
+func (h *dogHost) Close(workspaceID string) error                         { return nil }
 func (h *dogHost) ClosePane(pane string) error {
 	h.record("ClosePane %s", pane)
 	return nil

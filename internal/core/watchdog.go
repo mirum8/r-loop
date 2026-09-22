@@ -98,9 +98,14 @@ func (d *Watchdog) open() (string, string, error) {
 		}
 		return pane, "", nil
 	}
-	ws, err := d.Host.Open(OpenSpec{CWD: d.Root, Label: d.agent()})
+	ws, err := d.Host.Open(OpenSpec{CWD: d.Root, Label: "◆ watchdog"})
 	if err != nil {
 		return "", "", fmt.Errorf("open workspace: %w", err)
+	}
+	if err := d.Host.Tag(ws.ID, map[string]string{"rloop": "◆ run " + d.RunID}); err != nil {
+		if err := d.record("warning", map[string]string{"reason": "tag watchdog workspace: " + err.Error()}); err != nil {
+			return "", "", err
+		}
 	}
 	return ws.RootPane, ws.ID, nil
 }

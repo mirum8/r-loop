@@ -65,12 +65,7 @@ func (h *eventsHost) Prompt(agent, text string, wait bool, timeout time.Duration
 }
 
 func (h *eventsHost) spec(agent string) OpenSpec {
-	for _, o := range h.Opened {
-		if o.Label == agent {
-			return o
-		}
-	}
-	return OpenSpec{}
+	return h.Started[agent]
 }
 
 func (h *eventsHost) finish(agent string) {
@@ -182,11 +177,7 @@ func newEventsRig(t *testing.T) *eventsRig {
 }
 
 func (r *eventsRig) agents() []string {
-	var out []string
-	for _, o := range r.host.Opened {
-		out = append(out, o.Label)
-	}
-	return out
+	return r.host.Agents
 }
 
 func (r *eventsRig) stepStates(kind string) []string {

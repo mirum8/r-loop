@@ -53,6 +53,10 @@ func TestLiveHerdr(t *testing.T) {
 		t.Fatalf("workspace %+v", ws)
 	}
 
+	if err := c.Tag(ws.ID, map[string]string{"rloop": "◆ live", "rloop_wait": ""}); err != nil {
+		t.Fatalf("Tag: %v", err)
+	}
+
 	pane, err := c.Split(ws.RootPane, "right", dir)
 	if err != nil || pane == "" || pane == ws.RootPane {
 		t.Fatalf("Split: %q, %v", pane, err)

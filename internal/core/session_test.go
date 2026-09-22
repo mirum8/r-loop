@@ -167,7 +167,7 @@ func TestSpawnRecordsSpawnedBeforeOpenThenStartsPromptsAndRecordsRunning(t *test
 		"Repo.Snapshot /repo/.r-loop/wt/phase-3",
 		"Store.Append run-1 event",
 		"Store.Append run-1 step",
-		"SessionHost.Open /repo/.r-loop/wt/phase-3 rloop-p3-implement map[R_LOOP_PHASE:3 R_LOOP_RUN:run-1 R_LOOP_SENTINEL:" + sentinel + " R_LOOP_STEP:implement]",
+		"SessionHost.Open /repo/.r-loop/wt/phase-3 ◆ p3 implement map[R_LOOP_PHASE:3 R_LOOP_RUN:run-1 R_LOOP_SENTINEL:" + sentinel + " R_LOOP_STEP:implement]",
 		"SessionHost.Start pane-1 rloop-p3-implement codex [-c model=gpt-5.6-sol]",
 		"Prompts.Render implement",
 		`SessionHost.Prompt rloop-p3-implement "do phase 3" false 0s`,
@@ -360,7 +360,7 @@ func TestAttemptTwoGetsTheSuffixedNameAndSentinel(t *testing.T) {
 
 	s := r.spawn(t, 2)
 
-	if s.Agent != "rloop-p3-implement-a2" || r.host.Opened[0].Label != "rloop-p3-implement-a2" {
+	if s.Agent != "rloop-p3-implement-a2" || r.host.Opened[0].Label != "◆ p3 implement·a2" {
 		t.Fatalf("agent = %q, label = %q", s.Agent, r.host.Opened[0].Label)
 	}
 	if filepath.Base(s.Sentinel) != "implement-a2.sentinel" {

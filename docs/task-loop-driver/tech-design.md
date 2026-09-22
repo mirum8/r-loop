@@ -92,7 +92,11 @@ provider, model and effort, and `--model` and `--effort` override one row for on
     cwd string) (pane string, error)` (an empty `pane` splits the pane herdr calls current) ·
     `AgentPane(agent) (string, error)` (the pane the named agent runs in, `""` when herdr knows no
     such agent) · `ClosePane(pane) error` (closes one pane; used only for the watchdog's own — a
-    stale one of the same run at its start, and its own at the run's end).
+    stale one of the same run at its start, and its own at the run's end) · `Tag(workspaceID,
+    tokens map[string]string) error` (display-only sidebar tokens via herdr `workspace
+    report-metadata --source r-loop`; an empty value clears one: `rloop` carries the step's live
+    state, `rloop_wait` is set only while the step waits for input; a failure is a warning, never
+    a step failure).
   - `Repo`: `Root() string` · `Clean() ([]string, error)` · `HeadBranch() (string, error)` ·
     `HeadSHA(dir) (string, error)` · `AddWorktree(dir, branch, base string) error` ·
     `RemoveWorktree(dir) error` · `DeleteBranch(branch) error` · `Dirty(dir) ([]string, error)` · `CommitAll(dir, message)

@@ -50,6 +50,7 @@ var (
 type simHost struct {
 	mu      sync.Mutex
 	opened  map[string]core.OpenSpec
+	panes   map[string]core.OpenSpec
 	started []string
 	prompts []string
 	texts   map[string]string
@@ -60,7 +61,7 @@ type simHost struct {
 }
 
 func newSim() *simHost {
-	return &simHost{opened: map[string]core.OpenSpec{}, texts: map[string]string{}, fail: map[string]bool{}, hang: map[string]bool{}, edit: map[string]string{}}
+	return &simHost{opened: map[string]core.OpenSpec{}, panes: map[string]core.OpenSpec{}, texts: map[string]string{}, fail: map[string]bool{}, hang: map[string]bool{}, edit: map[string]string{}}
 }
 
 func (h *simHost) Reachable() error { return nil }
@@ -69,13 +70,17 @@ func (h *simHost) Open(spec core.OpenSpec) (core.Workspace, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.ws++
-	h.opened[spec.Label] = spec
-	return core.Workspace{ID: "w" + strconv.Itoa(h.ws), RootPane: "p" + strconv.Itoa(h.ws)}, nil
+	pane := "p" + strconv.Itoa(h.ws)
+	h.panes[pane] = spec
+	return core.Workspace{ID: "w" + strconv.Itoa(h.ws), RootPane: pane}, nil
 }
 
 func (h *simHost) Start(pane, name, kind string, args []string) (core.Agent, error) {
 	h.mu.Lock()
 	h.started = append(h.started, name)
+	if spec, ok := h.panes[pane]; ok {
+		h.opened[name] = spec
+	}
 	h.mu.Unlock()
 	return core.Agent{Name: name, Pane: pane}, nil
 }
@@ -117,13 +122,14 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 	return nil
 }
 
-func (h *simHost) State(agent string) (core.AgentState, error)       { return core.AgentWorking, nil }
-func (h *simHost) AgentPane(agent string) (string, error)            { return "", nil }
-func (h *simHost) Read(agent string, lines int) (string, error)      { return "", nil }
-func (h *simHost) Interrupt(agent string) error                      { return nil }
-func (h *simHost) Close(workspaceID string) error                    { return nil }
-func (h *simHost) ClosePane(pane string) error                       { return nil }
-func (h *simHost) Split(pane, direction, cwd string) (string, error) { return pane + "-split", nil }
+func (h *simHost) State(agent string) (core.AgentState, error)            { return core.AgentWorking, nil }
+func (h *simHost) AgentPane(agent string) (string, error)                 { return "", nil }
+func (h *simHost) Read(agent string, lines int) (string, error)           { return "", nil }
+func (h *simHost) Interrupt(agent string) error                           { return nil }
+func (h *simHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
+func (h *simHost) Close(workspaceID string) error                         { return nil }
+func (h *simHost) ClosePane(pane string) error                            { return nil }
+func (h *simHost) Split(pane, direction, cwd string) (string, error)      { return pane + "-split", nil }
 
 func (h *simHost) promptedAgents() []string {
 	h.mu.Lock()

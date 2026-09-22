@@ -157,7 +157,8 @@ func TestWatchdogWithNoDriverPaneOpensItsOwnWorkspaceAndStopClosesIt(t *testing.
 
 	want := []string{
 		"SessionHost.AgentPane rloop-wd-run-1",
-		"SessionHost.Open /repo rloop-wd-run-1 map[]",
+		"SessionHost.Open /repo ◆ watchdog map[]",
+		"SessionHost.Tag ws-1 map[rloop:◆ run run-1]",
 		"SessionHost.Start pane-1 rloop-wd-run-1 claude []",
 		`SessionHost.Prompt rloop-wd-run-1 "watch the run" false 0s`,
 		"SessionHost.Close ws-1",

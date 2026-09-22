@@ -28,12 +28,7 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 	if strings.HasPrefix(text, "r-loop:") {
 		return nil
 	}
-	var spec OpenSpec
-	for _, o := range h.Opened {
-		if o.Label == agent {
-			spec = o
-		}
-	}
+	spec := h.Started[agent]
 	sentinel := spec.Env["R_LOOP_SENTINEL"]
 	h.mu.Lock()
 	behaviour := h.behaviour[agent]
@@ -356,6 +351,65 @@ func TestAReviewRoundsFixHalfIsARunningStepEventNamingTheHalf(t *testing.T) {
 	}
 }
 
+func TestAStepTagsItsWorkspaceWithItsLiveState(t *testing.T) {
+	r := newLoopRig(t)
+
+	r.run(RunOptions{Phases: []int{2}})
+
+	want := []string{
+		"ws-1 map[rloop:◆ working rloop_wait:]", "ws-1 map[rloop:◆ done rloop_wait:]",
+		"ws-2 map[rloop:◆ working rloop_wait:]", "ws-2 map[rloop:◆ done rloop_wait:]",
+	}
+	if got := r.calls("SessionHost.Tag "); !reflect.DeepEqual(got, want) {
+		t.Errorf("tags\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestReviewFixAndWaitingAreTaggedOnTheWorkspace(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.runDir = t.TempDir()
+	ref := StepRef{Key: StepKey{Run: "run-1", Phase: 2, Kind: "implement", Attempt: 1}, Kind: r.loop.Kinds[1]}
+	ref.Kind.Row.Rounds = 3
+	obs := &loopObserver{l: r.loop, ref: ref}
+	s := &Session{Workspace: "ws-9", Ref: ref}
+
+	obs.Reviewing(s, 2)
+	obs.Fixing(s, 2)
+	r.loop.stepState(s, StepWaitingInput)
+
+	want := []string{
+		"ws-9 map[rloop:◆ review r2/3 rloop_wait:]",
+		"ws-9 map[rloop:◆ fixing r2 rloop_wait:]",
+		"ws-9 map[rloop:working rloop_wait:◆ waiting]",
+	}
+	if got := r.calls("SessionHost.Tag "); !reflect.DeepEqual(got, want) {
+		t.Errorf("tags\n got %q\nwant %q", got, want)
+	}
+}
+
+type tagFailHost struct {
+	*agentSim
+}
+
+func (h tagFailHost) Tag(string, map[string]string) error {
+	return errors.New("no metadata")
+}
+
+func TestAFailingTagWarnsOnceAndTheRunContinues(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Sessions.Host = tagFailHost{r.host}
+
+	code := r.run(RunOptions{Phases: []int{2}})
+
+	var warnings []string
+	for _, ev := range r.events("warning") {
+		warnings = append(warnings, ev.Fields["reason"])
+	}
+	if code != 0 || !reflect.DeepEqual(warnings, []string{"tag workspace: no metadata"}) {
+		t.Errorf("exit %d, warnings %q", code, warnings)
+	}
+}
+
 func TestStepRefUsesPhaseBranchWorktreeAndBase(t *testing.T) {
 	r := newLoopRig(t)
 
@@ -538,10 +592,7 @@ func TestResumeSkipsLandedPhasesAndOkStepsAndRerunsTheStoppedStep(t *testing.T) 
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	var agents []string
-	for _, o := range r.host.Opened {
-		agents = append(agents, o.Label)
-	}
+	agents := r.host.Agents
 	want := []string{"rloop-p1-implement-a2", "rloop-p3-plan", "rloop-p3-implement"}
 	if !reflect.DeepEqual(agents, want) {
 		t.Errorf("spawned %v, want %v", agents, want)

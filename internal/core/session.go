@@ -136,7 +136,7 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 	if err := m.record(key, StepSpawned, ""); err != nil {
 		return s, err
 	}
-	ws, err := m.Host.Open(OpenSpec{CWD: s.Dir, Label: s.Agent, Env: map[string]string{
+	ws, err := m.Host.Open(OpenSpec{CWD: s.Dir, Label: stepLabel(key), Env: map[string]string{
 		"R_LOOP_SENTINEL": s.Sentinel,
 		"R_LOOP_RUN":      key.Run,
 		"R_LOOP_PHASE":    strconv.Itoa(key.Phase),
@@ -150,6 +150,14 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 		return s, fmt.Errorf("spawn: %w", err)
 	}
 	return s, m.record(key, StepRunning, "")
+}
+
+func stepLabel(key StepKey) string {
+	label := fmt.Sprintf("◆ p%d %s", key.Phase, key.Kind)
+	if key.Attempt > 1 {
+		label += fmt.Sprintf("·a%d", key.Attempt)
+	}
+	return label
 }
 
 func (m *SessionManager) start(s *Session, stepDir string) error {

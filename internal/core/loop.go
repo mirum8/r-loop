@@ -87,6 +87,7 @@ type RunLoop struct {
 	warnings map[int]string
 	halted   *Signal
 	serving  bool
+	tagWarn  sync.Once
 }
 
 type openAsk struct {
@@ -959,12 +960,53 @@ func (l *RunLoop) emitHalf(ref StepRef, s *Session, round int, half string) {
 func (l *RunLoop) emitFields(ref StepRef, f map[string]string) {
 	ev := Event{At: time.Now(), Kind: "step", Phase: ref.Key.Phase, Step: ref.Key.Kind, Fields: f}
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if err := l.Store.Append(l.RunID, Record{Kind: RecordEvent, At: ev.At, Event: &ev}); err != nil {
 		l.Face.Emit(Event{At: ev.At, Kind: "warning", Fields: map[string]string{"reason": "store: " + err.Error()}})
 	}
 	l.Face.Emit(ev)
 	l.writeReport()
+	l.mu.Unlock()
+	l.tag(f)
+}
+
+func (l *RunLoop) tag(f map[string]string) {
+	tokens := stepTokens(f)
+	if f["workspace"] == "" || tokens == nil || l.Sessions == nil || l.Sessions.Host == nil {
+		return
+	}
+	if err := l.Sessions.Host.Tag(f["workspace"], tokens); err != nil {
+		l.tagWarn.Do(func() {
+			l.emit(Event{Kind: "warning", Fields: map[string]string{"reason": "tag workspace: " + err.Error()}})
+		})
+	}
+}
+
+func stepTokens(f map[string]string) map[string]string {
+	text := ""
+	switch StepState(f["state"]) {
+	case StepRunning, StepWaitingInput:
+		switch f["half"] {
+		case "find":
+			text = "◆ review r" + f["round"] + "/" + f["rounds"]
+		case "fix":
+			text = "◆ fixing r" + f["round"]
+		default:
+			text = "◆ working"
+		}
+	case StepStalled:
+		text = "◆ stalled"
+	case StepOK:
+		text = "◆ done"
+	case StepFailed:
+		text = "◆ failed"
+	default:
+		return nil
+	}
+	wait := ""
+	if StepState(f["state"]) == StepWaitingInput {
+		wait, text = "◆ waiting", strings.TrimPrefix(text, "◆ ")
+	}
+	return map[string]string{"rloop": text, "rloop_wait": wait}
 }
 
 func stepFields(ref StepRef, state StepState, reason, ws string, round int) map[string]string {
