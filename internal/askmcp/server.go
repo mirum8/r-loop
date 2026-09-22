@@ -26,10 +26,11 @@ import (
 const maxBody = 4 << 20
 
 type Server struct {
-	RunDir string
-	RunID  string
-	Store  core.Store
-	Seq    int
+	RunDir    string
+	RunID     string
+	Store     core.Store
+	Seq       int
+	KeepAlive time.Duration
 
 	mu        sync.Mutex
 	ctx       context.Context
@@ -45,8 +46,11 @@ type Server struct {
 
 type pending struct {
 	q         core.Question
+	seq       int
 	delivered bool
 	answered  bool
+	handed    bool
+	waiters   int
 	done      chan struct{}
 }
 
@@ -200,25 +204,41 @@ func (s *Server) mcpServer(key core.StepKey) *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "ask_watchdog",
 		Description: "Ask the run's watchdog a real choice the repository cannot answer, with the options and your recommendation. Blocks until answered.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in askInput) (*mcp.CallToolResult, askOutput, error) {
-		_, answer, err := s.ask(ctx, key, in)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in askInput) (*mcp.CallToolResult, askOutput, error) {
+		_, answer, err := s.ask(ctx, key, in, keepAlive(req))
 		return nil, askOutput{Answer: answer}, err
 	})
 	return srv
 }
 
-func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput) (string, string, error) {
+func keepAlive(req *mcp.CallToolRequest) func(context.Context, float64) error {
+	if req == nil || req.Session == nil || req.Params == nil {
+		return nil
+	}
+	token := req.Params.GetProgressToken()
+	if token == nil {
+		return nil
+	}
+	return func(ctx context.Context, n float64) error {
+		return req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{ProgressToken: token, Progress: n, Message: "waiting for the watchdog's answer"})
+	}
+}
+
+func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput, notify func(context.Context, float64) error) (string, string, error) {
 	s.mu.Lock()
 	p, serverCtx := s.open(key, in), s.ctx
 	if p != nil {
+		p.waiters++
 		s.mu.Unlock()
-		answer, err := s.await(ctx, serverCtx, p)
+		answer, err := s.await(ctx, serverCtx, p, notify)
 		return p.q.ID, answer, err
 	}
 	s.Seq++
 	p = &pending{
-		q:    core.Question{ID: "q" + strconv.Itoa(s.Seq), Step: key, Text: in.Question, Options: in.Options, Recommended: in.Recommended, AskedAt: time.Now()},
-		done: make(chan struct{}),
+		q:       core.Question{ID: "q" + strconv.Itoa(s.Seq), Step: key, Text: in.Question, Options: in.Options, Recommended: in.Recommended, AskedAt: time.Now()},
+		seq:     s.Seq,
+		waiters: 1,
+		done:    make(chan struct{}),
 	}
 	s.pending[p.q.ID] = p
 	out := s.questions
@@ -227,35 +247,68 @@ func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput) (string
 	select {
 	case out <- p.q:
 	case <-serverCtx.Done():
+		s.leave(p)
 		return p.q.ID, "", errors.New("r-loop stopped before the question was delivered")
 	case <-ctx.Done():
+		s.leave(p)
 		return p.q.ID, "", ctx.Err()
 	}
 	s.mu.Lock()
 	p.delivered = true
 	s.mu.Unlock()
-	answer, err := s.await(ctx, serverCtx, p)
+	answer, err := s.await(ctx, serverCtx, p, notify)
 	return p.q.ID, answer, err
 }
 
 func (s *Server) open(key core.StepKey, in askInput) *pending {
+	var orphan *pending
 	for _, p := range s.pending {
-		if p.delivered && !p.answered && p.q.Step == key && p.q.Text == in.Question && slices.Equal(p.q.Options, in.Options) {
+		if !p.delivered || p.q.Step != key {
+			continue
+		}
+		if !p.answered && p.q.Text == in.Question && slices.Equal(p.q.Options, in.Options) {
 			return p
 		}
+		if p.waiters == 0 && !p.handed && (orphan == nil || p.seq < orphan.seq) {
+			orphan = p
+		}
 	}
-	return nil
+	return orphan
 }
 
-func (s *Server) await(ctx, serverCtx context.Context, p *pending) (string, error) {
-	select {
-	case <-p.done:
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		return p.q.Answer, nil
-	case <-serverCtx.Done():
-		return "", errors.New("r-loop stopped before the question was answered")
-	case <-ctx.Done():
-		return "", ctx.Err()
+func (s *Server) leave(p *pending) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p.waiters--
+}
+
+func (s *Server) await(ctx, serverCtx context.Context, p *pending, notify func(context.Context, float64) error) (string, error) {
+	defer s.leave(p)
+	var tick <-chan time.Time
+	if notify != nil {
+		every := s.KeepAlive
+		if every <= 0 {
+			every = 30 * time.Second
+		}
+		ticker := time.NewTicker(every)
+		defer ticker.Stop()
+		tick = ticker.C
+	}
+	for n := 1; ; n++ {
+		select {
+		case <-p.done:
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			p.handed = true
+			return p.q.Answer, nil
+		case <-serverCtx.Done():
+			return "", errors.New("r-loop stopped before the question was answered")
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-tick:
+			if err := notify(ctx, float64(n)); err != nil {
+				return "", fmt.Errorf("the caller is gone: %w", err)
+			}
+		}
 	}
 }

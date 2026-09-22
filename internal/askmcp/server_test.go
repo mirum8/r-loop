@@ -2,11 +2,13 @@ package askmcp
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -294,5 +296,173 @@ func TestTheSameQuestionFromAnotherStepOrWithOtherOptionsIsNew(t *testing.T) {
 	}
 	if !ids["q2"] || !ids["q3"] {
 		t.Fatalf("ids = %v", ids)
+	}
+}
+
+func dropCall(t *testing.T, s *Server, key core.StepKey, args map[string]any) core.Question {
+	t.Helper()
+	callCtx, hangUp := context.WithCancel(context.Background())
+	gone := make(chan error, 1)
+	go func() {
+		_, err := connect(t, s.StepURL(key)).CallTool(callCtx, &mcp.CallToolParams{Name: "ask_watchdog", Arguments: args})
+		gone <- err
+	}()
+	q := next(t, s)
+	hangUp()
+	<-gone
+	time.Sleep(50 * time.Millisecond)
+	return q
+}
+
+func noQuestion(t *testing.T, s *Server) {
+	t.Helper()
+	select {
+	case q := <-s.Questions():
+		s.Answer(q.ID, "", "person", "")
+		t.Fatalf("a second question was escalated: %s", q.ID)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestARewordedRetryAfterADroppedCallRejoinsTheOrphanedQuestion(t *testing.T) {
+	s, _, _ := serve(t)
+	key := core.StepKey{Run: "run-7", Phase: "10c", Kind: "plan", Attempt: 1}
+	dropCall(t, s, key, map[string]any{"question": "Which store?", "options": []string{"jsonl", "sqlite"}})
+
+	again := ask(connect(t, s.StepURL(key)), map[string]any{"question": "Retrying: which store should the run use?", "options": []string{"jsonl", "sqlite", "both"}})
+
+	noQuestion(t, s)
+	if err := s.Answer("q1", "jsonl", "watchdog", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := answerText(t, <-again); got != "jsonl" {
+		t.Fatalf("answer = %q", got)
+	}
+}
+
+func TestARetryAfterTheOrphanedQuestionWasAnsweredGetsThatAnswer(t *testing.T) {
+	s, _, _ := serve(t)
+	key := core.StepKey{Run: "run-7", Phase: "10c", Kind: "plan", Attempt: 1}
+	dropCall(t, s, key, map[string]any{"question": "Which store?"})
+	if err := s.Answer("q1", "jsonl", "watchdog", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	again := ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which store, again?"})
+
+	noQuestion(t, s)
+	select {
+	case r := <-again:
+		if got := answerText(t, r); got != "jsonl" {
+			t.Fatalf("answer = %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the retry never got the answer")
+	}
+}
+
+func TestAnOrphanedQuestionAnswerIsHandedOverOnlyOnce(t *testing.T) {
+	s, _, _ := serve(t)
+	key := core.StepKey{Run: "run-7", Phase: "10c", Kind: "plan", Attempt: 1}
+	dropCall(t, s, key, map[string]any{"question": "Which store?"})
+	s.Answer("q1", "jsonl", "watchdog", "")
+	answerText(t, <-ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which store, again?"}))
+
+	later := ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which port?"})
+
+	if q := next(t, s); q.ID != "q2" {
+		t.Fatalf("id = %q", q.ID)
+	}
+	s.Answer("q2", "8080", "watchdog", "")
+	if got := answerText(t, <-later); got != "8080" {
+		t.Fatalf("answer = %q", got)
+	}
+}
+
+func TestAWaitingCallGetsProgressNotificationsSoTheClientKeepsItsStreamOpen(t *testing.T) {
+	s, _, _ := serve(t)
+	s.KeepAlive = 20 * time.Millisecond
+	progress := make(chan struct{}, 16)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, &mcp.ClientOptions{
+		ProgressNotificationHandler: func(context.Context, *mcp.ProgressNotificationClientRequest) {
+			select {
+			case progress <- struct{}{}:
+			default:
+			}
+		},
+	})
+	cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: s.StepURL(core.StepKey{Run: "run-7", Phase: "3", Kind: "plan", Attempt: 1}), MaxRetries: -1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cs.Close() })
+	params := &mcp.CallToolParams{Name: "ask_watchdog", Arguments: map[string]any{"question": "Which store?"}}
+	params.SetProgressToken("p1")
+	done := make(chan result, 1)
+	go func() {
+		res, err := cs.CallTool(context.Background(), params)
+		done <- result{res, err}
+	}()
+	next(t, s)
+
+	for range 2 {
+		select {
+		case <-progress:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no progress notification while waiting")
+		}
+	}
+	s.Answer("q1", "jsonl", "watchdog", "")
+	if got := answerText(t, <-done); got != "jsonl" {
+		t.Fatalf("answer = %q", got)
+	}
+}
+
+type conns struct {
+	mu  sync.Mutex
+	all []net.Conn
+}
+
+func (c *conns) dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+	if err == nil {
+		c.mu.Lock()
+		c.all = append(c.all, conn)
+		c.mu.Unlock()
+	}
+	return conn, err
+}
+
+func (c *conns) cut() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, conn := range c.all {
+		conn.Close()
+	}
+}
+
+func TestARetryAfterTheConnectionItselfDroppedRejoinsTheQuestion(t *testing.T) {
+	s, _, _ := serve(t)
+	s.KeepAlive = 20 * time.Millisecond
+	key := core.StepKey{Run: "run-7", Phase: "10c", Kind: "plan", Attempt: 1}
+	link := &conns{}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: s.StepURL(key), MaxRetries: -1, HTTPClient: &http.Client{Transport: &http.Transport{DialContext: link.dial}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := &mcp.CallToolParams{Name: "ask_watchdog", Arguments: map[string]any{"question": "Which store?"}}
+	params.SetProgressToken("p1")
+	go cs.CallTool(context.Background(), params)
+	next(t, s)
+	link.cut()
+	time.Sleep(200 * time.Millisecond)
+
+	again := ask(connect(t, s.StepURL(key)), map[string]any{"question": "Retrying: which store?"})
+
+	noQuestion(t, s)
+	s.Answer("q1", "jsonl", "watchdog", "")
+	if got := answerText(t, <-again); got != "jsonl" {
+		t.Fatalf("answer = %q", got)
 	}
 }

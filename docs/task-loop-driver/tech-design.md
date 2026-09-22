@@ -436,6 +436,13 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `<base>/<phase>/<kind>-rv-<name>/<attempt>` — the path identifies the asking agent. Tool
   `ask_watchdog(question, options?, recommended?) → {answer}` blocks until the watchdog answers; ids `q<seq>`; a repeated `ask_watchdog` from the same step with the same text and options while that
   question is open reuses its id and receives its answer — it is not recorded or forwarded again.
+  A question whose call has dropped — no call awaits it any more — is orphaned: the step's next
+  `ask_watchdog`, however worded and with whatever options, rejoins it and gets its answer, at once
+  when it was answered meanwhile; that answer is handed over once, and the ask after it is a new
+  question. A question another call from the step still awaits is not orphaned. While a call waits
+  and carries a progress token, the server sends a progress notification on it every 30 s
+  (`Server.KeepAlive`) so the client's idle timer never closes the stream; a notification that
+  cannot be delivered ends that call, which orphans its question.
   Every agent's MCP client is configured with a 24 h tool timeout (Milestone 2, Provider block), so
   a blocking call is never cut off by the client.
 - **waiting-input** — a question moves the step `running → waiting-input`, freezes its backstop,
