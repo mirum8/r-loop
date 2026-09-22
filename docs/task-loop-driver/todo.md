@@ -14,7 +14,9 @@ Phases 1, 4, 7, 10–17, 20–22 and 28 and added Phase 31: a stall is nudged th
 only the phases that depend on it, a red gate gets a fix round, answers come from any shell, and
 `--unattended` runs with nobody present. ADR-68 reshaped Phases 4, 10, 13–15, 18, 27 and 31: a
 fallback, the gate fix and the watchdog each name their own model and effort, and `--model` and
-`--effort` override one row for one run beside `--provider`.
+`--effort` override one row for one run beside `--provider`. ADR-74 added Milestone 8, Phase 32:
+a named `ui` reviewer on implement runs the project's `/test-app` skill whenever the repository
+has one.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -34,6 +36,7 @@ fallback, the gate fix and the watchdog each name their own model and effort, an
 - Wave 13: Phase 29
 - Wave 14: Phase 30
 - Wave 15: Phase 31
+- Wave 16: Phase 32
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -481,6 +484,22 @@ Contracts: `tech-design.md#milestone-7-the-watchdog`
 - [x] `watchdog.md` gains the unattended rule: when a stopped step's pane shows a provider usage limit, an authentication failure or an outage, propose a `provider` remedy naming the row's fallback, then `restart_step` with it; prefer `retry` with an addendum for anything the agent can do differently
 - [x] `unattended_test.go` (core) proves the timeout answer with and without a recommendation, no timeout without the flag, a fallback restart accepted and running on the fallback's model and effort, and another provider asked; `unattended_test.go` (app) runs a fake four-phase run with `--unattended` in which phase 1's implement stalls, is nudged, fails, is restarted under the allow-list and lands, phase 2 fails twice past `maxRestarts` and is blocked, phase 3 depends on 2 and is skipped, phase 4 lands, a question times out to its recommendation — and asserts `human touches: 0`, the Automatic decisions section, exit 1 and the resume line
 **Done when:** `go test ./internal/core/... ./internal/app/...` is green.
+
+## Milestone 8 — The UI test reviewer
+Contracts: `tech-design.md#milestone-8-the-ui-test-reviewer`
+
+### Phase 32 — A named `ui` reviewer that runs `/test-app`
+**Implements:** Review each phase with every configured reviewer
+**Depends on:** Phase 31
+**Files:** `internal/core/kinds.go` (modify) · `internal/core/review.go` (modify) · `internal/core/loop.go` (modify) · `internal/config/reader.go` (modify) · `internal/config/banner.go` (modify) · `internal/config/defaults.yaml` (modify) · `internal/app/preflight.go` (modify) · `internal/prompts/render.go` (modify) · `internal/prompts/templates/review-ui.md` (new) · `internal/face/tui/model.go` (modify) · `internal/core/review_test.go` (modify) · `internal/config/reader_test.go` (modify) · `internal/prompts/render_test.go` (modify) · `internal/app/app_test.go` (modify)
+**Risk:** none
+- [x] a reviewer block also takes `name`, `prompt` and `requires`; `name` is lowercase letters, digits and dashes and defaults to the provider; two reviewers of one row with the same name are rejected (exit 2); `requires` must be a path inside the repository; a fallback block still takes only provider, model and effort
+- [x] the reviewer's name, not its provider, keys its agent `rloop-p<N>-<kind>-rv-<name>-r<round>`, sentinel, `FindingsPath` `<kind>-findings-<name>-r<round>.json`, the findings file's `reviewer` and id prefix, and its `review-find` and `finding` events
+- [x] a reviewer with `prompt` renders that template instead of `review` and needs no native `review:` command, in the review half and in preflight; `review-ui` is an embedded prompt
+- [x] before the first round, a reviewer whose `requires` exists in neither the step's worktree nor the primary tree is left out of every round and recorded as `Event{Kind: "reviewer-skipped", Fields{step, reviewer, reason}}`, which the report lists and the TUI feed shows; when no reviewer is left, the review half ends `ok` without a round; a present file's absolute path is the prompt's `RequiredPath`
+- [x] every reviewer's prompt gets `ArtifactsDir` = `<RunDir>/phase-<N>/<kind>-rv-<name>-r<round>`; `review-ui` tells the agent to read the surface marker, stop with no findings when nothing the app renders changed, invoke the real `/test-app` (or follow `RequiredPath` when the Skill tool does not list it), let it deploy and tear down, check the changed flows and — for a web page or a terminal UI — how they render at three sizes, save captures under `ArtifactsDir`, and report a check that could not run as a finding
+- [x] the embedded implement row gains `{name: ui, provider: claude, model: opus, effort: high, prompt: review-ui, requires: .claude/skills/test-app/SKILL.md}`; the banner shows its name, prompt and requirement, and the dry run prints whether the requirement is found
+**Done when:** `go test ./...` is green and `go run ./cmd/r-loop docs/task-loop-driver/todo.md --dry-run --plain` lists `reviewer ui requires .claude/skills/test-app/SKILL.md`.
 
 ## Open questions
 

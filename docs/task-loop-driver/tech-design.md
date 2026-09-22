@@ -135,7 +135,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   absent, never to `.gitignore`.
 - **Sentinel** — JSON in `.r-loop/runs/<runID>/phase-<N>/`:
   `{"outcome":"ok"|"failed","reason":"<text>","at":"<RFC3339>"}`. The author half writes
-  `<kind>-a<attempt>.sentinel`; a reviewer `<kind>-rv-<provider>-r<round>-a<attempt>.sentinel`;
+  `<kind>-a<attempt>.sentinel`; a reviewer `<kind>-rv-<name>-r<round>-a<attempt>.sentinel`;
   the author's verify-and-apply half `<kind>-fix-r<round>-a<attempt>.sentinel`. Unreadable or
   malformed → the step is `failed` with reason `sentinel unreadable`.
 - **Config resolution** — every key resolves CLI override → `.r-loop/config.yaml` →
@@ -144,7 +144,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   provider, model, effort, timeout`, `fallback`, plus the review half on any row: `reviewers`,
   `rounds`, `reviewTimeout`. **A reviewer entry and a `fallback` are each a scalar provider name
   (model and effort left to the provider, flag omitted, banner prints `provider default`) or a
-  block with `provider`, `model`, `effort`.** `--provider`, `--model` and `--effort` each take
+  block with `provider`, `model`, `effort`; a reviewer block also takes `name`, `prompt` and
+  `requires` (Milestone 8).** `--provider`, `--model` and `--effort` each take
   `<step>=<value>` and override only that row's own key, never its reviewers; a key
   `land.fix` inherits from the implement row is the overridden value. **A `--provider
   <step>=<p>` naming that row's fallback provider swaps the fallback for the run** (spec ADR-66,
@@ -160,7 +161,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   or an empty `reviewers` list means the step has no review half. Rows: `plan`, `implement`,
   `milestone`. Defaults: pipeline `[plan, implement]`; plan `claude/opus/high/1h/plan-file`,
   reviewers `[codex]`, `rounds 2`, `reviewTimeout 20m`; implement
-  `codex/gpt-5.6-sol/medium/4h/diff`, reviewers `[claude]`, `rounds 3`, `reviewTimeout 45m`;
+  `codex/gpt-5.6-sol/medium/4h/diff`, reviewers `[claude, ui]` (`ui` = `claude/opus/high`,
+  `prompt review-ui`, `requires .claude/skills/test-app/SKILL.md`), `rounds 3`, `reviewTimeout 45m`;
   fallback plan `codex`, implement `claude` (scalars: provider defaults for model and effort);
   milestone `claude/opus/medium/1h/report`, no review; `land.fixRounds 1`, `land.gateTimeout 30m`, no `land.fix`;
   `unattended.allow [deps, ports, locks, restart, retry, provider]`, applied only with
@@ -240,11 +242,11 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Names and paths** — phase branch `r-loop/phase-<N>`; worktree `.r-loop/wt/phase-<N>/` from the
   primary tree's HEAD branch (`base`); slug `phase-<N>-<kebab title>` (≤ 60 chars); workspace label
   and author agent `rloop-p<N>-<kind>`, with `-a<attempt>` appended whenever `Attempt > 1`; reviewer
-  agent `rloop-p<N>-<kind>-rv-<provider>-r<round>`, or `…-r<round>-a<attempt>` when `Attempt > 1`,
+  agent `rloop-p<N>-<kind>-rv-<name>-r<round>`, or `…-r<round>-a<attempt>` when `Attempt > 1`,
   its prefix truncated so the name fits; milestone `rloop-p<N>-ms`; watchdog `rloop-wd-<runID>`
   (`core.WatchdogName`: the run id lowercased, every character outside `[a-z0-9_-]` turned into
   `-`, and a name longer than 32 cut to fit with a `-<8-hex fnv32a of the run id>` suffix), so a
-  run never touches another run's watchdog — all within `[a-z][a-z0-9_-]{0,31}`. Findings `phase-<N>/<kind>-findings-<provider>-r<round>.json`; verdict
+  run never touches another run's watchdog — all within `[a-z][a-z0-9_-]{0,31}`. Findings `phase-<N>/<kind>-findings-<name>-r<round>.json`; verdict
   `phase-<N>/<kind>-verdict-r<round>.json`; milestone report
   `docs/<topic>/reports/milestone-<M>-<slug>.md`.
 - **Spawn** — `SessionManager{Host; Repo; Prompts; Store; Ask AskChannel; Resolve; Now; Poll,
@@ -384,8 +386,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   round's reviewer panes are closed (`ClosePane`) and split again in the same places, since an
   interrupted agent (Claude Code at an idle prompt) need not exit and would leave its pane busy. The author is the same agent session through
   every round. A reviewer gets its own ask URL
-  (`<base>/<phase>/<kind>-rv-<provider>/<attempt>`) and, for a `{mcpConfig}` flag,
-  `<RunDir>/phase-<N>/<kind>-rv-<provider>-a<attempt>.mcp.json`. Preflight refuses a provider with
+  (`<base>/<phase>/<kind>-rv-<name>/<attempt>`) and, for a `{mcpConfig}` flag,
+  `<RunDir>/phase-<N>/<kind>-rv-<name>-a<attempt>.mcp.json`. Preflight refuses a provider with
   `ask: none` in any session role (ADR-73), so every reviewer has the channel.
 - **A round** — (1) `RoundTree = Snapshot(worktree)`, appended as `Event{Kind: "review-round",
   Fields{step, round, tree}}` before any reviewer starts; (2) resolve every reviewer (one with no
@@ -426,7 +428,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 
 - **Server** — MCP go-sdk streamable HTTP on `127.0.0.1:<free port>`, base `/mcp/<runToken>`
   (32 hex chars, stored mode 0600). A step URL is `<base>/<phase>/<kind>/<attempt>`, a reviewer's
-  `<base>/<phase>/<kind>-rv-<provider>/<attempt>` — the path identifies the asking agent. Tool
+  `<base>/<phase>/<kind>-rv-<name>/<attempt>` — the path identifies the asking agent. Tool
   `ask_watchdog(question, options?, recommended?) → {answer}` blocks until the watchdog answers; ids `q<seq>`; a repeated `ask_watchdog` from the same step with the same text and options while that
   question is open reuses its id and receives its answer — it is not recorded or forwarded again.
   Every agent's MCP client is configured with a 24 h tool timeout (Milestone 2, Provider block), so
@@ -513,6 +515,48 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   stays open with the watchdog. The primary tree holds the spec, the tech design, the
   todo, the committed phase plans and every landed phase, and never the current phase's
   uncommitted worktree.
+
+## Milestone 8 — The UI test reviewer
+
+Spec ADR-74. One more reviewer on implement, not a step kind: it runs the project's own
+`/test-app` skill and reports through the same findings, verdict and round machinery as a code
+reviewer.
+
+- **Reviewer block** — `{provider, model, effort, name, prompt, requires}`, all but `provider`
+  optional. `core.Reviewer{Provider, Model, Effort, Name, Prompt, Requires}`; `ID()` is `Name` or
+  else `Provider`, `Template()` is `Prompt` or else `review`. `name` matches `[a-z0-9][a-z0-9-]*`;
+  two reviewers of one row with the same `ID()` are a config error (exit 2); `requires` is a local
+  path (`filepath.IsLocal`). A `fallback` or `land.fix` block rejects the three new keys.
+- **Identity** — `ID()` keys the reviewer's `StepKey.Kind` suffix `-rv-<name>`, agent, sentinel,
+  MCP config, ask URL path, `FindingsPath`, the findings file's `reviewer` and id prefix, and the
+  `review-find` and `finding` events. `Provider` alone picks the CLI, model and effort.
+- **Native command** — only a reviewer whose `Template()` is `review` needs `ProviderArgs.Review`,
+  in `ReviewHalf.Run` and in preflight.
+- **Requirement** — once, before the first round (or the resumed round), each reviewer with
+  `requires` is looked up in the worker's worktree, then in `Repo.Root()`. Absent from both, it is
+  left out of every round and `Event{Kind: "reviewer-skipped", Fields{step, reviewer, reason:
+  "reviewer <name>: no <requires>"}}` is appended; the report's skip lines and the TUI feed show
+  it. Another stat error fails the step `reviewer <name>: <err>`. No reviewer left: the half is
+  `ok` with no round and no event beyond the skips.
+- **Prompt vars** — two keys join `StepVars` as empty strings and are set per reviewer:
+  `ArtifactsDir` = `<RunDir>/phase-<N>/<kind>-rv-<name>-r<round>` (every reviewer) and
+  `RequiredPath` = the absolute path the requirement resolved to (else empty).
+- **`review-ui` prompt** — embedded, overridable as `.r-loop/prompts/review-ui.md`. It keeps
+  `review.md`'s findings contract, earlier-rounds block and sentinel partial, and tells the agent
+  to: read the `<!-- test-app-surface: web|tui|cli -->` marker in `RequiredPath`; write empty
+  findings when nothing the app renders, prints or accepts changed; invoke the real `/test-app`
+  (or follow `RequiredPath` when the Skill tool does not list it), which builds, deploys and tears
+  down on its own; check the changed flows; for web capture the two most-changed pages at
+  1280x800, 768x1024 and iPhone 14 (≤ 6) and judge them with `frontend-design`, for a terminal UI
+  capture 160x50, the default size and 80x24 (≤ 6); save captures under `ArtifactsDir`; name the
+  source files behind each defect in `files`; report a check that could not run as a finding.
+- **Preflight** — renders each distinct reviewer prompt (`prompt review-ui: <source>`) and prints
+  `reviewer <name> requires <path>: found | missing, reviewer skipped`, resolved against the
+  primary tree.
+- **Rounds** — unchanged: the `ui` reviewer runs every round beside the code reviewer, both
+  findings files go to the one fix half, a real P1/P2 from either opens the next round, and real
+  P3/P4 UI findings are reported only (`finding` events). `gatefix` inherits the implement row's
+  reviewers, the `ui` reviewer with them.
 
 ## Issues files (ADR-69, ADR-70)
 
