@@ -294,6 +294,9 @@ func TestWatchSendsStepStartedAndStepEndedToTheWatchdog(t *testing.T) {
 
 	w.StepStarted(ref, &Session{Agent: "rloop-p2-implement", Dir: "/repo/.r-loop/wt/phase-2"})
 	w.StepEnded(ref, Outcome{State: StepFailed, Reason: "tests red"})
+	if err := w.Dog.Stop(); err != nil {
+		t.Fatal(err)
+	}
 
 	want := []string{
 		`SessionHost.Prompt rloop-wd-run-1 "step started phase-2/implement agent rloop-p2-implement worktree /repo/.r-loop/wt/phase-2 base abc123" false 0s`,
@@ -395,11 +398,14 @@ func TestWatchdogStartNeverTouchesAnotherRunsLiveWatchdog(t *testing.T) {
 
 type askingHost struct {
 	fakeSessionHost
+	mu         sync.Mutex
 	blockedFor int
 	prompts    int
 }
 
 func (h *askingHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.prompts++
 	if h.prompts <= h.blockedFor {
 		return errors.New("herdr agent prompt: herdr: agent_blocked: agent rloop-wd-run-1 is blocked and requires interactive input")
@@ -431,7 +437,79 @@ func TestNotifyWaitsOutAWatchdogAskingTheMaintainer(t *testing.T) {
 	if !dog.live() {
 		t.Error("watchdog dropped while it was asking the maintainer")
 	}
-	if len(store.Records["run-1"]) != 0 || len(face.Events) != 0 {
-		t.Errorf("recorded %+v emitted %+v", store.Records["run-1"], face.Events)
+	want := []string{"watchdog-waiting", "watchdog-resumed"}
+	if got := recordedKinds(store); !reflect.DeepEqual(got, want) {
+		t.Errorf("recorded %v, want %v", got, want)
 	}
+	if got := emittedKinds(face); !reflect.DeepEqual(got, want) {
+		t.Errorf("emitted %v, want %v", got, want)
+	}
+}
+
+func TestWaitingIsMarkedOnceAcrossDeliveriesUntilAPromptIsAccepted(t *testing.T) {
+	host := &askingHost{blockedFor: 3}
+	host.States = map[string]AgentState{"rloop-wd-run-1": AgentBlocked}
+	store := &fakeStore{}
+	face := &fakeFace{}
+	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+	dog.Face = face
+	dog.Sleep = func(time.Duration) { host.Err = errors.New("herdr: connection refused") }
+
+	first := dog.Notify("step started phase-2/implement", false, 0)
+	host.Err = nil
+	dog.Sleep = func(time.Duration) {}
+	second := dog.Notify("step ended phase-2/implement ok ", false, 0)
+
+	if first == nil || second != nil {
+		t.Errorf("first %v second %v", first, second)
+	}
+	want := []string{"watchdog-waiting", "watchdog-resumed"}
+	if got := recordedKinds(store); !reflect.DeepEqual(got, want) {
+		t.Errorf("recorded %v, want %v", got, want)
+	}
+	if got := emittedKinds(face); !reflect.DeepEqual(got, want) {
+		t.Errorf("emitted %v, want %v", got, want)
+	}
+}
+
+func TestStopGivesUpOnANoticeTheWatchdogIsBlockedOn(t *testing.T) {
+	host := &askingHost{blockedFor: 100}
+	host.States = map[string]AgentState{"rloop-wd-run-1": AgentBlocked}
+	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	dog.Sleep = nil
+	dog.Post("step started phase-2/implement")
+	dog.Post("step ended phase-2/implement ok ")
+
+	stopped := make(chan error)
+	go func() { stopped <- dog.Stop() }()
+
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop waited for the maintainer to answer the watchdog")
+	}
+	if dog.live() {
+		t.Error("watchdog live after Stop")
+	}
+}
+
+func recordedKinds(store *fakeStore) []string {
+	var kinds []string
+	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordEvent {
+			kinds = append(kinds, rec.Event.Kind)
+		}
+	}
+	return kinds
+}
+
+func emittedKinds(face *fakeFace) []string {
+	var kinds []string
+	for _, ev := range face.Events {
+		kinds = append(kinds, ev.Kind)
+	}
+	return kinds
 }

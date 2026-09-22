@@ -176,7 +176,7 @@ func TestTheRemedyWindowIsOpenWhenTheWatchdogHearsStepEnded(t *testing.T) {
 		if !held {
 			t.Error("the watchdog heard step ended before the remedy window opened")
 		}
-	default:
+	case <-time.After(2 * time.Second):
 		t.Fatal("the watchdog never heard step ended")
 	}
 	if _, ok := w.holding(); ok {

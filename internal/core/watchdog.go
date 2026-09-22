@@ -28,7 +28,14 @@ type Watchdog struct {
 	Sleep                                  func(time.Duration)
 
 	mu        sync.Mutex
+	send      sync.Mutex
+	cond      *sync.Cond
+	quit      chan struct{}
+	drained   chan struct{}
+	queue     []string
+	stopping  bool
 	gone      bool
+	asking    bool
 	pane      string
 	workspace string
 }
@@ -118,10 +125,62 @@ func (d *Watchdog) record(kind string, fields map[string]string) error {
 	return nil
 }
 
-func (d *Watchdog) Notify(text string, wait bool, timeout time.Duration) error {
+func (d *Watchdog) Post(text string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.gone {
+	if d.gone || d.stopping {
+		return
+	}
+	if d.drained == nil {
+		d.lazy()
+		d.drained = make(chan struct{})
+		go d.deliver()
+	}
+	d.queue = append(d.queue, text)
+	d.cond.Signal()
+}
+
+func (d *Watchdog) deliver() {
+	defer close(d.drained)
+	for {
+		d.mu.Lock()
+		for len(d.queue) == 0 && !d.stopping {
+			d.cond.Wait()
+		}
+		empty := len(d.queue) == 0
+		d.mu.Unlock()
+		if empty {
+			return
+		}
+		d.send.Lock()
+		d.flush()
+		d.send.Unlock()
+	}
+}
+
+func (d *Watchdog) flush() {
+	for {
+		d.mu.Lock()
+		if len(d.queue) == 0 {
+			d.mu.Unlock()
+			return
+		}
+		text := d.queue[0]
+		d.queue = d.queue[1:]
+		d.mu.Unlock()
+		d.prompt(text, false, 0)
+	}
+}
+
+func (d *Watchdog) Notify(text string, wait bool, timeout time.Duration) error {
+	d.send.Lock()
+	defer d.send.Unlock()
+	d.flush()
+	return d.prompt(text, wait, timeout)
+}
+
+func (d *Watchdog) prompt(text string, wait bool, timeout time.Duration) error {
+	if !d.live() {
 		return nil
 	}
 	err := d.Host.Prompt(d.agent(), text, wait, timeout)
@@ -133,21 +192,80 @@ func (d *Watchdog) Notify(text string, wait bool, timeout time.Duration) error {
 		if state == AgentGone {
 			break
 		}
-		d.sleep(watchdogRetryAfter)
+		if werr := d.waiting(true, "watchdog-waiting"); werr != nil {
+			return werr
+		}
+		if !d.pause() {
+			return err
+		}
 		err = d.Host.Prompt(d.agent(), text, wait, timeout)
 	}
 	if !blocked(err) {
+		if err == nil {
+			if werr := d.waiting(false, "watchdog-resumed"); werr != nil {
+				return werr
+			}
+		}
 		return err
 	}
-	ev := Event{At: time.Now(), Kind: "watchdog-unreachable", Fields: map[string]string{"reason": err.Error()}}
-	if rerr := d.Store.Append(d.RunID, Record{Kind: RecordEvent, At: ev.At, Event: &ev}); rerr != nil {
-		return fmt.Errorf("record watchdog-unreachable: %w", rerr)
+	if rerr := d.emit("watchdog-unreachable", map[string]string{"reason": err.Error()}, func() { d.gone = true }); rerr != nil {
+		return rerr
 	}
-	d.gone = true
+	return err
+}
+
+func (d *Watchdog) waiting(now bool, kind string) error {
+	d.mu.Lock()
+	was := d.asking
+	d.mu.Unlock()
+	if was == now {
+		return nil
+	}
+	return d.emit(kind, nil, func() { d.asking = now })
+}
+
+func (d *Watchdog) emit(kind string, fields map[string]string, apply func()) error {
+	ev := Event{At: time.Now(), Kind: kind, Fields: fields}
+	if err := d.Store.Append(d.RunID, Record{Kind: RecordEvent, At: ev.At, Event: &ev}); err != nil {
+		return fmt.Errorf("record %s: %w", kind, err)
+	}
+	d.mu.Lock()
+	apply()
+	d.mu.Unlock()
 	if d.Face != nil {
 		d.Face.Emit(ev)
 	}
-	return err
+	return nil
+}
+
+func (d *Watchdog) pause() bool {
+	d.mu.Lock()
+	d.lazy()
+	quit, stopping := d.quit, d.stopping
+	d.mu.Unlock()
+	if stopping {
+		return false
+	}
+	if d.Sleep != nil {
+		d.Sleep(watchdogRetryAfter)
+	} else {
+		t := time.NewTimer(watchdogRetryAfter)
+		select {
+		case <-t.C:
+		case <-quit:
+			t.Stop()
+		}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return !d.stopping
+}
+
+func (d *Watchdog) lazy() {
+	if d.cond == nil {
+		d.cond = sync.NewCond(&d.mu)
+		d.quit = make(chan struct{})
+	}
 }
 
 func (d *Watchdog) live() bool {
@@ -157,6 +275,18 @@ func (d *Watchdog) live() bool {
 }
 
 func (d *Watchdog) Stop() error {
+	d.mu.Lock()
+	d.lazy()
+	if !d.stopping {
+		d.stopping = true
+		close(d.quit)
+		d.cond.Broadcast()
+	}
+	drained := d.drained
+	d.mu.Unlock()
+	if drained != nil {
+		<-drained
+	}
 	d.mu.Lock()
 	pane, workspace := d.pane, d.workspace
 	d.pane, d.workspace, d.gone = "", "", true

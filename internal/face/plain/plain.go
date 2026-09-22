@@ -30,6 +30,8 @@ func (f *Face) Emit(ev core.Event) {
 		fmt.Fprintln(f.Out, strings.TrimRight(line, " "))
 	case "nudge":
 		fmt.Fprintf(f.Out, "%s  phase %s  %s  nudge\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step)
+	case "watchdog-waiting":
+		fmt.Fprintln(f.Out, "!  watchdog waiting for you")
 	case "warning", "error":
 		fmt.Fprintf(f.Out, "!  %s%s\n", where(ev.Phase, ev.Step), ev.Fields["reason"])
 	default:

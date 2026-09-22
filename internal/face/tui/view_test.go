@@ -176,6 +176,26 @@ func TestAGoneWatchdogIsInTheErrorColour(t *testing.T) {
 	}
 }
 
+func TestAWatchdogAskingTheMaintainerIsAmberUntilItResumes(t *testing.T) {
+	m := coloured(false)
+	m.Width = 120
+	m = m.Apply(core.Event{At: at(2), Kind: "watchdog-waiting"})
+
+	header := strings.Split(m.View(), "\n")[0]
+
+	if !regexp.MustCompile(`\x1b\[38;2;224;16[34];88[0-9;]*mwatchdog waiting for you`).MatchString(header) {
+		t.Fatalf("header %q", header)
+	}
+	m = m.Apply(core.Event{At: at(3), Kind: "watchdog-resumed"})
+	header = strings.Split(m.View(), "\n")[0]
+	if strings.Contains(header, "waiting for you") || !strings.Contains(header, "watchdog live") {
+		t.Fatalf("header after resume %q", header)
+	}
+	if regexp.MustCompile(`\x1b\[38;2;224;16[34];88`).MatchString(header) {
+		t.Fatalf("header still amber %q", header)
+	}
+}
+
 func TestErrorsAndHaltReasonsAreInTheErrorColourAndWarningsInAmber(t *testing.T) {
 	m := coloured(false)
 	m = m.Apply(core.Event{At: at(2), Kind: "warning", Fields: map[string]string{"reason": "round limit"}})

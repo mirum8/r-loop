@@ -481,6 +481,12 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   opens its own workspace labelled with the watchdog name. `Stop` closes that workspace, or else
   the pane. If `Start` fails on its row, the run is blocked with exit 4 (`watchdog did not start:
   <reason>`); there is no fallback provider for the watchdog.
+- **Delivery** — step notices go through `Watchdog.Post`, an ordered outbox one goroutine drains
+  with `Notify`; questions, phase checks and the unblock walk call `Notify` directly, after any
+  queued notices. A prompt refused with `agent_blocked` is retried every 30 s while the agent
+  exists; the first refusal records and emits `Event{Kind: "watchdog-waiting"}`, the next
+  accepted prompt `Event{Kind: "watchdog-resumed"}`, and one `Host.State` of `gone` records
+  `Event{Kind: "watchdog-unreachable"}`. `Stop` drains the outbox, giving up on a blocked prompt.
 - **Second MCP surface** — `<base>/watchdog/<wdToken>`; tools `signal(kind, step, reason,
   evidence) → {accepted, reason?}` · `propose_remedy(class, command, why, maintainer_said?) →
   {decision: authorised|refused|ask, reason?}` ·

@@ -99,24 +99,25 @@ type stepID struct {
 
 type Model struct {
 	Header
-	Phases    []Row
-	Current   string
-	Live      *Step
-	done      map[stepID]string
-	Questions []Question
-	DogGone   bool
-	Feed      []Entry
-	Status    string
-	Blocked   string
-	Resume    string
-	Notice    string
-	stopping  bool
-	abort     func() error
-	Now       time.Time
-	ended     time.Time
-	Width     int
-	Height    int
-	theme     Theme
+	Phases     []Row
+	Current    string
+	Live       *Step
+	done       map[stepID]string
+	Questions  []Question
+	DogGone    bool
+	DogWaiting bool
+	Feed       []Entry
+	Status     string
+	Blocked    string
+	Resume     string
+	Notice     string
+	stopping   bool
+	abort      func() error
+	Now        time.Time
+	ended      time.Time
+	Width      int
+	Height     int
+	theme      Theme
 }
 
 func NewModel(h Header, phases []core.Phase, th Theme) Model {
@@ -154,8 +155,12 @@ func (m Model) Apply(ev core.Event) Model {
 		m.log(ev, toneWarn, ev.Fields["reason"])
 	case "error", "restart-refused":
 		m.log(ev, toneError, ev.Fields["reason"])
+	case "watchdog-waiting":
+		m.DogWaiting = true
+	case "watchdog-resumed":
+		m.DogWaiting = false
 	case "watchdog-unreachable":
-		m.DogGone = true
+		m.DogGone, m.DogWaiting = true, false
 		m.log(ev, toneError, "watchdog gone: "+ev.Fields["reason"])
 	case "stalled":
 		m.log(ev, toneError, "stalled")
@@ -202,7 +207,7 @@ func replay(m Model, history []core.Event) Model {
 	}
 	m.Status, m.Blocked, m.Resume, m.Current, m.Live = "", "", "", "", nil
 	m.ended = time.Time{}
-	m.Questions, m.DogGone = nil, false
+	m.Questions, m.DogGone, m.DogWaiting = nil, false, false
 	return m
 }
 

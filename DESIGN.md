@@ -96,7 +96,8 @@ arrangement this identity's glance-first premise depends on.
 **What is built.** The layout the TUI actually draws is the one in the golden frames of Phase 22,
 `internal/face/tui/testdata/frame-120x40.golden` and `frame-70x30.golden`, and those frames are
 authoritative where this document or `docs/design/variants/layouts/rail.txt` differ: a header line
-carrying the watchdog's health (`watchdog live` dim, `watchdog gone` in `error`), the phase rail
+carrying the watchdog's health (`watchdog live` dim, `watchdog waiting for you` in `secondary`
+while herdr reports it blocked on a question in its own pane, `watchdog gone` in `error`), the phase rail
 beside the live-step panel (stacked below 80 columns), and a status line for a notice or a finished
 run. The panel names the step, a `steps` line with the phase's step kinds (done `✓` in `tertiary`,
 failed `×` in `error`, the live kind in `primary` without bold, pending dim), and below it an
@@ -121,7 +122,8 @@ labels all use it, which is what leaves the two accent colours alone to mean som
 
 - **`primary`** — a muted steel blue. The live step, and the selected row. One thing on screen is
   live, so one thing on screen is blue.
-- **`secondary`** — amber. **Something is waiting for you**: today, a warning. Questions and
+- **`secondary`** — amber. **Something is waiting for you**: a warning, or a watchdog blocked on
+  a question in its own pane (`watchdog waiting for you` in the header). Questions and
   consent are asked in the watchdog's own pane, not here. This is the only colour that means *act*,
   and nothing else is allowed to use it.
 - **`tertiary`** — a desaturated sage. A phase that landed. It reads as settled rather than

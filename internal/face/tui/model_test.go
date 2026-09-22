@@ -256,6 +256,25 @@ func TestAGoneWatchdogIsMarkedUntilResume(t *testing.T) {
 	}
 }
 
+func TestAWaitingWatchdogIsNotCarriedIntoAResume(t *testing.T) {
+	history := append(recorded(), core.Event{At: at(50), Kind: "watchdog-waiting"})
+
+	if m := newModel(history); !m.DogWaiting || !strings.Contains(m.View(), "watchdog waiting for you") {
+		t.Fatalf("waiting %v view:\n%s", m.DogWaiting, m.View())
+	}
+	if m := replay(newModel(nil), history); m.DogWaiting {
+		t.Fatal("resume keeps the watchdog waiting")
+	}
+}
+
+func TestAGoneWatchdogIsNoLongerWaiting(t *testing.T) {
+	m := newModel(append(recorded(), core.Event{At: at(50), Kind: "watchdog-waiting"}, core.Event{At: at(51), Kind: "watchdog-unreachable", Fields: map[string]string{"reason": "pane closed"}}))
+
+	if m.DogWaiting || !strings.Contains(m.View(), "watchdog gone") {
+		t.Fatalf("waiting %v view:\n%s", m.DogWaiting, m.View())
+	}
+}
+
 func TestAFinishedRunDropsTheWatchdogMarker(t *testing.T) {
 	m := newModel(recorded())
 

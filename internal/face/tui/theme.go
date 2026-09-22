@@ -15,32 +15,33 @@ const (
 )
 
 type Theme struct {
-	Header, HeaderFailed, Label, Idle, Text, Live, Current, Landed, Failed, Warn, Halt, Status, Border lipgloss.Style
+	Header, HeaderFailed, HeaderWaiting, Label, Idle, Text, Live, Current, Landed, Failed, Warn, Halt, Status, Border lipgloss.Style
 }
 
 func NewTheme(r *lipgloss.Renderer, noColor bool) Theme {
 	s := r.NewStyle
 	if noColor {
 		return Theme{
-			Header: s(), HeaderFailed: s().Reverse(true), Label: s().Faint(true), Idle: s().Faint(true), Text: s(),
+			Header: s(), HeaderFailed: s().Reverse(true), HeaderWaiting: s(), Label: s().Faint(true), Idle: s().Faint(true), Text: s(),
 			Live: s().Bold(true), Current: s(), Landed: s().Faint(true), Failed: s().Reverse(true),
 			Warn: s(), Halt: s().Reverse(true), Status: s(), Border: s().Faint(true),
 		}
 	}
 	fg := func(c string) lipgloss.Style { return s().Foreground(lipgloss.Color(c)) }
 	return Theme{
-		Header:       fg(Dim).Background(lipgloss.Color(Raised)),
-		HeaderFailed: fg(Error).Background(lipgloss.Color(Raised)),
-		Label:        fg(Dim),
-		Idle:         fg(Dim),
-		Text:         fg(Text),
-		Live:         fg(Primary).Bold(true),
-		Current:      fg(Primary),
-		Landed:       fg(Tertiary),
-		Failed:       fg(Error),
-		Warn:         fg(Secondary).Background(lipgloss.Color(Raised)),
-		Halt:         fg(Surface).Background(lipgloss.Color(Error)),
-		Status:       fg(Dim).Background(lipgloss.Color(Raised)),
-		Border:       fg(Outline),
+		Header:        fg(Dim).Background(lipgloss.Color(Raised)),
+		HeaderFailed:  fg(Error).Background(lipgloss.Color(Raised)),
+		HeaderWaiting: fg(Secondary).Background(lipgloss.Color(Raised)),
+		Label:         fg(Dim),
+		Idle:          fg(Dim),
+		Text:          fg(Text),
+		Live:          fg(Primary).Bold(true),
+		Current:       fg(Primary),
+		Landed:        fg(Tertiary),
+		Failed:        fg(Error),
+		Warn:          fg(Secondary).Background(lipgloss.Color(Raised)),
+		Halt:          fg(Surface).Background(lipgloss.Color(Error)),
+		Status:        fg(Dim).Background(lipgloss.Color(Raised)),
+		Border:        fg(Outline),
 	}
 }

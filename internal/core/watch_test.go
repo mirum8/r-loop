@@ -389,3 +389,28 @@ func TestARejectedWatchdogSignalDuringTheRemedyWindowHaltsTheHeldStep(t *testing
 		t.Errorf("restart %v %q", ok, reason)
 	}
 }
+
+func TestStepNoticesDoNotWaitForAWatchdogAskingTheMaintainer(t *testing.T) {
+	host := &askingHost{blockedFor: 1}
+	host.States = map[string]AgentState{"rloop-wd-run-1": AgentBlocked}
+	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	answered := make(chan struct{})
+	dog.Sleep = func(time.Duration) { <-answered }
+	defer close(answered)
+	w := newWatch(&fakeStore{})
+	w.Dog = dog
+
+	done := make(chan struct{})
+	go func() {
+		w.StepStarted(implementRef(2, 1), nil)
+		w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
+		dog.live()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("step notices and live() waited for the maintainer to answer the watchdog")
+	}
+}

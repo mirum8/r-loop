@@ -68,6 +68,8 @@ func (m Model) header(w int) string {
 	switch {
 	case m.DogGone:
 		dog, dogStyle = "watchdog gone", th.HeaderFailed
+	case m.DogWaiting && m.Status == "":
+		dog, dogStyle = "watchdog waiting for you", th.HeaderWaiting
 	case m.RunID != "" && m.Status == "":
 		dog = "watchdog live"
 	}

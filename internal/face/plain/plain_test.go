@@ -53,6 +53,17 @@ func TestWarningLine(t *testing.T) {
 	}
 }
 
+func TestAWatchdogAskingTheMaintainerIsFlagged(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	f.Emit(core.Event{At: at, Kind: "watchdog-waiting"})
+
+	if want := "!  watchdog waiting for you\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
 func TestNudgeLineNamesTheStep(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}
