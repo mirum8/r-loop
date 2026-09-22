@@ -65,6 +65,11 @@ watchdog:
   overtimeFactor: 2
   diffFactor: 3
 
+intake:
+  provider: claude
+  model: sonnet
+  effort: low
+
 unattended:
   allow:
     - deps

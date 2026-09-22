@@ -63,6 +63,10 @@ type Watchdog struct {
 	MaxRestarts                            int
 }
 
+type Intake struct {
+	Provider, Model, Effort string
+}
+
 type Land struct {
 	FixRounds   int
 	GateTimeout time.Duration
@@ -82,6 +86,7 @@ type LoopConfig struct {
 	Steps      map[string]StepRow
 	Providers  map[string]yaml.Node
 	Watchdog   Watchdog
+	Intake     Intake
 	Land       Land
 	Unattended Unattended
 	Notify     Notify
@@ -99,7 +104,7 @@ type fallbackSwap struct {
 
 type appliedOverride struct {
 	Override
-	old, oldSource string
+	path, old, oldSource string
 }
 
 var remedyClasses = []string{"deps", "ports", "containers", "locks", "restart", "retry", "provider"}
@@ -119,6 +124,7 @@ var topSchema = schema{
 		"fallback": nil, "reviewers": nil, "rounds": nil, "reviewTimeout": nil,
 	}},
 	"providers":  schema{"*": nil},
+	"intake":     roleSchema,
 	"land":       schema{"fixRounds": nil, "gateTimeout": nil, "fix": roleSchema},
 	"unattended": schema{"allow": nil},
 	"notify":     schema{"onHalt": nil, "onWarn": nil, "onDone": nil},
@@ -130,6 +136,8 @@ var topSchema = schema{
 }
 
 const defaultSource = "default"
+
+const IntakeRow = "intake"
 
 type layer struct {
 	file  string
@@ -525,6 +533,7 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 		dst  *string
 	}{
 		{"watchdog.provider", &w.Provider}, {"watchdog.model", &w.Model}, {"watchdog.effort", &w.Effort},
+		{"intake.provider", &cfg.Intake.Provider}, {"intake.model", &cfg.Intake.Model}, {"intake.effort", &cfg.Intake.Effort},
 		{"notify.onHalt", &cfg.Notify.OnHalt}, {"notify.onWarn", &cfg.Notify.OnWarn}, {"notify.onDone", &cfg.Notify.OnDone},
 	} {
 		if *f.dst, err = r.str(f.path); err != nil {
@@ -577,7 +586,7 @@ func (cfg *LoopConfig) applyOverrides(overrides []Override) error {
 	for _, o := range overrides {
 		flag := "--" + o.Key
 		row, ok := cfg.Steps[o.Step]
-		if !ok {
+		if !ok && o.Step != IntakeRow {
 			return configError(fmt.Sprintf("%s: unknown step %q", flag, o.Step))
 		}
 		k := Override{Key: o.Key, Step: o.Step}
@@ -585,20 +594,22 @@ func (cfg *LoopConfig) applyOverrides(overrides []Override) error {
 			return configError(fmt.Sprintf("%s: step %q given twice", flag, o.Step))
 		}
 		seen[k] = true
-		var field *string
-		switch o.Key {
-		case "provider":
-			field = &row.Provider
-		case "model":
-			field = &row.Model
-		case "effort":
-			field = &row.Effort
-		default:
+		fields := map[string]*string{"provider": &row.Provider, "model": &row.Model, "effort": &row.Effort}
+		path := "steps." + o.Step + "." + o.Key
+		if o.Step == IntakeRow {
+			fields = map[string]*string{"provider": &cfg.Intake.Provider, "model": &cfg.Intake.Model, "effort": &cfg.Intake.Effort}
+			path = IntakeRow + "." + o.Key
+		}
+		field, ok := fields[o.Key]
+		if !ok {
 			return configError(fmt.Sprintf("unknown override --%s", o.Key))
 		}
-		path := "steps." + o.Step + "." + o.Key
-		cfg.overrides = append(cfg.overrides, appliedOverride{o, *field, cfg.Provenance[path]})
+		cfg.overrides = append(cfg.overrides, appliedOverride{o, path, *field, cfg.Provenance[path]})
 		*field = o.Value
+		cfg.Provenance[path] = "flag:" + flag
+		if o.Step == IntakeRow {
+			continue
+		}
 		if o.Key == "provider" && row.Fallback.Provider == o.Value {
 			orig := configured[o.Step]
 			fb := "steps." + o.Step + ".fallback"
@@ -608,7 +619,6 @@ func (cfg *LoopConfig) applyOverrides(overrides []Override) error {
 			cfg.Provenance[fb] = "flag:" + flag
 		}
 		cfg.Steps[o.Step] = row
-		cfg.Provenance[path] = "flag:" + flag
 	}
 	return nil
 }

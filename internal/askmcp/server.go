@@ -113,6 +113,11 @@ func (s *Server) Serve(ctx context.Context) (string, error) {
 		}
 		stepHandler.ServeHTTP(w, r)
 	})}
+	serveHTTP(ctx, srv, ln)
+	return s.base, nil
+}
+
+func serveHTTP(ctx context.Context, srv *http.Server, ln net.Listener) {
 	go srv.Serve(ln)
 	go func() {
 		<-ctx.Done()
@@ -122,15 +127,21 @@ func (s *Server) Serve(ctx context.Context) (string, error) {
 			srv.Close()
 		}
 	}()
-	return s.base, nil
 }
 
-func (s *Server) token(name string) (string, error) {
+func newToken() (string, error) {
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
 	}
-	token := hex.EncodeToString(raw)
+	return hex.EncodeToString(raw), nil
+}
+
+func (s *Server) token(name string) (string, error) {
+	token, err := newToken()
+	if err != nil {
+		return "", err
+	}
 	if err := os.WriteFile(filepath.Join(s.RunDir, name), []byte(token), 0o600); err != nil {
 		return "", err
 	}

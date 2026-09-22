@@ -610,3 +610,28 @@ func TestUIReviewPromptPointsAtTheTestSkillAndTheCaptureDir(t *testing.T) {
 		t.Errorf("round 2 prompt lacks earlier findings:\n%s", later)
 	}
 }
+
+func TestIntakeTemplateCarriesTheTextTheUsageAndTheSubmitTool(t *testing.T) {
+	vars := map[string]any{"Text": "the loop plan, phases 3 and 4", "Dir": "/repo/sub", "Root": "/repo", "Usage": "  -phases n,n", "Unattended": false}
+
+	text := render(t, New(t.TempDir()), "intake", vars)
+
+	for _, want := range []string{"the loop plan, phases 3 and 4", "/repo/sub", "-phases n,n", "submit_args", "get a yes before you submit", "AskUserQuestion"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("intake missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "outcome") {
+		t.Errorf("intake carries the sentinel paragraph:\n%s", text)
+	}
+}
+
+func TestUnattendedIntakeNeverAsks(t *testing.T) {
+	vars := map[string]any{"Text": "phase 3", "Dir": "/repo", "Root": "/repo", "Usage": "", "Unattended": true}
+
+	text := render(t, New(t.TempDir()), "intake", vars)
+
+	if strings.Contains(text, "AskUserQuestion") || !strings.Contains(text, "Do not ask them anything") {
+		t.Errorf("unattended intake:\n%s", text)
+	}
+}

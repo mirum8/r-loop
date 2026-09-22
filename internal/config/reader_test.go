@@ -418,6 +418,7 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 		"override: implement provider codex (flag) replaces claude (.r-loop/config.yaml)",
 		"override: plan model sonnet (flag) replaces fable (default)",
 		"watchdog: claude opus low allow [deps]  ← provider default model default effort .r-loop/config.yaml:watchdog.effort",
+		"intake: claude sonnet low  ← default",
 	}, "\n") + "\n"
 	if got := Banner(cfg); got != want {
 		t.Errorf("banner:\n%s\nwant:\n%s", got, want)
@@ -534,4 +535,46 @@ func TestWatchdogFallbackIsAnUnknownKey(t *testing.T) {
 	d.writeProject(t, "watchdog:\n  fallback: codex\n")
 
 	d.loadErr(t, "watchdog.fallback")
+}
+
+func TestIntakeDefaultsToSonnetAtLowEffort(t *testing.T) {
+	cfg := newDirs(t).load(t)
+
+	if cfg.Intake != (Intake{Provider: "claude", Model: "sonnet", Effort: "low"}) || cfg.Provenance["intake.provider"] != "default" {
+		t.Fatalf("intake = %+v from %q", cfg.Intake, cfg.Provenance["intake.provider"])
+	}
+}
+
+func TestIntakeFromTheProjectFileKeepsItsProvenance(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "intake:\n  provider: pi\n  model: small\n")
+
+	cfg := d.load(t)
+
+	if cfg.Intake != (Intake{Provider: "pi", Model: "small", Effort: "low"}) || cfg.Provenance["intake.provider"] != ".r-loop/config.yaml:intake.provider" {
+		t.Fatalf("intake = %+v from %q", cfg.Intake, cfg.Provenance["intake.provider"])
+	}
+}
+
+func TestIntakeOverrideReplacesTheBlockAndSaysSoInTheBanner(t *testing.T) {
+	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "intake", Value: "codex"}, Override{Key: "model", Step: "intake", Value: "gpt-5.6-mini"})
+
+	if cfg.Intake != (Intake{Provider: "codex", Model: "gpt-5.6-mini", Effort: "low"}) || cfg.Provenance["intake.provider"] != "flag:--provider" {
+		t.Fatalf("intake = %+v from %q", cfg.Intake, cfg.Provenance["intake.provider"])
+	}
+	for _, want := range []string{
+		"override: intake provider codex (flag) replaces claude (default)\n",
+		"intake: codex gpt-5.6-mini low  ← provider flag:--provider model flag:--model effort default\n",
+	} {
+		if !strings.Contains(Banner(cfg), want) {
+			t.Errorf("banner missing %q:\n%s", want, Banner(cfg))
+		}
+	}
+}
+
+func TestUnknownIntakeKeyRejected(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "intake:\n  timeout: 5m\n")
+
+	d.loadErr(t, `unknown key "intake.timeout"`)
 }

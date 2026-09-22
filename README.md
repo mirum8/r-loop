@@ -78,6 +78,7 @@ and the project's full test suite must also pass.
 
 ```
 r-loop <todo.md> [flags]
+r-loop <free text> [flags]
 r-loop status [--plain]
 r-loop resume [--replan] [--unattended] [--plain]
 r-loop abort
@@ -97,8 +98,23 @@ r-loop --version
 | `--plain` | Print plain text lines instead of the full-screen TUI. Plain is also used when stdin or stdout is not a terminal. |
 | `--dry-run` | Check the plan, config, prompts and tools, print the banner and the run list, then stop. |
 
-`<step>` is a row name under `steps:` in the config: `plan`, `implement`, `milestone` or `gate`.
-The three step flags change only that step, not its reviewers.
+`<step>` is a row name under `steps:` in the config: `plan`, `implement`, `milestone` or `gate`,
+or `intake` (see below). The three step flags change only that step, not its reviewers.
+
+### Free text
+
+If you don't remember the flags, write what you want instead:
+
+```
+r-loop "the task-loop plan, only phases 3 and 4, codex for implement"
+```
+
+Anything other than a single path ending in `.md` counts as free text. r-loop opens a short
+intake session in herdr (the `intake:` row). The session finds the plan, works out the flags,
+and shows you the full command. Say yes, and r-loop checks the command the same way as a typed
+one. It prints `r-loop: resolved: r-loop <argv>` and starts that run. If the command is wrong
+(a ticked phase, an unknown step), the session gets the reason and asks you again.
+`--unattended` skips the confirmation. Ctrl-C cancels (exit 2).
 
 ### Subcommands
 
@@ -205,6 +221,12 @@ The `ui` reviewer runs the project's `/test-app` skill (claude, opus, high). It 
 | `diffFactor` | `3` | Warn when a diff is bigger than this many times the largest landed phase. |
 
 Remedy classes: `deps`, `ports`, `containers`, `locks`, `restart`, `retry`, `provider`.
+
+### `intake`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `provider`, `model`, `effort` | claude, sonnet, low | The session that turns a free-text start into a command line. Any provider with `ask: mcp` works. There is no fallback: a bad value stops with exit 2. |
 
 ### `unattended`
 

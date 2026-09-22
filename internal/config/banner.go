@@ -30,7 +30,7 @@ func Banner(cfg LoopConfig, extra ...string) string {
 		sources(p["land.fix.provider"], p["land.fix.model"], p["land.fix.effort"]))
 	for _, o := range cfg.overrides {
 		fmt.Fprintf(&b, "override: %s %s %s (flag) replaces %s (%s)\n", o.Step, o.Key, o.Value, orDefault(o.old),
-			strings.TrimSuffix(o.oldSource, ":steps."+o.Step+"."+o.Key))
+			strings.TrimSuffix(o.oldSource, ":"+o.path))
 	}
 	for _, sw := range cfg.swaps {
 		fmt.Fprintf(&b, "override: steps.%s.fallback swapped to %s (--provider) replaces %s (%s)\n", sw.step, sw.to.Provider,
@@ -40,6 +40,9 @@ func Banner(cfg LoopConfig, extra ...string) string {
 	w := cfg.Watchdog
 	fmt.Fprintf(&b, "watchdog: %s %s %s allow [%s]  ← %s\n", w.Provider, orDefault(w.Model), orDefault(w.Effort),
 		strings.Join(w.Allow, ", "), sources(p["watchdog.provider"], p["watchdog.model"], p["watchdog.effort"]))
+	in := cfg.Intake
+	fmt.Fprintf(&b, "intake: %s  ← %s\n", roleLine(in.Provider, in.Model, in.Effort),
+		sources(p["intake.provider"], p["intake.model"], p["intake.effort"]))
 	return b.String()
 }
 

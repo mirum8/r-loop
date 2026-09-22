@@ -354,6 +354,7 @@ func TestDryRunPrintsBannerWithOverridesAndTheRunList(t *testing.T) {
 		"prompt review-ui: embedded\n",
 		"reviewer ui requires .claude/skills/test-app/SKILL.md: missing, reviewer skipped\n",
 		"watchdog: claude opus high allow []  ← default\n",
+		"intake: claude sonnet low  ← default\n",
 		"phase 2  PlanReader: phases and milestones  plan (review ×2) → implement (review ×3) → land\n",
 		"phase 31  Unattended mode  plan (review ×2) → implement (review ×3) → land\n",
 	} {
@@ -422,7 +423,7 @@ func TestUsageErrorsExit2WithOneLine(t *testing.T) {
 	for _, args := range [][]string{
 		{"--bogus"},
 		{},
-		{"a.md", "b.md"},
+		{"a.md", "--phases"},
 		{"docs/topic/todo.md", "--from", "x"},
 		{"docs/topic/todo.md", "--provider", "implement"},
 		{"docs/topic/missing.md", "--dry-run"},

@@ -20,6 +20,7 @@ import (
 	"r-loop/internal/config"
 	"r-loop/internal/core"
 	"r-loop/internal/face/tui"
+	"r-loop/internal/providers"
 	"r-loop/internal/store"
 )
 
@@ -207,17 +208,25 @@ func (w *Wiring) validateProviders() error {
 		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, review: native(rv)})
 	}
 	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider})
+	roles = append(roles, role{field: "intake.provider", provider: cfg.Intake.Provider})
 	for _, r := range roles {
-		p, err := w.Registry.Resolve(r.provider)
-		if err != nil {
-			return exit(2, "%s: %v", r.field, err)
+		if err := checkRole(w.Registry, r); err != nil {
+			return err
 		}
-		if r.review && p.Review == "" {
-			return exit(2, "%s: provider %s has no review command", r.field, r.provider)
-		}
-		if p.Ask != "mcp" {
-			return exit(2, "%s: provider %s has no MCP ask channel", r.field, r.provider)
-		}
+	}
+	return nil
+}
+
+func checkRole(reg *providers.Registry, r role) error {
+	p, err := reg.Resolve(r.provider)
+	if err != nil {
+		return exit(2, "%s: %v", r.field, err)
+	}
+	if r.review && p.Review == "" {
+		return exit(2, "%s: provider %s has no review command", r.field, r.provider)
+	}
+	if p.Ask != "mcp" {
+		return exit(2, "%s: provider %s has no MCP ask channel", r.field, r.provider)
 	}
 	return nil
 }

@@ -115,22 +115,27 @@ func (p phaseList) Set(arg string) error {
 	return nil
 }
 
-func ParseArgs(args []string) (Options, error) {
-	var o Options
+func flagSet(o *Options) *flag.FlagSet {
 	fs := flag.NewFlagSet("r-loop", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fs.IntVar(&o.From, "from", 0, "")
-	fs.Var(phaseList{&o.Phases}, "phases", "")
+	fs.IntVar(&o.From, "from", 0, "run the unticked phases numbered N and up")
+	fs.Var(phaseList{&o.Phases}, "phases", "run only these unticked phases, comma-separated `n,n`")
 	for _, key := range []string{"provider", "model", "effort"} {
-		fs.Var(overrides{key, &o.Overrides}, key, "")
+		fs.Var(overrides{key, &o.Overrides}, key, "set one row's "+key+" for this run, `<step>=<"+key+">`; repeatable")
 	}
-	fs.BoolVar(&o.Unattended, "unattended", false, "")
-	fs.BoolVar(&o.Plain, "plain", false, "")
-	fs.BoolVar(&o.DryRun, "dry-run", false, "")
+	fs.BoolVar(&o.Unattended, "unattended", false, "never ask the maintainer; the watchdog decides from the repository")
+	fs.BoolVar(&o.Plain, "plain", false, "plain line output instead of the TUI")
+	fs.BoolVar(&o.DryRun, "dry-run", false, "print the banner and the run list, start nothing")
+	return fs
+}
+
+func parseFlags(args []string) (Options, []string, error) {
+	var o Options
+	fs := flagSet(&o)
 	var positional []string
 	for {
 		if err := fs.Parse(args); err != nil {
-			return o, err
+			return o, nil, err
 		}
 		if fs.NArg() == 0 {
 			break
@@ -138,11 +143,31 @@ func ParseArgs(args []string) (Options, error) {
 		positional = append(positional, fs.Arg(0))
 		args = fs.Args()[1:]
 	}
+	return o, positional, nil
+}
+
+func ParseArgs(args []string) (Options, error) {
+	o, positional, err := parseFlags(args)
+	if err != nil {
+		return o, err
+	}
 	if len(positional) != 1 {
 		return o, errors.New("want exactly one todo path")
 	}
 	o.Todo = positional[0]
 	return o, nil
+}
+
+func usage() string {
+	var b strings.Builder
+	fs := flagSet(&Options{})
+	fs.SetOutput(&b)
+	fs.PrintDefaults()
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func freeForm(positional []string) bool {
+	return len(positional) > 1 || len(positional) == 1 && !strings.HasSuffix(positional[0], ".md")
 }
 
 func Main(args []string, env Env) int {
@@ -156,7 +181,14 @@ func Main(args []string, env Env) int {
 			return Abort(args[1:], env)
 		}
 	}
-	opts, err := ParseArgs(args)
+	opts, positional, err := parseFlags(args)
+	if err == nil && freeForm(positional) {
+		if opts, err = Intake(args, opts, env); err != nil {
+			return fail(env, err)
+		}
+	} else if err == nil {
+		opts, err = ParseArgs(args)
+	}
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "usage: r-loop <todo.md> [flags]: %v\n", err)
 		return 2
