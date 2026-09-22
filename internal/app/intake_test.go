@@ -203,7 +203,7 @@ func TestIntakeRunsTheIntakeRowsProviderModelAndEffort(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if in.provider.Kind != "codex" || in.cfg.Model != "gpt-5.6-mini" || in.cfg.Effort != "low" {
+	if in.provider.Kind != "codex" || in.cfg.Model != "gpt-5.6-mini" || in.cfg.Effort != "medium" {
 		t.Fatalf("provider %+v cfg %+v", in.provider, in.cfg)
 	}
 }

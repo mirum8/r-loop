@@ -567,7 +567,7 @@ and the driver validates that argv before anything of a run exists.
   starts the intake when there is no flag error and `freeForm(positional)` is true: more than one
   positional, or one that does not end in `.md`. Otherwise `ParseArgs` runs as before.
 - **Row** — `config.Intake{Provider, Model, Effort}` comes from `intake.*` (default `claude sonnet
-  low`) and shares the role schema with `land.fix`. `applyOverrides` takes the row name
+  medium`) and shares the role schema with `land.fix`. `applyOverrides` takes the row name
   `config.IntakeRow` (`intake`), and its provenance path is `intake.<key>`. The banner line is
   `intake: <provider> <model> <effort>  ← <sources>`. `validateProviders` adds
   `role{field: "intake.provider"}`, and `newIntake` runs the same `checkRole` before herdr is

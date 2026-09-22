@@ -418,7 +418,7 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 		"override: implement provider codex (flag) replaces claude (.r-loop/config.yaml)",
 		"override: plan model sonnet (flag) replaces fable (default)",
 		"watchdog: claude opus low allow [deps]  ← provider default model default effort .r-loop/config.yaml:watchdog.effort",
-		"intake: claude sonnet low  ← default",
+		"intake: claude sonnet medium  ← default",
 	}, "\n") + "\n"
 	if got := Banner(cfg); got != want {
 		t.Errorf("banner:\n%s\nwant:\n%s", got, want)
@@ -537,10 +537,10 @@ func TestWatchdogFallbackIsAnUnknownKey(t *testing.T) {
 	d.loadErr(t, "watchdog.fallback")
 }
 
-func TestIntakeDefaultsToSonnetAtLowEffort(t *testing.T) {
+func TestIntakeDefaultsToSonnetAtMediumEffort(t *testing.T) {
 	cfg := newDirs(t).load(t)
 
-	if cfg.Intake != (Intake{Provider: "claude", Model: "sonnet", Effort: "low"}) || cfg.Provenance["intake.provider"] != "default" {
+	if cfg.Intake != (Intake{Provider: "claude", Model: "sonnet", Effort: "medium"}) || cfg.Provenance["intake.provider"] != "default" {
 		t.Fatalf("intake = %+v from %q", cfg.Intake, cfg.Provenance["intake.provider"])
 	}
 }
@@ -551,7 +551,7 @@ func TestIntakeFromTheProjectFileKeepsItsProvenance(t *testing.T) {
 
 	cfg := d.load(t)
 
-	if cfg.Intake != (Intake{Provider: "pi", Model: "small", Effort: "low"}) || cfg.Provenance["intake.provider"] != ".r-loop/config.yaml:intake.provider" {
+	if cfg.Intake != (Intake{Provider: "pi", Model: "small", Effort: "medium"}) || cfg.Provenance["intake.provider"] != ".r-loop/config.yaml:intake.provider" {
 		t.Fatalf("intake = %+v from %q", cfg.Intake, cfg.Provenance["intake.provider"])
 	}
 }
@@ -559,12 +559,12 @@ func TestIntakeFromTheProjectFileKeepsItsProvenance(t *testing.T) {
 func TestIntakeOverrideReplacesTheBlockAndSaysSoInTheBanner(t *testing.T) {
 	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "intake", Value: "codex"}, Override{Key: "model", Step: "intake", Value: "gpt-5.6-mini"})
 
-	if cfg.Intake != (Intake{Provider: "codex", Model: "gpt-5.6-mini", Effort: "low"}) || cfg.Provenance["intake.provider"] != "flag:--provider" {
+	if cfg.Intake != (Intake{Provider: "codex", Model: "gpt-5.6-mini", Effort: "medium"}) || cfg.Provenance["intake.provider"] != "flag:--provider" {
 		t.Fatalf("intake = %+v from %q", cfg.Intake, cfg.Provenance["intake.provider"])
 	}
 	for _, want := range []string{
 		"override: intake provider codex (flag) replaces claude (default)\n",
-		"intake: codex gpt-5.6-mini low  ← provider flag:--provider model flag:--model effort default\n",
+		"intake: codex gpt-5.6-mini medium  ← provider flag:--provider model flag:--model effort default\n",
 	} {
 		if !strings.Contains(Banner(cfg), want) {
 			t.Errorf("banner missing %q:\n%s", want, Banner(cfg))

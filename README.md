@@ -230,7 +230,7 @@ Remedy classes: `deps`, `ports`, `containers`, `locks`, `restart`, `retry`, `pro
 
 | Key | Default | Meaning |
 |---|---|---|
-| `provider`, `model`, `effort` | claude, sonnet, low | The session that turns a free-text start into a command line. Any provider with `ask: mcp` works. There is no fallback: a bad value stops with exit 2. |
+| `provider`, `model`, `effort` | claude, sonnet, medium | The session that turns a free-text start into a command line. Any provider with `ask: mcp` works. There is no fallback: a bad value stops with exit 2. |
 
 ### `unattended`
 

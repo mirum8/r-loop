@@ -68,7 +68,7 @@ watchdog:
 intake:
   provider: claude
   model: sonnet
-  effort: low
+  effort: medium
 
 unattended:
   allow:

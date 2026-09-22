@@ -3191,7 +3191,7 @@ But the watchdog cannot do it: it needs a run, and a run needs a plan.</p>
 <p><span class="f">Decision</span> When the positional arguments are anything other than one path
 ending in <code>.md</code>, and every flag parses, the driver starts an <em>intake</em> session
 before anything else. It uses the <code>intake:</code> row (<code>provider</code>,
-<code>model</code>, <code>effort</code>; default <code>claude sonnet low</code>), which
+<code>model</code>, <code>effort</code>; default <code>claude sonnet medium</code>), which
 <code>--provider/--model/--effort intake=…</code> override. The provider is resolved through the
 same registry as every step, so any provider with <code>ask: mcp</code> can run it. A bad row
 exits 2 and never falls back to the watchdog's row. The session gets the text, the flag reference
