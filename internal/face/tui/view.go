@@ -62,7 +62,7 @@ func (m Model) View() string {
 
 func (m Model) header(w int) string {
 	left := fmt.Sprintf("r-loop  %s  %s", m.RunID, m.Todo)
-	right := fmt.Sprintf("started %s · %s", m.Started.Format("15:04"), m.Now.Sub(m.Started).Truncate(time.Second))
+	right := fmt.Sprintf("started %s · %s", m.Started.Format("15:04"), m.clock().Sub(m.Started).Truncate(time.Second))
 	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 2 {
 		return left
@@ -105,9 +105,9 @@ func (m Model) panel(w int) []string {
 		add(th.Text, field("provider", provider))
 		add(th.Text, field("session", s.Workspace))
 		add(th.Text, field("state", s.State))
-		add(th.Text, field("started", s.Started.Format("15:04:05")+"   elapsed "+s.Elapsed(m.Now).String()))
+		add(th.Text, field("started", s.Started.Format("15:04:05")+"   elapsed "+s.Elapsed(m.clock()).String()))
 		backstop := "paused"
-		if left, paused := s.Remaining(m.Now); !paused {
+		if left, paused := s.Remaining(m.clock()); !paused {
 			backstop = left.Truncate(time.Second).String() + " left"
 		}
 		add(th.Text, field("backstop", backstop))

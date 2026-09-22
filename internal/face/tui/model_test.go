@@ -287,6 +287,21 @@ func TestAFinishedRunShowsTheReportWithoutAResumeLine(t *testing.T) {
 	}
 }
 
+func TestAFinishedRunStopsTheClocks(t *testing.T) {
+	events := recorded()
+	m := newModel(events[:len(events)-1])
+	m = m.Apply(core.Event{At: at(90), Kind: "finished"})
+
+	next, _ := m.Update(tickMsg(at(120)))
+
+	view := next.(Model).View()
+	for _, want := range []string{"started 14:00 · 1h30m0s", "elapsed 59m0s", "3h1m0s left"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view lacks %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestFaceSendsEventsToTheProgramAndClosesOnQ(t *testing.T) {
 	in, w := io.Pipe()
 	var out syncBuffer

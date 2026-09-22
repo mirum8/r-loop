@@ -79,6 +79,7 @@ type Model struct {
 	stopping bool
 	abort    func() error
 	Now      time.Time
+	ended    time.Time
 	Width    int
 	Height   int
 	theme    Theme
@@ -118,15 +119,15 @@ func (m Model) Apply(ev core.Event) Model {
 	case "warning", "error":
 		m.warn(ev)
 	case "finished":
-		m.end("finished")
+		m.end("finished", ev.At)
 	case "halt":
-		m.end("halted")
+		m.end("halted", ev.At)
 		m.Blocked, m.Resume = ev.Fields["blocked"], ev.Fields["resume"]
 		if r := ev.Fields["reason"]; r != "" {
 			m.warn(ev)
 		}
 	case "aborted":
-		m.end("halted")
+		m.end("halted", ev.At)
 		m.Resume = "r-loop resume"
 	}
 	return m
@@ -137,6 +138,7 @@ func replay(m Model, history []core.Event) Model {
 		m = m.Apply(ev)
 	}
 	m.Status, m.Blocked, m.Resume, m.Current, m.Live = "", "", "", 0, nil
+	m.ended = time.Time{}
 	return m
 }
 
@@ -198,10 +200,18 @@ func (m *Model) warn(ev core.Event) {
 	}
 }
 
-func (m *Model) end(status string) {
+func (m *Model) end(status string, at time.Time) {
 	m.Status = status
+	m.ended = at
 	m.Current = 0
 	m.Notice = ""
+}
+
+func (m Model) clock() time.Time {
+	if !m.ended.IsZero() {
+		return m.ended
+	}
+	return m.Now
 }
 
 type tickMsg time.Time
@@ -225,7 +235,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.Apply(core.Event(msg)), nil
 	case closedMsg:
 		if m.Status == "" {
-			m.end("ended")
+			m.end("ended", m.Now)
 		}
 	case tea.WindowSizeMsg:
 		if msg.Width > 0 && msg.Height > 0 {
