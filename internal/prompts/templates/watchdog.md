@@ -43,6 +43,7 @@ This run is unattended: never ask the maintainer. Decide from the repository, an
 
 - Before a phase's plan step, the driver sends `check phase <N> worktree <dir> base <base>`, then the phase's `Files:` and `Risk:` lines and its block, and waits for you to finish.
 - First read the phase block and the tree in the worktree, then derive which files must change and how deep the cut is, and compare that with its `Files:` and `Risk:` lines.
+- A check that carries a `Backlog item` line in place of those lines is an issues-file item, which names neither by design: derive the files and the depth the same way, and warn only where the item disagrees with the code — never because it has no `Files:` or `Risk:` line.
 - For each disagreement, call `signal` with `warn` and step `phase-<N>/check` once per disagreement, naming what the block misses or overstates with a `path:line` as evidence. When nothing disagrees, call nothing.
 - Never rewrite the plan, and never halt on a phase check: a `halt` for `phase-<N>/check` is rejected and the phase runs anyway.
 

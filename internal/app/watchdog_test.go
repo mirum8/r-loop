@@ -244,7 +244,7 @@ func TestExecuteSendsThePhaseCheckToTheWatchdogBeforeThePlanStep(t *testing.T) {
 		t.Fatalf("exit %d\n%s", code, f.out)
 	}
 
-	if pc := w.Watch.PhaseCheck; pc == nil || pc.Dog != w.Dog || pc.Timeout != 10*time.Minute {
+	if pc := w.Watch.PhaseCheck; pc == nil || pc.Dog != w.Dog || pc.Timeout != 10*time.Minute || pc.Backlog {
 		t.Fatalf("phase check %+v", pc)
 	}
 	calls := dog.Calls()
@@ -259,6 +259,26 @@ func TestExecuteSendsThePhaseCheckToTheWatchdogBeforeThePlanStep(t *testing.T) {
 	}
 	if got := stepEvents(f.load(w.Loop.RunID), "phase-check"); len(got) != 1 || got[0].Fields["result"] != "no disagreement" {
 		t.Errorf("phase-check events %+v", got)
+	}
+}
+
+func TestABacklogRunWiresThePhaseCheckForBacklogItems(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	path := filepath.Join(f.root, "issues-x-2026-09-23.md")
+	if err := os.WriteFile(path, []byte("# X\n\n- [ ] [#1] first\n      - crit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.commit()
+	w, err := f.preflight(path, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Dog.Host = &dogHost{}
+	if err := w.startWatchdog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if w.Watch.PhaseCheck == nil || !w.Watch.PhaseCheck.Backlog {
+		t.Fatalf("backlog phase check %+v", w.Watch.PhaseCheck)
 	}
 }
 
