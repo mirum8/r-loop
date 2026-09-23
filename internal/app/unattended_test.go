@@ -120,7 +120,7 @@ type unattendedHost struct {
 }
 
 func (h *unattendedHost) Start(pane, name, kind string, args []string) (core.Agent, error) {
-	if name == h.asking {
+	if agentRole(name) == h.asking {
 		for _, a := range args {
 			if u, ok := strings.CutPrefix(a, "mcp_servers.r-loop.url="); ok {
 				h.mu.Lock()
@@ -133,6 +133,7 @@ func (h *unattendedHost) Start(pane, name, kind string, args []string) (core.Age
 }
 
 func (h *unattendedHost) State(agent string) (core.AgentState, error) {
+	agent = agentRole(agent)
 	h.mu.Lock()
 	asked := agent == h.asking && h.asked
 	h.mu.Unlock()
@@ -143,6 +144,7 @@ func (h *unattendedHost) State(agent string) (core.AgentState, error) {
 }
 
 func (h *unattendedHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	agent = agentRole(agent)
 	if _, answer, ok := strings.Cut(text, "r-loop: answer to "); ok && agent == h.asking {
 		h.mu.Lock()
 		_, h.answer, _ = strings.Cut(answer, "): ")

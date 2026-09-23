@@ -17,7 +17,7 @@ Verified against `r-loop` @ `main` `feaf292`.
       - The watchdog still reports a real mismatch between an item and the code, but not the absence of a `Files:` line on a backlog item
       - A plan-file phase with an explicit `Files:` line is checked exactly as today
 
-- [ ] [#3] Mark test runs' phases, so a sandbox run under `/test-app` can't be mistaken for the real run
+- [x] [#3] Mark test runs' phases, so a sandbox run under `/test-app` can't be mistaken for the real run  <!-- fixed: r-loop/phase-3 -->
       - Two unlabelled runs on one machine never clash over a herdr agent name, whatever their phase numbers. Every step, reviewer and gate agent name carries something unique to its run, still within herdr's name limit
       - `r-loop resume` still finds a run's step and reviewer agents under the new names, including for a run started before this change
       - A labelled run keeps its label in workspace and agent names, as `4077431` built it

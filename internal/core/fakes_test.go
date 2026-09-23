@@ -3,9 +3,14 @@ package core
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sync"
 	"time"
 )
+
+var tokenRe = regexp.MustCompile(`-[0-9a-z]{5}(-p[1-9])`)
+
+func role(name string) string { return tokenRe.ReplaceAllString(name, "$1") }
 
 type callLog struct {
 	mu     sync.Mutex

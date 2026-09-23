@@ -58,20 +58,21 @@ type eventsHost struct {
 }
 
 func (h *eventsHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	key := role(agent)
 	if strings.HasPrefix(text, "r-loop: answer to ") {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		if h.refuse[agent] > 0 {
-			h.refuse[agent]--
+		if h.refuse[key] > 0 {
+			h.refuse[key]--
 			h.record("SessionHost.Refused %s", agent)
 			return errors.New("herdr agent prompt: agent_blocked")
 		}
-		h.typed[agent] = true
+		h.typed[key] = true
 		h.record("SessionHost.Typed %s %q", agent, text)
 		return nil
 	}
 	h.mu.Lock()
-	b := h.behaviour[agent]
+	b := h.behaviour[key]
 	h.mu.Unlock()
 	if b == "hold" || b == "ask" || b == "ask-noinput" || b == "ask-fail" {
 		h.record("SessionHost.Prompt %s", agent)
@@ -91,11 +92,12 @@ func (h *eventsHost) finish(agent string) {
 
 func (h *eventsHost) State(agent string) (AgentState, error) {
 	h.mu.Lock()
-	b := h.behaviour[agent]
-	n := h.asked[agent]
-	h.asked[agent] = n + 1
-	typed := h.typed[agent]
-	stopped, isStopped := h.stopped[agent]
+	key := role(agent)
+	b := h.behaviour[key]
+	n := h.asked[key]
+	h.asked[key] = n + 1
+	typed := h.typed[key]
+	stopped, isStopped := h.stopped[key]
 	h.mu.Unlock()
 	if isStopped {
 		return stopped, nil
@@ -201,7 +203,11 @@ func newEventsRig(t *testing.T) *eventsRig {
 }
 
 func (r *eventsRig) agents() []string {
-	return r.host.Agents
+	agents := append([]string(nil), r.host.Agents...)
+	for i := range agents {
+		agents[i] = role(agents[i])
+	}
+	return agents
 }
 
 func (r *eventsRig) stepStates(kind string) []string {

@@ -263,7 +263,7 @@ func TestFixHalfPromptsTheSameStepSessionWithTheRoundFiles(t *testing.T) {
 			t.Errorf("%s = %v, want %v", k, fix[k], v)
 		}
 	}
-	if n := len(r.callsFrom(`SessionHost.Prompt rloop-p3-implement "fix r1" false 0s`)); n != 1 {
+	if n := len(r.callsFrom(`SessionHost.Prompt rloop-2kuxv-p3-implement "fix r1" false 0s`)); n != 1 {
 		t.Fatalf("calls = %q", r.shared.Calls())
 	}
 	clean := r.events("review-clean")
@@ -356,7 +356,7 @@ func TestThreeRoundsWithFixesEndOKWithTheLimitWarningAndOneCommit(t *testing.T) 
 	}
 	calls := r.shared.Calls()
 	commits := r.callsFrom("Repo.CommitAll")
-	lastFix := slices.Index(calls, `SessionHost.Prompt rloop-p3-implement-a2 "fix r3" false 0s`)
+	lastFix := slices.Index(calls, `SessionHost.Prompt rloop-2kuxv-p3-implement-a2 "fix r3" false 0s`)
 	if len(commits) != 1 || lastFix < 0 || slices.Index(calls, commits[0]) < lastFix {
 		t.Fatalf("calls = %q", calls)
 	}

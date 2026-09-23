@@ -254,9 +254,14 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   delivered: <err>`.
 - **Names and paths** — phase branch `r-loop/phase-<N>`; worktree `.r-loop/wt/phase-<N>/` from the
   primary tree's HEAD branch (`base`); slug `phase-<N>-<kebab title>` (≤ 60 chars); workspace label
-  and author agent `rloop-p<N>-<kind>`, with `-a<attempt>` appended whenever `Attempt > 1`; reviewer
-  agent `rloop-p<N>-<kind>-rv-<name>-r<round>`, or `…-r<round>-a<attempt>` when `Attempt > 1`,
-  its prefix truncated so the name fits; milestone `rloop-p<N>-ms`; watchdog `rloop-wd-<runID>`
+  `◆ [<label> ]p<N> <kind>[·a<attempt>]`; author, gate and milestone agent
+  `rloop-[<label>-]<token>-p<N>-<kind>[-a<attempt>]`; reviewer agent adds
+  `-rv-<name>-r<round>[-a<attempt>]`. The token is five base36 characters of
+  `fnv32a(<repo root>\n<runID>[\n<salt>])` modulo 36⁵. A taken name uses salt 1 or 2.
+  All these agents use one 32-character cap: the suffix stays, while an overlong prefix is cut
+  and receives a five-character hash of its full value. An `agent-named` event with
+  `attempt`, `agent`, and for reviewers `reviewer` and `round`, is appended before each `Host.Start`.
+  Watchdog `rloop-wd-<runID>`
   (`core.WatchdogName`: the run id lowercased, every character outside `[a-z0-9_-]` turned into
   `-`, and a name longer than 32 cut to fit with a `-<8-hex fnv32a of the run id>` suffix), so a
   run never touches another run's watchdog — all within `[a-z][a-z0-9_-]{0,31}`. Findings `phase-<N>/<kind>-findings-<name>-r<round>.json`; verdict
@@ -330,7 +335,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Resume** — skips landed phases and `ok` steps, and re-runs the stopped step of **every**
   phase that halted, in phase order, as a new attempt on its own worktree; a phase blocked only
   because of a dependency simply runs. Before claiming, resume asks herdr for the state of the
-  phase's last recorded step agent (`rloop-p<N>-<kind>[-a<attempt>]`); when it is `working` or
+  phase's last attempt's recorded step and reviewer agents from `agent-named` events; for a run
+  without these events it rebuilds the old step and reviewer names. When an agent is `working` or
   `blocked` — a driver killed mid-step leaves it running — resume appends `Event{Kind:
   "stale-interrupted", Phase, Step, Fields{agent, state}}`, then `Interrupt`s it and prints
   `interrupted previous session <agent>: still <state>`. After the claim and before the re-run, every

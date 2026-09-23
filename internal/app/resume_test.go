@@ -46,7 +46,10 @@ var (
 	planRe     = regexp.MustCompile(`\.task-plans/[a-z0-9-]+\.md`)
 	findingsRe = regexp.MustCompile("into `([^`]+-findings-([a-z0-9]+)-r[0-9]+\\.json)`")
 	nativeRe   = regexp.MustCompile("`([^`]+/native-review\\.txt)`")
+	tokenRe    = regexp.MustCompile(`-[0-9a-z]{5}(-p[1-9])`)
 )
+
+func agentRole(name string) string { return tokenRe.ReplaceAllString(name, "$1") }
 
 type simHost struct {
 	mu      sync.Mutex
@@ -78,9 +81,9 @@ func (h *simHost) Open(spec core.OpenSpec) (core.Workspace, error) {
 
 func (h *simHost) Start(pane, name, kind string, args []string) (core.Agent, error) {
 	h.mu.Lock()
-	h.started = append(h.started, name)
+	h.started = append(h.started, agentRole(name))
 	if spec, ok := h.panes[pane]; ok {
-		h.opened[name] = spec
+		h.opened[agentRole(name)] = spec
 	}
 	h.mu.Unlock()
 	return core.Agent{Name: name, Pane: pane}, nil
@@ -91,6 +94,7 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 		return nil
 	}
 	h.mu.Lock()
+	agent = agentRole(agent)
 	h.prompts = append(h.prompts, agent)
 	h.texts[agent] = text
 	spec, fail, hang, edit := h.opened[agent], h.fail[agent], h.hang[agent], h.edit[agent]
@@ -99,7 +103,7 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 	switch {
 	case hang:
 		return nil
-	case strings.Contains(agent, "-rv-"):
+	case findingsRe.MatchString(text):
 		m := findingsRe.FindStringSubmatch(text)
 		writeTo(m[1], `{"reviewer":"`+m[2]+`","findings":[]}`)
 		writeTo(nativeRe.FindStringSubmatch(text)[1], "native review output")
@@ -263,7 +267,7 @@ func TestResumeAfterFailedImplementRerunsOnlyImplementAsAttempt2OverItsWork(t *t
 	if log := git(t, f.root, "log", "--format=%s", "-1", "r-loop/phase-1"); log != "r-loop: phase 1 implement" {
 		t.Fatalf("last commit %q", log)
 	}
-	out := f.out.String()
+	out := agentRole(f.out.String())
 	banner := strings.Index(out, "previous session rloop-p1-implement left in workspace w2")
 	if banner < 0 || banner > strings.Index(out, "face: plain") {
 		t.Fatalf("resume banner missing or below the banner:\n%s", out)
@@ -375,7 +379,7 @@ func TestResumeRunsBothHaltedPhasesInOrderThenTheSkippedDependent(t *testing.T) 
 	if !slices.Equal(lander.landed, []string{"1", "2", "3"}) {
 		t.Fatalf("landed %v", lander.landed)
 	}
-	out := f.out.String()
+	out := agentRole(f.out.String())
 	for _, want := range []string{"previous session rloop-p1-implement left in workspace", "previous session rloop-p2-implement left in workspace"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("%q missing:\n%s", want, out)
@@ -437,16 +441,22 @@ func TestResumeDuringAReviewContinuesAtTheRecordedRound(t *testing.T) {
 		t.Fatalf("code=%d err=%v\n%s", code, err, f.out)
 	}
 	started := sim.startedAgents()
-	if !slices.Contains(started, "rloop-p1-implement-a2") || !slices.Contains(started, "rloop-p1-implement-rv-clau-r2-a2") {
+	reviewer := ""
+	for _, agent := range started {
+		if strings.HasPrefix(agent, "rloop-p1-imple-") && strings.HasSuffix(agent, "-r2-a2") {
+			reviewer = agent
+		}
+	}
+	if !slices.Contains(started, "rloop-p1-implement-a2") || reviewer == "" {
 		t.Fatalf("started %v", started)
 	}
-	if slices.Contains(started, "rloop-p1-implement-rv-clau-r1-a2") {
+	if slices.ContainsFunc(started, func(a string) bool { return strings.HasSuffix(a, "-r1-a2") }) {
 		t.Fatalf("round 1 re-run: %v", started)
 	}
 	if slices.Contains(sim.promptedAgents(), "rloop-p1-implement-a2") {
 		t.Fatalf("work half re-run: %v", sim.promptedAgents())
 	}
-	rv := sim.text("rloop-p1-implement-rv-clau-r2-a2")
+	rv := sim.text(reviewer)
 	if !strings.Contains(rv, "implement-findings-claude-r1.json") || !strings.Contains(rv, "tree-r1") {
 		t.Fatalf("round 2 reviewer lacks round 1 context:\n%s", rv)
 	}
@@ -459,7 +469,7 @@ func TestResumeDuringAReviewContinuesAtTheRecordedRound(t *testing.T) {
 	if !slices.Equal(rounds, []string{"2"}) {
 		t.Fatalf("attempt 2 rounds %v", rounds)
 	}
-	if !strings.Contains(f.out.String(), "previous session rloop-p1-implement left in workspace w7") {
+	if !strings.Contains(agentRole(f.out.String()), "previous session rloop-p1-implement left in workspace w7") {
 		t.Fatalf("banner:\n%s", f.out)
 	}
 }
@@ -783,6 +793,142 @@ func (f *fixture) seedKilledImplement() (string, string) {
 	st.SetCurrent(id, 999999)
 	f.write(".r-loop/wt/phase-1/wip.txt", "half done by the killed attempt")
 	return id, wt
+}
+
+func (f *fixture) appendRunEvent(id string, event core.Record) {
+	f.t.Helper()
+	if err := store.New(f.root).Append(id, event); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *fixture) herdrWorking(t *testing.T, agents ...string) {
+	t.Helper()
+	script := "#!/bin/sh\necho \"$@\" >> \"$0.calls\"\n"
+	for _, agent := range agents {
+		script += fmt.Sprintf("if [ \"$1 $2 $3\" = \"agent get %s\" ]; then echo '{\"result\":{\"agent\":{\"name\":\"%s\",\"pane_id\":\"w2:p1\",\"agent_status\":\"working\"}}}'; exit 0; fi\n", agent, agent)
+	}
+	script += "echo '{}'\n"
+	if err := os.WriteFile(f.herdr, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResumeInterruptsTheRecordedStepAgent(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _ := f.seedKilledImplement()
+	agent := "rloop-k3x9q-p1-implement"
+	f.appendRunEvent(id, ev(t0, "agent-named", 1, "implement", map[string]string{"attempt": "1", "agent": agent}))
+	f.herdrWorking(t, agent)
+	code, _, err := f.resume(newSim())
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v stderr=%s stdout=%s", code, err, f.err.String(), f.out.String())
+	}
+	calls, _ := os.ReadFile(f.herdr + ".calls")
+	stale := stepEvents(f.load(id), "stale-interrupted")
+	if !strings.Contains(string(calls), "agent send-keys "+agent+" esc") || len(stale) != 1 || stale[0].Fields["agent"] != agent || !strings.Contains(f.out.String(), "interrupted previous session "+agent+": still working") || !strings.Contains(f.out.String(), "previous session "+agent+" left in workspace w2") {
+		t.Fatalf("calls %s; stale %+v; out %s", calls, stale, f.out.String())
+	}
+}
+
+func TestResumeFindsTheRecordedAgentOfTheLastAttempt(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _ := f.seedKilledImplement()
+	for _, pair := range [][2]string{{"1", "rloop-k3x9q-p1-implement"}, {"2", "rloop-k3x9q-p1-implement-a2"}} {
+		f.appendRunEvent(id, ev(t0, "agent-named", 1, "implement", map[string]string{"attempt": pair[0], "agent": pair[1]}))
+	}
+	f.appendRunEvent(id, ev(t0, "step", 1, "implement", map[string]string{"state": "running", "attempt": "2", "workspace": "w3"}))
+	f.herdrWorking(t, "rloop-k3x9q-p1-implement-a2")
+	code, _, err := f.resume(newSim())
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	stale := stepEvents(f.load(id), "stale-interrupted")
+	if len(stale) != 1 || stale[0].Fields["agent"] != "rloop-k3x9q-p1-implement-a2" {
+		t.Fatalf("stale %+v", stale)
+	}
+}
+
+func TestResumeInterruptsARecordedReviewerStillWorking(t *testing.T) {
+	f := newResumeFixture(t, reviewConfig)
+	id, _ := f.seedKilledImplement()
+	f.appendRunEvent(id, ev(t0, "review-round", 1, "implement", map[string]string{"round": "2", "tree": "tree", "attempt": "1"}))
+	f.appendRunEvent(id, ev(t0, "agent-named", 1, "implement", map[string]string{"attempt": "1", "agent": "rloop-k3x9q-p1-implement"}))
+	agent := "rloop-k3x9q-p1-implemen-abcde-r2"
+	f.appendRunEvent(id, ev(t0, "agent-named", 1, "implement", map[string]string{"attempt": "1", "agent": agent, "reviewer": "claude", "round": "2"}))
+	f.herdrWorking(t, agent)
+	code, _, err := f.resume(newSim())
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	stale := stepEvents(f.load(id), "stale-interrupted")
+	if len(stale) != 1 || stale[0].Fields["agent"] != agent {
+		t.Fatalf("stale %+v", stale)
+	}
+}
+
+func TestResumeOfARunStartedBeforeTheChangeInterruptsItsLegacyReviewer(t *testing.T) {
+	f := newResumeFixture(t, reviewConfig)
+	id, _ := f.seedKilledImplement()
+	f.appendRunEvent(id, ev(t0, "review-round", 1, "implement", map[string]string{"round": "2", "tree": "tree", "attempt": "1"}))
+	agent := "rloop-p1-implement-rv-claude-r2"
+	f.herdrWorking(t, agent)
+	code, _, err := f.resume(newSim())
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	calls, _ := os.ReadFile(f.herdr + ".calls")
+	stale := stepEvents(f.load(id), "stale-interrupted")
+	if len(stale) != 1 || stale[0].Fields["agent"] != agent || !strings.Contains(string(calls), "agent get rloop-p1-implement\n") || !strings.Contains(string(calls), "agent get rloop-p1-implement-rv-ui-r2\n") {
+		t.Fatalf("calls %s; stale %+v", calls, stale)
+	}
+}
+
+func TestResumeCrashedRightAfterStartFindsTheRecordedAgent(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _ := f.seedKilledImplement()
+	agent := "rloop-k3x9q-p1-implement"
+	f.appendRunEvent(id, ev(t0, "agent-named", 1, "implement", map[string]string{"attempt": "1", "agent": agent}))
+	f.herdrWorking(t, agent)
+	code, _, err := f.resume(newSim())
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	stale := stepEvents(f.load(id), "stale-interrupted")
+	if len(stale) != 1 || stale[0].Fields["agent"] != agent {
+		t.Fatalf("stale %+v", stale)
+	}
+}
+
+func TestAResumedRunFindsTheStepAgentItNamedItself(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	first := newSim()
+	first.fail["rloop-p1-implement"] = true
+	id, code := f.firstRun(first, "--phases", "1")
+	if code != 1 {
+		t.Fatalf("first code %d", code)
+	}
+	var agent string
+	for _, e := range stepEvents(f.load(id), "agent-named") {
+		if e.Phase == "1" && e.Step == "implement" {
+			agent = e.Fields["agent"]
+		}
+	}
+	if !regexp.MustCompile(`^rloop-[0-9a-z]{5}-p1-implement$`).MatchString(agent) {
+		t.Fatalf("agent %q", agent)
+	}
+	f.herdrWorking(t, agent)
+	code, _, err := f.resume(newSim())
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	stale := stepEvents(f.load(id), "stale-interrupted")
+	if len(stale) != 1 || stale[0].Fields["agent"] != agent {
+		t.Fatalf("stale %+v", stale)
+	}
+	if !strings.Contains(f.out.String(), "previous session "+agent+" left in workspace w2") {
+		t.Fatalf("out %s", f.out.String())
+	}
 }
 
 func TestResumeClaimsTheLeftoversOfAStepKilledInItsWorkHalfAndBuildsOnThem(t *testing.T) {

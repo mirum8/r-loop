@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -98,6 +99,65 @@ func (r *reviewRig) callsFrom(prefixes ...string) []string {
 		}
 	}
 	return out
+}
+
+func TestReviewersOfOneRoundGetDistinctNamesWithinTheLimit(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+	if out := r.run(); out.State != StepOK {
+		t.Fatalf("outcome %+v", out)
+	}
+	for _, name := range []string{"rloop-2kuxv-p3-implemen-q1s68-r1", "rloop-2kuxv-p3-implemen-8lgad-r1"} {
+		if len(name) != 32 || len(r.callsFrom("SessionHost.Start pane-2 "+name, "SessionHost.Start pane-3 "+name)) != 1 {
+			t.Fatalf("name %q; calls %v", name, r.shared.Calls())
+		}
+	}
+}
+
+func TestAReviewerOfARetriedStepKeepsRoundAndAttempt(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.worker.Ref.Key.Attempt = 2
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+	r.run()
+	if len(r.callsFrom("SessionHost.Start pane-2 rloop-2kuxv-p3-imple-8lgad-r1-a2")) != 1 {
+		t.Fatalf("calls %v", r.shared.Calls())
+	}
+}
+
+func TestTwoRunsNameTheSameReviewerApart(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.worker.Ref.Key.Run = "run-7"
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+	r.run()
+	if len(r.callsFrom("SessionHost.Start pane-2 rloop-qih3p-p3-implemen-an2ns-r1")) != 1 {
+		t.Fatalf("calls %v", r.shared.Calls())
+	}
+}
+
+func TestAReviewerWhoseNameIsTakenMovesToTheNextToken(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.host.Panes = map[string]string{"rloop-2kuxv-p3-implemen-8lgad-r1": "pane-9"}
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+	r.run()
+	if len(r.callsFrom("SessionHost.Start pane-2 rloop-uiz4e-p3-implemen-y9gc2-r1")) != 1 {
+		t.Fatalf("calls %v", r.shared.Calls())
+	}
+}
+
+func TestAReviewerIsRecordedBeforeItStarts(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+	r.run()
+	events := r.events("agent-named")
+	want := map[string]string{"attempt": "1", "agent": "rloop-2kuxv-p3-implemen-8lgad-r1", "reviewer": "codex", "round": "1", "step": "implement"}
+	if len(events) != 2 || !reflect.DeepEqual(events[1].Fields, want) {
+		t.Fatalf("events %+v", events)
+	}
+	calls := r.shared.Calls()
+	start := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "SessionHost.Start pane-2") })
+	if start < 1 || calls[start-1] != "Store.Append run-1 event" {
+		t.Fatalf("calls %v", calls)
+	}
 }
 
 func writeReview(t *testing.T, vars map[string]any, outcome string, findings int) {
@@ -278,15 +338,17 @@ func TestReviewSplitsStartsThenPromptsAndReplacesPanesWithFreshAgentsInRound2(t 
 		"Store.Append run-1 event",
 		"SessionHost.Split pane-1 right " + wt,
 		"SessionHost.Split pane-2 down " + wt,
-		"SessionHost.Start pane-2 rloop-p3-implement-rv-claude-r1 claude []",
-		"SessionHost.Start pane-3 rloop-p3-implement-rv-codex-r1 codex []",
-		`SessionHost.Prompt rloop-p3-implement-rv-claude-r1 "review r1" false 0s`,
-		`SessionHost.Prompt rloop-p3-implement-rv-codex-r1 "review r1" false 0s`,
+		"Store.Append run-1 event",
+		"SessionHost.Start pane-2 rloop-2kuxv-p3-implemen-q1s68-r1 claude []",
+		"Store.Append run-1 event",
+		"SessionHost.Start pane-3 rloop-2kuxv-p3-implemen-8lgad-r1 codex []",
+		`SessionHost.Prompt rloop-2kuxv-p3-implemen-q1s68-r1 "review r1" false 0s`,
+		`SessionHost.Prompt rloop-2kuxv-p3-implemen-8lgad-r1 "review r1" false 0s`,
 		"Store.Append run-1 event",
 		"Store.Append run-1 event",
 		"Repo.Snapshot " + wt,
 		"Repo.TreeDiff tree-start tree-start",
-		`SessionHost.Prompt rloop-p3-implement "fix r1" false 0s`,
+		`SessionHost.Prompt rloop-2kuxv-p3-implement "fix r1" false 0s`,
 		"Repo.Snapshot " + wt,
 		"Repo.TreeDiff tree-start tree-start",
 		"Repo.Snapshot " + wt,
@@ -299,10 +361,12 @@ func TestReviewSplitsStartsThenPromptsAndReplacesPanesWithFreshAgentsInRound2(t 
 		"SessionHost.ClosePane pane-3",
 		"SessionHost.Split pane-1 right " + wt,
 		"SessionHost.Split pane-4 down " + wt,
-		"SessionHost.Start pane-4 rloop-p3-implement-rv-claude-r2 claude []",
-		"SessionHost.Start pane-5 rloop-p3-implement-rv-codex-r2 codex []",
-		`SessionHost.Prompt rloop-p3-implement-rv-claude-r2 "review r2" false 0s`,
-		`SessionHost.Prompt rloop-p3-implement-rv-codex-r2 "review r2" false 0s`,
+		"Store.Append run-1 event",
+		"SessionHost.Start pane-4 rloop-2kuxv-p3-implemen-q1s68-r2 claude []",
+		"Store.Append run-1 event",
+		"SessionHost.Start pane-5 rloop-2kuxv-p3-implemen-8lgad-r2 codex []",
+		`SessionHost.Prompt rloop-2kuxv-p3-implemen-q1s68-r2 "review r2" false 0s`,
+		`SessionHost.Prompt rloop-2kuxv-p3-implemen-8lgad-r2 "review r2" false 0s`,
 		"Store.Append run-1 event",
 		"Store.Append run-1 event",
 		"Repo.Snapshot " + wt,
@@ -322,7 +386,7 @@ func TestReviewSplitsStartsThenPromptsAndReplacesPanesWithFreshAgentsInRound2(t 
 	if len(clean) != 1 || !reflect.DeepEqual(clean[0].Fields, map[string]string{"step": "implement", "round": "2"}) {
 		t.Fatalf("review-clean events = %+v", clean)
 	}
-	if got := r.worker.asker("implement-rv-codex"); got != "rloop-p3-implement-rv-codex-r2" {
+	if got := r.worker.asker("implement-rv-codex"); got != "rloop-2kuxv-p3-implemen-8lgad-r2" {
 		t.Errorf("a codex reviewer question goes to %q", got)
 	}
 }
@@ -387,7 +451,7 @@ func TestReviewerAgentNameIsTruncatedToFitKeepingTheRound(t *testing.T) {
 		t.Fatalf("starts = %q", starts)
 	}
 	name := strings.Fields(starts[0])[2]
-	if len(name) > 32 || strings.Contains(name, "--") || !strings.HasSuffix(name, "-r1") || !strings.HasPrefix(name, "rloop-p3-implement-rv-claude") {
+	if len(name) > 32 || strings.Contains(name, "--") || !strings.HasSuffix(name, "-r1") || !strings.HasPrefix(name, "rloop-2kuxv-p3-implemen-") {
 		t.Fatalf("name = %q", name)
 	}
 }
@@ -417,8 +481,8 @@ func TestBlockReviewerPassesModelAndEffortScalarReviewerNone(t *testing.T) {
 	}
 	starts := r.callsFrom("SessionHost.Start pane-")
 	want := []string{
-		"SessionHost.Start pane-2 rloop-p3-implement-rv-codex-r1 codex [--model gpt-5.6-sol --effort high]",
-		"SessionHost.Start pane-3 rloop-p3-implement-rv-claude-r1 claude []",
+		"SessionHost.Start pane-2 rloop-2kuxv-p3-implemen-8lgad-r1 codex [--model gpt-5.6-sol --effort high]",
+		"SessionHost.Start pane-3 rloop-2kuxv-p3-implemen-q1s68-r1 claude []",
 	}
 	if !reflect.DeepEqual(starts[1:], want) {
 		t.Fatalf("starts = %q", starts)
@@ -463,7 +527,7 @@ func TestStartFailureNamesTheReviewer(t *testing.T) {
 	if out.State != StepFailed || out.Reason != "reviewer claude: agent_start_failed" {
 		t.Fatalf("outcome = %+v", out)
 	}
-	if n := len(r.callsFrom("SessionHost.Prompt rloop-p3-implement-rv")); n != 0 {
+	if n := len(r.callsFrom("SessionHost.Prompt rloop-2kuxv-p3-implement-rv")); n != 0 {
 		t.Fatalf("calls = %q", r.shared.Calls())
 	}
 }
@@ -534,14 +598,14 @@ func TestOneReviewerStallsWhileTheOtherFinishes(t *testing.T) {
 			writeReview(t, vars, "ok", 1)
 		}
 	}
-	r.sm.Host = &stateHost{scriptedHost: r.host, states: map[string]AgentState{"rloop-p3-implement-rv-claude-r1": AgentIdle}}
+	r.sm.Host = &stateHost{scriptedHost: r.host, states: map[string]AgentState{"rloop-2kuxv-p3-implemen-q1s68-r1": AgentIdle}}
 
 	out := r.run()
 
 	if out.State != StepFailed || out.Reason != "reviewer claude: stalled: no response to nudge" || !out.Stalled {
 		t.Fatalf("outcome = %+v", out)
 	}
-	if n := len(r.callsFrom(`SessionHost.Prompt rloop-p3-implement-rv-claude-r1 "r-loop: no sentinel`)); n != 1 {
+	if n := len(r.callsFrom(`SessionHost.Prompt rloop-2kuxv-p3-implemen-q1s68-r1 "r-loop: no sentinel`)); n != 1 {
 		t.Fatalf("nudges = %d", n)
 	}
 	finds := r.events("review-find")
@@ -649,7 +713,7 @@ func TestRetriedAttemptSuffixesReviewerNamesAndDropsStaleFindings(t *testing.T) 
 	if out.State != StepFailed || out.Reason != "reviewer codex: evidence missing: no findings at implement-findings-codex-r1.json" {
 		t.Fatalf("outcome = %+v", out)
 	}
-	if n := len(r.callsFrom("SessionHost.Start pane-2 rloop-p3-implement-rv-code-r1-a2 ")); n != 1 {
+	if n := len(r.callsFrom("SessionHost.Start pane-2 rloop-2kuxv-p3-imple-8lgad-r1-a2 ")); n != 1 {
 		t.Fatalf("calls = %q", r.shared.Calls())
 	}
 }
@@ -713,7 +777,7 @@ func TestReviewerIsStartedWithItsOwnAskURLAndMCPConfig(t *testing.T) {
 	if !host.present {
 		t.Fatal("the mcp config was not there when the reviewer started")
 	}
-	if got := r.count("SessionHost.Start pane-2 rloop-p3-implement-rv-claude-r1 claude [--mcp-config " + path + "]"); got != 1 {
+	if got := r.count("SessionHost.Start pane-2 rloop-2kuxv-p3-implemen-q1s68-r1 claude [--mcp-config " + path + "]"); got != 1 {
 		t.Fatalf("calls =\n%s", strings.Join(r.shared.Calls(), "\n"))
 	}
 	data, err := os.ReadFile(path)
@@ -762,11 +826,11 @@ func TestAnAskNoneReviewerRecordsAskNoneOnceNamingTheReviewer(t *testing.T) {
 
 func TestReviewerWithoutAskUserIsNotNudgedToCallIt(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "claude"})
-	r.sm.Host = &stateHost{scriptedHost: r.host, states: map[string]AgentState{"rloop-p3-implement-rv-claude-r1": AgentIdle}}
+	r.sm.Host = &stateHost{scriptedHost: r.host, states: map[string]AgentState{"rloop-2kuxv-p3-implemen-q1s68-r1": AgentIdle}}
 
 	r.run()
 
-	nudges := r.callsFrom(`SessionHost.Prompt rloop-p3-implement-rv-claude-r1 "r-loop: no sentinel`)
+	nudges := r.callsFrom(`SessionHost.Prompt rloop-2kuxv-p3-implemen-q1s68-r1 "r-loop: no sentinel`)
 	if len(nudges) != 1 || strings.Contains(nudges[0], "ask_watchdog") {
 		t.Fatalf("nudges = %q", nudges)
 	}
@@ -776,11 +840,11 @@ func TestReviewerWithAskWatchdogIsNudgedToCallIt(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "claude"})
 	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
 	r.sm.Resolve = askingReviewResolve(r)
-	r.sm.Host = &stateHost{scriptedHost: r.host, states: map[string]AgentState{"rloop-p3-implement-rv-claude-r1": AgentIdle}}
+	r.sm.Host = &stateHost{scriptedHost: r.host, states: map[string]AgentState{"rloop-2kuxv-p3-implemen-q1s68-r1": AgentIdle}}
 
 	r.run()
 
-	nudges := r.callsFrom(`SessionHost.Prompt rloop-p3-implement-rv-claude-r1 "r-loop: no sentinel`)
+	nudges := r.callsFrom(`SessionHost.Prompt rloop-2kuxv-p3-implemen-q1s68-r1 "r-loop: no sentinel`)
 	if len(nudges) != 1 || !strings.Contains(nudges[0], "ask_watchdog") {
 		t.Fatalf("nudges = %q", nudges)
 	}
@@ -802,7 +866,7 @@ func TestReviewerClockHoldsWhileTheStepHasAnOpenQuestion(t *testing.T) {
 	if out.State != StepOK {
 		t.Fatalf("outcome = %+v", out)
 	}
-	if n := len(r.callsFrom(`SessionHost.Prompt rloop-p3-implement-rv-codex-r1 "r-loop: no sentinel`)); n != 0 {
+	if n := len(r.callsFrom(`SessionHost.Prompt rloop-2kuxv-p3-implemen-8lgad-r1 "r-loop: no sentinel`)); n != 0 {
 		t.Fatalf("nudges = %d", n)
 	}
 }
@@ -888,9 +952,9 @@ func TestRound2StartsWhenTheRound1ReviewerIgnoresTheInterrupt(t *testing.T) {
 		t.Fatalf("outcome = %+v", out)
 	}
 	if got := r.callsFrom("SessionHost.Start pane-2", "SessionHost.Start pane-3", "SessionHost.ClosePane"); !reflect.DeepEqual(got, []string{
-		"SessionHost.Start pane-2 rloop-p3-implement-rv-claude-r1 claude []",
+		"SessionHost.Start pane-2 rloop-2kuxv-p3-implemen-q1s68-r1 claude []",
 		"SessionHost.ClosePane pane-2",
-		"SessionHost.Start pane-3 rloop-p3-implement-rv-claude-r2 claude []",
+		"SessionHost.Start pane-3 rloop-2kuxv-p3-implemen-q1s68-r2 claude []",
 	}) {
 		t.Fatalf("calls = %q", got)
 	}
@@ -964,8 +1028,8 @@ func TestNamedUIReviewerRunsBesideTheSameProviderWithItsOwnPromptAndFiles(t *tes
 	}
 	starts := r.callsFrom("SessionHost.Start pane-")[1:]
 	want := []string{
-		"SessionHost.Start pane-2 rloop-p3-implement-rv-claude-r1 claude []",
-		"SessionHost.Start pane-3 rloop-p3-implement-rv-ui-r1 claude [--model opus --effort high]",
+		"SessionHost.Start pane-2 rloop-2kuxv-p3-implemen-q1s68-r1 claude []",
+		"SessionHost.Start pane-3 rloop-2kuxv-p3-implemen-eshis-r1 claude [--model opus --effort high]",
 	}
 	if !reflect.DeepEqual(starts, want) {
 		t.Fatalf("starts = %q", starts)
@@ -1076,7 +1140,7 @@ func TestALabelledRunNamesTheReviewerWithTheLabel(t *testing.T) {
 
 	r.run()
 
-	if n := len(r.callsFrom("SessionHost.Start pane-2 rloop-test-p3-implement-rv-co-r1 codex")); n != 1 {
+	if n := len(r.callsFrom("SessionHost.Start pane-2 rloop-test-2kuxv-p3-imp-v9mk8-r1 codex")); n != 1 {
 		t.Fatalf("starts = %q", r.callsFrom("SessionHost.Start"))
 	}
 }
