@@ -28,19 +28,21 @@ type Watchdog struct {
 	Sleep                                  func(time.Duration)
 	OnGone                                 func()
 
-	mu        sync.Mutex
-	send      sync.Mutex
-	wait      sync.Mutex
-	cond      *sync.Cond
-	quit      chan struct{}
-	drained   chan struct{}
-	queue     []string
-	stopping  bool
-	gone      bool
-	asking    bool
-	blocked   bool
-	pane      string
-	workspace string
+	mu           sync.Mutex
+	send         sync.Mutex
+	wait         sync.Mutex
+	cond         *sync.Cond
+	quit         chan struct{}
+	drained      chan struct{}
+	queue        []string
+	stopping     bool
+	dropQueue    bool
+	gone         bool
+	asking       bool
+	blocked      bool
+	pane         string
+	workspace    string
+	notifyCancel context.CancelFunc
 }
 
 func WatchdogName(runID string) string {
@@ -164,7 +166,10 @@ func (d *Watchdog) deliver() {
 func (d *Watchdog) flush() {
 	for {
 		d.mu.Lock()
-		if len(d.queue) == 0 {
+		if len(d.queue) == 0 || d.dropQueue {
+			if d.dropQueue {
+				d.queue = nil
+			}
 			d.mu.Unlock()
 			return
 		}
@@ -182,12 +187,69 @@ func (d *Watchdog) Notify(text string, wait bool, timeout time.Duration) error {
 	return d.prompt(text, wait, timeout)
 }
 
+func (d *Watchdog) NotifyContext(ctx context.Context, text string, wait bool, timeout time.Duration) error {
+	ctx, cancel := context.WithCancel(ctx)
+	d.mu.Lock()
+	if d.stopping {
+		d.mu.Unlock()
+		cancel()
+		return context.Canceled
+	}
+	d.notifyCancel = cancel
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		d.notifyCancel = nil
+		d.mu.Unlock()
+		cancel()
+	}()
+	d.send.Lock()
+	defer func() {
+		if ctx.Err() != nil {
+			d.mu.Lock()
+			d.dropQueue = true
+			d.queue = nil
+			d.mu.Unlock()
+		}
+		d.send.Unlock()
+	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.flush()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if host, ok := d.Host.(interface {
+		PromptContext(context.Context, string, string, bool, time.Duration) error
+	}); ok {
+		return d.promptWith(ctx, text, wait, timeout, func() error {
+			return host.PromptContext(ctx, d.agent(), text, wait, timeout)
+		})
+	}
+	return d.promptWith(ctx, text, wait, timeout, func() error {
+		return d.Host.Prompt(d.agent(), text, wait, timeout)
+	})
+}
+
 func (d *Watchdog) prompt(text string, wait bool, timeout time.Duration) error {
+	return d.promptWith(context.Background(), text, wait, timeout, func() error {
+		return d.Host.Prompt(d.agent(), text, wait, timeout)
+	})
+}
+
+func (d *Watchdog) promptWith(ctx context.Context, text string, wait bool, timeout time.Duration, call func() error) error {
 	if !d.live() {
 		return nil
 	}
-	err := d.Host.Prompt(d.agent(), text, wait, timeout)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	err := call()
 	for blocked(err) {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		state, serr := d.Host.State(d.agent())
 		if serr != nil {
 			return serr
@@ -201,7 +263,13 @@ func (d *Watchdog) prompt(text string, wait bool, timeout time.Duration) error {
 		if !d.pause() {
 			return err
 		}
-		err = d.Host.Prompt(d.agent(), text, wait, timeout)
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
+		err = call()
+	}
+	if cerr := ctx.Err(); cerr != nil {
+		return cerr
 	}
 	if !blocked(err) {
 		if err == nil {
@@ -322,11 +390,20 @@ func (d *Watchdog) Stop() error {
 	if !d.stopping {
 		d.stopping = true
 		close(d.quit)
+		if d.notifyCancel != nil {
+			d.dropQueue = true
+			d.notifyCancel()
+			d.queue = nil
+		}
 		d.cond.Broadcast()
 	}
 	drained := d.drained
+	_, cancellable := d.Host.(interface {
+		PromptContext(context.Context, string, string, bool, time.Duration) error
+	})
+	canWait := d.notifyCancel == nil || cancellable
 	d.mu.Unlock()
-	if drained != nil {
+	if drained != nil && canWait {
 		<-drained
 	}
 	d.mu.Lock()

@@ -124,7 +124,7 @@ func (p *GateProbe) discover(ctx context.Context, phase Phase, st RunState) (str
 		return "", fmt.Errorf("%s names no command in backticks", report)
 	}
 	command := strings.TrimSpace(m[1])
-	code, output, err := p.Repo.Run("", command, p.Timeout)
+	code, output, err := p.Repo.Run(ctx, "", command, p.Timeout)
 	if err == nil && code != 0 {
 		err = fmt.Errorf("exited %d\n%s", code, output)
 	}

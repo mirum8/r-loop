@@ -1094,3 +1094,20 @@ func TestAnAbortDuringTheRemedyWindowStopsTheRunAtOnce(t *testing.T) {
 		t.Errorf("hooks fired on abort: %v", got)
 	}
 }
+
+func TestAnInterruptDuringTheRemedyWindowHaltsAtOnce(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.RemedyWindow = 2 * time.Second
+	r.host.behaviour["rloop-p1-implement"] = "fail"
+	ctx, cancel := context.WithCancelCause(context.Background())
+	r.watcher.ended = func(ref StepRef, out Outcome) {
+		if out.State == StepFailed {
+			cancel(errors.New("SIGTERM"))
+		}
+	}
+	start := time.Now()
+	code := r.loop.Run(ctx, RunOptions{Phases: []string{"1"}})
+	if code != 4 || time.Since(start) >= time.Second || len(r.events("phase-blocked")) != 0 {
+		t.Fatalf("exit %d, elapsed %s, blocked %+v", code, time.Since(start), r.events("phase-blocked"))
+	}
+}

@@ -2,6 +2,7 @@ package herdr
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"r-loop/internal/core"
@@ -18,6 +20,7 @@ import (
 var ErrNoBinary = errors.New("herdr binary not found")
 
 var (
+	callTimeout     = 30 * time.Second
 	paneBusyBudget  = 20 * time.Second
 	paneBusyBackoff = 250 * time.Millisecond
 )
@@ -35,13 +38,32 @@ type Client struct {
 }
 
 func (c Client) exec(args ...string) ([]byte, error) {
-	cmd := exec.Command(c.Bin, args...)
+	return c.execWithin(callTimeout, args...)
+}
+
+func (c Client) execWithin(limit time.Duration, args ...string) ([]byte, error) {
+	return c.execWithinContext(context.Background(), limit, args...)
+}
+
+func (c Client) execWithinContext(parent context.Context, limit time.Duration, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, limit)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, c.Bin, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if err == nil {
 		return stdout.Bytes(), nil
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, fmt.Errorf("herdr %s: timed out after %s", strings.Join(args[:min(len(args), 3)], " "), limit)
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return nil, ctx.Err()
 	}
 	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("%w: %s", ErrNoBinary, c.Bin)
@@ -64,7 +86,15 @@ func (c Client) exec(args ...string) ([]byte, error) {
 }
 
 func (c Client) call(out any, args ...string) error {
-	data, err := c.exec(args...)
+	return c.callWithin(callTimeout, out, args...)
+}
+
+func (c Client) callWithin(limit time.Duration, out any, args ...string) error {
+	return c.callWithinContext(context.Background(), limit, out, args...)
+}
+
+func (c Client) callWithinContext(ctx context.Context, limit time.Duration, out any, args ...string) error {
+	data, err := c.execWithinContext(ctx, limit, args...)
 	if err != nil {
 		return err
 	}
@@ -248,12 +278,19 @@ func (c Client) awaitUnblocked(agent string) error {
 }
 
 func (c Client) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	return c.PromptContext(context.Background(), agent, text, wait, timeout)
+}
+
+func (c Client) PromptContext(ctx context.Context, agent, text string, wait bool, timeout time.Duration) error {
 	args := []string{"agent", "prompt", agent, text}
 	if wait {
 		args = append(args, "--wait", "--timeout", strconv.FormatInt(timeout.Milliseconds(), 10))
 	}
 	var out struct{}
-	return c.call(&out, args...)
+	if wait {
+		return c.callWithinContext(ctx, callTimeout+timeout, &out, args...)
+	}
+	return c.callWithinContext(ctx, callTimeout, &out, args...)
 }
 
 func (c Client) State(agent string) (core.AgentState, error) {

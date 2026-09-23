@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,59 @@ import (
 	"testing"
 	"time"
 )
+
+func TestAnAbortDuringThePhaseCheckWaitStopsTheRun(t *testing.T) {
+	r := newCheckRig(t)
+	blocked := make(chan struct{})
+	t.Cleanup(func() { close(blocked) })
+	r.dogHost.onPrompt = func(text string) {
+		if strings.HasPrefix(text, "check phase") {
+			r.store.MarkAbort("run-1")
+			select {
+			case <-blocked:
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}
+	start := time.Now()
+	code := r.run(RunOptions{Phases: []string{"1"}})
+	if code != 1 || time.Since(start) >= 2*time.Second {
+		t.Fatalf("exit %d, elapsed %s", code, time.Since(start))
+	}
+	if got := r.calls("SessionHost.Open"); len(got) != 0 {
+		t.Fatalf("sessions opened: %v", got)
+	}
+	if ev := r.events("aborted"); len(ev) != 1 || ev[0].Step != "check" {
+		t.Fatalf("aborted = %+v", ev)
+	}
+}
+
+func TestAnInterruptDuringThePhaseCheckWaitHaltsTheRun(t *testing.T) {
+	r := newCheckRig(t)
+	blocked := make(chan struct{})
+	t.Cleanup(func() { close(blocked) })
+	started := make(chan struct{})
+	r.dogHost.onPrompt = func(text string) {
+		if strings.HasPrefix(text, "check phase") {
+			close(started)
+			select {
+			case <-blocked:
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	go func() { <-started; time.Sleep(20 * time.Millisecond); cancel(errors.New("SIGTERM")) }()
+	start := time.Now()
+	code := r.loop.Run(ctx, RunOptions{Phases: []string{"1"}})
+	if code != 4 || time.Since(start) >= 2*time.Second {
+		t.Fatalf("exit %d, elapsed %s", code, time.Since(start))
+	}
+	runs := r.runRecords()
+	if last := runs[len(runs)-1]; last.Run != RunHalted || !strings.HasPrefix(last.Reason, "interrupted") {
+		t.Fatalf("last = %+v", last)
+	}
+}
 
 type checkHost struct {
 	fakeSessionHost

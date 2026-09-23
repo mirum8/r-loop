@@ -122,12 +122,12 @@ provider, model and effort, and `--model` and `--effort` override one row for on
     (tree string, err error)` — a tree object of the working tree, untracked files included,
     written through a throwaway index so no branch, commit or real index changes ·
     `TreeDiff(from, to string) ([]string, error)` — the paths that differ between two trees ·
-    `MergeNoFF(branch) error` (`--no-commit`; a failure that leaves unmerged paths returns
+    `MergeNoFF(ctx, branch) error` (`--no-commit`; when ctx ends, git's process group is killed and the primary tree is put back at the pre-merge HEAD, returning an error that says interrupted; a failure that leaves unmerged paths returns
     `ErrMergeConflict` naming them after `git merge --abort`; any other failure returns git's
-    error) · `AbortMerge() error` · `Commit(message) (string, error)` (`git add -A`
-    then commit, in the primary tree) · `CommitTouches(sha) ([]string, error)` · `ResetHard(ref)
-    error` · `Run(dir, command string, timeout) (exit int, output string, err error)` (via `sh
-    -c`).
+    error) · `AbortMerge() error` · `Commit(ctx, message) (string, error)` (`git add -A`
+    then commit, in the primary tree; the commit is killed when ctx ends) · `CommitTouches(sha) ([]string, error)` · `ResetHard(ref)
+    error` · `Run(ctx, dir, command string, timeout) (exit int, output string, err error)` (via `sh
+    -c`, in its own process group with `GIT_TERMINAL_PROMPT=0`; the group is killed when ctx ends, on the timeout, and once the command exits; a command that exits while a background child still holds its output is judged by its exit code, never by the wait delay). Every other git call runs with GIT_TERMINAL_PROMPT=0 in its own process group, killed after a 10-minute per-call timeout with an error naming the command and the timeout; every herdr CLI call has a 30 s per-call timeout (a waiting Prompt gets its wait on top), with the same error shape.
   - `Store`: `Create(RunMeta) (runID string, err error)` · `Append(runID, Record) error` (a
     transition is appended **before** the action it describes) · `Load(runID) (RunState,
     error)` (reads every file of the run) · `Current() (runID string, pid int, ok bool)` ·
@@ -339,7 +339,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   remedy window. An abort likewise records the run `halted` before the live step is cancelled. When nothing is left to run: all landed → `finished`,
   `notify.onDone`, exit `0`; any phase blocked → `halted`, `notify.onHalt`, `r-loop resume`
   printed, and the exit code of the **first** block — `1` failed, `3` a failure that began as a
-  stall, `5` a watchdog halt. Abort marker → exit `1` at once; preflight refusal `4`; usage, git
+  stall, `5` a watchdog halt. Abort marker → exit `1` at once; SIGINT, SIGTERM or SIGHUP during a step, the remedy window, the phase check or land, or the TUI program exiting (its own exit or an error from Run) → the run is recorded `halted` with `interrupted: <signal | display closed | display exited: <err>>`, a `halt` event with that reason and `r-loop resume`, no hook, exit `4`; an abort or interrupt during land kills the gate's process group and aborts the merge, so the primary tree is clean; preflight refusal `4`; usage, git
   state, config `2`; missing binary `127`.
 - **Resume** — skips landed phases and `ok` steps, and re-runs the stopped step of **every**
   phase that halted, in phase order, as a new attempt on its own worktree; a phase blocked only
@@ -505,7 +505,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   watchdog's pane (ADR-73).
 - **Stop** — `ctrl+c` on a live run asks `stop the run? … [y/n]`; `y` marks the run aborted,
   exactly as `r-loop abort` does (the live step's session and worktree are left for resume); any
-  other key cancels. Before a run exists `y` only says `stopping before the run starts`.
+  other key cancels. A second ctrl+c while the prompt is up, or any ctrl+c after `y` (even once the run shows halted), force-quits: it marks the run aborted if that was not yet done, quits the program and restores the terminal; the run exits 1. The driver owns SIGINT/SIGTERM/SIGHUP — the TUI installs no signal handler of its own. Before a run exists `y` only says `stopping before the run starts`.
 - **Dry run** — `--dry-run` always prints plain lines and starts no session. After the banner and
   `run list:` (one line per phase and its pipeline), a backlog item with no criteria gets
   `warning: phase N has no acceptance criteria…`, and each open `## Resolve first` entry that

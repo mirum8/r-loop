@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"regexp"
 	"strconv"
@@ -583,12 +584,18 @@ func TestCtrlCDuringALiveStepAsksBeforeStopping(t *testing.T) {
 	if !strings.Contains(next.(Model).View(), "stop the run?") {
 		t.Fatalf("view:\n%s", next.(Model).View())
 	}
+	if !strings.Contains(next.(Model).View(), "ctrl+c again to quit now") {
+		t.Fatalf("stop prompt omits force quit: %s", next.(Model).View())
+	}
 	next, cmd = next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if cmd != nil || aborted != 1 {
 		t.Fatalf("y: cmd=%v aborted=%d", cmd, aborted)
 	}
 	if !strings.Contains(next.(Model).View(), "abort requested") {
 		t.Fatalf("view:\n%s", next.(Model).View())
+	}
+	if !strings.Contains(next.(Model).View(), "ctrl+c again to quit now") || strings.Contains(next.(Model).View(), "before its next step") {
+		t.Fatalf("abort notice is inaccurate: %s", next.(Model).View())
 	}
 	if _, cmd := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")}); cmd != nil {
 		t.Fatal("q quit a live run")
@@ -605,6 +612,51 @@ func TestAnyKeyButYCancelsTheStop(t *testing.T) {
 
 	if aborted != 0 || strings.Contains(next.(Model).View(), "stop the run?") {
 		t.Fatalf("aborted=%d view:\n%s", aborted, next.(Model).View())
+	}
+}
+
+func TestASecondCtrlCAtTheStopPromptAbortsAndQuits(t *testing.T) {
+	m := newModel(recorded())
+	aborted := 0
+	m.abort = func() error { aborted++; return nil }
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, cmd := next.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil || aborted != 1 {
+		t.Fatalf("second ctrl+c: command=%v abort calls=%d", cmd, aborted)
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("second ctrl+c did not quit")
+	}
+}
+
+func TestCtrlCAfterAnAbortWasRequestedQuitsWithoutAbortingTwice(t *testing.T) {
+	m := newModel(recorded())
+	aborted := 0
+	m.abort = func() error { aborted++; return nil }
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	next, _ = next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	_, cmd := next.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil || aborted != 1 {
+		t.Fatalf("ctrl+c after abort: command=%v abort calls=%d", cmd, aborted)
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("ctrl+c after abort did not quit")
+	}
+}
+
+func TestCtrlCAfterTheAbortedEventStillQuits(t *testing.T) {
+	m := newModel(recorded())
+	aborted := 0
+	m.abort = func() error { aborted++; return nil }
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	next, _ = next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = next.(Model).Apply(core.Event{Kind: "aborted", Phase: "2", Step: "implement"})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil || aborted != 1 {
+		t.Fatalf("ctrl+c after event: command=%v abort calls=%d", cmd, aborted)
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("ctrl+c after event did not quit")
 	}
 }
 
@@ -724,6 +776,97 @@ func TestFaceSendsEventsToTheProgramAndClosesOnQ(t *testing.T) {
 
 	if !strings.Contains(out.String(), "report: /repo/report.md") {
 		t.Fatalf("out:\n%s", out.String())
+	}
+}
+
+func TestFaceReportsARunErrorToOnExit(t *testing.T) {
+	in, writer := io.Pipe()
+	defer in.Close()
+	var out syncBuffer
+	exits := make(chan error, 1)
+	f := &Face{In: in, Out: &out, OnExit: func(err error) { exits <- err }}
+	f.Start(Header{RunID: "r1", Started: t0}, plan(), nil)
+	writer.CloseWithError(errors.New("tty gone"))
+	select {
+	case err := <-exits:
+		if err == nil || !strings.Contains(err.Error(), "tty gone") {
+			t.Fatalf("exit error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		f.Stop()
+		t.Fatal("Run exit was not reported")
+	}
+}
+
+func TestFaceReportsItsProgramExitToOnExit(t *testing.T) {
+	in, writer := io.Pipe()
+	defer in.Close()
+	defer writer.Close()
+	var out syncBuffer
+	exits := make(chan error, 2)
+	f := &Face{In: in, Out: &out, OnExit: func(err error) { exits <- err }}
+	f.Start(Header{RunID: "r1", Started: t0}, plan(), nil)
+	f.Stop()
+	select {
+	case <-exits:
+	case <-time.After(2 * time.Second):
+		t.Fatal("program exit was not reported")
+	}
+	select {
+	case err := <-exits:
+		t.Fatalf("OnExit called twice; second error = %v", err)
+	default:
+	}
+}
+
+func TestConcurrentStopAndCloseWaitForProgramExit(t *testing.T) {
+	in, writer := io.Pipe()
+	defer in.Close()
+	defer writer.Close()
+	var out syncBuffer
+	exiting := make(chan struct{})
+	release := make(chan struct{})
+	f := &Face{In: in, Out: &out, OnExit: func(error) {
+		close(exiting)
+		<-release
+	}}
+	f.Start(Header{RunID: "r1", Started: t0}, plan(), nil)
+	f.Emit(core.Event{Kind: "halt", Fields: map[string]string{"reason": "SIGTERM"}})
+	first := make(chan struct{})
+	go func() { f.Stop(); close(first) }()
+	select {
+	case <-exiting:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("program did not exit")
+	}
+	second := make(chan struct{})
+	closed := make(chan struct{})
+	go func() { f.Stop(); close(second) }()
+	go func() { f.Close(); close(closed) }()
+	select {
+	case <-second:
+		t.Error("second Stop returned before program exit completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+	select {
+	case <-closed:
+		t.Error("Close returned before program exit completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if strings.Contains(out.String(), "halted: SIGTERM") {
+		t.Error("Close printed the halt reason before program exit completed")
+	}
+	close(release)
+	for name, done := range map[string]<-chan struct{}{"first Stop": first, "second Stop": second, "Close": closed} {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Errorf("%s did not return", name)
+		}
+	}
+	if !strings.Contains(out.String(), "halted: SIGTERM") {
+		t.Fatalf("missing halt reason: %q", out.String())
 	}
 }
 

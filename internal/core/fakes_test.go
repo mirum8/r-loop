@@ -231,7 +231,7 @@ func (f *fakeRepo) TreeDiff(from, to string) ([]string, error) {
 	return f.TreeChanges, f.Err
 }
 
-func (f *fakeRepo) MergeNoFF(branch string) error {
+func (f *fakeRepo) MergeNoFF(ctx context.Context, branch string) error {
 	f.record("Repo.MergeNoFF %s", branch)
 	return f.MergeErr
 }
@@ -241,7 +241,7 @@ func (f *fakeRepo) AbortMerge() error {
 	return f.Err
 }
 
-func (f *fakeRepo) Commit(message string) (string, error) {
+func (f *fakeRepo) Commit(ctx context.Context, message string) (string, error) {
 	f.record("Repo.Commit %q", message)
 	return f.SHA, f.Err
 }
@@ -256,7 +256,7 @@ func (f *fakeRepo) ResetHard(ref string) error {
 	return f.Err
 }
 
-func (f *fakeRepo) Run(dir, command string, timeout time.Duration) (int, string, error) {
+func (f *fakeRepo) Run(ctx context.Context, dir, command string, timeout time.Duration) (int, string, error) {
 	f.record("Repo.Run %s %q %s", dir, command, timeout)
 	return f.RunExit, f.RunOutput, f.Err
 }

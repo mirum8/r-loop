@@ -148,6 +148,7 @@ const (
 )
 
 const ReasonAborted = "aborted"
+const ReasonInterrupted = "interrupted"
 
 type Record struct {
 	Kind     string

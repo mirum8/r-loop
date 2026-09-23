@@ -46,7 +46,7 @@ func (s *Shell) Fire(hook string, env map[string]string) {
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
 	out, err := cmd.CombinedOutput()
-	if err == nil {
+	if err == nil || (errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState.Success()) {
 		return
 	}
 	reason := err.Error()

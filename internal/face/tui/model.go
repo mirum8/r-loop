@@ -114,6 +114,7 @@ type Model struct {
 	Resume     string
 	Notice     string
 	stopping   bool
+	aborting   bool
 	abort      func() error
 	Now        time.Time
 	ended      time.Time
@@ -407,25 +408,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.String() == "q" && m.Status != "":
 			return m, tea.Quit
+		case msg.Type == tea.KeyCtrlC && (m.stopping || m.aborting):
+			if m.Status == "" && !m.aborting && m.RunID != "" && m.abort != nil {
+				_ = m.abort()
+			}
+			return m, tea.Quit
 		case m.stopping:
 			m.confirmStop(msg)
 		case msg.Type == tea.KeyCtrlC && m.Status == "":
-			m.stopping, m.Notice = true, "stop the run? the live step's session and worktree are left for resume [y/n]"
+			m.stopping, m.Notice = true, "stop the run? keep session for resume [y/n; ctrl+c again to quit now]"
 		}
 	}
 	return m, nil
 }
 
 type Face struct {
-	In      io.Reader
-	Out     io.Writer
-	NoColor bool
-	Abort   func() error
-	mu      sync.Mutex
-	prog    *tea.Program
-	backlog []core.Event
-	done    chan struct{}
-	report  string
+	In        io.Reader
+	Out       io.Writer
+	NoColor   bool
+	Abort     func() error
+	OnExit    func(error)
+	mu        sync.Mutex
+	prog      *tea.Program
+	backlog   []core.Event
+	done      chan struct{}
+	report    string
+	endKind   string
+	endReason string
 }
 
 func (f *Face) Start(h Header, phases []core.Phase, history []core.Event) {
@@ -440,11 +449,15 @@ func (f *Face) Start(h Header, phases []core.Phase, history []core.Event) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.report = h.Report
-	f.prog = tea.NewProgram(m, tea.WithInput(f.In), tea.WithOutput(f.Out), tea.WithAltScreen())
+	f.prog = tea.NewProgram(m, tea.WithInput(f.In), tea.WithOutput(f.Out), tea.WithAltScreen(), tea.WithoutSignalHandler())
 	f.done = make(chan struct{})
+	prog, done := f.prog, f.done
 	go func() {
-		defer close(f.done)
-		f.prog.Run()
+		defer close(done)
+		_, err := prog.Run()
+		if f.OnExit != nil {
+			f.OnExit(err)
+		}
 	}()
 	for _, ev := range f.backlog {
 		f.prog.Send(eventMsg(ev))
@@ -455,6 +468,9 @@ func (f *Face) Start(h Header, phases []core.Phase, history []core.Event) {
 func (f *Face) Emit(ev core.Event) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if ev.Kind == "halt" || ev.Kind == "aborted" {
+		f.endKind, f.endReason = ev.Kind, ev.Fields["reason"]
+	}
 	if f.prog == nil {
 		f.backlog = append(f.backlog, ev)
 		return
@@ -467,24 +483,41 @@ func (f *Face) Stop() {
 	prog, done := f.prog, f.done
 	f.prog = nil
 	f.mu.Unlock()
-	if prog == nil {
-		return
+	if prog != nil {
+		prog.Quit()
 	}
-	prog.Quit()
-	<-done
+	if done != nil {
+		<-done
+	}
 }
 
 func (f *Face) Close() {
 	f.mu.Lock()
 	prog, done := f.prog, f.done
 	f.mu.Unlock()
-	if prog == nil {
-		return
+	if prog != nil {
+		prog.Send(closedMsg{})
 	}
-	prog.Send(closedMsg{})
-	<-done
-	if f.report != "" {
-		fmt.Fprintf(f.Out, "report: %s\n", f.report)
+	if done != nil {
+		<-done
+	}
+	f.mu.Lock()
+	endKind, endReason, report := f.endKind, f.endReason, f.report
+	f.mu.Unlock()
+	switch endKind {
+	case "halt":
+		if endReason != "" {
+			fmt.Fprintf(f.Out, "halted: %s\n", endReason)
+		} else {
+			fmt.Fprintln(f.Out, "halted")
+		}
+		fmt.Fprintln(f.Out, "r-loop resume")
+	case "aborted":
+		fmt.Fprintln(f.Out, "aborted")
+		fmt.Fprintln(f.Out, "r-loop resume")
+	}
+	if report != "" {
+		fmt.Fprintf(f.Out, "report: %s\n", report)
 	}
 }
 
@@ -506,5 +539,6 @@ func (m *Model) confirmStop(key tea.KeyMsg) {
 		m.Notice = "abort failed: " + err.Error()
 		return
 	}
-	m.Notice = "abort requested; the run stops before its next step"
+	m.aborting = true
+	m.Notice = "abort requested; stopping now (ctrl+c again to quit now)"
 }

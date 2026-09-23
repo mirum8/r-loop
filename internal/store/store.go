@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"r-loop/internal/core"
@@ -24,6 +26,8 @@ const (
 )
 
 var legacyPhaseRe = regexp.MustCompile(`"Phase":(\d+)`)
+
+var excludeTimeout = time.Minute
 
 var recordFiles = []string{eventsFile, questionsFile, signalsFile, remediesFile}
 
@@ -308,8 +312,18 @@ func (s *Store) Aborted(runID string) bool {
 }
 
 func EnsureExcluded(repoRoot string) error {
-	out, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--git-common-dir").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), excludeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", "--git-common-dir")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("git rev-parse --git-common-dir: timed out after %s: %w", excludeTimeout, context.DeadlineExceeded)
+		}
 		return fmt.Errorf("git rev-parse --git-common-dir: %w", err)
 	}
 	common := strings.TrimSpace(string(out))

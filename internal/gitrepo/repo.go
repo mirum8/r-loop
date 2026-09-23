@@ -2,6 +2,7 @@ package gitrepo
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,8 @@ var identity = []string{
 	"GIT_COMMITTER_NAME=r-loop", "GIT_COMMITTER_EMAIL=r-loop@local",
 }
 
+var gitTimeout = 10 * time.Minute
+
 type Repo struct {
 	root string
 }
@@ -36,13 +39,43 @@ func Open(dir string) (*Repo, error) {
 }
 
 func run(dir string, env []string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	if env != nil {
-		cmd.Env = append(os.Environ(), env...)
+	return runCtx(context.Background(), dir, env, args...)
+}
+
+func runCtx(parent context.Context, dir string, env []string, args ...string) (string, error) {
+	return runCtxStarted(parent, dir, env, nil, args...)
+}
+
+func runCtxStarted(parent context.Context, dir string, env []string, started *bool, args ...string) (string, error) {
+	if err := parent.Err(); err != nil {
+		return "", fmt.Errorf("git %s: interrupted: %w", strings.Join(args, " "), err)
 	}
+	ctx, cancel := context.WithTimeout(parent, gitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
+	err := cmd.Start()
+	if err == nil {
+		if started != nil {
+			*started = true
+		}
+		err = cmd.Wait()
+	}
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		err = nil
+	}
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return stdout.String(), fmt.Errorf("git %s: timed out after %s: %w", strings.Join(args, " "), gitTimeout, context.DeadlineExceeded)
+		}
+		if parent.Err() != nil {
+			return stdout.String(), fmt.Errorf("git %s: interrupted: %w", strings.Join(args, " "), parent.Err())
+		}
 		return stdout.String(), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
@@ -307,10 +340,42 @@ func (r *Repo) TreeDiff(from, to string) ([]string, error) {
 	return split0(out), err
 }
 
-func (r *Repo) MergeNoFF(branch string) error {
-	_, mergeErr := r.git("", "merge", "--no-ff", "--no-commit", branch)
+func (r *Repo) MergeNoFF(ctx context.Context, branch string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("git merge --no-ff --no-commit %s: interrupted: %w", branch, err)
+	}
+	pre, err := r.HeadSHA("")
+	if err != nil {
+		return err
+	}
+	lockPath, err := r.git("", "rev-parse", "--git-path", "index.lock")
+	if err != nil {
+		return err
+	}
+	lockPath = strings.TrimSpace(lockPath)
+	if !filepath.IsAbs(lockPath) {
+		lockPath = filepath.Join(r.root, lockPath)
+	}
+	_, preexistingLockErr := os.Stat(lockPath)
+	lockWasAbsent := errors.Is(preexistingLockErr, os.ErrNotExist)
+	var started bool
+	_, mergeErr := runCtxStarted(ctx, r.root, nil, &started, "merge", "--no-ff", "--no-commit", branch)
 	if mergeErr == nil {
 		return nil
+	}
+	if ctx.Err() != nil || errors.Is(mergeErr, context.DeadlineExceeded) {
+		if !started {
+			return mergeErr
+		}
+		if lockWasAbsent {
+			if err := os.Remove(lockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return errors.Join(mergeErr, fmt.Errorf("remove interrupted merge lock: %w", err))
+			}
+		}
+		if abortErr := r.AbortMerge(); abortErr != nil {
+			return errors.Join(mergeErr, r.ResetHard(pre))
+		}
+		return mergeErr
 	}
 	out, err := r.git("", "diff", "--name-only", "-z", "--diff-filter=U")
 	if err != nil {
@@ -331,14 +396,26 @@ func (r *Repo) AbortMerge() error {
 	return err
 }
 
-func (r *Repo) Commit(message string) (string, error) {
+func (r *Repo) Commit(ctx context.Context, message string) (string, error) {
 	if _, err := r.git("", "add", "-A"); err != nil {
 		return "", err
 	}
-	if _, err := run(r.root, identity, "commit", "-q", "-m", message); err != nil {
+	before, err := r.HeadSHA("")
+	if err != nil {
 		return "", err
 	}
-	return r.HeadSHA("")
+	_, commitErr := runCtx(ctx, r.root, identity, "commit", "-q", "-m", message)
+	after, headErr := r.HeadSHA("")
+	if headErr != nil {
+		return "", errors.Join(commitErr, headErr)
+	}
+	if after != before {
+		return after, nil
+	}
+	if commitErr == nil {
+		return "", fmt.Errorf("git commit did not advance HEAD")
+	}
+	return "", commitErr
 }
 
 func (r *Repo) CommitTouches(sha string) ([]string, error) {
@@ -351,9 +428,13 @@ func (r *Repo) ResetHard(ref string) error {
 	return err
 }
 
-func (r *Repo) Run(dir, command string, timeout time.Duration) (int, string, error) {
+func (r *Repo) Run(ctx context.Context, dir, command string, timeout time.Duration) (int, string, error) {
+	if err := ctx.Err(); err != nil {
+		return -1, "", fmt.Errorf("interrupted: %w", err)
+	}
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = r.path(dir)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = time.Second
 	var out bytes.Buffer
@@ -361,13 +442,17 @@ func (r *Repo) Run(dir, command string, timeout time.Duration) (int, string, err
 	if err := cmd.Start(); err != nil {
 		return -1, "", err
 	}
+	kill := func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	stop := context.AfterFunc(ctx, kill)
 	var timedOut atomic.Bool
 	timer := time.AfterFunc(timeout, func() {
 		timedOut.Store(true)
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		kill()
 	})
 	err := cmd.Wait()
 	timer.Stop()
+	stop()
+	kill()
 	output := out.String()
 	if timedOut.Load() {
 		if output != "" && !strings.HasSuffix(output, "\n") {
@@ -375,8 +460,11 @@ func (r *Repo) Run(dir, command string, timeout time.Duration) (int, string, err
 		}
 		return -1, output + "timed out after " + timeout.String(), nil
 	}
+	if err := ctx.Err(); err != nil {
+		return -1, output, fmt.Errorf("interrupted: %w", err)
+	}
 	var exitErr *exec.ExitError
-	if err != nil && !errors.As(err, &exitErr) {
+	if err != nil && !errors.As(err, &exitErr) && !errors.Is(err, exec.ErrWaitDelay) {
 		return -1, output, err
 	}
 	return cmd.ProcessState.ExitCode(), output, nil

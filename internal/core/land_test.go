@@ -11,12 +11,205 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"r-loop/internal/core"
 	"r-loop/internal/gitrepo"
 )
+
+func waitForPID(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		b, err := os.ReadFile(path)
+		if err == nil {
+			var pid int
+			if _, err := fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &pid); err == nil && pid > 0 {
+				return pid
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("pid not written to %s", path)
+	return 0
+}
+
+func assertProcessGone(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Errorf("process %d remains", pid)
+}
+
+func assertNoMergeHead(t *testing.T, root string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(root, ".git", "MERGE_HEAD")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("MERGE_HEAD remains: %v", err)
+	}
+}
+
+func TestLandGateCancelledWhileTheGateRunsKillsItsGroupAndAbortsTheMerge(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	head := e.head()
+	pidFile := filepath.Join(t.TempDir(), "gate.pid")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := e.gate().Land(ctx, phaseOne("echo $$ > '"+pidFile+"'; sleep 300"))
+		result <- err
+	}()
+	pid := waitForPID(t, pidFile)
+	cancel()
+	select {
+	case err := <-result:
+		if err == nil || errors.Is(err, core.ErrGate) {
+			t.Errorf("Land err = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("land did not stop")
+	}
+	assertProcessGone(t, pid)
+	e.assertUntouched(head)
+	assertNoMergeHead(t, e.root)
+}
+
+type cancelAfterGate struct {
+	*gitrepo.Repo
+	cancel context.CancelFunc
+}
+
+func (r cancelAfterGate) Run(ctx context.Context, dir, command string, timeout time.Duration) (int, string, error) {
+	code, output, err := r.Repo.Run(ctx, dir, command, timeout)
+	r.cancel()
+	return code, output, err
+}
+
+func TestLandCancelledAsTheGatePassesNeitherTicksNorCommits(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	head := e.head()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g := e.gate()
+	g.Repo = cancelAfterGate{Repo: e.repo, cancel: cancel}
+	_, err := g.Land(ctx, phaseOne("true"))
+	if err == nil || !strings.Contains(err.Error(), "interrupted") {
+		t.Fatalf("Land err = %v", err)
+	}
+	if len(e.plan.ticks) != 0 {
+		t.Errorf("ticks = %v", e.plan.ticks)
+	}
+	e.assertUntouched(head)
+	assertNoMergeHead(t, e.root)
+}
+
+func TestLandPassingGateAndCancelledDuringAHangingCommitHookLeavesACleanTree(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	head := e.head()
+	pidFile := filepath.Join(t.TempDir(), "hook.pid")
+	hook := filepath.Join(e.root, ".git", "hooks", "pre-commit")
+	writeFile(t, hook, "#!/bin/sh\necho $$ > '"+pidFile+"'\nsleep 300\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := e.gate().Land(ctx, phaseOne("true"))
+		result <- err
+	}()
+	pid := waitForPID(t, pidFile)
+	cancel()
+	select {
+	case err := <-result:
+		if err == nil || errors.Is(err, core.ErrGate) {
+			t.Errorf("Land err = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("land did not stop")
+	}
+	assertProcessGone(t, pid)
+	e.assertUntouched(head)
+	assertNoMergeHead(t, e.root)
+}
+
+func TestLandCancelledDuringPostCommitHookRecordsTheLanding(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	before := e.head()
+	pidFile := filepath.Join(t.TempDir(), "hook.pid")
+	hook := filepath.Join(e.root, ".git", "hooks", "post-commit")
+	writeFile(t, hook, "#!/bin/sh\necho $$ > '"+pidFile+"'\nsleep 300\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type result struct {
+		landing core.Landing
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() { landing, err := e.gate().Land(ctx, phaseOne("true")); done <- result{landing, err} }()
+	pid := waitForPID(t, pidFile)
+	cancel()
+	select {
+	case got := <-done:
+		if got.err != nil || got.landing.MergeSHA == "" || got.landing.MergeSHA != e.head() || got.landing.MergeSHA == before {
+			t.Fatalf("Land = %+v, %v; HEAD = %s", got.landing, got.err, e.head())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Land did not stop")
+	}
+	assertProcessGone(t, pid)
+	if len(e.store.landings()) != 1 || gitCmd(t, e.root, "status", "--porcelain") != "" {
+		t.Fatalf("landings = %+v; status = %q", e.store.landings(), gitCmd(t, e.root, "status", "--porcelain"))
+	}
+	assertNoMergeHead(t, e.root)
+}
+
+func TestLandGatePassingWithABackgroundChildLands(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	start := time.Now()
+	landing, err := e.gate().Land(context.Background(), phaseOne("sleep 30 & echo green"))
+	if err != nil || landing.MergeSHA != e.head() || time.Since(start) >= 5*time.Second {
+		t.Fatalf("landing = %+v, err = %v, elapsed = %s", landing, err, time.Since(start))
+	}
+}
+
+func TestLandGateRedWithABackgroundChildIsAGateFailureWithItsExitCode(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	_, err := e.gate().Land(context.Background(), phaseOne("sleep 30 & exit 3"))
+	if !errors.Is(err, core.ErrGate) || !strings.Contains(err.Error(), "exited 3") {
+		t.Fatalf("Land err = %v", err)
+	}
+}
+
+func TestLandGateRedWithABackgroundChildGetsAGateFixRound(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	var refs []core.StepRef
+	g := e.gate()
+	g.FixRounds = 1
+	g.Runner = fixingRunner(e, &refs)
+	landing, err := g.Land(context.Background(), phaseOne("test -f fix1.txt || { sleep 30 & exit 3; }"))
+	if err != nil || landing.MergeSHA != e.head() || len(refs) != 1 || len(e.store.events("gate-fix")) != 1 {
+		t.Fatalf("landing = %+v, err = %v, rounds = %d", landing, err, len(refs))
+	}
+}
 
 func gitCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()

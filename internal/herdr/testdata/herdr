@@ -1,4 +1,5 @@
 #!/bin/sh
+if [ -n "$HERDR_SLEEP" ]; then sleep "$HERDR_SLEEP"; fi
 printf '%s\0' "$@" > "$HERDR_ARGV"
 printf '%s' "$HERDR_STDOUT"
 printf '%s' "$HERDR_STDERR" >&2

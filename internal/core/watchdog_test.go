@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -498,6 +499,94 @@ func TestStopGivesUpOnANoticeTheWatchdogIsBlockedOn(t *testing.T) {
 	if dog.live() {
 		t.Error("watchdog live after Stop")
 	}
+}
+
+func TestStopCancelsAWaitingPhaseCheckAndDropsQueuedPost(t *testing.T) {
+	entered := make(chan struct{})
+	host := &cancellablePromptHost{entered: entered}
+	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	dog.pane = "watchdog-pane"
+	notified := make(chan error, 1)
+	go func() { notified <- dog.NotifyContext(context.Background(), "check phase 1", true, 10*time.Minute) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("phase check did not enter the waiting prompt")
+	}
+	dog.Post("step ended phase-1/implement")
+	stopped := make(chan error, 1)
+	go func() { stopped <- dog.Stop() }()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Stop blocked behind the waiting phase check")
+	}
+	select {
+	case err := <-notified:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("NotifyContext error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waiting prompt did not return")
+	}
+	if got := host.Calls(); slices.ContainsFunc(got, func(call string) bool { return strings.Contains(call, "step ended phase-1/implement") }) {
+		t.Fatalf("queued post was sent after Stop: %v", got)
+	}
+}
+
+func TestStopDoesNotWaitForAnUncancellablePhaseCheckHost(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	host := &checkHost{}
+	host.onPrompt = func(text string) {
+		close(entered)
+		<-release
+	}
+	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	dog.pane = "watchdog-pane"
+	notified := make(chan error, 1)
+	go func() { notified <- dog.NotifyContext(context.Background(), "check phase 1", true, 10*time.Minute) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("phase check did not enter the waiting prompt")
+	}
+	dog.Post("step ended phase-1/implement")
+	stopped := make(chan error, 1)
+	go func() { stopped <- dog.Stop() }()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		close(release)
+		t.Fatal("Stop waited for the uncancellable host")
+	}
+	close(release)
+	select {
+	case <-notified:
+	case <-time.After(time.Second):
+		t.Fatal("prompt did not finish after release")
+	}
+	if got := host.Calls(); slices.ContainsFunc(got, func(call string) bool { return strings.Contains(call, "step ended phase-1/implement") }) {
+		t.Fatalf("queued post was sent after Stop: %v", got)
+	}
+}
+
+type cancellablePromptHost struct {
+	fakeSessionHost
+	entered chan struct{}
+}
+
+func (h *cancellablePromptHost) PromptContext(ctx context.Context, agent, text string, wait bool, timeout time.Duration) error {
+	h.record("SessionHost.Prompt %s %q %t %s", agent, text, wait, timeout)
+	close(h.entered)
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func recordedKinds(store *fakeStore) []string {

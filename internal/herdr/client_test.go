@@ -1,6 +1,7 @@
 package herdr
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -203,6 +204,49 @@ func TestStateOfMissingAgentIsGone(t *testing.T) {
 
 	if err != nil || got != core.AgentGone {
 		t.Fatalf("got %q, %v", got, err)
+	}
+}
+
+func TestAWedgedHerdrCallFailsAfterTheCallTimeoutNamingTheCommand(t *testing.T) {
+	c, _ := fake(t, `{"id":"cli:agent:get","result":{"agent":{"agent_status":"idle"},"type":"agent_info"}}`)
+	t.Setenv("HERDR_SLEEP", "300")
+	old := callTimeout
+	callTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { callTimeout = old })
+	start := time.Now()
+	_, err := c.State("a1")
+	if err == nil || !strings.Contains(err.Error(), "herdr agent get a1") || !strings.Contains(err.Error(), "timed out after 200ms") || time.Since(start) > 5*time.Second {
+		t.Fatalf("State = %v after %v", err, time.Since(start))
+	}
+}
+
+func TestAWaitingPromptGetsItsWaitOnTopOfTheCallTimeout(t *testing.T) {
+	c, _ := fake(t, `{"id":"cli:agent:prompt","result":{"type":"ok"}}`)
+	t.Setenv("HERDR_SLEEP", "0.5")
+	old := callTimeout
+	callTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { callTimeout = old })
+	if err := c.Prompt("a1", "x", true, 2*time.Second); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+}
+
+func TestCancelWaitingPromptStopsTheHerdrCLI(t *testing.T) {
+	c, _ := fake(t, `{"id":"cli:agent:prompt","result":{"type":"ok"}}`)
+	t.Setenv("HERDR_SLEEP", "300")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- c.PromptContext(ctx, "a1", "check phase 1", true, 10*time.Minute) }()
+	time.Sleep(50 * time.Millisecond)
+	start := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("PromptContext error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("PromptContext still running %s after cancellation", time.Since(start))
 	}
 }
 

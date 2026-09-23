@@ -21,6 +21,10 @@ const (
 	defaultStallGrace = 2 * time.Minute
 )
 
+func timedOut(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "timed out after")
+}
+
 type SessionManager struct {
 	Host       SessionHost
 	Repo       Repo
@@ -345,7 +349,10 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 	if !errors.Is(err, ErrNoSentinel) {
 		return m.judge(s, sentinel, err), true
 	}
-	state, _ := m.Host.State(s.Agent)
+	state, stateErr := m.Host.State(s.Agent)
+	if timedOut(stateErr) {
+		return m.fail(s, stateErr.Error()), true
+	}
 	if state == AgentGone {
 		return m.fail(s, "agent gone"), true
 	}
@@ -476,7 +483,7 @@ func (m *SessionManager) judge(s *Session, sentinel Sentinel, sErr error) Outcom
 }
 
 func (m *SessionManager) headMoved(s *Session, head string) string {
-	code, out, err := m.Repo.Run(s.Dir, "git log --no-color --format=%h%x09%cn%x09%s "+shellQuote(s.StartSHA+".."+head), time.Minute)
+	code, out, err := m.Repo.Run(context.Background(), s.Dir, "git log --no-color --format=%h%x09%cn%x09%s "+shellQuote(s.StartSHA+".."+head), time.Minute)
 	if err != nil {
 		return "head log: " + err.Error()
 	}

@@ -35,10 +35,19 @@ func (c *PhaseCheck) Run(ctx context.Context, ph Phase, base string) CheckOutcom
 	if err := c.Repo.AddWorktree(wt, fmt.Sprintf("r-loop/phase-%s", ph.ID), base); err != nil {
 		return CheckOutcome{Kind: phaseCheckSkipped, Reason: "worktree: " + err.Error()}
 	}
-	if err := c.Dog.Notify(checkText(ph, filepath.Join(c.Repo.Root(), wt), base, c.Backlog), true, c.Timeout); err != nil {
-		return CheckOutcome{Kind: phaseCheckTimeout, Reason: err.Error()}
+	errc := make(chan error, 1)
+	go func() {
+		errc <- c.Dog.NotifyContext(ctx, checkText(ph, filepath.Join(c.Repo.Root(), wt), base, c.Backlog), true, c.Timeout)
+	}()
+	select {
+	case err := <-errc:
+		if err != nil {
+			return CheckOutcome{Kind: phaseCheckTimeout, Reason: err.Error()}
+		}
+		return CheckOutcome{Kind: phaseCheckRan}
+	case <-ctx.Done():
+		return CheckOutcome{Kind: phaseCheckSkipped, Reason: "interrupted: " + ctx.Err().Error()}
 	}
-	return CheckOutcome{Kind: phaseCheckRan}
 }
 
 func checkText(ph Phase, worktree, base string, backlog bool) string {

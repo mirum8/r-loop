@@ -9,13 +9,13 @@ review's own ranking: #1–#9 are P1, #10–#22 are P2 and #23–#33 are P3.
 
 Verified against `r-loop` @ `main` `058c81b`.
 
-- [ ] [#1] Signals are only handled during intake: a kill during land leaves main mid-merge, the gate is orphaned, and the TUI's SIGTERM leaves the driver running headless
+- [x] [#1] Signals are only handled during intake: a kill during land leaves main mid-merge, the gate is orphaned, and the TUI's SIGTERM leaves the driver running headless  <!-- fixed: r-loop/phase-1 -->
       - While the driver is in any step or in land, SIGTERM, SIGHUP or SIGINT cancels the run context, records the run as halted with an interrupted reason, and exits non-zero. The process is never killed outright
       - A signal during a land merge or gate kills the gate's process group and aborts the merge (or resets to the pre-merge HEAD), so the primary tree is clean and `r-loop resume` can proceed
       - If the TUI program exits because of a signal or an error from `Run`, the run is halted or aborted as above; phases never keep running without a display
       - A test sends SIGTERM to a run blocked in a long gate command and asserts that the gate child is gone, the store holds a halted record, and the working tree is clean
 
-- [ ] [#2] herdr and git calls have no timeout: a wedged herdr server or a git hook, LFS filter or credential prompt hangs the whole run
+- [x] [#2] herdr and git calls have no timeout: a wedged herdr server or a git hook, LFS filter or credential prompt hangs the whole run  <!-- fixed: r-loop/phase-1 -->
       - Every herdr CLI call fails with an error once a per-call timeout expires, and the step backstop and abort still work afterwards. Test: a fake herdr binary that sleeps forever
       - Every git invocation runs with `GIT_TERMINAL_PROMPT=0`, and a hanging git command (e.g. a hook that sleeps) ends with an error after a bounded timeout. Its process is killed, not leaked
       - A timed-out herdr or git call becomes a step failure or a halt reason that names the command and the timeout
@@ -74,7 +74,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - A fake store that fails every append stops the run within one step; no further spawn, merge or commit happens
       - The policy for each record kind (fatal or warn) is decided and covered by a test
 
-- [ ] [#11] Abort is ignored during land and the phase check, and the TUI has no force-quit
+- [x] [#11] Abort is ignored during land and the phase check, and the TUI has no force-quit  <!-- fixed: r-loop/phase-1 -->
       - An abort requested while the land gate runs kills the gate's process group within a few seconds, reverts the in-progress merge, records the run as aborted and exits 1
       - An abort during a gate-fix round, gate probe, milestone report or phase-check wait takes effect within the poll interval
       - In the TUI, a second ctrl+c while the stop prompt is up (or after an abort was requested) force-quits: the run is recorded as aborted and the terminal is restored
@@ -101,7 +101,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - While a finished TUI is still on screen, `r-loop resume` and a new run from another terminal do not refuse with "live in pid"
       - The TUI still stays open on the final state until `q`, and the report path is still printed after it closes
 
-- [ ] [#16] A passing gate that leaves a background child running is treated as an error (`WaitDelay`)
+- [x] [#16] A passing gate that leaves a background child running is treated as an error (`WaitDelay`)  <!-- fixed: r-loop/phase-1 -->
       - A gate command that exits 0 but leaves a background process holding stdout lets the phase land
       - A gate that exits non-zero with a background child left is reported as a gate failure with its exit code, and gate-fix rounds run
       - A notify hook that exits 0 but leaves a background child does not produce a `notify-failed` event

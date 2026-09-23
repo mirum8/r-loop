@@ -79,7 +79,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 			return Landing{}, "", "", err
 		}
 	}
-	if err := g.Repo.MergeNoFF(fmt.Sprintf("r-loop/phase-%s", n)); err != nil {
+	if err := g.Repo.MergeNoFF(ctx, fmt.Sprintf("r-loop/phase-%s", n)); err != nil {
 		return Landing{}, "", "", err
 	}
 	landing := Landing{Phase: n}
@@ -94,7 +94,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 			return Landing{}, "", "", errors.Join(err, g.Repo.AbortMerge())
 		}
 		command = item + " && " + suite
-		if output, err := g.redAtBase(phase, item); err != nil {
+		if output, err := g.redAtBase(ctx, phase, item); err != nil {
 			return Landing{}, command, output, errors.Join(err, g.Repo.AbortMerge())
 		}
 	}
@@ -102,7 +102,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 		landing.GateSkipped = true
 		g.emit(Event{Kind: "gate-skipped", Phase: n, Step: "land", Fields: map[string]string{"phase": n}})
 	} else {
-		code, output, err := g.Repo.Run("", command, g.GateTimeout)
+		code, output, err := g.Repo.Run(ctx, "", command, g.GateTimeout)
 		if err == nil && code != 0 {
 			err = fmt.Errorf("%w: %s exited %d\n%s", ErrGate, command, code, output)
 		}
@@ -111,10 +111,13 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 		}
 		landing.GateOutput = output
 	}
+	if err := ctx.Err(); err != nil {
+		return Landing{}, "", "", errors.Join(fmt.Errorf("interrupted: %w", err), g.Repo.AbortMerge())
+	}
 	if err := g.Plan.Tick(g.TodoPath, phase); err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), g.Repo.ResetHard("HEAD"))
 	}
-	sha, err := g.Repo.Commit(fmt.Sprintf("phase %s: %s", n, phase.Title))
+	sha, err := g.Repo.Commit(ctx, fmt.Sprintf("phase %s: %s", n, phase.Title))
 	if err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("commit: %w", err), g.Repo.ResetHard("HEAD"))
 	}
@@ -141,7 +144,7 @@ func (g *LandGate) itemCommand(phase Phase) (string, error) {
 	return item, nil
 }
 
-func (g *LandGate) redAtBase(phase Phase, item string) (string, error) {
+func (g *LandGate) redAtBase(ctx context.Context, phase Phase, item string) (string, error) {
 	n := phase.ID
 	changed, err := g.Repo.ChangedFiles("", "HEAD")
 	if err != nil {
@@ -163,11 +166,11 @@ func (g *LandGate) redAtBase(phase Phase, item string) (string, error) {
 	for _, p := range tests {
 		setup = append(setup, fmt.Sprintf("mkdir -p %s && cp %s %s", shellQuote(filepath.Dir(filepath.Join(red, p))), shellQuote(p), shellQuote(filepath.Join(red, p))))
 	}
-	defer g.Repo.Run("", remove+"; git worktree prune", time.Minute)
-	if code, out, err := g.Repo.Run("", remove+"; "+strings.Join(setup, " && "), time.Minute); err != nil || code != 0 {
+	defer g.Repo.Run(context.Background(), "", remove+"; git worktree prune", time.Minute)
+	if code, out, err := g.Repo.Run(ctx, "", remove+"; "+strings.Join(setup, " && "), time.Minute); err != nil || code != 0 {
 		return out, fmt.Errorf("base worktree for the red check: exit %d: %v\n%s", code, err, out)
 	}
-	code, out, err := g.Repo.Run(red, item, g.GateTimeout)
+	code, out, err := g.Repo.Run(ctx, red, item, g.GateTimeout)
 	if err != nil {
 		return out, fmt.Errorf("red check: %w", err)
 	}
