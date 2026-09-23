@@ -164,7 +164,7 @@ section:target > h2 { color: var(--clay); }
       </ul></li>
     <li class="p"><a href="#p6">Part 6 · Decisions</a>
       <ul>
-        <li class="s"><a href="#adr-index">ADR-1 … ADR-75</a></li>
+        <li class="s"><a href="#adr-index">ADR-1 … ADR-76</a></li>
       </ul></li>
     <li class="p"><a href="#p7">Part 7 · Technical details</a>
       <ul>
@@ -457,9 +457,10 @@ than my output.</p>
 <p>As a <strong>provider agent</strong>, I want one way to ask when the plan does not tell me
 something I need, so that guessing is never the cheapest option available to me.</p>
 <p><em>Given</em> the driver's <code>ask_watchdog</code> tool in my session, <em>when</em> I call it
-with a question, its options and my recommendation, <em>then</em> the call blocks until the
-watchdog answers — from the repository, or from the maintainer it asked in its own session — and I
-am not penalised for the wait; I never ask the person in my own pane.</p>
+with a question, its options and my recommendation, <em>then</em> the call returns at once with
+the question's id, I end my turn, and the watchdog's answer — from the repository, or from the
+maintainer it asked in its own session — arrives as my next message; I am not penalised for the
+wait, and I never ask the person in my own pane (<a href="#adr-76">ADR-76</a>).</p>
 
 <h3>Fan out reviewers using my own mechanism</h3>
 <p>As a <strong>provider agent</strong>, I want the reviewer list expanded into whatever parallel
@@ -857,7 +858,7 @@ others are variations of.</p>
   <text x="411" y="262" class="lbl-sm">reads plan · spec · earlier phases, looking for a citation</text>
 
   <polyline points="403,300 320,300 320,330 577,330" class="clay" fill="none" marker-end="url(#sq-c)"/>
-  <text x="330" y="294" class="lbl-sm">cited answer — logged, shown, returned</text>
+  <text x="330" y="294" class="lbl-sm">cited answer — logged, typed into the pane</text>
   <line x1="397" y1="300" x2="72" y2="300" class="clay" stroke-dasharray="5 3" marker-end="url(#sq-c)"/>
   <text x="80" y="294" class="lbl-sm">no citation → asks you in its pane</text>
 
@@ -890,10 +891,13 @@ skipped. The run goes on with the phases that do not. When nothing is left to ru
 phase at its stopped step (<a href="#adr-65">ADR-65</a>).</p>
 
 <h4>A step asks a question</h4>
-<p>The session calls <code>ask_watchdog</code>. The step enters <code>waiting-input</code>, its
-backstop pauses, and the driver hands the question to the watchdog. If the watchdog can answer it
+<p>The session calls <code>ask_watchdog</code>, which returns at once, and ends its turn. The
+step enters <code>waiting-input</code>, its backstop pauses, and the driver hands the question to
+the watchdog. If the watchdog can answer it
 from the spec, the tech-design or an earlier phase, it answers with a <code>file:line</code>
-citation; the answer is logged and returned to the session, which resumes. If it cannot cite an
+citation; the answer is logged, and once herdr reports the asking agent not working the driver
+types it into that agent's pane as its next message, and the session resumes
+(<a href="#adr-76">ADR-76</a>). If it cannot cite an
 answer, it asks the maintainer in its own session — with its question tool, rewritten so it makes
 sense without the agent's context — and answers with the citation <code>maintainer</code>. An empty
 or invalid citation is refused and the question stays with the watchdog; the TUI never shows it. An
@@ -1514,9 +1518,12 @@ a different release cadence or a different blast radius; it is one sequence over
       <td>the only concurrency in v1, and safe because every reviewer is read-only over the step's
           worktree, which the driver snapshots before and checks after
           (<a href="#adr-56">ADR-56</a>)</td></tr>
-  <tr><td>a session → <code>AskServer</code></td><td>MCP, synchronous from the caller's view</td>
-      <td>the call blocks until the watchdog answers, which is what makes <code>waiting-input</code>
-          a real state rather than a guess about silence</td></tr>
+  <tr><td>a session → <code>AskServer</code></td><td>MCP, returns at once; the answer comes back
+          as the session's next message, typed into its pane by the driver</td>
+      <td>a call held open for an answer is fragile — an agent may move it to the background and
+          end its turn, and the stream can drop silently — while the open question, not the call,
+          is what makes <code>waiting-input</code> a real state rather than a guess about silence
+          (<a href="#adr-76">ADR-76</a>)</td></tr>
   <tr><td>watchdog → <code>AskServer</code></td><td>MCP, on a separate tool surface</td>
       <td>signals, remedies and answers must not be reachable from a step session</td></tr>
   <tr><td>watchdog → a running session</td><td><code>herdr agent read</code> — read-only</td>
@@ -1593,7 +1600,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Seventy-five decisions, each with the alternative that was live at the time; ten are superseded and kept in place, and thirty carry a later amendment. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, and ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks.</p>
+<p class="lede">Seventy-six decisions, each with the alternative that was live at the time; ten are superseded and kept in place, and thirty carry a later amendment. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, and ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked.</p>
 
 <div id="adr-index">
 
@@ -2097,7 +2104,8 @@ amended 2026-09-19 — every agent's MCP client is started with a fixed 24 h too
 (codex <code>tool_timeout_sec=86400</code>, <code>"timeout": 86400000</code> in each
 <code>.mcp.json</code>), because <code>ask_user</code> and <code>propose_remedy</code> block until
 a person answers, which has no bound in an attended run, and claude's default of 60 s cut the call
-off first</p>
+off first · amended by <a href="#adr-76">ADR-76</a> — <code>ask_watchdog</code> returns at once and
+the answer is typed into the asking pane, so no call waits and the 24 h timeout is removed</p>
 <p><span class="f">Context</span> An agent that cannot ask will guess, and a guess reaches the code.
 Before this, a blocked session could only be detected as silence.</p>
 <p><span class="f">Decision</span> The driver serves an <code>ask_watchdog</code> tool
@@ -3104,7 +3112,7 @@ phases.</p>
 
 <div class="adr">
 <h3 id="adr-73">ADR-73 — Step agents ask the watchdog; only the watchdog asks the maintainer, in its own session</h3>
-<p><span class="f">Status</span> accepted · supersedes <a href="#adr-63">ADR-63</a>, <a href="#adr-67">ADR-67</a> and the one-channel paragraph of <a href="#adr-71">ADR-71</a> · amends <a href="#adr-28">ADR-28</a>, <a href="#adr-29">ADR-29</a>, <a href="#adr-38">ADR-38</a>, <a href="#adr-39">ADR-39</a> and <a href="#adr-62">ADR-62</a></p>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-63">ADR-63</a>, <a href="#adr-67">ADR-67</a> and the one-channel paragraph of <a href="#adr-71">ADR-71</a> · amends <a href="#adr-28">ADR-28</a>, <a href="#adr-29">ADR-29</a>, <a href="#adr-38">ADR-38</a>, <a href="#adr-39">ADR-39</a> and <a href="#adr-62">ADR-62</a> · amended by <a href="#adr-76">ADR-76</a> — <code>ask_watchdog</code> returns at once, the agent ends its turn, and the driver types the answer into the pane that asked</p>
 <p><span class="f">Context</span> The maintainer talks to the watchdog in its pane, and the watchdog
 asked them through <code>ask_user</code>, which put the question in the TUI's questions panel — a
 second place to answer, beside the conversation the question came from. A question the watchdog
@@ -3219,6 +3227,48 @@ exits 2 and closes it.</p>
 <p><span class="f">Revisit when</span> the intake needs to change a plan rather than pick one, or a
 second free-text entry point (resume, status) is wanted.</p>
 </div>
+
+<div class="adr">
+<h3 id="adr-76">ADR-76 — A step asks, ends its turn, and gets the answer as its next message</h3>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-73">ADR-73</a> and <a href="#adr-28">ADR-28</a></p>
+<p><span class="f">Context</span> Under <a href="#adr-73">ADR-73</a> an <code>ask_watchdog</code>
+call blocked until the watchdog answered, which can take as long as the maintainer takes. A call
+held that long is fragile: Claude moves a tool call to the background after 120 s and ends its
+turn, and the stream under it can drop without either side noticing. Keeping it alive took a 24 h
+client tool timeout on every agent, a progress notification every 30 s, logic that let a retried
+call rejoin an orphaned question and hand its answer over once, and a router that polled the
+watchdog every 5 s while it held a question. Each piece was a fix for the one before it.</p>
+<p><span class="f">Decision</span> <code>ask_watchdog(question, options?, recommended?)</code>
+returns at once with <code>{id: "q&lt;n&gt;", status: "asked"}</code> and tells the agent to end its
+turn and do nothing else until the answer arrives as its next message. The question reaches the
+driver as before; the step enters <code>waiting-input</code>, its stall nudge and backstop are
+suspended, and the driver hands it to the watchdog, which answers with
+<code>answer_question</code> as before. A step or reviewer (one <code>StepKey</code>) has one open
+question at a time: a second ask while one is open is a tool error that names the open id and says
+to end the turn and wait. When the answer is accepted the driver records it, then waits until herdr
+reports the asking agent not <code>working</code> — checked at the session poll interval, retried
+on <code>agent_blocked</code> — and types
+<code>r-loop: answer to &lt;id&gt; (by watchdog, citing &lt;path:line&gt;): &lt;answer&gt;</code>, or
+<code>(by maintainer)</code>, into that agent's pane: the step's own session, or the reviewer pane
+that asked. Once it is typed the step returns to <code>running</code> and the stall rules resume.
+An asking agent that is gone before the answer is typed, or a step that has ended, gets nothing;
+the question is recorded withdrawn. The 24 h tool timeouts, the keepalive, the rejoin logic and the
+router's poll are removed. A gone watchdog halts the run as before, once.</p>
+<p><span class="f">Alternatives</span> Keep the blocking call and harden it further — rejected:
+every fix so far answered a failure of the one before, and the client's own backgrounding is
+outside the driver's control. Let the agent poll a <code>get_answer</code> tool — rejected: an agent
+that polls is an agent spending turns and context on waiting, and one that stops polling is a stall
+the driver cannot tell from a wait. Write the answer to a file the agent watches — rejected: it
+needs the agent to keep a turn open, which is the problem.</p>
+<p><span class="f">Consequences</span> Every MCP call an agent makes is short, so client defaults
+are enough. The answer lands in the pane as a message the maintainer can read in the step's
+workspace. The driver now writes into a step's pane for a second reason beside the nudge, and only
+when the agent is idle, so it never interrupts a turn. An agent that ignores the instruction and
+keeps working delays its own answer until it stops.</p>
+<p><span class="f">Revisit when</span> an agent's MCP client can hold a call open for hours
+reliably, or a provider cannot take a typed message while its turn is over.</p>
+</div>
+
 
 
 </div>
@@ -3413,8 +3463,12 @@ of in each project's file.</p>
 
 <p><strong>The MCP surfaces.</strong> Every step session and every reviewer session gets one tool,
 each on its own URL:
-<code>ask_watchdog(question, options?, recommended?) → answer</code>, which blocks until the
-watchdog answers; the driver hands the watchdog
+<code>ask_watchdog(question, options?, recommended?) → {id, status: asked}</code>, which returns at
+once and tells the agent to end its turn: the answer arrives as its next message, typed into its
+pane as <code>r-loop: answer to &lt;id&gt; (by watchdog, citing &lt;path:line&gt;): &lt;answer&gt;</code>
+or <code>(by maintainer)</code>. A step or reviewer has one open question at a time; a second ask
+while one is open is a tool error naming the open id (<a href="#adr-76">ADR-76</a>). The driver
+hands the watchdog
 <code>question &lt;id&gt; from phase-&lt;N&gt;/&lt;kind&gt;: &lt;text&gt; options: … recommended: …</code>.
 The watchdog session gets its own tools, offered to no other session, and no ask tool — it asks the
 maintainer in its own session (<a href="#adr-73">ADR-73</a>):

@@ -17,7 +17,8 @@ fallback, the gate fix and the watchdog each name their own model and effort, an
 `--effort` override one row for one run beside `--provider`. ADR-74 added Milestone 8, Phase 32:
 a named `ui` reviewer on implement runs the project's `/test-app` skill whenever the repository
 has one. ADR-75 added Milestone 9, Phase 33: free text on the command line goes to a short intake
-session whose proposed command line the driver validates.
+session whose proposed command line the driver validates. ADR-76 added Milestone 10, Phase 34:
+`ask_watchdog` returns at once and the driver types the answer into the pane that asked.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -39,6 +40,7 @@ session whose proposed command line the driver validates.
 - Wave 15: Phase 31
 - Wave 16: Phase 32
 - Wave 17: Phase 33
+- Wave 18: Phase 34
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -516,6 +518,22 @@ Contracts: `tech-design.md#milestone-9-free-text-start`
 - [x] the intake is its own session, split beside the driver's pane or in a `◆ intake` workspace, named `rloop-intake-<pid>`. It gets the text, the working directory, the repository root and the flag reference generated from the parser, and its only MCP tool is `submit_args(argv)`. Its prompt confirms the full command with the maintainer before submitting (never asks with `--unattended`). The session is closed on accept, on Ctrl-C (exit 2) and when its agent is gone (exit 4)
 - [x] `submit_args` is validated by the driver: `ParseArgs`, a plan path ending in `.md`, the plan read, `RunList` and `config.Load` with the argv's overrides. A refusal returns the reason, and a second accept is refused. On accept stderr shows `r-loop: resolved: r-loop <argv, shell-quoted>`, and the run continues exactly as if that argv had been typed
 **Done when:** `go test ./...` is green and `go run ./cmd/r-loop docs/task-loop-driver/todo.md --dry-run --plain` prints `intake: claude sonnet medium  ← default`.
+
+## Milestone 10 — Ask, then end the turn
+Contracts: `tech-design.md#milestone-5-the-ask-channel`
+
+### Phase 34 — `ask_watchdog` returns at once and the answer is typed into the asking pane
+**Implements:** Ask the watchdog a question · Answer an agent's question without leaving the loop
+**Depends on:** Phase 33
+**Files:** `internal/askmcp/server.go` (modify) · `internal/core/questions.go` (modify) · `internal/core/loop.go` (modify) · `internal/core/session.go` (modify) · `internal/core/review.go` (modify) · `internal/providers/registry.go` (modify) · `internal/providers/shipped/codex.yaml` (modify) · `internal/prompts/render.go` (modify) · `internal/prompts/templates/watchdog.md` (modify) · `internal/app/resume.go` (modify) · `internal/askmcp/server_test.go` (modify) · `internal/core/questions_test.go` (modify) · `internal/core/session_test.go` (modify) · `internal/core/review_test.go` (modify) · `internal/core/loop_events_test.go` (modify) · `internal/providers/registry_test.go` (modify) · `internal/prompts/render_test.go` (modify) · `internal/app/ask_test.go` (modify) · `internal/app/testdata/ask-agent.go` (modify) · `internal/app/unattended_test.go` (modify) · `internal/app/resume_test.go` (modify)
+**Risk:** concurrency
+- [x] `ask_watchdog(question, options?, recommended?)` sends the question on `Questions()` and returns at once `{id: "q<n>", status: "asked"}` with the text `the answer will arrive as your next message; end your turn now and do nothing else until it arrives`; a second ask from the same `StepKey` while one is open is a tool error naming the open id and saying to end the turn and wait; `Server.Answer(id, …)` closes the question and errors on an unknown or closed id; `Server.KeepAlive`, the progress notifications, the orphan, rejoin and exact-match reuse are removed
+- [x] `QuestionRouter.Route` sends `Dog.Notify` and returns; it no longer polls. A Notify error or a watchdog found gone halts through `Watch.Route` / `Watch.WatchdogGone`, exactly once
+- [x] the loop names the asking agent when it admits a question — the step's own session for `<kind>`, the round's reviewer pane for `<kind>-rv-<name>` — and `RunLoop.Deliver` records the answer, closes it on the server, then types `r-loop: answer to <id> (by watchdog, citing <path:line>): <answer>` (or `(by maintainer)`) into that agent with `Host.Prompt(agent, text, false, 0)` once `Host.State` reports it not `working`, checked at the session poll interval and retried on `agent_blocked`; the step stays `waiting-input`, with its nudge and backstop suspended, until the answer is typed
+- [x] an asking agent gone before the answer is typed withdraws the question (`Answer: agent gone`) and releases the step; a step that ends first withdraws it and nothing is typed; `r-loop resume` withdraws every question a dead driver left open (`Answer: step failed`)
+- [x] no MCP tool timeout: `WriteMCPConfig` writes `{"mcpServers":{"r-loop":{"type":"http","url":"<url>"}}}` and the shipped codex `askFlag` is `-c mcp_servers.r-loop.url={url}`
+- [x] the step prompts, the tool description and the nudge say to call `ask_watchdog`, end the turn and wait for the answer as the next message; the watchdog prompt says the agent waits idle until the driver types its answer
+**Done when:** `go test -race ./...` is green and `grep -rn "KeepAlive\|86400\|tool_timeout_sec" internal` prints nothing.
 
 ## Open questions
 

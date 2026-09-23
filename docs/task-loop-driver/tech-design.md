@@ -188,12 +188,10 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   mcpConfigPath)` expands the templates and omits a flag whose template or value is empty.
   Shipped: `claude` (`--model {model}`, `--effort {effort}`, `--mcp-config {mcpConfig}`, `review: /code-review`) and
   `codex` (`-c model={model}`, `-c model_reasoning_effort={effort}`, `-c
-  mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.tool_timeout_sec=86400`, `review: /review`).
+  mcp_servers.r-loop.url={url}`, `review: /review`).
   `{mcpConfig}` is a per-agent file
-  `{"mcpServers":{"r-loop":{"type":"http","url":"<url>","timeout":86400000}}}`. **Both carry a
-  fixed 24 h MCP tool timeout**: `ask_watchdog` blocks until the watchdog answers, perhaps after asking a person,
-  which has no bound in an attended run, and an agent's MCP client must never time the call out
-  first (claude's default HTTP timeout is 60 s). The core sees a provider only as
+  `{"mcpServers":{"r-loop":{"type":"http","url":"<url>"}}}`. Neither sets an MCP tool timeout:
+  every call returns at once (ADR-76), so the clients' defaults are enough. The core sees a provider only as
   `ProviderArgs{Kind string; Args []string; Ask bool; Review string}`.
 - **Step kind** — `StepKind{Name, Prompt, Check string; Row StepRow}`; `StepRow{Provider, Model, Effort string; Fallback Fallback; Timeout time.Duration; Reviewers []Reviewer; Rounds int; ReviewTimeout time.Duration}`; `Reviewer{Provider, Model, Effort string}`, `Fallback{Provider, Model, Effort string}` and `GateFix{Provider, Model, Effort string}` — one type per role, the same three fields; an empty `Model` or `Effort` is the provider's default. A row's `check ∈ {plan-file,
   diff, report}` or one added with `RegisterCheck`; `findings` and `verdict` are the review
@@ -434,29 +432,34 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Server** — MCP go-sdk streamable HTTP on `127.0.0.1:<free port>`, base `/mcp/<runToken>`
   (32 hex chars, stored mode 0600). A step URL is `<base>/<phase>/<kind>/<attempt>`, a reviewer's
   `<base>/<phase>/<kind>-rv-<name>/<attempt>` — the path identifies the asking agent. Tool
-  `ask_watchdog(question, options?, recommended?) → {answer}` blocks until the watchdog answers; ids `q<seq>`; a repeated `ask_watchdog` from the same step with the same text and options while that
-  question is open reuses its id and receives its answer — it is not recorded or forwarded again.
-  A question whose call has dropped — no call awaits it any more — is orphaned: the step's next
-  `ask_watchdog`, however worded and with whatever options, rejoins it and gets its answer, at once
-  when it was answered meanwhile; that answer is handed over once, and the ask after it is a new
-  question. A question another call from the step still awaits is not orphaned. While a call waits
-  and carries a progress token, the server sends a progress notification on it every 30 s
-  (`Server.KeepAlive`) so the client's idle timer never closes the stream; a notification that
-  cannot be delivered ends that call, which orphans its question.
-  A call that drops before its question reaches the watchdog takes the question with it: it is
-  dropped from the server, never orphaned, and the step's next ask is a new question.
-  Every agent's MCP client is configured with a 24 h tool timeout (Milestone 2, Provider block), so
-  a blocking call is never cut off by the client.
-- **waiting-input** — a question moves the step `running → waiting-input`, freezes its backstop,
-  and is recorded; the answer returns it to `running`. A backstop firing in `waiting-input` halts
+  `ask_watchdog(question, options?, recommended?) → {id, status: "asked"}` returns at once
+  (ADR-76); ids `q<seq>`. Its text tells the agent the answer will arrive as its next message, to
+  end its turn now and do nothing else until it arrives. The question is sent on `Questions()`
+  before the call returns; a call that ends before the driver takes it drops the question. One
+  open question per `StepKey`: a second `ask_watchdog` while one is open is a tool error naming
+  the open id and saying to end the turn and wait. `Server.Answer(id, …)` closes the question, so
+  the step may ask again; an unknown or already-closed id is an error. No call waits, so there is
+  no keepalive and no MCP tool timeout on any client.
+- **waiting-input** — a question moves the step `running → waiting-input`, freezes its backstop
+  and its stall nudge, and is recorded; the answer, once typed into the asking pane, returns it to
+  `running`. A backstop firing in `waiting-input` halts
   with `invariant: a question never expires`.
 - **Routing** — the loop freezes the step first, records and emits the question, then hands it
   to `Watcher.Route` (the watchdog, Milestone 7). No face ever asks (ADR-73). The driver never
   answers a question itself: when the watchdog is gone, `Watch.Route` halts the run instead.
+- **Delivery** — `RunLoop.Deliver(id, answer, by, citation)` records the answer, emits
+  `question-answered`, closes it with `AskChannel.Answer`, and then, off the caller's goroutine,
+  types `r-loop: answer to <id> (by watchdog, citing <path:line>): <answer>` — or `(by maintainer)`
+  — into the agent that asked with `Host.Prompt(agent, text, false, 0)`. The agent is named when
+  the question is admitted: the step's own session for `<kind>`, the round's reviewer pane for
+  `<kind>-rv-<name>`. It types only once `Host.State` reports the agent not `working`, checking at
+  the session poll interval and retrying on `agent_blocked`; then the step returns to `running`.
+  An agent found gone first withdraws the question (`Answer: agent gone`) and releases the step.
 - **Withdrawal** — when a step ends (`ok`, `failed`, `stalled`, a halt or an abort) its open
-  questions are withdrawn: each is recorded `AnsweredBy: withdrawn`, `Answer: step <state>`, and
-  the agent's pending call is released with `r-loop:
-  phase-<N>/<kind> has ended; this question is withdrawn.` A question that arrives for a step that
+  questions, answered but not yet typed included, are withdrawn: each is recorded `AnsweredBy:
+  withdrawn`, `Answer: step <state>`, and closed on the server; nothing is typed. `r-loop resume`
+  withdraws every question left open by a driver that died (`Answer: step failed`), since its step
+  ended with the driver. A question that arrives for a step that
   has already ended is withdrawn at once (`Answer: step ended`) and never moves the step to
   `waiting-input`. An answer to a withdrawn question or an ended step's question is dropped with
   `Event{Kind: "note", Fields{reason: "answer dropped: question <id> is not open"}}` — not
@@ -685,12 +688,12 @@ and the driver validates that argv before anything of a run exists.
 - **Deferred** — the watchdog managing the loop through MCP or a CLI (a non-goal in the spec).
 - **Only the watchdog asks, in its own session (ADR-73)** — a step agent asks with
   `ask_watchdog`; `QuestionRouter.Route` sends the watchdog `question <id> from phase-<N>/<kind>:
-  <text> options: <…> recommended: <…>` and waits while it is live (checked on a fixed 5 s
-  ticker). The watchdog answers with `answer_question`, citing a `path:line` or `maintainer` —
+  <text> options: <…> recommended: <…>` with `Dog.Notify`, which waits while the watchdog is
+  blocked, and returns (ADR-76). The watchdog answers with `answer_question`, citing a `path:line` or `maintainer` —
   after asking the maintainer in its own session with AskUserQuestion, or as plain text — which
   delivers `AnsweredBy: maintainer` and counts as a human touch. An empty or invalid citation is
-  refused and the question stays open. When the watchdog is not live as a question arrives, or
-  stops being live while it holds one, `Watch.Route` accepts a driver `halt` signal `the watchdog
+  refused and the question stays open. When the watchdog is not live as a question arrives, or the
+  notice cannot reach it, `Watch.Route` accepts a driver `halt` signal `the watchdog
   is gone` for the asking step; the question is never answered, and `r-loop resume` starts a new
   watchdog. With `--unattended` the watchdog prompt says never to ask the maintainer: answer from
   the repository, or take the agent's recommended option citing the `path:line` that supports it.
