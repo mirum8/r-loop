@@ -118,6 +118,78 @@ func TestPhaseCheckCreatesTheWorktreeThenWaitsOnTheCheckPromptBeforeThePlanSpawn
 	}
 }
 
+func TestABacklogItemCheckCarriesTheBlockWithoutFilesOrRisk(t *testing.T) {
+	r := newCheckRig(t)
+	r.loop.Plan.Phases[0].Files = nil
+	r.loop.Plan.Phases[0].Risk = ""
+	r.watch.PhaseCheck.Backlog = true
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	calls := r.shared.Calls()
+	check := indexOf(calls, `SessionHost.Prompt rloop-wd-run-1 "check phase 1`)
+	if check < 0 {
+		t.Fatalf("check prompt absent: %q", calls)
+	}
+	prompt := calls[check]
+	for _, want := range []string{"check phase 1", "Backlog item: an issues file names no files and no risk", "### Phase 1 — Core types"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("check prompt %s\nmissing %q", prompt, want)
+		}
+	}
+	for _, absent := range []string{"Files:", "Risk:"} {
+		if strings.Contains(prompt, absent) {
+			t.Errorf("check prompt unexpectedly contains %q: %s", absent, prompt)
+		}
+	}
+}
+
+func TestAPlanFilePhaseWithoutFilesOrRiskStillSaysNone(t *testing.T) {
+	r := newCheckRig(t)
+	r.loop.Plan.Phases[0].Files = nil
+	r.loop.Plan.Phases[0].Risk = ""
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	calls := r.shared.Calls()
+	check := indexOf(calls, `SessionHost.Prompt rloop-wd-run-1 "check phase 1`)
+	if check < 0 {
+		t.Fatalf("check prompt absent: %q", calls)
+	}
+	prompt := calls[check]
+	for _, want := range []string{"Files: none", "Risk: none"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("check prompt %s\nmissing %q", prompt, want)
+		}
+	}
+	if strings.Contains(prompt, "Backlog item") {
+		t.Errorf("plan check marked as backlog: %s", prompt)
+	}
+}
+
+func TestAWarnDuringABacklogItemCheckReachesThePlanPrompt(t *testing.T) {
+	r := newCheckRig(t)
+	r.watch.PhaseCheck.Backlog = true
+	var accepted bool
+	r.dogHost.onPrompt = func(text string) {
+		if strings.HasPrefix(text, "check phase 1") {
+			accepted, _ = r.signal(SignalWarn, "check", "item: internal/core/a.go:3 already does it")
+		}
+	}
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if !accepted {
+		t.Fatal("warn not accepted")
+	}
+	if got := r.planWarnings(t); got != "- item: internal/core/a.go:3 already does it" {
+		t.Errorf("PhaseWarnings %q", got)
+	}
+	if !strings.Contains(r.report(t), "phase 1 phase check: item: internal/core/a.go:3 already does it — landed") {
+		t.Errorf("report\n%s", r.report(t))
+	}
+}
+
 func TestAWarnDuringTheCheckIsShownBeforeThePlanStepAndReachesThePlanPrompt(t *testing.T) {
 	r := newCheckRig(t)
 	var accepted bool

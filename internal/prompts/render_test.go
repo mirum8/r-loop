@@ -13,6 +13,15 @@ var _ core.Prompts = (*Renderer)(nil)
 
 var stepTemplates = []string{"plan", "implement", "review", "review-ui", "fix", "milestone", "gatefix", "gate"}
 
+func TestWatchdogPhaseCheckJudgesABacklogItemAgainstTheCode(t *testing.T) {
+	got := render(t, New(t.TempDir()), "watchdog", fullVars())
+	for _, want := range []string{"carries a `Backlog item` line in place of those lines", "warn only where the item disagrees with the code", "never because it has no `Files:` or `Risk:` line"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("watchdog prompt missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func fullVars() map[string]any {
 	return map[string]any{
 		"PhaseNumber":   7,

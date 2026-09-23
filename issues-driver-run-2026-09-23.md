@@ -12,7 +12,7 @@ Verified against `r-loop` @ `main` `feaf292`.
       - When a reviewer's `review` command cannot run in its session, the round records that as a reviewer failure or a warning the Face shows, never as a clean review
       - The claude reviewer's `/code-review` path is checked the same way, and the plain face and `report.md` name which command each reviewer really ran
 
-- [ ] [#2] Every issues-file item gets a "Files: none understates the cut" warning from the phase check
+- [x] [#2] Every issues-file item gets a "Files: none understates the cut" warning from the phase check  <!-- fixed: r-loop/phase-2 -->
       - For a backlog item, the phase check does not present `Files: none` and `Risk:` as the plan's claims, because an issues file carries neither by design
       - The watchdog still reports a real mismatch between an item and the code, but not the absence of a `Files:` line on a backlog item
       - A plan-file phase with an explicit `Files:` line is checked exactly as today
