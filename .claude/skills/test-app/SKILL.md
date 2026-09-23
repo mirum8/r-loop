@@ -39,7 +39,7 @@ Four cases, in priority order:
 
 Every session must be stopped. Set the teardown up as a trap the moment a start succeeds, so the session goes away on **any** exit path — a failed assertion, an error, an abort — not just the happy one:
 
-    H=$("$TUI" start --geometry 120x40 -- "$BIN" docs/plan/todo-tiny.md) || exit 1
+    H=$("$TUI" start --geometry 120x40 -- "$BIN" docs/plan/todo-tiny.md --unattended) || exit 1
     trap '"$TUI" stop "$H"' EXIT
 
 A leaked tmux session is worse than a leaked container in one specific way: nothing lists it where you would look. The driver's own TTL eventually reaps it, but that is a backstop for a killed run, not a substitute for the trap.
@@ -62,6 +62,8 @@ Edit the template, never a copy, when a check needs a new fixture. Keep its base
 **No-agent checks always run.** They spend nothing and need no herdr pane: `--version`; argv errors (unknown flag, `--phases` naming a ticked or unknown phase, flow-style YAML or an unknown key in `.r-loop/config.yaml`) exit **2**; `--dry-run --plain` on each sandbox plan prints the banner with provenance and the right run list; the dry-run on `todo.md` names the open `## Resolve first` entry blocking phase 3; a dirty tree exits **4** listing the paths (the check runs before any run is created, so it spends nothing even with herdr up); `status` with no run; `--create-config` under a throwaway `HOME`; `NO_COLOR`; and the golden harness `go test ./internal/face/...` from the repo root. **Every positional argument in this tier must end in `.md`.** Anything else is free text, and it opens a live intake session even with `--dry-run`.
 
 **Live checks** need `herdr status server` to be up and `HERDR_PANE_ID` set, and they spend real agent time. These include the TUI itself, because it draws only after preflight has started the watchdog. Scope them to the change: a render or key change needs one `todo-tiny.md` run in the driver (geometry sweep, `C-c` → `n` cancels, `C-c` → `y` aborts, `q` after the end, restoration); a loop, land or review change needs `todo-tiny.md` to land and tick; an issues-path change needs `issues.md`. After a live run, `"$BIN" status --plain`, `events.jsonl` and `git log` in the sandbox are the evidence. Without a herdr pane, every live check is **NOT RUN** and named, never passed.
+
+**Never a live run inside r-loop's own review.** When the working directory is under `.r-loop/wt/` (`case "$PWD" in */.r-loop/wt/*)`), this skill was started by an r-loop session, usually the implement step's `ui` reviewer. That run is already live on this machine. A nested run would clash with its herdr agent names, and it would bring a second watchdog that asks the maintainer, in a pane split beside the reviewer. Run the no-agent tier and the golden harness only. Report every live check as **NOT RUN (inside an r-loop review)**, and name the frames a manual `/test-app` should capture. Outside a review, a live run started by a subagent always passes `--unattended`, because no person watches a subagent's nested watchdog.
 
 ## When this skill activates
 
