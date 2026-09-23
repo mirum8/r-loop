@@ -148,39 +148,54 @@ func (c Client) Start(pane, name, kind string, args []string) (core.Agent, error
 			time.Sleep(paneBusyBackoff)
 			continue
 		}
+		if errors.As(err, &herr) && herr.Code == "agent_not_ready" && kind == "claude" {
+			accepted, terr := c.acceptTrust(name, claudeTrustAnswer, "down", "enter")
+			if terr != nil {
+				return core.Agent{}, terr
+			}
+			if !accepted {
+				return core.Agent{}, err
+			}
+			return core.Agent{Name: name, Pane: pane}, nil
+		}
 		if err != nil {
 			return core.Agent{}, err
 		}
 		break
 	}
-	if err := c.acceptTrust(name); err != nil {
+	if _, err := c.acceptTrust(name, codexTrustQuestion, "enter"); err != nil {
 		return core.Agent{}, err
 	}
 	return core.Agent{Name: out.Result.Agent.Name, Pane: out.Result.Agent.Pane}, nil
 }
 
-const trustQuestion = "Do you trust the contents of this directory?"
+const (
+	codexTrustQuestion = "Do you trust the contents of this directory?"
+	claudeTrustAnswer  = "Yes, I trust this folder"
+)
 
-func (c Client) acceptTrust(agent string) error {
+func (c Client) acceptTrust(agent, marker string, keys ...string) (bool, error) {
 	asks := func() (bool, error) {
 		screen, err := c.exec("agent", "read", agent, "--source", "visible")
-		return strings.Contains(string(screen), trustQuestion), err
+		return strings.Contains(string(screen), marker), err
 	}
 	ask, err := asks()
 	if err != nil || !ask {
-		return err
+		return false, err
 	}
 	var out struct{}
-	if err := c.call(&out, "agent", "send-keys", agent, "enter"); err != nil {
-		return err
+	for _, key := range keys {
+		if err := c.call(&out, "agent", "send-keys", agent, key); err != nil {
+			return true, err
+		}
 	}
 	deadline := time.Now().Add(paneBusyBudget)
 	for {
 		if ask, err = asks(); err != nil || !ask {
-			return err
+			return true, err
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("herdr: agent %s still asks to trust its directory", agent)
+			return true, fmt.Errorf("herdr: agent %s still asks to trust its directory", agent)
 		}
 		time.Sleep(paneBusyBackoff)
 	}

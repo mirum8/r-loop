@@ -25,6 +25,8 @@ An amendment to ADR-73 added Milestone 12, Phase 36: the watchdog calls `ask_mai
 asks the maintainer in its own pane, and the run shows it waiting for them with the question.
 An amendment to ADR-6 added Milestone 13, Phase 37: the sentinel drops `at`, so a mistyped
 timestamp no longer fails a finished step.
+An amendment to ADR-1 added Milestone 14, Phase 38: the herdr adapter accepts claude's trust
+dialog, which herdr reports as `agent_not_ready`.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -50,6 +52,7 @@ timestamp no longer fails a finished step.
 - Wave 19: Phase 35
 - Wave 20: Phase 36
 - Wave 21: Phase 37
+- Wave 22: Phase 38
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -161,7 +164,7 @@ Contracts: `tech-design.md#milestone-2-sessions-and-providers`
 - [x] `herdr.Client{Bin string}` implements `core.SessionHost` by running the `herdr` CLI; every call parses stdout JSON on exit 0 and, on exit 1, the JSON error on stderr into `herdr.Error{Code, Message string}` so callers branch on `Code`; exit 2 is `herdr.Error{Code: "usage"}`; a missing binary is `ErrNoBinary` (the CLI maps it to exit 127)
 - [x] `Reachable()` runs `herdr workspace list` and returns the error code when the server is not up — never `herdr status`, which exits 0 with no server
 - [x] `Open(spec)` runs `herdr workspace create --cwd <spec.CWD> --label <spec.Label> --env K=V… --no-focus` and returns `.result.workspace.workspace_id` and `.result.root_pane.pane_id`; `Split(pane, direction, cwd)` runs `herdr pane split --pane <pane> --direction <d> --cwd <cwd> --no-focus`, or `--current` in place of `--pane` when `pane` is empty, and returns `.result.pane.pane_id`
-- [x] `Start(pane, name, kind, args)` runs `herdr agent start <name> --kind <kind> --pane <pane> -- <args…>`, which returns once herdr reports the agent ready; `agent_pane_busy` is retried every 250 ms within a 20 s budget, and any other code, `agent_not_ready` included, comes back as a `herdr.Error` at once; after the start, when the agent's visible screen (`herdr agent read <name> --source visible`) shows codex's `Do you trust the contents of this directory?` dialog, `Start` sends `enter` and polls every 250 ms until it clears, failing with `herdr: agent <name> still asks to trust its directory` after 20 s — the driver arranging trust for the sessions it opens (spec ADR-1)
+- [x] `Start(pane, name, kind, args)` runs `herdr agent start <name> --kind <kind> --pane <pane> -- <args…>`, which returns once herdr reports the agent ready; `agent_pane_busy` is retried every 250 ms within a 20 s budget, and any other code, `agent_not_ready` included, comes back as a `herdr.Error` at once; after the start, when the agent's visible screen (`herdr agent read <name> --source visible`) shows codex's `Do you trust the contents of this directory?` dialog, `Start` sends `enter` and polls every 250 ms until it clears, failing with `herdr: agent <name> still asks to trust its directory` after 20 s — the driver arranging trust for the sessions it opens (spec ADR-1); a claude start that fails `agent_not_ready` on claude's trust dialog is accepted as Phase 38 describes
 - [x] `Prompt(agent, text, wait, timeout)` runs `herdr agent prompt <agent> <text>` with `--wait --timeout <ms>` when `wait` is set; the text is one argv element, never shell-parsed; `agent_blocked` and `agent_prompt_stalled` come back as `herdr.Error` codes
 - [x] `State(agent)` runs `herdr agent get <agent>` and maps the lifecycle state `idle|working|blocked|done|unknown` to `core.AgentState`, a not-found code to `gone`; `AgentPane(agent)` runs the same `herdr agent get <agent>` and returns `.result.agent.pane_id`, or `""` for a not-found code; `Read(agent, lines)` runs `herdr agent read <agent> --source recent-unwrapped --lines <n>`; `Interrupt(agent)` runs `herdr agent send-keys <agent> esc` then `herdr agent send-keys <agent> ctrl+c`; `Close(id)` runs `herdr workspace close <id>` and never adds `--group`; `ClosePane(pane)` runs `herdr pane close <pane>`, used only for the watchdog's own pane and a stale one of the same run
 - [x] `client_test.go` points `Bin` at `testdata/herdr`, a script that records its argv and prints canned JSON, and proves every command's argv, each result field parsed, the error-code mapping, and `ErrNoBinary`
@@ -585,6 +588,19 @@ Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
 - [x] every step prompt asks for `{"outcome":"ok","reason":""}` or `{"outcome":"failed","reason":"<why>"}`, with no timestamp
 - [x] the test sentinels and the `ask-agent` test binary write the two-field form
 **Done when:** `go test -race ./...` is green and `grep -n "RFC3339" internal/prompts/render.go internal/core/evidence.go` prints nothing.
+
+## Milestone 14 — Claude's trust dialog
+Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
+
+### Phase 38 — The herdr adapter accepts claude's trust dialog
+**Implements:** Run every remaining phase of a plan
+**Depends on:** Phase 37
+**Files:** `internal/herdr/client.go` (modify) · `internal/herdr/client_test.go` (modify)
+**Risk:** none
+- [x] when `herdr agent start` for a `claude` agent fails `agent_not_ready` and the visible screen shows `Yes, I trust this folder`, `Start` sends `down` then `enter`, polls every 250 ms within the 20 s budget until the screen no longer shows it, and returns `Agent{Name: name, Pane: pane}` from its own arguments
+- [x] a claude trust dialog still showing after 20 s fails with `herdr: agent <name> still asks to trust its directory`
+- [x] any other not-ready screen returns the original `agent_not_ready` error and presses no key; codex's trust acceptance after a successful start is unchanged
+**Done when:** `go test -race ./internal/herdr/...` is green.
 
 ## Open questions
 

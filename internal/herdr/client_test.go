@@ -463,3 +463,89 @@ func TestStartFailsWhenTrustDialogDoesNotClear(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+const claudeTrustScreen = " Accessing workspace:\n /repo\n Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team).\n Claude Code'll be able to read, edit, and execute files here.\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel\n"
+
+func notReadyThenTrusted(t *testing.T, before, after string) (Client, func() [][]string) {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	entered := filepath.Join(dir, "entered")
+	for name, screen := range map[string]string{"before": before, "after": after} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(screen), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\0' \"$@\" >> \"" + log + "\"\n" +
+		"printf '\\n' >> \"" + log + "\"\n" +
+		"case \"$2\" in\n" +
+		"start) printf '%s' '{\"error\":{\"code\":\"agent_not_ready\",\"message\":\"agent '\"$3\"' is blocked during startup and is not ready for prompts\"}}' >&2; exit 1 ;;\n" +
+		"send-keys) if [ \"$4\" = enter ]; then touch \"" + entered + "\"; fi; printf '%s' '{\"result\":{\"type\":\"ok\"}}' ;;\n" +
+		"read) if [ -e \"" + entered + "\" ]; then cat \"" + filepath.Join(dir, "after") + "\"; else cat \"" + filepath.Join(dir, "before") + "\"; fi ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return Client{Bin: bin}, func() [][]string {
+		data, err := os.ReadFile(log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var calls [][]string
+		for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+			calls = append(calls, strings.Split(strings.TrimSuffix(line, "\x00"), "\x00"))
+		}
+		return calls
+	}
+}
+
+func TestStartAcceptsClaudesTrustDialogThatHerdrReportsNotReady(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := notReadyThenTrusted(t, claudeTrustScreen, "❯ \n")
+
+	agent, err := c.Start("w8P:p1", "rloop-wd-run-1", "claude", []string{"--model", "opus"})
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if agent != (core.Agent{Name: "rloop-wd-run-1", Pane: "w8P:p1"}) {
+		t.Fatalf("agent %+v", agent)
+	}
+	assertCalls(t, calls(), [][]string{
+		{"agent", "start", "rloop-wd-run-1", "--kind", "claude", "--pane", "w8P:p1", "--", "--model", "opus"},
+		{"agent", "read", "rloop-wd-run-1", "--source", "visible"},
+		{"agent", "send-keys", "rloop-wd-run-1", "down"},
+		{"agent", "send-keys", "rloop-wd-run-1", "enter"},
+		{"agent", "read", "rloop-wd-run-1", "--source", "visible"},
+	})
+}
+
+func TestStartStillFailsWhenAnAgentIsNotReadyForAnotherReason(t *testing.T) {
+	shrinkPaneBusyWait(t, 20*time.Millisecond)
+	c, calls := notReadyThenTrusted(t, "  ✨ Update available!\n› 1. Update now\n  2. Skip\n", "")
+
+	_, err := c.Start("w8P:p1", "a1", "claude", nil)
+
+	var herr Error
+	if !errors.As(err, &herr) || herr.Code != "agent_not_ready" {
+		t.Fatalf("got %#v", err)
+	}
+	for _, call := range calls() {
+		if call[1] == "send-keys" {
+			t.Fatalf("pressed keys on an unknown startup screen: %q", call)
+		}
+	}
+}
+
+func TestStartFailsWhenClaudesTrustDialogDoesNotClear(t *testing.T) {
+	shrinkPaneBusyWait(t, 20*time.Millisecond)
+	c, _ := notReadyThenTrusted(t, claudeTrustScreen, claudeTrustScreen)
+
+	_, err := c.Start("w8P:p1", "a1", "claude", nil)
+
+	if err == nil || !strings.Contains(err.Error(), "trust") {
+		t.Fatalf("got %v", err)
+	}
+}

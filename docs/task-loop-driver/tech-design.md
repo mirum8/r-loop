@@ -88,8 +88,12 @@ provider, model and effort, and `--model` and `--effort` override one row for on
     map[string]string}) (Workspace{ID, RootPane string}, error)` · `Start(pane, name, kind
     string, args []string) (Agent{Name, Pane string}, error)` (the herdr adapter retries
     `agent_pane_busy` every 250 ms within a 20 s budget and accepts codex's "Do you trust the
-    contents of this directory?" dialog, failing when it has not cleared in 20 s — the driver
-    arranging trust for the sessions it opens, spec ADR-1) · `Prompt(agent, text string, wait
+    contents of this directory?" dialog with `enter`, and — when a claude start fails
+    `agent_not_ready` on a screen showing "Yes, I trust this folder" — claude's trust dialog
+    with `down` then `enter`, returning `Agent{name, pane}` from its own arguments; either fails
+    when the dialog has not cleared in 20 s, and any other not-ready screen returns the
+    `agent_not_ready` error with no key pressed — the driver arranging trust for the sessions it
+    opens, spec ADR-1) · `Prompt(agent, text string, wait
     bool, timeout time.Duration) error` · `State(agent) (AgentState, error)` with `AgentState ∈
     {idle, working, blocked, done, unknown, gone}` · `Read(agent string, lines int) (string,
     error)` · `Interrupt(agent) error` · `Close(workspaceID) error` · `Split(pane, direction,
