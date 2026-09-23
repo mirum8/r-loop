@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -219,7 +220,7 @@ func foreignTestEdit(ctx CheckContext) string {
 		quoted[i] = shellQuote(p)
 	}
 	command := fmt.Sprintf("git ls-tree -r --name-only %s -- %s", shellQuote(ctx.Step.Base), strings.Join(quoted, " "))
-	code, out, err := ctx.Repo.Run(worktreeDir(ctx), command, 30*time.Second)
+	code, out, err := ctx.Repo.Run(context.Background(), worktreeDir(ctx), command, 30*time.Second)
 	if err != nil || code != 0 {
 		return ""
 	}

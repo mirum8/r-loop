@@ -229,6 +229,257 @@ func (r *loopRig) runRecords() []Record {
 	return out
 }
 
+type landerFunc func(context.Context, Phase) (Landing, error)
+
+func (f landerFunc) Land(ctx context.Context, ph Phase) (Landing, error) { return f(ctx, ph) }
+
+type stepRunnerFunc func(context.Context, StepRef, Observer) Outcome
+
+func (f stepRunnerFunc) Run(ctx context.Context, ref StepRef, obs Observer) Outcome {
+	return f(ctx, ref, obs)
+}
+
+func landGate(r *loopRig) *LandGate {
+	g := &LandGate{Repo: r.repo, Plan: &fakePlanSource{}, Store: r.store, Face: r.face, RunID: "run-1", TodoPath: "docs/x/todo.md", GateTimeout: time.Minute}
+	r.repo.Touched = []string{"docs/x/todo.md", "code.go"}
+	r.loop.Lander = g
+	return g
+}
+
+func assertAbortedLand(t *testing.T, r *loopRig, code int) {
+	t.Helper()
+	if code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	runs := r.runRecords()
+	if len(runs) == 0 || runs[len(runs)-1].Run != RunHalted || runs[len(runs)-1].Reason != ReasonAborted {
+		t.Fatalf("run records = %+v", runs)
+	}
+	if got := r.events("aborted"); len(got) != 1 || got[0].Step != "land" {
+		t.Fatalf("aborted = %+v", got)
+	}
+}
+
+func TestAnAbortDuringAGateFixRoundStopsTheRun(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Plan.Phases[0].DoneWhen = "`go test ./x`"
+	r.repo.RunExit = 1
+	g := landGate(r)
+	g.FixRounds = 1
+	fix := StepKind{Name: "gatefix", Prompt: "gatefix", Check: "diff", Row: StepRow{Provider: "codex", Timeout: time.Hour}}
+	g.FixKind = fix
+	g.Runner = DefaultRunners(r.loop.Sessions, []StepKind{fix})["diff"]
+	r.host.behaviour["rloop-p1-gatefix"] = "abort"
+	start := time.Now()
+	code := r.run(RunOptions{Phases: []string{"1"}})
+	assertAbortedLand(t, r, code)
+	if time.Since(start) >= 2*time.Second || len(r.calls("Repo.MergeNoFF ")) != 1 {
+		t.Fatalf("elapsed %s, merges %v", time.Since(start), r.calls("Repo.MergeNoFF "))
+	}
+}
+
+func TestAnAbortDuringTheGateProbeStopsTheRun(t *testing.T) {
+	r := newLoopRig(t)
+	g := landGate(r)
+	g.Suite = &GateProbe{Sessions: r.loop.Sessions, Repo: r.repo, Kind: StepKind{Name: "gate", Prompt: "gate", Check: "diff", Row: StepRow{Provider: "codex", Timeout: time.Hour}}, Plan: r.loop.Plan, RunID: "run-1", RunDir: r.store.dir, Face: r.face, Timeout: time.Minute}
+	r.host.behaviour["rloop-p1-gate"] = "abort"
+	start := time.Now()
+	code := r.run(RunOptions{Phases: []string{"1"}})
+	assertAbortedLand(t, r, code)
+	if time.Since(start) >= 2*time.Second || len(r.calls("Repo.MergeNoFF ")) != 0 {
+		t.Fatalf("elapsed %s, merges %v", time.Since(start), r.calls("Repo.MergeNoFF "))
+	}
+}
+
+func TestAnAbortDuringTheMilestoneReportStopsTheRun(t *testing.T) {
+	r := newLoopRig(t)
+	g := landGate(r)
+	g.Boundary = &MilestoneBoundary{Plan: r.loop.Plan, Sessions: r.loop.Sessions, Repo: r.repo, Kind: StepKind{Name: "milestone", Prompt: "milestone", Check: "diff", Row: StepRow{Provider: "codex", Timeout: time.Hour}}, Topic: "x", RunDir: r.store.dir, RunID: "run-1", Face: r.face}
+	r.host.behaviour["rloop-p3-milestone"] = "abort"
+	start := time.Now()
+	code := r.run(RunOptions{})
+	assertAbortedLand(t, r, code)
+	if time.Since(start) >= 2*time.Second {
+		t.Fatalf("elapsed %s", time.Since(start))
+	}
+}
+
+func TestAnAbortWhileLandRunsCancelsItAndRecordsTheAbortOnce(t *testing.T) {
+	r := newLoopRig(t)
+	cancelled := make(chan bool, 1)
+	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+		r.store.MarkAbort("run-1")
+		select {
+		case <-ctx.Done():
+			cancelled <- true
+		case <-time.After(5 * time.Second):
+			cancelled <- false
+		}
+		return Landing{}, ctx.Err()
+	})
+	start := time.Now()
+	code := r.run(RunOptions{Phases: []string{"1"}})
+	assertAbortedLand(t, r, code)
+	if time.Since(start) >= 2*time.Second || !<-cancelled {
+		t.Fatalf("land not cancelled promptly: %s", time.Since(start))
+	}
+	count := 0
+	for _, rec := range r.runRecords() {
+		if rec.Reason == ReasonAborted {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("aborted records = %d", count)
+	}
+}
+
+func TestAnInterruptMidStepHaltsTheRunAsInterruptedWithExit4(t *testing.T) {
+	r := newLoopRig(t)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	r.loop.Runners = map[string]StepRunner{"plan-file": stepRunnerFunc(func(stepCtx context.Context, ref StepRef, obs Observer) Outcome {
+		cancel(errors.New("SIGTERM"))
+		<-stepCtx.Done()
+		return Outcome{State: StepFailed, Reason: "interrupted"}
+	})}
+	code := r.loop.Run(ctx, RunOptions{Phases: []string{"1"}})
+	if code != 4 {
+		t.Fatalf("exit %d", code)
+	}
+	runs := r.runRecords()
+	if last := runs[len(runs)-1]; last.Run != RunHalted || last.Reason != "interrupted: SIGTERM" {
+		t.Fatalf("last = %+v", last)
+	}
+	if halt := r.events("halt"); len(halt) != 1 || halt[0].Fields["reason"] != "interrupted: SIGTERM" || halt[0].Fields["resume"] != "r-loop resume" {
+		t.Fatalf("halt = %+v", halt)
+	}
+	if len(r.events("phase-blocked")) != 0 || len(r.calls("Notifier.Fire ")) != 0 || len(r.host.Opened) != 0 {
+		t.Fatalf("blocked = %+v, hooks = %v, sessions = %d", r.events("phase-blocked"), r.calls("Notifier.Fire "), len(r.host.Opened))
+	}
+}
+
+func TestAnInterruptDuringLandHaltsTheRunAsInterrupted(t *testing.T) {
+	r := newLoopRig(t)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	r.loop.Lander = landerFunc(func(landCtx context.Context, ph Phase) (Landing, error) {
+		cancel(errors.New("SIGTERM"))
+		select {
+		case <-landCtx.Done():
+		case <-time.After(5 * time.Second):
+		}
+		return Landing{}, landCtx.Err()
+	})
+	code := r.loop.Run(ctx, RunOptions{Phases: []string{"1"}})
+	if code != 4 {
+		t.Fatalf("exit %d", code)
+	}
+	runs := r.runRecords()
+	if last := runs[len(runs)-1]; last.Run != RunHalted || !strings.HasPrefix(last.Reason, "interrupted") {
+		t.Fatalf("last = %+v", last)
+	}
+	if halt := r.events("halt"); len(halt) != 1 || halt[0].Step != "land" {
+		t.Fatalf("halt = %+v", halt)
+	}
+}
+
+type stateErrorHost struct {
+	*agentSim
+}
+
+func (h stateErrorHost) State(agent string) (AgentState, error) {
+	return AgentWorking, errors.New("herdr agent get x: timed out after 30s")
+}
+
+func TestAnAbortStopsAStepWhileEveryHostStateCallFails(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Sessions.Host = stateErrorHost{r.host}
+	r.host.behaviour["rloop-p1-implement"] = "abort"
+	code := r.run(RunOptions{Phases: []string{"1"}})
+	if code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	runs := r.runRecords()
+	if last := runs[len(runs)-1]; last.Run != RunHalted || last.Reason != ReasonAborted {
+		t.Fatalf("last = %+v", last)
+	}
+}
+
+func TestAnAbortMarkedByALandThatThenSucceedsStillStopsTheRun(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+		r.store.MarkAbort("run-1")
+		return Landing{Phase: ph.ID, MergeSHA: "merge"}, nil
+	})
+	code := r.run(RunOptions{Phases: []string{"1"}})
+	assertAbortedLand(t, r, code)
+	if len(r.events("finished")) != 0 {
+		t.Fatal("finished after abort")
+	}
+}
+
+func TestAnInterruptAsTheLastPhaseLandsDoesNotFinish(t *testing.T) {
+	r := newLoopRig(t)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+		landing := Landing{Phase: ph.ID, MergeSHA: "merge"}
+		r.store.Append("run-1", Record{Kind: RecordLanding, Landing: &landing})
+		cancel(errors.New("SIGTERM"))
+		return landing, nil
+	})
+	code := r.loop.Run(ctx, RunOptions{Phases: []string{"1"}})
+	if code != 4 || len(r.events("finished")) != 0 {
+		t.Fatalf("exit %d, finished %+v", code, r.events("finished"))
+	}
+	if got := r.events("landed"); len(got) != 1 || got[0].Phase != "1" {
+		t.Fatalf("landed = %+v", got)
+	}
+	if got := r.events("worktree-removed"); len(got) != 1 || got[0].Phase != "1" {
+		t.Fatalf("worktree removed = %+v", got)
+	}
+	if got := r.events("workspace-closed"); len(got) != 2 {
+		t.Fatalf("workspaces closed = %+v", got)
+	}
+	runs := r.runRecords()
+	if last := runs[len(runs)-1]; last.Run != RunHalted || last.Reason != "interrupted: SIGTERM" {
+		t.Fatalf("last = %+v", last)
+	}
+}
+
+func TestAnInterruptAsTheLastStepEndsHaltsInsteadOfBlocking(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.RemedyWindow = 0
+	r.host.behaviour["rloop-p1-implement"] = "fail"
+	ctx, cancel := context.WithCancelCause(context.Background())
+	r.watcher.ended = func(ref StepRef, out Outcome) {
+		if out.State == StepFailed {
+			cancel(errors.New("SIGTERM"))
+		}
+	}
+	code := r.loop.Run(ctx, RunOptions{Phases: []string{"1"}})
+	if code != 4 || len(r.events("phase-blocked")) != 0 || len(r.calls("Notifier.Fire ")) != 0 {
+		t.Fatalf("exit %d, blocked %+v, hooks %v", code, r.events("phase-blocked"), r.calls("Notifier.Fire "))
+	}
+	runs := r.runRecords()
+	if last := runs[len(runs)-1]; last.Run != RunHalted || last.Reason != "interrupted: SIGTERM" {
+		t.Fatalf("last = %+v", last)
+	}
+}
+
+func TestATimedOutGitMergeBlocksThePhaseNamingIt(t *testing.T) {
+	r := newLoopRig(t)
+	reason := "git merge --no-ff --no-commit r-loop/phase-1: timed out after 10m0s"
+	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+		return Landing{}, errors.New(reason)
+	})
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	blocked := r.events("phase-blocked")
+	if len(blocked) != 1 || !strings.Contains(blocked[0].Fields["reason"], "land: "+reason) {
+		t.Fatalf("blocked = %+v", blocked)
+	}
+}
+
 func (r *loopRig) report(t *testing.T) string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(r.store.dir, "report.md"))

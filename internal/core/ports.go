@@ -67,12 +67,12 @@ type Repo interface {
 	DiffStat(dir, ref string) (int, int, error)
 	Snapshot(dir string) (string, error)
 	TreeDiff(from, to string) ([]string, error)
-	MergeNoFF(branch string) error
+	MergeNoFF(ctx context.Context, branch string) error
 	AbortMerge() error
-	Commit(message string) (string, error)
+	Commit(ctx context.Context, message string) (string, error)
 	CommitTouches(sha string) ([]string, error)
 	ResetHard(ref string) error
-	Run(dir, command string, timeout time.Duration) (int, string, error)
+	Run(ctx context.Context, dir, command string, timeout time.Duration) (int, string, error)
 }
 
 type Store interface {

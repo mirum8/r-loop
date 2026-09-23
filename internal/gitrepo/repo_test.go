@@ -1,12 +1,15 @@
 package gitrepo
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -320,7 +323,7 @@ func TestMergeNoFFThenCommit(t *testing.T) {
 	branchWith(t, dir, "r-loop/phase-1", "feature.txt", "f\n")
 	head := git(t, dir, "rev-parse", "HEAD")
 
-	if err := r.MergeNoFF("r-loop/phase-1"); err != nil {
+	if err := r.MergeNoFF(context.Background(), "r-loop/phase-1"); err != nil {
 		t.Fatalf("MergeNoFF: %v", err)
 	}
 	if got := git(t, dir, "rev-parse", "HEAD"); got != head {
@@ -328,7 +331,7 @@ func TestMergeNoFFThenCommit(t *testing.T) {
 	}
 	write(t, filepath.Join(dir, "todo.md"), "- [x] ticked\n")
 
-	sha, err := r.Commit("r-loop: land phase 1")
+	sha, err := r.Commit(context.Background(), "r-loop: land phase 1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +354,7 @@ func TestMergeConflictRestoresTree(t *testing.T) {
 	git(t, dir, "commit", "-q", "-am", "main edit")
 	head := git(t, dir, "rev-parse", "HEAD")
 
-	err := r.MergeNoFF("side")
+	err := r.MergeNoFF(context.Background(), "side")
 	if !errors.Is(err, core.ErrMergeConflict) {
 		t.Fatalf("err = %v, want ErrMergeConflict", err)
 	}
@@ -373,7 +376,7 @@ func TestAbortMergeAfterCleanMerge(t *testing.T) {
 	r, dir := newRepo(t)
 	branchWith(t, dir, "side", "feature.txt", "f\n")
 
-	if err := r.MergeNoFF("side"); err != nil {
+	if err := r.MergeNoFF(context.Background(), "side"); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.AbortMerge(); err != nil {
@@ -403,7 +406,7 @@ func TestResetHard(t *testing.T) {
 
 func TestRunExitAndOutput(t *testing.T) {
 	r, dir := newRepo(t)
-	exit, out, err := r.Run("", "pwd; echo err >&2; exit 3", time.Minute)
+	exit, out, err := r.Run(context.Background(), "", "pwd; echo err >&2; exit 3", time.Minute)
 	if err != nil || exit != 3 {
 		t.Fatalf("Run = %d, %v", exit, err)
 	}
@@ -416,7 +419,7 @@ func TestRunExitAndOutput(t *testing.T) {
 func TestRunTimesOut(t *testing.T) {
 	r, _ := newRepo(t)
 	start := time.Now()
-	exit, out, err := r.Run("", "echo started; sleep 30 & sleep 30", 200*time.Millisecond)
+	exit, out, err := r.Run(context.Background(), "", "echo started; sleep 30 & sleep 30", 200*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,6 +429,356 @@ func TestRunTimesOut(t *testing.T) {
 	if exit != -1 || !strings.Contains(out, "started") || !strings.HasSuffix(out, "timed out after 200ms") {
 		t.Fatalf("Run = %d, %q", exit, out)
 	}
+}
+
+func waitPID(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		b, err := os.ReadFile(path)
+		if err == nil {
+			var pid int
+			if _, err := fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &pid); err == nil && pid > 0 {
+				return pid
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("pid was not written to %s", path)
+	return 0
+}
+
+func waitGroupGone(t *testing.T, pgid int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(-pgid, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("process group %d still exists", pgid)
+}
+
+func waitProcessGone(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("process %d still exists", pid)
+}
+
+func TestRunThatPassesButLeavesABackgroundChildExitsZero(t *testing.T) {
+	r, _ := newRepo(t)
+	pidFile := filepath.Join(t.TempDir(), "gate.pid")
+	start := time.Now()
+	exit, out, err := r.Run(context.Background(), "", "echo $$ > '"+pidFile+"'; sleep 30 & echo ok", time.Minute)
+	if err != nil || exit != 0 || !strings.Contains(out, "ok") || time.Since(start) > 5*time.Second {
+		t.Fatalf("Run = %d, %q, %v after %v", exit, out, err, time.Since(start))
+	}
+	waitGroupGone(t, waitPID(t, pidFile))
+}
+
+func TestRunThatFailsAndLeavesABackgroundChildKeepsItsExitCode(t *testing.T) {
+	r, _ := newRepo(t)
+	start := time.Now()
+	exit, out, err := r.Run(context.Background(), "", "sleep 30 & exit 3", time.Minute)
+	if err != nil || exit != 3 || time.Since(start) > 5*time.Second {
+		t.Fatalf("Run = %d, %q, %v after %v", exit, out, err, time.Since(start))
+	}
+}
+
+func TestRunCancelledKillsTheProcessGroup(t *testing.T) {
+	r, _ := newRepo(t)
+	pidFile := filepath.Join(t.TempDir(), "gate.pid")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type result struct {
+		exit int
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		exit, _, err := r.Run(ctx, "", "echo $$ > '"+pidFile+"'; sleep 300", time.Minute)
+		done <- result{exit, err}
+	}()
+	pid := waitPID(t, pidFile)
+	cancel()
+	select {
+	case got := <-done:
+		if got.exit != -1 || !errors.Is(got.err, context.Canceled) {
+			t.Fatalf("Run = %+v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not cancel")
+	}
+	waitGroupGone(t, pid)
+}
+
+func TestRunWithAnEndedContextStartsNothing(t *testing.T) {
+	r, _ := newRepo(t)
+	marker := filepath.Join(t.TempDir(), "started")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := r.Run(ctx, "", "touch '"+marker+"'", time.Minute)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker exists: %v", err)
+	}
+}
+
+func TestRunCommandsSeeTerminalPromptOff(t *testing.T) {
+	r, _ := newRepo(t)
+	_, out, err := r.Run(context.Background(), "", "echo $GIT_TERMINAL_PROMPT", time.Minute)
+	if err != nil || strings.TrimSpace(out) != "0" {
+		t.Fatalf("Run = %q, %v", out, err)
+	}
+}
+
+func TestAHangingGitCallIsKilledAfterTheTimeoutNamingTheCommand(t *testing.T) {
+	r, dir := newRepo(t)
+	old := gitTimeout
+	gitTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { gitTimeout = old })
+	pidFile := filepath.Join(t.TempDir(), "hook.pid")
+	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	write(t, hook, "#!/bin/sh\necho $$ > '"+pidFile+"'\nsleep 300\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "a.txt"), "change\n")
+	for attempt := 0; attempt < 10; attempt++ {
+		start := time.Now()
+		_, err := r.CommitAll("", "change")
+		if err == nil || !strings.Contains(err.Error(), "git commit") || !strings.Contains(err.Error(), "timed out after 300ms") || time.Since(start) > 5*time.Second {
+			t.Fatalf("CommitAll = %v after %v", err, time.Since(start))
+		}
+		if _, err := os.Stat(pidFile); err == nil {
+			waitProcessGone(t, waitPID(t, pidFile))
+			return
+		}
+	}
+	t.Fatal("pre-commit hook never started before the 300ms timeout")
+}
+
+func TestEveryGitCallRunsWithTerminalPromptOff(t *testing.T) {
+	r, dir := newRepo(t)
+	valueFile := filepath.Join(t.TempDir(), "prompt")
+	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	write(t, hook, "#!/bin/sh\nprintf '%s' \"$GIT_TERMINAL_PROMPT\" > '"+valueFile+"'\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "a.txt"), "change\n")
+	if _, err := r.CommitAll("", "change"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(stringMustRead(t, valueFile))); got != "0" {
+		t.Fatalf("GIT_TERMINAL_PROMPT = %q", got)
+	}
+}
+
+func stringMustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func slowMerge(t *testing.T) (*Repo, string, string, string) {
+	t.Helper()
+	r, dir := newRepo(t)
+	pidFile := filepath.Join(t.TempDir(), "smudge.pid")
+	write(t, filepath.Join(dir, ".gitattributes"), "*.slow filter=slow\n")
+	git(t, dir, "add", ".gitattributes")
+	git(t, dir, "commit", "-q", "-m", "attributes")
+	git(t, dir, "config", "filter.slow.clean", "cat")
+	git(t, dir, "config", "filter.slow.smudge", "sh -c 'echo $$ > "+pidFile+"; sleep 300'")
+	branchWith(t, dir, "side", "a.slow", "slow\n")
+	head := git(t, dir, "rev-parse", "HEAD")
+	return r, dir, head, pidFile
+}
+
+func assertCleanMerge(t *testing.T, dir, head string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(dir, ".git", "index.lock")); !os.IsNotExist(err) {
+		t.Fatalf("index.lock remains: %v", err)
+	}
+	if got := status(t, dir); got != "" {
+		t.Fatalf("status = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git", "MERGE_HEAD")); !os.IsNotExist(err) {
+		t.Fatalf("MERGE_HEAD remains: %v", err)
+	}
+	if got := git(t, dir, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("HEAD = %s, want %s", got, head)
+	}
+	write(t, filepath.Join(dir, "after-recovery.txt"), "ok\n")
+	git(t, dir, "add", "after-recovery.txt")
+}
+
+func TestMergeNoFFWithCancelledContextPreservesExistingEdits(t *testing.T) {
+	r, dir := newRepo(t)
+	branchWith(t, dir, "side", "feature.txt", "feature\n")
+	head := git(t, dir, "rev-parse", "HEAD")
+	write(t, filepath.Join(dir, "a.txt"), "uncommitted edit\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := r.MergeNoFF(ctx, "side"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("MergeNoFF = %v", err)
+	}
+	if got := git(t, dir, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("HEAD = %s, want %s", got, head)
+	}
+	if got := string(stringMustRead(t, filepath.Join(dir, "a.txt"))); got != "uncommitted edit\n" {
+		t.Fatalf("tracked edit lost: %q", got)
+	}
+}
+
+func TestMergeNoFFCancelledMidMergeLeavesThePreMergeHead(t *testing.T) {
+	r, dir, head, pidFile := slowMerge(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- r.MergeNoFF(ctx, "side") }()
+	pid := waitPID(t, pidFile)
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "interrupted") {
+			t.Fatalf("MergeNoFF = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("MergeNoFF did not cancel")
+	}
+	waitProcessGone(t, pid)
+	assertCleanMerge(t, dir, head)
+}
+
+func TestMergeNoFFTimedOutLeavesThePreMergeHead(t *testing.T) {
+	r, dir, head, pidFile := slowMerge(t)
+	old := gitTimeout
+	gitTimeout = 2 * time.Second
+	t.Cleanup(func() { gitTimeout = old })
+	done := make(chan error, 1)
+	go func() { done <- r.MergeNoFF(context.Background(), "side") }()
+	pid := waitPID(t, pidFile)
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "git merge --no-ff --no-commit") || !strings.Contains(err.Error(), "timed out after 2s") {
+			t.Fatalf("MergeNoFF = %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("MergeNoFF did not time out")
+	}
+	waitProcessGone(t, pid)
+	assertCleanMerge(t, dir, head)
+}
+
+func TestCommitCancelledInAHangingHookMakesNoCommit(t *testing.T) {
+	r, dir := newRepo(t)
+	head := git(t, dir, "rev-parse", "HEAD")
+	pidFile := filepath.Join(t.TempDir(), "hook.pid")
+	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	write(t, hook, "#!/bin/sh\necho $$ > '"+pidFile+"'\nsleep 300\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "a.txt"), "change\n")
+	git(t, dir, "add", "-A")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := r.Commit(ctx, "change"); done <- err }()
+	pid := waitPID(t, pidFile)
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "interrupted") {
+			t.Fatalf("Commit = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Commit did not cancel")
+	}
+	waitProcessGone(t, pid)
+	if got := git(t, dir, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("HEAD = %s, want %s", got, head)
+	}
+}
+
+func TestCommitWithPostCommitBackgroundChildReturnsNewHead(t *testing.T) {
+	r, dir := newRepo(t)
+	hook := filepath.Join(dir, ".git", "hooks", "post-commit")
+	write(t, hook, "#!/bin/sh\nsleep 30 &\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "a.txt"), "change\n")
+	start := time.Now()
+	sha, err := r.Commit(context.Background(), "change")
+	if err != nil || sha != git(t, dir, "rev-parse", "HEAD") || time.Since(start) > 5*time.Second {
+		t.Fatalf("Commit = %q, %v after %s", sha, err, time.Since(start))
+	}
+}
+
+func TestCommitCancelledInPostCommitHookReturnsNewHead(t *testing.T) {
+	r, dir := newRepo(t)
+	before := git(t, dir, "rev-parse", "HEAD")
+	pidFile := filepath.Join(t.TempDir(), "hook.pid")
+	hook := filepath.Join(dir, ".git", "hooks", "post-commit")
+	write(t, hook, "#!/bin/sh\necho $$ > '"+pidFile+"'\nsleep 300\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "a.txt"), "change\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type result struct {
+		sha string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() { sha, err := r.Commit(ctx, "change"); done <- result{sha, err} }()
+	pid := waitPID(t, pidFile)
+	cancel()
+	select {
+	case got := <-done:
+		head := git(t, dir, "rev-parse", "HEAD")
+		if head == before || got.err != nil || got.sha != head {
+			t.Fatalf("Commit = %q, %v; HEAD = %q, before = %q", got.sha, got.err, head, before)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Commit did not cancel")
+	}
+	waitProcessGone(t, pid)
+}
+
+func TestCommitTimedOutInPostCommitHookReturnsNewHead(t *testing.T) {
+	r, dir := newRepo(t)
+	before := git(t, dir, "rev-parse", "HEAD")
+	old := gitTimeout
+	gitTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { gitTimeout = old })
+	pidFile := filepath.Join(t.TempDir(), "hook.pid")
+	hook := filepath.Join(dir, ".git", "hooks", "post-commit")
+	write(t, hook, "#!/bin/sh\necho $$ > '"+pidFile+"'\nsleep 300\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "a.txt"), "change\n")
+	sha, err := r.Commit(context.Background(), "change")
+	if head := git(t, dir, "rev-parse", "HEAD"); head == before || err != nil || sha != head {
+		t.Fatalf("Commit = %q, %v; HEAD = %q, before = %q", sha, err, head, before)
+	}
+	waitProcessGone(t, waitPID(t, pidFile))
 }
 
 func TestSnapshotKeepsTrackedIgnoredFile(t *testing.T) {

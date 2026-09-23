@@ -90,7 +90,7 @@ func (w *Wiring) walk(ctx context.Context, blocking []core.Entry, list []core.Ph
 			resolved = append(resolved, e)
 		}
 	}
-	if _, err := w.Repo.Commit(fmt.Sprintf("docs: resolve %d plan blockers", len(resolved))); err != nil {
+	if _, err := w.Repo.Commit(ctx, fmt.Sprintf("docs: resolve %d plan blockers", len(resolved))); err != nil {
 		return exit(2, "%v", err)
 	}
 	for _, e := range resolved {

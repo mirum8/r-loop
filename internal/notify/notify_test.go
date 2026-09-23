@@ -139,6 +139,38 @@ func TestHookPastItsTimeoutIsKilledAndLogged(t *testing.T) {
 	}
 }
 
+func TestAHookThatExitsZeroButLeavesABackgroundChildIsNotAFailure(t *testing.T) {
+	dir := t.TempDir()
+	ev := &events{}
+	sh := &Shell{Log: filepath.Join(dir, "notify.log"), Emit: ev.Emit}
+	start := time.Now()
+	sh.Fire("sleep 30 &", hookEnv())
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("Fire took %v", time.Since(start))
+	}
+	if got := ev.kind("notify-failed"); len(got) != 0 {
+		t.Fatalf("events = %+v", got)
+	}
+	if _, err := os.Stat(sh.Log); !os.IsNotExist(err) {
+		t.Fatalf("notify log exists: %v", err)
+	}
+}
+
+func TestAHookThatFailsAndLeavesABackgroundChildIsStillAFailure(t *testing.T) {
+	dir := t.TempDir()
+	ev := &events{}
+	sh := &Shell{Log: filepath.Join(dir, "notify.log"), Emit: ev.Emit}
+	start := time.Now()
+	sh.Fire("sleep 30 & exit 3", hookEnv())
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("Fire took %v", time.Since(start))
+	}
+	got := ev.kind("notify-failed")
+	if len(got) != 1 || !strings.Contains(got[0].Fields["reason"], "exit status 3") {
+		t.Fatalf("events = %+v", got)
+	}
+}
+
 func TestDefaultTimeoutIsSixtySeconds(t *testing.T) {
 	if (&Shell{}).timeout() != 60*time.Second {
 		t.Fatal((&Shell{}).timeout())

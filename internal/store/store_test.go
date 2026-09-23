@@ -435,6 +435,45 @@ func TestEnsureExcludedOutsideGitFails(t *testing.T) {
 	}
 }
 
+func fakeGitForExclude(t *testing.T, body string) string {
+	t.Helper()
+	bin := t.TempDir()
+	path := filepath.Join(bin, "git")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return path
+}
+
+func TestEnsureExcludedRunsGitWithTerminalPromptOff(t *testing.T) {
+	root := t.TempDir()
+	value := filepath.Join(t.TempDir(), "prompt")
+	fakeGitForExclude(t, "printf '%s' \"$GIT_TERMINAL_PROMPT\" > '"+value+"'\necho .git")
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureExcluded(root); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, value); got != "0" {
+		t.Fatalf("GIT_TERMINAL_PROMPT = %q", got)
+	}
+}
+
+func TestEnsureExcludedGivesUpOnAHangingGit(t *testing.T) {
+	root := t.TempDir()
+	fakeGitForExclude(t, "sleep 300")
+	old := excludeTimeout
+	excludeTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { excludeTimeout = old })
+	start := time.Now()
+	err := EnsureExcluded(root)
+	if err == nil || !strings.Contains(err.Error(), "timed out after 200ms") || time.Since(start) > 5*time.Second {
+		t.Fatalf("EnsureExcluded = %v after %v", err, time.Since(start))
+	}
+}
+
 var _ core.Store = (*Store)(nil)
 
 func TestLoadReadsIntegerPhasesOfAnOlderRun(t *testing.T) {

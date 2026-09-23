@@ -15,6 +15,7 @@ import (
 type scriptedHost struct {
 	fakeSessionHost
 	StartErr error
+	StateErr error
 	script   func(n int) AgentState
 	polls    int
 }
@@ -30,6 +31,9 @@ func (h *scriptedHost) Start(pane, name, kind string, args []string) (Agent, err
 func (h *scriptedHost) State(agent string) (AgentState, error) {
 	h.record("SessionHost.State %s", agent)
 	h.polls++
+	if h.StateErr != nil {
+		return AgentWorking, h.StateErr
+	}
 	if h.script == nil {
 		return AgentWorking, nil
 	}
@@ -142,6 +146,46 @@ func (r *rig) count(prefix string) int {
 		}
 	}
 	return n
+}
+
+func TestATimedOutStateCallFailsTheStepNamingIt(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.host.StateErr = errors.New("herdr agent get x: timed out after 30s")
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+	if out.State != StepFailed || !strings.Contains(out.Reason, r.host.StateErr.Error()) || r.host.polls != 1 {
+		t.Fatalf("outcome = %+v, polls = %d", out, r.host.polls)
+	}
+}
+
+func TestATimedOutStateCallFailsAStepWaitingOnAnAnswer(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	s.OpenQuestion.Store(true)
+	r.host.StateErr = errors.New("herdr agent get x: timed out after 30s")
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+	if out.State != StepFailed || !strings.Contains(out.Reason, r.host.StateErr.Error()) || r.host.polls != 1 {
+		t.Fatalf("outcome = %+v, polls = %d", out, r.host.polls)
+	}
+}
+
+func TestTheBackstopStillFiresWhenEveryHostStateCallFails(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.host.StateErr = errors.New("herdr agent get x: connection refused")
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+	if out.State != StepFailed || !strings.Contains(out.Reason, "backstop 1h0m0s") || r.host.polls != 61 {
+		t.Fatalf("outcome = %+v, polls = %d", out, r.host.polls)
+	}
+}
+
+func TestATimedOutHostCallAtSpawnFailsTheStepNamingIt(t *testing.T) {
+	r := newRig(t)
+	r.host.StartErr = errors.New("herdr agent start x: timed out after 30s")
+	out := (singleRunner{sm: r.sm}).Run(context.Background(), r.ref(1), &recObserver{})
+	if out.State != StepFailed || !strings.Contains(out.Reason, r.host.StartErr.Error()) {
+		t.Fatalf("outcome = %+v", out)
+	}
 }
 
 type recObserver struct {

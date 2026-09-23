@@ -8,10 +8,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/x/term"
@@ -251,8 +253,31 @@ func fail(env Env, err error) int {
 }
 
 func (w *Wiring) Execute(opts core.RunOptions) int {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	quit := make(chan struct{})
+	defer func() {
+		signal.Stop(sigs)
+		close(quit)
+	}()
+	go func() {
+		for {
+			select {
+			case sig := <-sigs:
+				cancel(errors.New(signalName(sig)))
+				if w.TUI != nil {
+					w.TUI.Stop()
+				}
+			case <-quit:
+				return
+			}
+		}
+	}()
+	if w.TUI != nil {
+		w.TUI.OnExit = func(err error) { cancel(displayExit(err)) }
+	}
 	code := 2
 	if _, err := w.Ask.Serve(ctx); err != nil {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: ask server: %v\n", err)
@@ -262,15 +287,38 @@ func (w *Wiring) Execute(opts core.RunOptions) int {
 		w.startTUI()
 		code = w.run(ctx, opts)
 	}
+	if w.TUI != nil && context.Cause(ctx) != nil {
+		w.TUI.Stop()
+	}
 	if err := w.Dog.Stop(); err != nil {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: close watchdog: %v\n", err)
 	}
-	cancel()
+	cancel(nil)
 	w.Face.Close()
 	if err := w.Store.ClearCurrent(); err != nil {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: clear current: %v\n", err)
 	}
 	return code
+}
+
+func signalName(sig os.Signal) string {
+	switch sig {
+	case syscall.SIGINT:
+		return "SIGINT"
+	case syscall.SIGTERM:
+		return "SIGTERM"
+	case syscall.SIGHUP:
+		return "SIGHUP"
+	default:
+		return sig.String()
+	}
+}
+
+func displayExit(err error) error {
+	if err != nil {
+		return fmt.Errorf("display exited: %w", err)
+	}
+	return errors.New("display closed")
 }
 
 func (w *Wiring) run(ctx context.Context, opts core.RunOptions) int {
