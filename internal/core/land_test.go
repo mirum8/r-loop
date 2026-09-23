@@ -619,7 +619,7 @@ func (h *reportHost) Prompt(agent, text string, wait bool, timeout time.Duration
 			return err
 		}
 	}
-	data, _ := json.Marshal(map[string]string{"outcome": outcome, "reason": "report failed", "at": time.Now().Format(time.RFC3339)})
+	data, _ := json.Marshal(map[string]string{"outcome": outcome, "reason": "report failed"})
 	return os.WriteFile(sentinel, data, 0o644)
 }
 

@@ -193,7 +193,7 @@ func (h *probeHost) Prompt(agent, text string, wait bool, timeout time.Duration)
 	if err := os.WriteFile(filepath.Join(cwd, report), []byte("`"+h.command+"`\n\nfrom the Makefile\n"), 0o644); err != nil {
 		return err
 	}
-	data, _ := json.Marshal(map[string]string{"outcome": h.outcome, "reason": "probe failed", "at": time.Now().Format(time.RFC3339)})
+	data, _ := json.Marshal(map[string]string{"outcome": h.outcome, "reason": "probe failed"})
 	return os.WriteFile(sentinel, data, 0o644)
 }
 

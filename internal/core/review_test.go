@@ -107,7 +107,7 @@ func writeReview(t *testing.T, vars map[string]any, outcome string, findings int
 	if err := os.WriteFile(vars["FindingsPath"].(string), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sentinel := `{"outcome":"` + outcome + `","reason":"","at":"2026-09-18T10:05:00Z"}`
+	sentinel := `{"outcome":"` + outcome + `","reason":""}`
 	if err := os.WriteFile(vars["Sentinel"].(string), []byte(sentinel), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +481,7 @@ func TestDefaultRunnersRunTheReviewHalfBeforeTheCommit(t *testing.T) {
 	ref.Key.Attempt = 2
 	r.repo.TreeChanges = []string{"a.go"}
 	r.host.script = func(int) AgentState {
-		os.WriteFile(filepath.Join(r.runDir, "phase-3", "implement-a2.sentinel"), []byte(`{"outcome":"ok","reason":"","at":"2026-09-18T10:05:00Z"}`), 0o644)
+		os.WriteFile(filepath.Join(r.runDir, "phase-3", "implement-a2.sentinel"), []byte(`{"outcome":"ok","reason":""}`), 0o644)
 		return AgentWorking
 	}
 	runner := DefaultRunners(r.sm, []StepKind{ref.Kind})["diff"]
@@ -502,7 +502,7 @@ func TestRetriedAttemptSuffixesReviewerNamesAndDropsStaleFindings(t *testing.T) 
 	stale := filepath.Join(r.runDir, "phase-3", "implement-findings-codex-r1.json")
 	os.WriteFile(stale, []byte(`{"reviewer":"codex","findings":[]}`), 0o644)
 	r.behave = func(vars map[string]any) {
-		os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"ok","reason":"","at":"2026-09-18T10:05:00Z"}`), 0o644)
+		os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"ok","reason":""}`), 0o644)
 	}
 
 	out := r.run()
@@ -785,7 +785,7 @@ func writeNamedReview(t *testing.T, vars map[string]any, findings int) {
 	if err := os.WriteFile(vars["FindingsPath"].(string), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"ok","reason":"","at":"2026-09-18T10:05:00Z"}`), 0o644); err != nil {
+	if err := os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"ok","reason":""}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

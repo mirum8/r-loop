@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -60,7 +59,7 @@ func run() error {
 		return err
 	}
 	tmp := sentinel + ".tmp"
-	if err := os.WriteFile(tmp, []byte(fmt.Sprintf(`{"outcome":"ok","reason":"","at":%q}`, time.Now().UTC().Format(time.RFC3339))), 0o644); err != nil {
+	if err := os.WriteFile(tmp, []byte(`{"outcome":"ok","reason":""}`), 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, sentinel)

@@ -86,7 +86,7 @@ func (h *eventsHost) spec(agent string) OpenSpec {
 
 func (h *eventsHost) finish(agent string) {
 	h.repo.setChanges("code.go")
-	writeFile(h.spec(agent).Env["R_LOOP_SENTINEL"], `{"outcome":"ok","reason":"","at":"2026-09-18T10:05:00Z"}`)
+	writeFile(h.spec(agent).Env["R_LOOP_SENTINEL"], `{"outcome":"ok","reason":""}`)
 }
 
 func (h *eventsHost) State(agent string) (AgentState, error) {
@@ -121,7 +121,7 @@ func (h *eventsHost) State(agent string) (AgentState, error) {
 		h.finish(agent)
 	}
 	if b == "ask-fail" && n == 10 {
-		writeFile(h.spec(agent).Env["R_LOOP_SENTINEL"], `{"outcome":"failed","reason":"gave up","at":"2026-09-18T10:05:00Z"}`)
+		writeFile(h.spec(agent).Env["R_LOOP_SENTINEL"], `{"outcome":"failed","reason":"gave up"}`)
 	}
 	return AgentWorking, nil
 }

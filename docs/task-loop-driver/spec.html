@@ -450,7 +450,8 @@ once, after that; <em>and</em> the report lists each finding with its round and 
 <p>As a <strong>provider agent</strong>, I want one documented way to say how my step ended, so that
 the driver never has to read my terminal to find out.</p>
 <p><em>Given</em> a step prompt carrying a sentinel path, <em>when</em> I finish or halt,
-<em>then</em> I write the outcome to that path as my last action, and the driver reads it rather
+<em>then</em> I write the outcome to that path as my last action —
+<code>{"outcome":"ok"|"failed","reason":"&lt;text&gt;"}</code> — and the driver reads it rather
 than my output.</p>
 
 <h3>Ask the watchdog a question</h3>
@@ -1705,7 +1706,7 @@ every provider must now declare a fan-out capability — which creates the failu
 
 <div class="adr">
 <h3 id="adr-6">ADR-6 — A provider is a config block, not driver code</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-54">ADR-54</a> — the block declares a native review command where it has one, and no fan-out capability · amended 2026-09-23 — the block may carry <code>flags</code>, fixed flags passed first on every start, because codex's startup update prompt blocks herdr's <code>agent start</code> and the shipped codex block turns it off with <code>-c check_for_update_on_startup=false</code></p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-54">ADR-54</a> — the block declares a native review command where it has one, and no fan-out capability · amended 2026-09-23 — the block may carry <code>flags</code>, fixed flags passed first on every start, because codex's startup update prompt blocks herdr's <code>agent start</code> and the shipped codex block turns it off with <code>-c check_for_update_on_startup=false</code> · amended 2026-09-23 — the completion signal, the sentinel, is <code>{"outcome":"ok"|"failed","reason":"&lt;text&gt;"}</code> and no longer carries <code>at</code>, because a mistyped, never-read timestamp failed a finished step as <code>sentinel unreadable</code>; the driver timestamps every record itself, and a sentinel that still carries <code>at</code> is read with it ignored</p>
 <p><span class="f">Context</span> <em>Portability across agents</em> sets the target at one config
 block and zero driver lines. herdr already supports 23 agent kinds, so the driver cannot ship a
 branch per agent and stay honest about the claim.</p>

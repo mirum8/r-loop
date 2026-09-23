@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 )
 
 type EvidenceContext struct {
@@ -502,7 +501,6 @@ var (
 type Sentinel struct {
 	Outcome string `json:"outcome"`
 	Reason  string `json:"reason"`
-	At      string `json:"at"`
 }
 
 func ReadSentinel(path string) (Sentinel, error) {
@@ -519,9 +517,6 @@ func ReadSentinel(path string) (Sentinel, error) {
 	}
 	if s.Outcome != "ok" && s.Outcome != "failed" {
 		return Sentinel{}, fmt.Errorf("%w: outcome %q", ErrSentinelMalformed, s.Outcome)
-	}
-	if _, err := time.Parse(time.RFC3339, s.At); err != nil {
-		return Sentinel{}, fmt.Errorf("%w: at %q", ErrSentinelMalformed, s.At)
 	}
 	return s, nil
 }

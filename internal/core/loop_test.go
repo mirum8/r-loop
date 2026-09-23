@@ -36,7 +36,7 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 	switch behaviour {
 	case "hold":
 	case "fail":
-		writeFile(sentinel, `{"outcome":"failed","reason":"tests red","at":"2026-09-18T10:05:00Z"}`)
+		writeFile(sentinel, `{"outcome":"failed","reason":"tests red"}`)
 	case "stall":
 		h.mu.Lock()
 		h.idle[agent] = true
@@ -46,7 +46,7 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 	case "already-done":
 		writeFile(filepath.Join(spec.CWD, text), "status: already-done\n\n## Evidence\n- do it: store/store.go:12\n")
 		h.repo.setChanges(text)
-		writeFile(sentinel, `{"outcome":"ok","reason":"","at":"2026-09-18T10:05:00Z"}`)
+		writeFile(sentinel, `{"outcome":"ok","reason":""}`)
 	default:
 		changed := "code.go"
 		if spec.Env["R_LOOP_STEP"] == "plan" {
@@ -54,7 +54,7 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 			writeFile(filepath.Join(spec.CWD, text), "status: planned\n\n## Summary\nx\n## Changes\nx\n## Tests\n- a test\n## Assumptions\n- phase "+spec.Env["R_LOOP_PHASE"]+" keeps state in memory\n")
 		}
 		h.repo.setChanges(changed)
-		writeFile(sentinel, `{"outcome":"ok","reason":"","at":"2026-09-18T10:05:00Z"}`)
+		writeFile(sentinel, `{"outcome":"ok","reason":""}`)
 	}
 	return nil
 }

@@ -23,6 +23,8 @@ An amendment to ADR-6 added Milestone 11, Phase 35: a provider block's `flags` a
 every start, and the shipped codex block turns off codex's startup update prompt.
 An amendment to ADR-73 added Milestone 12, Phase 36: the watchdog calls `ask_maintainer` before it
 asks the maintainer in its own pane, and the run shows it waiting for them with the question.
+An amendment to ADR-6 added Milestone 13, Phase 37: the sentinel drops `at`, so a mistyped
+timestamp no longer fails a finished step.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -47,6 +49,7 @@ asks the maintainer in its own pane, and the run shows it waiting for them with 
 - Wave 18: Phase 34
 - Wave 19: Phase 35
 - Wave 20: Phase 36
+- Wave 21: Phase 37
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -569,6 +572,19 @@ Contracts: `tech-design.md#milestone-7-the-watchdog`
 - [x] the TUI keeps `watchdog waiting for you` amber in the header and adds an amber feed line `watchdog asks you: <question>` on one line; the plain face prints `!  watchdog waiting for you: <question>`
 - [x] the watchdog prompt says to call `ask_maintainer` first, then ask in its pane (AskUserQuestion when it has one, otherwise plain text), then wait for the reply
 **Done when:** `go test -race ./...` is green and `grep -n "ask_maintainer" internal/askmcp/watchdog.go internal/prompts/templates/watchdog.md` prints the tool and the prompt line.
+
+## Milestone 13 — A sentinel without a timestamp
+Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
+
+### Phase 37 — The sentinel is an outcome and a reason, with no `at`
+**Implements:** Report a step's outcome so the driver can act
+**Depends on:** Phase 36
+**Files:** `internal/core/evidence.go` (modify) · `internal/prompts/render.go` (modify) · `internal/app/testdata/ask-agent.go` (modify) · `internal/core/evidence_test.go` (modify) · `internal/prompts/render_test.go` (modify) · `internal/core/*_test.go` (modify) · `internal/app/resume_test.go` (modify)
+**Risk:** none
+- [x] `core.Sentinel` loses `At`; `ReadSentinel` checks only that `outcome` is `ok` or `failed`, and a sentinel still carrying `at`, with any value, is read as the other two fields
+- [x] every step prompt asks for `{"outcome":"ok","reason":""}` or `{"outcome":"failed","reason":"<why>"}`, with no timestamp
+- [x] the test sentinels and the `ask-agent` test binary write the two-field form
+**Done when:** `go test -race ./...` is green and `grep -n "RFC3339" internal/prompts/render.go internal/core/evidence.go` prints nothing.
 
 ## Open questions
 

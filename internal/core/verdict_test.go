@@ -208,7 +208,7 @@ func writeVerdict(t *testing.T, vars map[string]any, entries ...string) {
 	if err := os.WriteFile(vars["VerdictPath"].(string), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sentinel := `{"outcome":"ok","reason":"","at":"2026-09-18T10:05:00Z"}`
+	sentinel := `{"outcome":"ok","reason":""}`
 	if err := os.WriteFile(vars["Sentinel"].(string), []byte(sentinel), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestThreeRoundsWithFixesEndOKWithTheLimitWarningAndOneCommit(t *testing.T) 
 	ref.Kind.Row.Rounds = 3
 	r.repo.TreeChanges = []string{"a.go"}
 	r.host.script = func(int) AgentState {
-		os.WriteFile(filepath.Join(r.runDir, "phase-3", "implement-a2.sentinel"), []byte(`{"outcome":"ok","reason":"","at":"2026-09-18T10:05:00Z"}`), 0o644)
+		os.WriteFile(filepath.Join(r.runDir, "phase-3", "implement-a2.sentinel"), []byte(`{"outcome":"ok","reason":""}`), 0o644)
 		return AgentWorking
 	}
 	r.behave = func(vars map[string]any) {
@@ -378,7 +378,7 @@ func TestFixHalfFailures(t *testing.T) {
 			writeVerdict(t, vars, entry("codex-r1-1", "out-of-scope", "P3", false, ""))
 		}, "evidence missing: no change since the step started"},
 		"failed sentinel": {func(r *reviewRig, vars map[string]any) {
-			os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"failed","reason":"cannot fix","at":"2026-09-18T10:05:00Z"}`), 0o644)
+			os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"failed","reason":"cannot fix"}`), 0o644)
 		}, "cannot fix"},
 	} {
 		t.Run(name, func(t *testing.T) {

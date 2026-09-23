@@ -190,7 +190,7 @@ func TestStepTemplatesCarryTheSentinelParagraph(t *testing.T) {
 	for _, name := range stepTemplates {
 		text := render(t, r, name, fullVars())
 		for _, want := range []string{
-			`{"outcome":"ok","reason":"","at":"<RFC3339>"}`,
+			`{"outcome":"ok","reason":""}`,
 			`{"outcome":"failed","reason":"<why>"`,
 			sentinel,
 			"last action",
@@ -200,6 +200,9 @@ func TestStepTemplatesCarryTheSentinelParagraph(t *testing.T) {
 			if !strings.Contains(text, want) {
 				t.Errorf("%s: missing %q", name, want)
 			}
+		}
+		if strings.Contains(text, `"at"`) || strings.Contains(text, "RFC3339") {
+			t.Errorf("%s: the sentinel still asks for a timestamp", name)
 		}
 	}
 }

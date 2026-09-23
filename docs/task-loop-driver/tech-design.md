@@ -138,7 +138,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   marker. `.r-loop/runs/` and `.r-loop/wt/` are appended to `<git-common-dir>/info/exclude` when
   absent, never to `.gitignore`.
 - **Sentinel** — JSON in `.r-loop/runs/<runID>/phase-<N>/`:
-  `{"outcome":"ok"|"failed","reason":"<text>","at":"<RFC3339>"}`. The author half writes
+  `{"outcome":"ok"|"failed","reason":"<text>"}`; the driver timestamps every record itself, and an
+  unknown field (an old sentinel's `at`) is ignored. The author half writes
   `<kind>-a<attempt>.sentinel`; a reviewer `<kind>-rv-<name>-r<round>-a<attempt>.sentinel`;
   the author's verify-and-apply half `<kind>-fix-r<round>-a<attempt>.sentinel`. Unreadable or
   malformed → the step is `failed` with reason `sentinel unreadable`.

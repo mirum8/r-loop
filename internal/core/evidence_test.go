@@ -402,8 +402,10 @@ func TestReadSentinel(t *testing.T) {
 		body string
 		want Sentinel
 	}{
-		"ok":     {`{"outcome":"ok","reason":"","at":"2026-09-18T10:00:00Z"}`, Sentinel{Outcome: "ok", At: "2026-09-18T10:00:00Z"}},
-		"failed": {`{"outcome":"failed","reason":"plan is wrong","at":"2026-09-18T10:00:00Z"}`, Sentinel{Outcome: "failed", Reason: "plan is wrong", At: "2026-09-18T10:00:00Z"}},
+		"ok":                         {`{"outcome":"ok","reason":""}`, Sentinel{Outcome: "ok"}},
+		"failed":                     {`{"outcome":"failed","reason":"plan is wrong"}`, Sentinel{Outcome: "failed", Reason: "plan is wrong"}},
+		"an old sentinel with at":    {`{"outcome":"ok","reason":"","at":"2026-09-18T10:00:00Z"}`, Sentinel{Outcome: "ok"}},
+		"a mistyped at is no matter": {`{"outcome":"ok","reason":"","at":"2026-09-23T11:50:08:z"}`, Sentinel{Outcome: "ok"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := ReadSentinel(writeSentinel(t, tc.body))
@@ -426,8 +428,6 @@ func TestReadSentinelOfAnAbsentFileIsErrNoSentinel(t *testing.T) {
 func TestReadSentinelRejectsMalformedContent(t *testing.T) {
 	for name, body := range map[string]string{
 		"other outcome": `{"outcome":"done","reason":"","at":"2026-09-18T10:00:00Z"}`,
-		"no timestamp":  `{"outcome":"ok","reason":""}`,
-		"bad timestamp": `{"outcome":"ok","reason":"","at":"yesterday"}`,
 		"no outcome":    `{"reason":"","at":"2026-09-18T10:00:00Z"}`,
 		"not json":      `ok`,
 		"empty":         ``,

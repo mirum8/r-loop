@@ -107,7 +107,7 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 			wip = planRe.FindString(text)
 		}
 		writeTo(filepath.Join(spec.CWD, wip), "half done by "+agent)
-		writeTo(sentinel, `{"outcome":"failed","reason":"tests red","at":"2026-09-18T10:05:00Z"}`)
+		writeTo(sentinel, `{"outcome":"failed","reason":"tests red"}`)
 		return nil
 	case spec.Env["R_LOOP_STEP"] == "plan":
 		writeTo(filepath.Join(spec.CWD, planRe.FindString(text)), "status: planned\n\n## Summary\nx\n## Changes\nx\n## Tests\n- a test by "+agent+"\n## Assumptions\nnone\n")
@@ -118,7 +118,7 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 		}
 		writeTo(filepath.Join(spec.CWD, name), "written by "+agent)
 	}
-	writeTo(sentinel, `{"outcome":"ok","reason":"","at":"2026-09-18T10:05:00Z"}`)
+	writeTo(sentinel, `{"outcome":"ok","reason":""}`)
 	return nil
 }
 

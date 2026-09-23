@@ -108,7 +108,7 @@ func (r *rig) spawn(t *testing.T, attempt int) *Session {
 
 func (r *rig) writeSentinel(t *testing.T, s *Session, outcome, reason string) {
 	t.Helper()
-	body := `{"outcome":"` + outcome + `","reason":"` + reason + `","at":"2026-09-18T10:05:00Z"}`
+	body := `{"outcome":"` + outcome + `","reason":"` + reason + `"}`
 	if err := os.WriteFile(s.Sentinel, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
