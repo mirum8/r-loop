@@ -25,6 +25,7 @@ var identity = []string{
 }
 
 var gitTimeout = 10 * time.Minute
+var lockBackoff = []time.Duration{50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond, 800 * time.Millisecond, 1600 * time.Millisecond}
 
 type Repo struct {
 	root string
@@ -43,13 +44,45 @@ func run(dir string, env []string, args ...string) (string, error) {
 }
 
 func runCtx(parent context.Context, dir string, env []string, args ...string) (string, error) {
-	return runCtxStarted(parent, dir, env, nil, args...)
+	return runCtxStarted(parent, dir, env, nil, nil, args...)
 }
 
-func runCtxStarted(parent context.Context, dir string, env []string, started *bool, args ...string) (string, error) {
+func runCtxStarted(parent context.Context, dir string, env []string, beforeStart func(), started *bool, args ...string) (string, error) {
 	if err := parent.Err(); err != nil {
 		return "", fmt.Errorf("git %s: interrupted: %w", strings.Join(args, " "), err)
 	}
+	for i := 0; ; i++ {
+		out, stderr, err := runOnce(parent, dir, env, beforeStart, started, args...)
+		locked := err != nil && (strings.Contains(stderr, "index.lock': File exists") ||
+			strings.Contains(stderr, "Unable to write index") && indexLockExists(dir, env))
+		if locked && started != nil {
+			*started = false
+		}
+		if err == nil || i == len(lockBackoff) || !locked {
+			return out, err
+		}
+		select {
+		case <-parent.Done():
+			return out, fmt.Errorf("git %s: interrupted: %w", strings.Join(args, " "), parent.Err())
+		case <-time.After(lockBackoff[i]):
+		}
+	}
+}
+
+func indexLockExists(dir string, env []string) bool {
+	path, _, err := runOnce(context.Background(), dir, env, nil, nil, "rev-parse", "--git-path", "index.lock")
+	if err != nil {
+		return false
+	}
+	path = strings.TrimSpace(path)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+	_, err = os.Stat(path)
+	return err == nil
+}
+
+func runOnce(parent context.Context, dir string, env []string, beforeStart func(), started *bool, args ...string) (string, string, error) {
 	ctx, cancel := context.WithTimeout(parent, gitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
@@ -59,6 +92,9 @@ func runCtxStarted(parent context.Context, dir string, env []string, started *bo
 	cmd.WaitDelay = time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if beforeStart != nil {
+		beforeStart()
+	}
 	err := cmd.Start()
 	if err == nil {
 		if started != nil {
@@ -71,14 +107,14 @@ func runCtxStarted(parent context.Context, dir string, env []string, started *bo
 	}
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return stdout.String(), fmt.Errorf("git %s: timed out after %s: %w", strings.Join(args, " "), gitTimeout, context.DeadlineExceeded)
+			return stdout.String(), stderr.String(), fmt.Errorf("git %s: timed out after %s: %w", strings.Join(args, " "), gitTimeout, context.DeadlineExceeded)
 		}
 		if parent.Err() != nil {
-			return stdout.String(), fmt.Errorf("git %s: interrupted: %w", strings.Join(args, " "), parent.Err())
+			return stdout.String(), stderr.String(), fmt.Errorf("git %s: interrupted: %w", strings.Join(args, " "), parent.Err())
 		}
-		return stdout.String(), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+		return stdout.String(), stderr.String(), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
-	return stdout.String(), nil
+	return stdout.String(), stderr.String(), nil
 }
 
 func split0(out string) []string {
@@ -148,8 +184,11 @@ func (r *Repo) AddWorktree(dir, branch, base string) error {
 
 func (r *Repo) worktreeBranch(abs string) (string, bool, error) {
 	want, err := filepath.EvalSymlinks(abs)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
 	}
 	out, err := r.git("", "worktree", "list", "--porcelain")
 	if err != nil {
@@ -176,15 +215,67 @@ func (r *Repo) worktreeBranch(abs string) (string, bool, error) {
 }
 
 func (r *Repo) RemoveWorktree(dir string) error {
-	if _, err := r.git("", "worktree", "remove", "--force", r.path(dir)); err != nil {
+	abs := r.path(dir)
+	if _, found, err := r.worktreeBranch(abs); err != nil {
+		return err
+	} else if !found {
+		if _, err := os.Lstat(abs); err == nil {
+			return fmt.Errorf("worktree directory %s remains but is not registered", dir)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		_, err := r.git("", "worktree", "prune")
+		return err
+	}
+	if _, err := r.git("", "worktree", "remove", "--force", abs); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(abs); err == nil {
+		return fmt.Errorf("worktree directory %s remains after removal", dir)
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	_, err := r.git("", "worktree", "prune")
 	return err
 }
 
-func (r *Repo) DeleteBranch(branch string) error {
-	_, err := r.git("", "branch", "-d", branch)
+func (r *Repo) WorktreePath(branch string) (string, error) {
+	out, err := r.git("", "worktree", "list", "--porcelain")
+	if err != nil {
+		return "", err
+	}
+	for _, block := range strings.Split(out, "\n\n") {
+		var path, current string
+		for _, line := range strings.Split(block, "\n") {
+			if value, ok := strings.CutPrefix(line, "worktree "); ok {
+				path = value
+			}
+			if value, ok := strings.CutPrefix(line, "branch "); ok {
+				current = value
+			}
+		}
+		if current == "refs/heads/"+branch {
+			return path, nil
+		}
+	}
+	return "", nil
+}
+
+func (r *Repo) BranchExists(branch string) (bool, error) {
+	out, err := r.git("", "branch", "--list", branch)
+	return strings.TrimSpace(out) != "", err
+}
+
+func (r *Repo) DeleteBranch(branch string, force bool) error {
+	exists, err := r.BranchExists(branch)
+	if err != nil || !exists {
+		return err
+	}
+	flag := "-d"
+	if force {
+		flag = "-D"
+	}
+	_, err = r.git("", "branch", flag, branch)
 	return err
 }
 
@@ -356,10 +447,9 @@ func (r *Repo) MergeNoFF(ctx context.Context, branch string) error {
 	if !filepath.IsAbs(lockPath) {
 		lockPath = filepath.Join(r.root, lockPath)
 	}
-	_, preexistingLockErr := os.Stat(lockPath)
-	lockWasAbsent := errors.Is(preexistingLockErr, os.ErrNotExist)
+	var lockWasAbsent bool
 	var started bool
-	_, mergeErr := runCtxStarted(ctx, r.root, nil, &started, "merge", "--no-ff", "--no-commit", branch)
+	_, mergeErr := runCtxStarted(ctx, r.root, nil, func() { _, err := os.Stat(lockPath); lockWasAbsent = errors.Is(err, os.ErrNotExist) }, &started, "merge", "--no-ff", "--no-commit", branch)
 	if mergeErr == nil {
 		return nil
 	}
@@ -373,7 +463,9 @@ func (r *Repo) MergeNoFF(ctx context.Context, branch string) error {
 			}
 		}
 		if abortErr := r.AbortMerge(); abortErr != nil {
-			return errors.Join(mergeErr, r.ResetHard(pre))
+			if resetErr := r.ResetHard(pre); resetErr != nil {
+				return errors.Join(mergeErr, abortErr, resetErr)
+			}
 		}
 		return mergeErr
 	}
@@ -392,12 +484,36 @@ func (r *Repo) MergeNoFF(ctx context.Context, branch string) error {
 }
 
 func (r *Repo) AbortMerge() error {
+	_, _ = r.git("", "update-index", "-q", "--refresh")
 	_, err := r.git("", "merge", "--abort")
-	return err
+	if err != nil {
+		return fmt.Errorf("%w: git merge --abort failed, so the primary tree still holds an unfinished merge; finish it with git merge --abort: %v", core.ErrUnfinishedMerge, err)
+	}
+	return nil
 }
 
-func (r *Repo) Commit(ctx context.Context, message string) (string, error) {
-	if _, err := r.git("", "add", "-A"); err != nil {
+func (r *Repo) MergeInProgress() (bool, error) {
+	path, err := r.git("", "rev-parse", "--git-path", "MERGE_HEAD")
+	if err != nil {
+		return false, err
+	}
+	path = strings.TrimSpace(path)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(r.root, path)
+	}
+	_, err = os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (r *Repo) Commit(ctx context.Context, message string, paths ...string) (string, error) {
+	add := []string{"add", "-A"}
+	if len(paths) > 0 {
+		add = append([]string{"add", "--"}, paths...)
+	}
+	if _, err := r.git("", add...); err != nil {
 		return "", err
 	}
 	before, err := r.HeadSHA("")
@@ -425,6 +541,11 @@ func (r *Repo) CommitTouches(sha string) ([]string, error) {
 
 func (r *Repo) ResetHard(ref string) error {
 	_, err := r.git("", "reset", "--hard", "-q", ref)
+	return err
+}
+
+func (r *Repo) ResetKeep(ref string) error {
+	_, err := r.git("", "reset", "--keep", "-q", ref)
 	return err
 }
 

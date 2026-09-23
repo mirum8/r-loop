@@ -48,6 +48,7 @@ type Store struct {
 
 type meta struct {
 	Todo    string    `json:"todo"`
+	Branch  string    `json:"branch,omitempty"`
 	Started time.Time `json:"started"`
 }
 
@@ -79,7 +80,7 @@ func (s *Store) Create(m core.RunMeta) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, "config.resolved.yaml"), m.ResolvedConfig, 0o644); err != nil {
 		return "", err
 	}
-	mb, err := json.Marshal(meta{Todo: m.Todo, Started: m.Started})
+	mb, err := json.Marshal(meta{Todo: m.Todo, Branch: m.Branch, Started: m.Started})
 	if err != nil {
 		return "", err
 	}
@@ -128,7 +129,7 @@ func (s *Store) Load(runID string) (core.RunState, error) {
 	if err := json.Unmarshal(mb, &m); err != nil {
 		return st, fmt.Errorf("meta.json: %w", err)
 	}
-	st.Todo, st.Started = m.Todo, m.Started
+	st.Todo, st.Branch, st.Started = m.Todo, m.Branch, m.Started
 	var order []core.StepKey
 	for _, name := range recordFiles {
 		recs, warning, err := s.readRecords(runID, name)

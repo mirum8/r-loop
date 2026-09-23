@@ -191,8 +191,12 @@ func (f *fakeRepo) RemoveWorktree(dir string) error {
 	return f.Err
 }
 
-func (f *fakeRepo) DeleteBranch(branch string) error {
-	f.record("Repo.DeleteBranch %s", branch)
+func (f *fakeRepo) DeleteBranch(branch string, force bool) error {
+	suffix := ""
+	if force {
+		suffix = " --force"
+	}
+	f.record("Repo.DeleteBranch %s%s", branch, suffix)
 	return f.Err
 }
 
@@ -241,9 +245,19 @@ func (f *fakeRepo) AbortMerge() error {
 	return f.Err
 }
 
-func (f *fakeRepo) Commit(ctx context.Context, message string) (string, error) {
+func (f *fakeRepo) Commit(ctx context.Context, message string, paths ...string) (string, error) {
 	f.record("Repo.Commit %q", message)
 	return f.SHA, f.Err
+}
+
+func (f *fakeRepo) MergeInProgress() (bool, error) {
+	f.record("Repo.MergeInProgress")
+	return false, f.Err
+}
+
+func (f *fakeRepo) ResetKeep(ref string) error {
+	f.record("Repo.ResetKeep %s", ref)
+	return f.Err
 }
 
 func (f *fakeRepo) CommitTouches(sha string) ([]string, error) {

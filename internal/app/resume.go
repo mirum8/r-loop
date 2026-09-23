@@ -93,6 +93,15 @@ func (w *Wiring) resume(run core.RunState, replan bool) (core.RunOptions, error)
 	if err := w.clean(); err != nil {
 		return core.RunOptions{}, err
 	}
+	if run.Branch != "" {
+		head, err := w.Repo.HeadBranch()
+		if err != nil {
+			return core.RunOptions{}, exit(2, "head branch: %v", err)
+		}
+		if head != run.Branch {
+			return core.RunOptions{}, exit(4, "primary tree is on %s, but run %s started on %s; check out %s, then resume", head, id, run.Branch, run.Branch)
+		}
+	}
 	halted := haltedPhases(run, list)
 	for _, n := range halted {
 		if err := w.stopStale(run, n); err != nil {

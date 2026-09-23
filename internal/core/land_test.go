@@ -271,6 +271,7 @@ func (p *tickPlan) Tick(path string, ph core.Phase) error {
 type memStore struct {
 	mu      sync.Mutex
 	dir     string
+	branch  string
 	records []core.Record
 }
 
@@ -286,7 +287,7 @@ func (s *memStore) Append(runID string, rec core.Record) error {
 func (s *memStore) Load(runID string) (core.RunState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := core.RunState{ID: runID, Steps: map[core.StepKey]core.StepState{}}
+	st := core.RunState{ID: runID, Branch: s.branch, Steps: map[core.StepKey]core.StepState{}}
 	for _, r := range s.records {
 		if r.Kind == core.RecordStep {
 			st.Steps[*r.Step] = r.State

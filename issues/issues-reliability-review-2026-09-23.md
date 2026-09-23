@@ -20,13 +20,13 @@ Verified against `r-loop` @ `main` `058c81b`.
       - Every git invocation runs with `GIT_TERMINAL_PROMPT=0`, and a hanging git command (e.g. a hook that sleeps) ends with an error after a bounded timeout. Its process is killed, not leaked
       - A timed-out herdr or git call becomes a step failure or a halt reason that names the command and the timeout
 
-- [ ] [#3] Primary-tree operations assume a clean tree on the start branch: land's `add -A` sweeps in maintainer edits, and ResetHard/RemoveAll can destroy uncommitted work
+- [x] [#3] Primary-tree operations assume a clean tree on the start branch: land's `add -A` sweeps in maintainer edits, and ResetHard/RemoveAll can destroy uncommitted work  <!-- fixed: r-loop/phase-3 -->
       - If a file outside the phase's changes is modified or untracked in the primary tree when land starts, land refuses with a named error, does not commit that file, and leaves its contents unchanged
       - If the primary tree's checked-out branch differs from the branch recorded at run start, land refuses before merging and names both branches
       - An untracked maintainer file that existed before a milestone report step still exists, byte for byte, after that report fails
       - Gate-probe discovery and land's tick/commit cleanup never discard an uncommitted maintainer edit; they refuse to start on a dirty tree instead
 
-- [ ] [#4] A new run silently reuses leftover `.r-loop/wt/phase-N` worktrees and `r-loop/phase-N` branches without checking their base
+- [x] [#4] A new run silently reuses leftover `.r-loop/wt/phase-N` worktrees and `r-loop/phase-N` branches without checking their base  <!-- fixed: r-loop/phase-3 -->
       - If `.r-loop/wt/phase-N` or `r-loop/phase-N` already exists when a fresh run starts, the run refuses and names the leftover instead of reusing it
       - An existing `r-loop/phase-N` branch that is not based on the current base-branch HEAD is never reused as the phase's worktree branch
       - Uncommitted files in a leftover worktree never end up in a step commit of a fresh run
@@ -128,7 +128,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - A key set to null (`gateTimeout:` or `~`) resolves to the next layer's value, and the banner's provenance names that layer
       - The land gate never runs with a zero timeout
 
-- [ ] [#21] `index.lock` contention is not retried, and a failed git cleanup can leave the maintainer's tree mid-merge
+- [x] [#21] `index.lock` contention is not retried, and a failed git cleanup can leave the maintainer's tree mid-merge  <!-- fixed: r-loop/phase-3 -->
       - A git command that fails because `.git/index.lock` exists is retried with bounded backoff before its error is returned
       - If `MERGE_HEAD` exists in the primary tree when land starts, land refuses with an error naming the unfinished merge
       - Resume and preflight name a leftover `MERGE_HEAD` explicitly and say how to fix it, instead of a generic dirty-tree message

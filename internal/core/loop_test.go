@@ -239,7 +239,15 @@ func (f stepRunnerFunc) Run(ctx context.Context, ref StepRef, obs Observer) Outc
 	return f(ctx, ref, obs)
 }
 
-func landGate(r *loopRig) *LandGate {
+func landGate(t *testing.T, r *loopRig) *LandGate {
+	t.Helper()
+	todo := filepath.Join(r.repo.RootDir, "docs/x/todo.md")
+	if err := os.MkdirAll(filepath.Dir(todo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(todo, []byte("todo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	g := &LandGate{Repo: r.repo, Plan: &fakePlanSource{}, Store: r.store, Face: r.face, RunID: "run-1", TodoPath: "docs/x/todo.md", GateTimeout: time.Minute}
 	r.repo.Touched = []string{"docs/x/todo.md", "code.go"}
 	r.loop.Lander = g
@@ -264,7 +272,7 @@ func TestAnAbortDuringAGateFixRoundStopsTheRun(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.Plan.Phases[0].DoneWhen = "`go test ./x`"
 	r.repo.RunExit = 1
-	g := landGate(r)
+	g := landGate(t, r)
 	g.FixRounds = 1
 	fix := StepKind{Name: "gatefix", Prompt: "gatefix", Check: "diff", Row: StepRow{Provider: "codex", Timeout: time.Hour}}
 	g.FixKind = fix
@@ -280,7 +288,7 @@ func TestAnAbortDuringAGateFixRoundStopsTheRun(t *testing.T) {
 
 func TestAnAbortDuringTheGateProbeStopsTheRun(t *testing.T) {
 	r := newLoopRig(t)
-	g := landGate(r)
+	g := landGate(t, r)
 	g.Suite = &GateProbe{Sessions: r.loop.Sessions, Repo: r.repo, Kind: StepKind{Name: "gate", Prompt: "gate", Check: "diff", Row: StepRow{Provider: "codex", Timeout: time.Hour}}, Plan: r.loop.Plan, RunID: "run-1", RunDir: r.store.dir, Face: r.face, Timeout: time.Minute}
 	r.host.behaviour["rloop-p1-gate"] = "abort"
 	start := time.Now()
@@ -293,7 +301,7 @@ func TestAnAbortDuringTheGateProbeStopsTheRun(t *testing.T) {
 
 func TestAnAbortDuringTheMilestoneReportStopsTheRun(t *testing.T) {
 	r := newLoopRig(t)
-	g := landGate(r)
+	g := landGate(t, r)
 	g.Boundary = &MilestoneBoundary{Plan: r.loop.Plan, Sessions: r.loop.Sessions, Repo: r.repo, Kind: StepKind{Name: "milestone", Prompt: "milestone", Check: "diff", Row: StepRow{Provider: "codex", Timeout: time.Hour}}, Topic: "x", RunDir: r.store.dir, RunID: "run-1", Face: r.face}
 	r.host.behaviour["rloop-p3-milestone"] = "abort"
 	start := time.Now()

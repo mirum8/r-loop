@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -113,7 +114,7 @@ func TestABlockedPhaseKeepsItsWorktreeAndBranch(t *testing.T) {
 	}
 }
 
-func TestASkippedItemClosesItsWorkspacesButKeepsItsUnmergedBranch(t *testing.T) {
+func TestASkippedItemRemovesItsWorktreeAndForceDeletesItsBranch(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.Sessions.ItemGates = true
 	r.host.behaviour["rloop-p2-plan"] = "already-done"
@@ -123,8 +124,51 @@ func TestASkippedItemClosesItsWorkspacesButKeepsItsUnmergedBranch(t *testing.T) 
 	if got := r.calls("SessionHost.Close "); !reflect.DeepEqual(got, []string{"ws-1"}) {
 		t.Fatalf("closed %v", got)
 	}
-	if n := len(r.calls("Repo.RemoveWorktree")) + len(r.calls("Repo.DeleteBranch")); n != 0 {
-		t.Fatalf("calls %v", r.shared.Calls())
+	calls := r.shared.Calls()
+	close, remove, del := indexOf(calls, "SessionHost.Close ws-1"), indexOf(calls, "Repo.RemoveWorktree .r-loop/wt/phase-2"), indexOf(calls, "Repo.DeleteBranch r-loop/phase-2 --force")
+	if close < 0 || remove < close || del < remove {
+		t.Fatalf("calls %v", calls)
+	}
+	if ev := r.events("worktree-removed"); len(ev) != 1 || ev[0].Phase != "2" {
+		t.Fatalf("events %+v", ev)
+	}
+}
+
+func TestASkippedItemWhoseWorktreeWillNotGoBlocksThePhase(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Sessions.ItemGates = true
+	r.host.behaviour["rloop-p2-plan"] = "already-done"
+	r.loop.Sessions.Repo = removeFailRepo{r.repo}
+	if code := r.run(RunOptions{Phases: []string{"2"}}); code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	ev := r.events("phase-blocked")
+	if len(ev) != 1 || !strings.Contains(ev[0].Fields["reason"], "item skipped, but its cleanup failed") || !strings.Contains(ev[0].Fields["reason"], "worktree is locked") {
+		t.Fatalf("blocked %+v", ev)
+	}
+	if len(r.events("finished")) != 0 {
+		t.Fatal("run finished")
+	}
+}
+
+type deleteFailRepo struct{ *loopRepo }
+
+func (r deleteFailRepo) DeleteBranch(branch string, force bool) error {
+	r.loopRepo.DeleteBranch(branch, force)
+	return errors.New("branch is busy")
+}
+
+func TestASkippedItemWhoseBranchWillNotGoBlocksThePhase(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Sessions.ItemGates = true
+	r.host.behaviour["rloop-p2-plan"] = "already-done"
+	r.loop.Sessions.Repo = deleteFailRepo{r.repo}
+	if code := r.run(RunOptions{Phases: []string{"2"}}); code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	ev := r.events("phase-blocked")
+	if len(ev) != 1 || !strings.Contains(ev[0].Fields["reason"], "delete branch r-loop/phase-2") || !strings.Contains(ev[0].Fields["reason"], "branch is busy") {
+		t.Fatalf("blocked %+v", ev)
 	}
 }
 

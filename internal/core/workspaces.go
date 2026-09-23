@@ -12,17 +12,19 @@ type stepWorkspace struct {
 
 func everyWorkspace(string, int) bool { return true }
 
-func (l *RunLoop) removeWorktree(phase string) {
+func (l *RunLoop) removeWorktree(phase string, force bool) error {
 	wt, branch := fmt.Sprintf(".r-loop/wt/phase-%s", phase), fmt.Sprintf("r-loop/phase-%s", phase)
 	l.emit(Event{Kind: "worktree-removed", Phase: phase, Fields: map[string]string{"worktree": wt, "branch": branch}})
 	repo := l.Sessions.Repo
 	if err := repo.RemoveWorktree(wt); err != nil {
 		l.emit(Event{Kind: "warning", Phase: phase, Fields: map[string]string{"reason": "remove worktree " + wt + ": " + err.Error()}})
-		return
+		return fmt.Errorf("remove worktree %s: %w", wt, err)
 	}
-	if err := repo.DeleteBranch(branch); err != nil {
+	if err := repo.DeleteBranch(branch, force); err != nil {
 		l.emit(Event{Kind: "warning", Phase: phase, Fields: map[string]string{"reason": "delete branch " + branch + ": " + err.Error()}})
+		return fmt.Errorf("delete branch %s: %w", branch, err)
 	}
+	return nil
 }
 
 func (l *RunLoop) closeWorkspaces(phase string, match func(kind string, attempt int) bool) {

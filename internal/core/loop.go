@@ -237,6 +237,9 @@ func latestAttempt(st RunState, run, phase, kind string) (int, StepState) {
 }
 
 func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base string, replan bool) (string, Outcome, bool) {
+	if skippedBefore(prior, ph.ID) {
+		return l.skipCleanup(ph.ID)
+	}
 	n := ph.ID
 	l.emit(Event{Kind: "phase-start", Phase: n, Fields: map[string]string{"phase": n, "title": ph.Title}})
 	last := &Session{Dir: filepath.Join(l.Sessions.Repo.Root(), fmt.Sprintf(".r-loop/wt/phase-%s", n))}
@@ -253,7 +256,7 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 			l.advance(n, kind.Name)
 			if l.itemSkipped(ph, kind, last.Dir) {
 				l.closeWorkspaces(n, everyWorkspace)
-				return "", Outcome{State: StepOK}, false
+				return l.skipCleanup(n)
 			}
 			continue
 		}
@@ -285,7 +288,7 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 		}
 		if l.itemSkipped(ph, kind, last.Dir) {
 			l.closeWorkspaces(n, everyWorkspace)
-			return "", Outcome{State: StepOK}, false
+			return l.skipCleanup(n)
 		}
 	}
 	lander := l.Lander
@@ -330,7 +333,18 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	l.emit(Event{Kind: "phase-state", Phase: n, Fields: map[string]string{"phase": n, "state": string(PhaseLanded)}})
 	l.emit(Event{Kind: "landed", Phase: n, Fields: map[string]string{"phase": n, "merge": landing.MergeSHA, "gateSkipped": strconv.FormatBool(landing.GateSkipped)}})
 	l.closeWorkspaces(n, everyWorkspace)
-	l.removeWorktree(n)
+	_ = l.removeWorktree(n, false)
+	return "", Outcome{State: StepOK}, false
+}
+
+func skippedBefore(prior RunState, phase string) bool {
+	return slices.ContainsFunc(prior.Events, func(e Event) bool { return e.Kind == "item-skipped" && e.Phase == phase })
+}
+
+func (l *RunLoop) skipCleanup(n string) (string, Outcome, bool) {
+	if err := l.removeWorktree(n, true); err != nil {
+		return "plan", Outcome{State: StepFailed, Reason: "item skipped, but its cleanup failed: " + err.Error()}, false
+	}
 	return "", Outcome{State: StepOK}, false
 }
 

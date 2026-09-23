@@ -63,6 +63,9 @@ func (p *GateProbe) Command(ctx context.Context, phase Phase) (string, error) {
 }
 
 func (p *GateProbe) discover(ctx context.Context, phase Phase, st RunState) (string, error) {
+	if err := cleanTree(p.Repo); err != nil {
+		return "", err
+	}
 	root := p.Repo.Root()
 	reportAbs := filepath.Join(p.RunDir, "gate.md")
 	report, err := filepath.Rel(root, reportAbs)
@@ -109,7 +112,7 @@ func (p *GateProbe) discover(ctx context.Context, phase Phase, st RunState) (str
 		out = p.Sessions.Finish(s, p.Sessions.Wait(ctx, s, rec))
 	}
 	rec.finished(ref, out)
-	if err := p.Repo.ResetHard("HEAD"); err != nil {
+	if err := p.restore(); err != nil {
 		return "", fmt.Errorf("restore: %w", err)
 	}
 	if out.State != StepOK {
@@ -128,8 +131,27 @@ func (p *GateProbe) discover(ctx context.Context, phase Phase, st RunState) (str
 	if err == nil && code != 0 {
 		err = fmt.Errorf("exited %d\n%s", code, output)
 	}
+	if restoreErr := p.restore(); restoreErr != nil {
+		return "", errors.Join(err, fmt.Errorf("restore: %w", restoreErr))
+	}
 	if err != nil {
 		return "", fmt.Errorf("discovered gate %s fails on %s: %v", command, base, err)
 	}
 	return command, nil
+}
+
+func (p *GateProbe) restore() error {
+	if err := p.Repo.ResetHard("HEAD"); err != nil {
+		return err
+	}
+	left, err := p.Repo.Dirty("")
+	if err != nil {
+		return err
+	}
+	for _, path := range left {
+		if err := os.RemoveAll(filepath.Join(p.Repo.Root(), path)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
