@@ -32,7 +32,7 @@ Verified against `r-loop` @ `main` `feaf292`.
       - A step that really commits before review is still failed as today, with today's reason
       - The watchdog can restart a step that failed this way without the phase first being marked blocked
 
-- [ ] [#6] A codex implement step cannot run the full test suite: its sandbox forbids local listeners (`bind: operation not permitted`)
+- [x] [#6] A codex implement step cannot run the full test suite: its sandbox forbids local listeners (`bind: operation not permitted`)  <!-- fixed: r-loop/phase-6 -->
       - A codex step session can run the repository's full `go test ./...`, including the `internal/askmcp` and `internal/app` tests that open local TCP listeners, or the implement prompt names exactly which packages it cannot run and why
       - The shipped codex provider block's `flags` carry whatever codex needs for that, and a provider test pins them
 

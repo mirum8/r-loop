@@ -3,6 +3,7 @@ package providers
 import (
 	"encoding/json"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,10 +53,64 @@ func TestShippedCodexBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Provider{Name: "codex", Kind: "codex", Flags: "-c check_for_update_on_startup=false", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
+	want := Provider{Name: "codex", Kind: "codex", Flags: "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
 		AskFlag: "-c mcp_servers.r-loop.url={url}", DoneSignal: "sentinel", Ask: "mcp", Review: "codex exec review --uncommitted {args} -o {output}", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
+	}
+}
+
+func TestShippedCodexFlagsLetTheSandboxOpenLocalListeners(t *testing.T) {
+	r := NewRegistry(nil, nil, t.TempDir())
+	codex, err := r.Resolve("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := Args(codex, "", "", "http://127.0.0.1:9/ask", "")
+	found := false
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-c" && args[i+1] == "sandbox_workspace_write.network_access=true" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("step args %q lack the network access flag", args)
+	}
+	if review := ToCore(codex, "", "", "http://x", "").Review; !strings.Contains(review, " -c sandbox_workspace_write.network_access=true ") {
+		t.Errorf("review command %q lacks the network access flag", review)
+	}
+}
+
+func TestShippedCodexFlagsLetACodexSandboxOpenALocalListener(t *testing.T) {
+	if os.Getenv("R_LOOP_LISTEN_HELPER") == "1" {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := listener.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if os.Getenv("CODEX_SANDBOX") != "" {
+		t.Skip("cannot start a nested codex sandbox")
+	}
+	codexBin, err := exec.LookPath("codex")
+	if err != nil {
+		t.Skip("codex not on PATH")
+	}
+	r := NewRegistry(nil, nil, t.TempDir())
+	codex, err := r.Resolve("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"sandbox", "-c", "sandbox_mode=workspace-write"}, strings.Fields(codex.Flags)...)
+	args = append(args, "--", os.Args[0], "-test.run=^TestShippedCodexFlagsLetACodexSandboxOpenALocalListener$", "-test.count=1")
+	cmd := exec.Command(codexBin, args...)
+	cmd.Env = append(os.Environ(), "R_LOOP_LISTEN_HELPER=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("codex sandbox with the shipped flags could not open a local listener: %v\n%s", err, out)
 	}
 }
 
@@ -207,9 +262,9 @@ func TestArgsOfShippedBlocks(t *testing.T) {
 		{"claude without model and effort", claude, "", "",
 			[]string{"--mcp-config", "/run/mcp.json"}},
 		{"codex with model and effort", codex, "gpt-5", "high",
-			[]string{"-c", "check_for_update_on_startup=false", "-c", "model=gpt-5", "-c", "model_reasoning_effort=high", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask"}},
+			[]string{"-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "model=gpt-5", "-c", "model_reasoning_effort=high", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask"}},
 		{"codex without model and effort", codex, "", "",
-			[]string{"-c", "check_for_update_on_startup=false", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask"}},
+			[]string{"-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -230,7 +285,7 @@ func TestArgsOmitAskFlagWithoutItsValue(t *testing.T) {
 	if got := Args(claude, "opus", "", "http://x", ""); !reflect.DeepEqual(got, []string{"--model", "opus"}) {
 		t.Errorf("claude: %q", got)
 	}
-	if got := Args(codex, "", "low", "", "/run/mcp.json"); !reflect.DeepEqual(got, []string{"-c", "check_for_update_on_startup=false", "-c", "model_reasoning_effort=low"}) {
+	if got := Args(codex, "", "low", "", "/run/mcp.json"); !reflect.DeepEqual(got, []string{"-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "model_reasoning_effort=low"}) {
 		t.Errorf("codex: %q", got)
 	}
 }
@@ -277,8 +332,8 @@ func TestToCoreFillsTheReviewArgsWithFlagsModelAndEffort(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ model, effort, want string }{
-		{"gpt-x", "high", "codex exec review --uncommitted -c check_for_update_on_startup=false -c model=gpt-x -c model_reasoning_effort=high -o {output}"},
-		{"", "", "codex exec review --uncommitted -c check_for_update_on_startup=false -o {output}"},
+		{"gpt-x", "high", "codex exec review --uncommitted -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -c model=gpt-x -c model_reasoning_effort=high -o {output}"},
+		{"", "", "codex exec review --uncommitted -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -o {output}"},
 	} {
 		got := ToCore(codex, tc.model, tc.effort, "http://x", "").Review
 		if got != tc.want {

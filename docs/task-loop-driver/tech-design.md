@@ -198,7 +198,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `~/.config/r-loop/providers/<name>.yaml`, else the shipped block. `Args(p, model, effort, askURL,
   mcpConfigPath)` expands the templates and omits a flag whose template or value is empty.
   Shipped: `claude` (`--model {model}`, `--effort {effort}`, `--mcp-config {mcpConfig}`, `review: /code-review`) and
-  `codex` (`flags: -c check_for_update_on_startup=false`, `-c model={model}`, `-c model_reasoning_effort={effort}`, `-c
+  `codex` (`flags: -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true`, `-c model={model}`, `-c model_reasoning_effort={effort}`, `-c
   mcp_servers.r-loop.url={url}`, `review: codex exec review --uncommitted {args} -o {output}`).
   `{mcpConfig}` is a per-agent file
   `{"mcpServers":{"r-loop":{"type":"http","url":"<url>"}}}`. Neither sets an MCP tool timeout:
