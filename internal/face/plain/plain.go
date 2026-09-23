@@ -36,6 +36,8 @@ func (f *Face) Emit(ev core.Event) {
 		} else {
 			fmt.Fprintln(f.Out, "!  watchdog waiting for you")
 		}
+	case "phase-check-start", "phase-check", "phase-check-timeout", "phase-check-skipped":
+		fmt.Fprintf(f.Out, "%s  phase %s  phase check  %s\n", ev.At.Format("15:04:05"), ev.Phase, checkDetail(ev))
 	case "warning", "error":
 		fmt.Fprintf(f.Out, "!  %s%s\n", where(ev.Phase, ev.Step), ev.Fields["reason"])
 	default:
@@ -69,4 +71,27 @@ func where(phase, step string) string {
 		return ""
 	}
 	return fmt.Sprintf("phase %s %s: ", phase, step)
+}
+
+func checkDetail(ev core.Event) string {
+	f := ev.Fields
+	switch ev.Kind {
+	case "phase-check-start":
+		return "watchdog checking the plan"
+	case "phase-check":
+		if f["result"] == "no disagreement" {
+			return "found no disagreement"
+		}
+		return "warned"
+	case "phase-check-timeout":
+		return withReason("timed out", f["reason"])
+	}
+	return withReason("skipped", f["reason"])
+}
+
+func withReason(text, reason string) string {
+	if reason == "" {
+		return text
+	}
+	return text + ": " + reason
 }

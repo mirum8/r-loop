@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	phaseCheckStart   = "phase-check-start"
 	phaseCheckRan     = "phase-check"
 	phaseCheckTimeout = "phase-check-timeout"
 	phaseCheckSkipped = "phase-check-skipped"

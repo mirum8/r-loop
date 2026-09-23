@@ -301,3 +301,27 @@ func TestErrorsAndHaltReasonsAreInTheErrorColourAndWarningsInAmber(t *testing.T)
 		}
 	}
 }
+
+func TestTheCheckingLineIsDimAndItsWarningsAmber(t *testing.T) {
+	m := coloured(false)
+	m.Now = at(4)
+	m = m.Apply(core.Event{At: at(2), Kind: "phase-start", Phase: "2"})
+	m = m.Apply(core.Event{At: at(2), Kind: "phase-check-start", Phase: "2"})
+	m = m.Apply(core.Event{At: at(3), Kind: "warning", Phase: "2", Step: "check", Fields: map[string]string{"reason": "Risk: none is too low"}})
+	view := m.View()
+	if !regexp.MustCompile(`\x1b\[38;2;138;146;158mphase 2 · watchdog checking the plan · 2m0s`).MatchString(view) {
+		t.Fatalf("checking line is not dim:\n%s", view)
+	}
+	amber := `\x1b\[38;2;224;16[34];88[0-9;]*m[^\x1b]*`
+	if !regexp.MustCompile(amber + `Risk: none is too low`).MatchString(view) {
+		t.Fatalf("warning is not amber:\n%s", view)
+	}
+	m = m.Apply(core.Event{At: at(3), Kind: "phase-check", Phase: "2", Fields: map[string]string{"phase": "2", "result": "Risk: none is too low"}})
+	view = m.View()
+	if !regexp.MustCompile(`\x1b\[38;2;138;146;158m {3}14:03  phase 2: phase check warned`).MatchString(view) {
+		t.Fatalf("result is not dim:\n%s", view)
+	}
+	if regexp.MustCompile(amber + `phase check warned`).MatchString(view) {
+		t.Fatalf("result is amber:\n%s", view)
+	}
+}

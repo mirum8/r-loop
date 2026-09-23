@@ -309,7 +309,13 @@ func (l *RunLoop) itemSkipped(ph Phase, kind StepKind, dir string) bool {
 
 func (l *RunLoop) checkPhase(ctx context.Context, ph Phase, base string) {
 	n := ph.ID
+	if l.Watcher != nil {
+		l.emit(Event{Kind: phaseCheckStart, Phase: n, Fields: map[string]string{"phase": n}})
+	}
 	out := l.watcher().BeforePhase(ctx, ph, base)
+	if l.Watcher != nil && out.Kind == "" {
+		out = CheckOutcome{Kind: phaseCheckSkipped, Reason: "no phase check"}
+	}
 	var warnings []string
 	for drained := false; !drained; {
 		select {

@@ -103,6 +103,8 @@ type Model struct {
 	Current    string
 	Live       *Step
 	done       map[stepID]string
+	checking   string
+	checkFrom  time.Time
 	Questions  []Question
 	DogGone    bool
 	DogWaiting bool
@@ -150,7 +152,13 @@ func (m Model) Apply(ev core.Event) Model {
 	case "phase-blocked", "phase-skipped", "item-skipped":
 		m.setPhase(ev.Phase, core.PhaseBlocked)
 	case "step":
+		m.checking = ""
 		m.step(ev)
+	case "phase-check-start":
+		m.checking, m.checkFrom, m.Live = ev.Phase, ev.At, nil
+	case "phase-check", "phase-check-timeout", "phase-check-skipped":
+		m.checking = ""
+		m.log(ev, toneDim, "phase check "+checkDetail(ev))
 	case "warning":
 		m.log(ev, toneWarn, ev.Fields["reason"])
 	case "error", "restart-refused":
@@ -210,6 +218,7 @@ func replay(m Model, history []core.Event) Model {
 	}
 	m.Status, m.Blocked, m.Resume, m.Current, m.Live = "", "", "", "", nil
 	m.ended = time.Time{}
+	m.checking = ""
 	m.Questions, m.DogGone, m.DogWaiting = nil, false, false
 	return m
 }
@@ -298,7 +307,29 @@ func landedText(f map[string]string) string {
 	return text
 }
 
+func checkDetail(ev core.Event) string {
+	f := ev.Fields
+	switch ev.Kind {
+	case "phase-check":
+		if f["result"] == "no disagreement" {
+			return "found no disagreement"
+		}
+		return "warned"
+	case "phase-check-timeout":
+		return withReason("timed out", f["reason"])
+	}
+	return withReason("skipped", f["reason"])
+}
+
+func withReason(text, reason string) string {
+	if reason == "" {
+		return text
+	}
+	return text + ": " + reason
+}
+
 func (m *Model) end(status string, at time.Time) {
+	m.checking = ""
 	m.Status = status
 	m.ended = at
 	m.Current = ""

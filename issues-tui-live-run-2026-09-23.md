@@ -20,7 +20,7 @@ Verified against `r-loop` @ `main` `2db8b3b`.
       - The steps line stays one row, cut with `…` at 80 columns and below, with no amber and no bold
       - The golden frames and `TestTheStepsLineTracksDoneFailedLiveAndPendingKinds` use a step list the real wiring can produce
 
-- [ ] [#3] Nothing shown during the phase check
+- [x] [#3] Nothing shown during the phase check  <!-- fixed: r-loop/phase-3 -->
       - The core emits a Face-visible event when the watchdog's phase check starts, before the worktree is created and before the blocking `Notify`
       - From then until the check ends, the TUI panel shows a dim line naming the phase and saying the watchdog is checking the plan, with its elapsed time. It never shows "no step running", and never the previous phase's finished step
       - When the check ends, EVENTS gains one dim result line for `phase-check`, `phase-check-timeout` or `phase-check-skipped`; the check's own warnings stay amber `warning` lines

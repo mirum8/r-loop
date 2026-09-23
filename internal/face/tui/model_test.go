@@ -75,6 +75,84 @@ func newModel(events []core.Event) Model {
 	return m
 }
 
+func TestAPhaseCheckReplacesThePreviousStepInThePanelUntilItEnds(t *testing.T) {
+	m := newModel(recorded()[:10])
+	m = m.Apply(core.Event{At: at(22), Kind: "phase-check-start", Phase: "2", Fields: map[string]string{"phase": "2"}})
+	if m.Live != nil {
+		t.Fatalf("previous step remains live: %+v", m.Live)
+	}
+	next, _ := m.Update(tickMsg(at(24)))
+	m = next.(Model)
+	view := m.View()
+	if !strings.Contains(view, "phase 2 · watchdog checking the plan · 2m0s") {
+		t.Fatalf("checking line missing:\n%s", view)
+	}
+	for _, unwanted := range []string{"no step running", "PHASE 1", "backstop"} {
+		if strings.Contains(view, unwanted) {
+			t.Errorf("view contains %q:\n%s", unwanted, view)
+		}
+	}
+	m = m.Apply(core.Event{At: at(25), Kind: "phase-check", Phase: "2", Fields: map[string]string{"phase": "2", "result": "no disagreement"}})
+	if view := m.View(); strings.Contains(view, "watchdog checking the plan") {
+		t.Fatalf("check still shown:\n%s", view)
+	}
+}
+
+func TestEachPhaseCheckResultIsOneDimFeedLine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ev   core.Event
+		want string
+		tone tone
+	}{
+		{"clear", core.Event{Kind: "phase-check", Fields: map[string]string{"result": "no disagreement"}}, "phase 2: phase check found no disagreement", toneDim},
+		{"warned", core.Event{Kind: "phase-check", Fields: map[string]string{"result": "Files: none leaves out core; Risk: none is too low"}}, "phase 2: phase check warned", toneDim},
+		{"timeout", core.Event{Kind: "phase-check-timeout", Fields: map[string]string{"reason": "herdr: timeout: no answer within 10m0s"}}, "phase 2: phase check timed out: herdr: timeout: no answer within 10m0s", toneDim},
+		{"skipped reason", core.Event{Kind: "phase-check-skipped", Fields: map[string]string{"reason": "watchdog unreachable"}}, "phase 2: phase check skipped: watchdog unreachable", toneDim},
+		{"skipped", core.Event{Kind: "phase-check-skipped"}, "phase 2: phase check skipped", toneDim},
+		{"warning", core.Event{Kind: "warning", Step: "check", Fields: map[string]string{"reason": "Risk: none is too low"}}, "phase 2 check: Risk: none is too low", toneWarn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.ev.At, tc.ev.Phase = at(5), "2"
+			m := newModel([]core.Event{tc.ev})
+			if len(m.Feed) != 1 || !strings.HasSuffix(m.Feed[0].Text, tc.want) || m.Feed[0].Tone != tc.tone {
+				t.Fatalf("feed %+v, want suffix %q and tone %v", m.Feed, tc.want, tc.tone)
+			}
+		})
+	}
+	if feed := newModel([]core.Event{{At: at(5), Kind: "phase-check-start", Phase: "2"}}).Feed; len(feed) != 0 {
+		t.Fatalf("start added feed entries %+v", feed)
+	}
+}
+
+func TestTheCheckingLineClearsOnAStepOnTheRunsEndAndOnResume(t *testing.T) {
+	start := core.Event{At: at(22), Kind: "phase-check-start", Phase: "2", Fields: map[string]string{"phase": "2"}}
+	for _, tc := range []struct {
+		name string
+		ev   core.Event
+		want string
+	}{
+		{"step", step(23, 2, "plan", "running", "claude", "opus", "high", "ws-5"), "PHASE 2 · plan"},
+		{"finished", core.Event{At: at(23), Kind: "finished"}, ""},
+		{"halt", core.Event{At: at(23), Kind: "halt"}, ""},
+		{"aborted", core.Event{At: at(23), Kind: "aborted"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel(recorded()[:10]).Apply(start).Apply(tc.ev)
+			view := m.View()
+			if strings.Contains(view, "watchdog checking the plan") || (tc.want != "" && !strings.Contains(view, tc.want)) {
+				t.Fatalf("view:\n%s", view)
+			}
+		})
+	}
+	t.Run("resume", func(t *testing.T) {
+		m := replay(newModel(nil), append(recorded()[:10], start))
+		if view := m.View(); strings.Contains(view, "watchdog checking the plan") {
+			t.Fatalf("view:\n%s", view)
+		}
+	})
+}
+
 type plainView struct {
 	states map[string]string
 	live   string
