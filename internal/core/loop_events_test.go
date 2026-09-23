@@ -222,6 +222,102 @@ func (r *eventsRig) restartOnFailure() {
 	}
 }
 
+func TestThePhaseCheckStartReachesTheFaceBeforeTheWorktreeAndTheCheckPrompt(t *testing.T) {
+	r := newCheckRig(t)
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	calls := r.shared.Calls()
+	phase := indexOf(calls, "Face.Emit phase-start")
+	start := indexOf(calls, "Face.Emit phase-check-start")
+	worktree := indexOf(calls, "Repo.AddWorktree .r-loop/wt/phase-1")
+	prompt := indexOf(calls, `SessionHost.Prompt rloop-wd-run-1 "check phase 1`)
+	if phase < 0 || start < 0 || worktree < 0 || prompt < 0 || !(phase < start && start < worktree && worktree < prompt) {
+		t.Fatalf("event order: phase %d, start %d, worktree %d, prompt %d in %q", phase, start, worktree, prompt, calls)
+	}
+	if got := r.events("phase-check-start"); len(got) != 1 || got[0].Phase != "1" || got[0].Fields["phase"] != "1" {
+		t.Fatalf("start events %+v", got)
+	}
+	stored := 0
+	for _, rec := range r.store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == "phase-check-start" {
+			stored++
+		}
+	}
+	if stored != 1 {
+		t.Errorf("stored %d start events, want 1", stored)
+	}
+	if start == 0 || !strings.HasPrefix(calls[start-1], "Store.Append run-1") {
+		t.Errorf("start event was not stored before display: %q", calls)
+	}
+}
+
+func TestEachPhaseCheckStartIsFollowedByOneResult(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want string
+		make func(*testing.T) *loopRig
+	}{
+		{"ran", "phase-check", func(t *testing.T) *loopRig { return newCheckRig(t).loopRig }},
+		{"timed out", "phase-check-timeout", func(t *testing.T) *loopRig {
+			r := newCheckRig(t)
+			r.dogHost.err = errors.New("herdr agent prompt: herdr: timeout: no answer within 10m0s")
+			r.dogHost.States = map[string]AgentState{"rloop-wd-run-1": AgentGone}
+			return r.loopRig
+		}},
+		{"skipped", "phase-check-skipped", func(t *testing.T) *loopRig {
+			r := newLoopRig(t)
+			r.loop.Watcher = &Watch{Store: r.store, Face: r.face}
+			return r
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := tc.make(t)
+			if code := r.run(RunOptions{Phases: []string{"1"}}); code != 0 {
+				t.Fatalf("exit %d", code)
+			}
+			var kinds []string
+			for _, ev := range r.face.Events {
+				if strings.HasPrefix(ev.Kind, "phase-check") {
+					kinds = append(kinds, ev.Kind)
+				}
+			}
+			if want := []string{"phase-check-start", tc.want}; !reflect.DeepEqual(kinds, want) {
+				t.Fatalf("kinds %v, want %v", kinds, want)
+			}
+		})
+	}
+}
+
+func TestAWatcherWithNoOutcomeStillEndsTheCheck(t *testing.T) {
+	r := newEventsRig(t)
+	if code := r.run(RunOptions{Phases: []string{"2"}}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	var kinds []string
+	for _, ev := range r.face.Events {
+		if strings.HasPrefix(ev.Kind, "phase-check") {
+			kinds = append(kinds, ev.Kind)
+		}
+	}
+	if want := []string{"phase-check-start", "phase-check-skipped"}; !reflect.DeepEqual(kinds, want) {
+		t.Fatalf("kinds %v, want %v", kinds, want)
+	}
+	if got := r.events("phase-check-skipped"); len(got) != 1 || got[0].Phase != "2" || got[0].Fields["reason"] != "no phase check" {
+		t.Errorf("skip events %+v", got)
+	}
+}
+
+func TestNoPhaseCheckStartWithoutAWatcher(t *testing.T) {
+	r := newLoopRig(t)
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if got := r.events("phase-check-start"); len(got) != 0 {
+		t.Errorf("start events %+v", got)
+	}
+}
+
 func TestWarnSignalIsEmittedAndTheRunContinues(t *testing.T) {
 	r := newEventsRig(t)
 	r.watcher.started = func(ref StepRef, s *Session) {

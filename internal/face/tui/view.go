@@ -111,7 +111,9 @@ func (m Model) panel(w int) []string {
 	th := m.theme
 	var lines []string
 	add := func(style lipgloss.Style, s string) { lines = append(lines, style.Render(ansi.Truncate(s, w, "…"))) }
-	if s := m.Live; s != nil {
+	if m.checking != "" {
+		add(th.Label, fmt.Sprintf("phase %s · watchdog checking the plan · %s", m.checking, m.clock().Sub(m.checkFrom).Truncate(time.Second)))
+	} else if s := m.Live; s != nil {
 		add(th.Text, fmt.Sprintf("PHASE %s · %s", s.Phase, s.Label()))
 		label := th.Text.Render(fmt.Sprintf("%-10s ", "steps"))
 		lines = append(lines, ansi.Truncate(label+m.pipeline(s, w-lipgloss.Width(label)), w, "…"))
