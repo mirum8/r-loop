@@ -32,6 +32,267 @@ func newWatchdog(host SessionHost, store Store, provider ProviderArgs) *Watchdog
 	}
 }
 
+type vanishingHost struct {
+	fakeSessionHost
+	gone atomic.Bool
+}
+
+func (h *vanishingHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	if h.gone.Load() {
+		h.record("SessionHost.Prompt %s %q %t %s", agent, text, wait, timeout)
+		return errors.New("herdr agent prompt: herdr: agent_not_found: no agent named rloop-wd-run-1")
+	}
+	return h.fakeSessionHost.Prompt(agent, text, wait, timeout)
+}
+
+func (h *vanishingHost) State(agent string) (AgentState, error) {
+	if h.gone.Load() {
+		return AgentGone, nil
+	}
+	return h.fakeSessionHost.State(agent)
+}
+
+type vanishingLander struct {
+	*fakeLander
+	host *vanishingHost
+}
+
+func (l *vanishingLander) Land(ctx context.Context, ph Phase) (Landing, error) {
+	landing, err := l.fakeLander.Land(ctx, ph)
+	l.host.gone.Store(true)
+	return landing, err
+}
+
+func TestAWatchdogWhoseAgentIsNotFoundIsMarkedGoneOnce(t *testing.T) {
+	for _, method := range []string{"Post", "Notify"} {
+		t.Run(method, func(t *testing.T) {
+			host := &vanishingHost{}
+			host.gone.Store(true)
+			store := &fakeStore{}
+			face := &fakeFace{}
+			dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+			dog.Face = face
+			var calls atomic.Int32
+			gone := make(chan struct{}, 2)
+			dog.OnGone = func() { calls.Add(1); gone <- struct{}{} }
+			if method == "Post" {
+				dog.Post("a")
+				select {
+				case <-gone:
+				case <-time.After(2 * time.Second):
+					t.Fatal("OnGone did not run")
+				}
+				dog.Post("b")
+				if err := dog.Stop(); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := dog.Notify("a", false, 0); err == nil || !strings.Contains(err.Error(), "agent_not_found") {
+					t.Errorf("first Notify: %v", err)
+				}
+				dog.Notify("b", false, 0)
+			}
+			if calls.Load() != 1 {
+				t.Errorf("OnGone calls %d", calls.Load())
+			}
+			if got := recordedKinds(store); !reflect.DeepEqual(got, []string{"watchdog-unreachable"}) {
+				t.Errorf("recorded %v", got)
+			}
+			if got := emittedKinds(face); !reflect.DeepEqual(got, []string{"watchdog-unreachable"}) {
+				t.Errorf("emitted %v", got)
+			}
+			if !dog.Gone() {
+				t.Error("watchdog remains live")
+			}
+			if got := host.Calls(); len(got) != 1 || !strings.HasPrefix(got[0], "SessionHost.Prompt ") {
+				t.Errorf("host calls %q", got)
+			}
+		})
+	}
+}
+
+func TestATransientPromptErrorLeavesTheWatchdogLive(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		state    AgentState
+		stateErr error
+	}{
+		{"agent idle", AgentIdle, nil},
+		{"state unreadable", AgentUnknown, errors.New("herdr: connection refused")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host := &checkHost{err: errors.New("herdr agent prompt: timed out after 30s")}
+			host.States = map[string]AgentState{"rloop-wd-run-1": tc.state}
+			host.Err = tc.stateErr
+			store := &fakeStore{}
+			dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+			var gone atomic.Int32
+			dog.OnGone = func() { gone.Add(1) }
+			for range 2 {
+				if err := dog.Notify("a", false, 0); err == nil || !strings.Contains(err.Error(), "timed out") {
+					t.Errorf("Notify: %v", err)
+				}
+			}
+			if !dog.live() || gone.Load() != 0 || len(store.Records["run-1"]) != 0 {
+				t.Errorf("live %t gone calls %d records %+v", dog.live(), gone.Load(), store.Records["run-1"])
+			}
+			prompts := 0
+			for _, call := range host.Calls() {
+				if strings.HasPrefix(call, "SessionHost.Prompt ") {
+					prompts++
+				}
+			}
+			if prompts != 2 {
+				t.Errorf("prompts %q", host.Calls())
+			}
+		})
+	}
+}
+
+type stallingHost struct {
+	fakeSessionHost
+	entered, release chan struct{}
+}
+
+func (h *stallingHost) Prompt(string, string, bool, time.Duration) error {
+	close(h.entered)
+	<-h.release
+	return errors.New("herdr agent prompt: herdr: agent_not_found: no agent named rloop-wd-run-1")
+}
+
+func (h *stallingHost) State(string) (AgentState, error) { return AgentGone, nil }
+
+func TestAnAgentNotFoundDuringStopDoesNotFireOnGone(t *testing.T) {
+	host := &stallingHost{entered: make(chan struct{}), release: make(chan struct{})}
+	store := &fakeStore{}
+	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+	var gone atomic.Int32
+	dog.OnGone = func() { gone.Add(1) }
+	dog.Post("a")
+	select {
+	case <-host.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("prompt did not start")
+	}
+	done := make(chan error, 1)
+	go func() { done <- dog.Stop() }()
+	deadline := time.After(2 * time.Second)
+	for {
+		dog.mu.Lock()
+		stopping := dog.stopping
+		dog.mu.Unlock()
+		if stopping {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("Stop did not start")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	close(host.release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop blocked")
+	}
+	if gone.Load() != 0 {
+		t.Errorf("OnGone calls %d", gone.Load())
+	}
+	if got := recordedKinds(store); slices.Contains(got, "watchdog-unreachable") {
+		t.Errorf("recorded %v", got)
+	}
+}
+
+func TestAWatchdogPaneKilledDuringLandHaltsAtTheNextPhasesCheckBeforeAnyStep(t *testing.T) {
+	r := newLoopRig(t)
+	host := &vanishingHost{}
+	dog := newWatchdog(host, &r.store.fakeStore, ProviderArgs{Kind: "claude"})
+	dog.Face = r.face
+	w := &Watch{Store: r.store, Face: r.face, PhaseCheck: &PhaseCheck{Dog: dog, Repo: r.repo, Timeout: time.Minute}}
+	var gone atomic.Int32
+	dog.OnGone = func() { gone.Add(1); w.WatchdogGone() }
+	r.loop.Watcher = w
+	r.loop.Lander = &vanishingLander{fakeLander: r.lander, host: host}
+	code := r.run(RunOptions{})
+	if code != 5 {
+		t.Errorf("exit %d", code)
+	}
+	var phases []string
+	for _, ev := range r.events("phase-start") {
+		phases = append(phases, ev.Phase)
+	}
+	if !reflect.DeepEqual(phases, []string{"1", "2"}) {
+		t.Errorf("phase starts %v", phases)
+	}
+	if got := r.calls("Land "); !reflect.DeepEqual(got, []string{"1"}) {
+		t.Errorf("lands %v", got)
+	}
+	for _, rec := range r.store.Records["run-1"] {
+		if rec.Kind == RecordStep && rec.Step.Phase == "2" {
+			t.Errorf("phase 2 step %+v", rec)
+		}
+	}
+	if got := r.events("phase-check-timeout"); len(got) != 0 {
+		t.Errorf("timeouts %+v", got)
+	}
+	checks := r.events("phase-check-skipped")
+	if len(checks) != 1 || checks[0].Phase != "2" || checks[0].Fields["reason"] != "watchdog unreachable" {
+		t.Errorf("skipped %+v", checks)
+	}
+	kinds := r.kinds()
+	u := slices.Index(kinds, "watchdog-unreachable")
+	s := slices.Index(kinds, "phase-check-skipped")
+	h := slices.Index(kinds, "halt")
+	if u < 0 || s <= u || h <= s || slices.Index(kinds[u+1:], "watchdog-unreachable") >= 0 {
+		t.Errorf("event order %v", kinds)
+	}
+	if gone.Load() != 1 {
+		t.Errorf("OnGone calls %d", gone.Load())
+	}
+	runs := r.runRecords()
+	if len(runs) == 0 || runs[len(runs)-1].Reason != "watchdog: the watchdog is gone" {
+		t.Errorf("last run %+v", runs)
+	}
+}
+
+func TestAGoneWatchdogsHaltDoesNotBlockAPhaseCheckBehindAFullSignalQueue(t *testing.T) {
+	store := &fakeStore{}
+	w := newWatch(store)
+	key := implementRef(2, 1).Key
+	w.StepStarted(implementRef(2, 1), nil)
+	for range 64 {
+		if _, err := w.Accept(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: key, Reason: "w"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	host := &goneHost{}
+	host.gone.Store(true)
+	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+	dog.OnGone = w.WatchdogGone
+	defer dog.Stop()
+	dog.Post("step ended phase-2/implement failed")
+	done := make(chan error, 1)
+	go func() { done <- dog.Notify("check phase 3", true, time.Minute) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Notify blocked behind the drain")
+	}
+	for i := 0; i < 64; i++ {
+		if sig := receive(t, w); sig.Kind != SignalWarn {
+			t.Errorf("signal %d: %+v", i, sig)
+		}
+	}
+	if sig := receive(t, w); sig.Kind != SignalHalt || sig.Reason != "the watchdog is gone" || sig.Step != key {
+		t.Errorf("halt %+v", sig)
+	}
+}
+
 func TestWatchdogStartSplitsThenStartsThenPromptsWithoutWait(t *testing.T) {
 	host := &fakeSessionHost{}
 	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude", Args: []string{"--model", "sonnet", "--effort", "low", "--mcp-config", "/run/wd.json"}})

@@ -273,19 +273,36 @@ func (d *Watchdog) promptWith(ctx context.Context, text string, wait bool, timeo
 	}
 	if !blocked(err) {
 		if err == nil {
-			if werr := d.markResumed(true); werr != nil {
-				return werr
-			}
+			return d.markResumed(true)
 		}
-		return err
+		if state, serr := d.Host.State(d.agent()); serr != nil || state != AgentGone {
+			return err
+		}
 	}
-	if rerr := d.emit("watchdog-unreachable", map[string]string{"reason": err.Error()}, func() { d.gone = true }); rerr != nil {
-		return rerr
+	if lerr := d.lost(err.Error()); lerr != nil {
+		return lerr
+	}
+	return err
+}
+
+func (d *Watchdog) lost(reason string) error {
+	d.wait.Lock()
+	d.mu.Lock()
+	skip := d.gone || d.stopping
+	d.mu.Unlock()
+	if skip {
+		d.wait.Unlock()
+		return nil
+	}
+	err := d.emit("watchdog-unreachable", map[string]string{"reason": reason}, func() { d.gone = true })
+	d.wait.Unlock()
+	if err != nil {
+		return err
 	}
 	if d.OnGone != nil {
 		d.OnGone()
 	}
-	return err
+	return nil
 }
 
 func (d *Watchdog) AskMaintainer(question string, options []string, recommended string) error {

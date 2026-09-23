@@ -41,6 +41,9 @@ func (c *PhaseCheck) Run(ctx context.Context, ph Phase, base string) CheckOutcom
 	}()
 	select {
 	case err := <-errc:
+		if !c.Dog.live() {
+			return CheckOutcome{Kind: phaseCheckSkipped, Reason: "watchdog unreachable"}
+		}
 		if err != nil {
 			return CheckOutcome{Kind: phaseCheckTimeout, Reason: err.Error()}
 		}

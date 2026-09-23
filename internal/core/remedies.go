@@ -184,10 +184,12 @@ func (r *Remedies) Restart(step, addendum, provider, maintainerSaid string) (boo
 		return false, "no authorised remedy"
 	}
 	r.Watch.init()
+	reply := make(chan string, 1)
 	select {
-	case r.Watch.restarts <- Restart{Step: key, Addendum: addendum, Provider: provider, Remedy: remedy}:
-		return true, ""
+	case r.Watch.restarts <- Restart{Step: key, Addendum: addendum, Provider: provider, Remedy: remedy, Reply: reply}:
 	case <-closed:
 		return false, "run halted"
 	}
+	reason := <-reply
+	return reason == "", reason
 }

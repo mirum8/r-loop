@@ -241,6 +241,33 @@ func stepEvents(st core.RunState, kind string) []core.Event {
 	return out
 }
 
+func TestResumeContinuesSignalSequenceFromTheHighestStoredSignal(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	w, err := f.preflight(f.todo, "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := w.Store.Create(core.RunMeta{Todo: f.todo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := core.StepKey{Run: id, Phase: "2", Kind: "implement", Attempt: 1}
+	for _, seq := range []int{1, 65} {
+		sig := core.Signal{Seq: seq, Kind: core.SignalWarn, Source: core.SourceWatchdog, Step: key}
+		if err := w.Store.Append(id, core.Record{Kind: core.RecordSignal, Signal: &sig}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.bind(id)
+	got, err := w.Watch.Accept(core.Signal{Kind: core.SignalWarn, Source: core.SourceWatchdog, Step: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Seq != 66 {
+		t.Fatalf("resumed signal sequence = %d, want 66", got.Seq)
+	}
+}
+
 func TestResumeAfterFailedImplementRerunsOnlyImplementAsAttempt2OverItsWork(t *testing.T) {
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()

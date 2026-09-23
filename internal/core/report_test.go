@@ -24,6 +24,30 @@ func TestReportDoesNotClaimAnUnknownHistoricalReviewCommand(t *testing.T) {
 	}
 }
 
+func TestReportMarksDroppedSignalsWithoutMarkingDeliveredSignals(t *testing.T) {
+	key := StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}
+	st := RunState{ID: "run-1", Signals: []Signal{
+		{Seq: 64, Kind: SignalWarn, Source: SourceWatchdog, Step: key, Reason: "first"},
+		{Seq: 65, Kind: SignalWarn, Source: SourceWatchdog, Step: key, Reason: "overflow"},
+	}, Events: []Event{{Kind: "signal-dropped", Phase: "2", Step: "implement", Fields: map[string]string{"seq": "65", "kind": "warn", "source": "watchdog", "reason": "overflow"}}}}
+	got := Report(st, threePhasePlan())
+	if !strings.Contains(got, "warn from watchdog, phase 2 implement: overflow (dropped: signal queue full)") {
+		t.Errorf("dropped signal not marked:\n%s", got)
+	}
+	if strings.Contains(got, "first (dropped") {
+		t.Errorf("delivered signal marked dropped:\n%s", got)
+	}
+}
+
+func TestReportNamesADroppedRejectionNotice(t *testing.T) {
+	key := StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}
+	st := RunState{ID: "run-1", Signals: []Signal{{Seq: 1, Kind: SignalWarn, Source: SourceWatchdog, Step: key, Reason: "late", Rejected: true, RejectReason: "step is not running"}}, Events: []Event{{Kind: "signal-dropped", Fields: map[string]string{"seq": "1"}}}}
+	got := Report(st, threePhasePlan())
+	if !strings.Contains(got, "(rejected: step is not running) (rejection notice dropped: signal queue full)") {
+		t.Fatalf("report does not identify the dropped notice:\n%s", got)
+	}
+}
+
 func TestReportCountsAndListsAResolveFirstAnswer(t *testing.T) {
 	st := RunState{
 		ID: "run-1", Status: RunFinished,

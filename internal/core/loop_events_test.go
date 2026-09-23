@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -19,6 +20,24 @@ type fakeWatcher struct {
 	started  func(StepRef, *Session)
 	ended    func(StepRef, Outcome)
 	route    func(context.Context, Question) bool
+}
+
+type lateHaltWatcher struct {
+	*fakeWatcher
+	armed atomic.Bool
+	halts chan Signal
+}
+
+func (w *lateHaltWatcher) Signals() <-chan Signal {
+	if w.armed.Load() {
+		return w.halts
+	}
+	return nil
+}
+
+func (w *lateHaltWatcher) Restarts() <-chan Restart {
+	w.armed.Store(true)
+	return w.fakeWatcher.restarts
 }
 
 func (w *fakeWatcher) BeforePhase(ctx context.Context, ph Phase, base string) CheckOutcome {
@@ -268,7 +287,6 @@ func TestEachPhaseCheckStartIsFollowedByOneResult(t *testing.T) {
 		{"timed out", "phase-check-timeout", func(t *testing.T) *loopRig {
 			r := newCheckRig(t)
 			r.dogHost.err = errors.New("herdr agent prompt: herdr: timeout: no answer within 10m0s")
-			r.dogHost.States = map[string]AgentState{"rloop-wd-run-1": AgentGone}
 			return r.loopRig
 		}},
 		{"skipped", "phase-check-skipped", func(t *testing.T) *loopRig {
@@ -728,6 +746,77 @@ func TestAStaleRestartForAnEarlierAttemptIsIgnored(t *testing.T) {
 	want := []string{"rloop-p2-plan", "rloop-p2-implement", "rloop-p2-implement-a2"}
 	if got := r.agents(); !reflect.DeepEqual(got, want) {
 		t.Errorf("spawned %v, want %v", got, want)
+	}
+}
+
+func TestARestartTheLoopTakesWhileAHaltIsPendingIsAnsweredWithTheHalt(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.RemedyWindow = time.Minute
+	r.loop.Sessions.Poll = time.Hour
+	r.loop.runDir = r.store.Dir("run-1")
+	r.loop.restarts = map[string]int{}
+	key := StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}
+	w := &lateHaltWatcher{fakeWatcher: r.watcher, halts: make(chan Signal, 1)}
+	w.halts <- Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: key, Reason: "wrong turn"}
+	reply := make(chan string, 1)
+	r.watcher.restarts <- Restart{Step: key, Addendum: "again", Reply: reply}
+	r.loop.Watcher = w
+	kind := r.loop.Kinds[1]
+	out := Outcome{State: StepFailed, Reason: "backstop"}
+	_, ok, aborted := r.loop.awaitRestart(context.Background(), StepRef{Key: key, Kind: kind}, kind, &out)
+	if ok || aborted {
+		t.Errorf("restart accepted %t aborted %t", ok, aborted)
+	}
+	select {
+	case reason := <-reply:
+		if reason != "run halted: watchdog: wrong turn" {
+			t.Errorf("reason %q", reason)
+		}
+	default:
+		t.Error("missing reply")
+	}
+	if !out.Halted {
+		t.Errorf("outcome %+v", out)
+	}
+	if got := r.events("restart"); len(got) != 0 {
+		t.Errorf("restarts %+v", got)
+	}
+}
+
+func TestAStaleRestartIsAnsweredAsNotWaiting(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.RemedyWindow = 30 * time.Millisecond
+	r.host.behaviour["rloop-p2-implement"] = "fail"
+	r.host.behaviour["rloop-p2-implement-a2"] = "fail"
+	first, stale := make(chan string, 1), make(chan string, 1)
+	r.watcher.ended = func(ref StepRef, out Outcome) {
+		if out.State == StepFailed && ref.Key.Attempt == 1 {
+			r.watcher.restarts <- Restart{Step: ref.Key, Reply: first}
+			r.watcher.restarts <- Restart{Step: ref.Key, Reply: stale}
+		}
+	}
+	code := r.run(RunOptions{Phases: []string{"2"}})
+	if code != 1 {
+		t.Errorf("exit %d", code)
+	}
+	select {
+	case reason := <-first:
+		if reason != "" {
+			t.Errorf("first reply %q", reason)
+		}
+	default:
+		t.Error("missing first reply")
+	}
+	select {
+	case reason := <-stale:
+		if reason != "phase-2/implement attempt 1 is not waiting for a restart" {
+			t.Errorf("stale reply %q", reason)
+		}
+	default:
+		t.Error("missing stale reply")
+	}
+	if got := r.agents(); !reflect.DeepEqual(got, []string{"rloop-p2-plan", "rloop-p2-implement", "rloop-p2-implement-a2"}) {
+		t.Errorf("agents %v", got)
 	}
 }
 

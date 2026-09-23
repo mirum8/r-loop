@@ -37,6 +37,13 @@ type Watcher interface {
 type Restart struct {
 	Step                       StepKey
 	Addendum, Provider, Remedy string
+	Reply                      chan string
+}
+
+func (rs Restart) answer(reason string) {
+	if rs.Reply != nil {
+		rs.Reply <- reason
+	}
 }
 
 type nopWatcher struct{}
@@ -246,6 +253,9 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	if l.checkPhase(ctx, ph, base) {
 		l.stop(ctx, n, "check")
 		return "check", Outcome{}, true
+	}
+	if l.dogGone(n) {
+		return "check", Outcome{State: StepFailed, Reason: "watchdog: " + watchdogGone, Halted: true}, false
 	}
 	stopped := l.stoppedKind(prior, n)
 	replan = replan && stopped != "" && stopped != "plan" && slices.ContainsFunc(l.Kinds, func(k StepKind) bool { return k.Name == "plan" })
@@ -503,13 +513,17 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 		case rs = <-l.watcher().Restarts():
 		}
 		if rs.Step != key {
+			rs.answer(fmt.Sprintf("phase-%s/%s attempt %d is not waiting for a restart", rs.Step.Phase, rs.Step.Kind, rs.Step.Attempt))
 			continue
 		}
 		if l.drainHalts(key, out) {
+			rs.answer("run halted: " + out.Reason)
 			return StepRef{}, false, false
 		}
 		if l.restarts[step] >= l.MaxRestarts {
-			l.emit(Event{Kind: "restart-refused", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "reason": fmt.Sprintf("restart limit %d reached", l.MaxRestarts)}})
+			reason := fmt.Sprintf("restart limit %d reached", l.MaxRestarts)
+			l.emit(Event{Kind: "restart-refused", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "reason": reason}})
+			rs.answer(reason)
 			return StepRef{}, false, false
 		}
 		l.restarts[step]++
@@ -526,6 +540,7 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 			f["model"], f["effort"] = kind.Row.Model, kind.Row.Effort
 		}
 		l.emit(Event{Kind: "restart", Phase: key.Phase, Step: key.Kind, Fields: f})
+		rs.answer("")
 		return next, true, false
 	}
 }
