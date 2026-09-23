@@ -78,7 +78,7 @@ func (h *dogHost) ClosePane(pane string) error {
 	h.record("ClosePane %s", pane)
 	return nil
 }
-func (h *dogHost) Split(pane, direction, cwd string) (string, error) {
+func (h *dogHost) Split(pane, direction, cwd string, env map[string]string) (string, error) {
 	h.record("Split %q %s %s", pane, direction, cwd)
 	return "wd-pane", nil
 }

@@ -102,7 +102,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
     bool, timeout time.Duration) error` · `State(agent) (AgentState, error)` with `AgentState ∈
     {idle, working, blocked, done, unknown, gone}` · `Read(agent string, lines int) (string,
     error)` · `Interrupt(agent) error` · `Close(workspaceID) error` · `Split(pane, direction,
-    cwd string) (pane string, error)` (an empty `pane` splits the pane herdr calls current) ·
+    cwd string, env map[string]string) (pane string, error)` (an empty `pane` splits the pane herdr calls current; `env` becomes `--env K=V` on the split pane's shell, `nil` for none) ·
     `AgentPane(agent) (string, error)` (the pane the named agent runs in, `""` when herdr knows no
     such agent) · `ClosePane(pane) error` (closes one pane; used only for the watchdog's own — a
     stale one of the same run at its start, and its own at the run's end) · `Tag(workspaceID,
@@ -401,7 +401,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 
 - **Shape** — a review half runs after a step's author half ends `ok` and before the step's
   commit, inside the step's own workspace: the author stays in the root pane, and each reviewer
-  gets a pane split to its right (`Split(rootPane, "right", worktree)`, stacked when there are several).
+  gets a pane split to its right (`Split(rootPane, "right", worktree, reviewerEnv)`, stacked when there are several).
+  Each reviewer pane is split with `R_LOOP_RUN`, `R_LOOP_PHASE`, `R_LOOP_STEP` (the reviewed step's) and `R_LOOP_REVIEWER`.
   **Each round starts a fresh reviewer agent** in a fresh pane: from round 2 on, the previous
   round's reviewer panes are closed (`ClosePane`) and split again in the same places, since an
   interrupted agent (Claude Code at an idle prompt) need not exit and would leave its pane busy. The author is the same agent session through

@@ -630,7 +630,9 @@ func (h *reportHost) Interrupt(agent string) error                           { r
 func (h *reportHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
 func (h *reportHost) Close(workspaceID string) error                         { return nil }
 func (h *reportHost) ClosePane(pane string) error                            { return nil }
-func (h *reportHost) Split(pane, direction, cwd string) (string, error)      { return "", nil }
+func (h *reportHost) Split(pane, direction, cwd string, env map[string]string) (string, error) {
+	return "", nil
+}
 
 type reportPrompts struct {
 	mu   sync.Mutex

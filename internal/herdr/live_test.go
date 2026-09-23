@@ -57,12 +57,34 @@ func TestLiveHerdr(t *testing.T) {
 		t.Fatalf("Tag: %v", err)
 	}
 
-	pane, err := c.Split(ws.RootPane, "right", dir)
+	runID := "run-" + suffix
+	reviewerEnv := map[string]string{
+		"R_LOOP_RUN":      runID,
+		"R_LOOP_PHASE":    "3",
+		"R_LOOP_STEP":     "implement",
+		"R_LOOP_REVIEWER": "claude",
+	}
+	pane, err := c.Split(ws.RootPane, "right", dir, reviewerEnv)
 	if err != nil || pane == "" || pane == ws.RootPane {
 		t.Fatalf("Split: %q, %v", pane, err)
 	}
+	command := "echo split-env=$R_LOOP_RUN/$R_LOOP_PHASE/$R_LOOP_STEP/$R_LOOP_REVIEWER"
+	want := "split-env=" + runID + "/3/implement/claude"
+	for attempt := 0; attempt < 3; attempt++ {
+		_, err := c.exec("pane", "run", pane, command)
+		if err == nil {
+			_, err = c.exec("pane", "wait-output", "--match", want, "--timeout", "3000", pane)
+		}
+		if err == nil {
+			break
+		}
+		if attempt == 2 {
+			t.Fatalf("split pane environment: %v", err)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 
-	extra, err := c.Split(ws.RootPane, "down", dir)
+	extra, err := c.Split(ws.RootPane, "down", dir, nil)
 	if err != nil {
 		t.Fatalf("Split: %v", err)
 	}
@@ -78,21 +100,14 @@ func TestLiveHerdr(t *testing.T) {
 	if err := c.Interrupt(first); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		s, err := c.State(first)
-		if err != nil {
-			t.Fatalf("State: %v", err)
-		}
-		if s == core.AgentGone {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("first agent still %q after interrupt", s)
-		}
-		time.Sleep(250 * time.Millisecond)
+	if err := c.ClosePane(pane); err != nil {
+		t.Fatalf("ClosePane of first reviewer: %v", err)
 	}
-	startTolerant(t, c, pane, "rl-live-b-"+suffix)
+	nextPane, err := c.Split(ws.RootPane, "right", dir, reviewerEnv)
+	if err != nil || nextPane == "" || nextPane == pane {
+		t.Fatalf("Split fresh reviewer pane: %q, %v", nextPane, err)
+	}
+	startTolerant(t, c, nextPane, "rl-live-b-"+suffix)
 
 	if s, err := c.State("rl-live-missing-" + suffix); err != nil || s != core.AgentGone {
 		t.Fatalf("State of missing agent: %q, %v", s, err)

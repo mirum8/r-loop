@@ -44,7 +44,7 @@ func (in *Intake) Run(ctx context.Context, accepted <-chan []string) ([]string, 
 
 func (in *Intake) open() (string, string, error) {
 	if in.Pane != "" {
-		pane, err := in.Host.Split(in.Pane, "right", in.Root)
+		pane, err := in.Host.Split(in.Pane, "right", in.Root, nil)
 		if err != nil {
 			return "", "", fmt.Errorf("split: %w", err)
 		}

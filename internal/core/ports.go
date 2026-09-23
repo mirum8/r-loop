@@ -48,7 +48,7 @@ type SessionHost interface {
 	Interrupt(agent string) error
 	Close(workspaceID string) error
 	Tag(workspaceID string, tokens map[string]string) error
-	Split(pane, direction, cwd string) (string, error)
+	Split(pane, direction, cwd string, env map[string]string) (string, error)
 	ClosePane(pane string) error
 }
 

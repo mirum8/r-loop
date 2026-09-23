@@ -55,6 +55,7 @@ func (f *fakePlanSource) Tick(path, phase string) error {
 type fakeSessionHost struct {
 	callLog
 	Opened  []OpenSpec
+	Splits  []map[string]string
 	Agents  []string
 	Started map[string]OpenSpec
 	roots   map[string]OpenSpec
@@ -134,8 +135,9 @@ func (f *fakeSessionHost) ClosePane(pane string) error {
 	return f.Err
 }
 
-func (f *fakeSessionHost) Split(pane, direction, cwd string) (string, error) {
+func (f *fakeSessionHost) Split(pane, direction, cwd string, env map[string]string) (string, error) {
 	f.record("SessionHost.Split %s %s %s", pane, direction, cwd)
+	f.Splits = append(f.Splits, env)
 	f.next++
 	return fmt.Sprintf("pane-%d", f.next), f.Err
 }
