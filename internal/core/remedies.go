@@ -25,6 +25,7 @@ const (
 type Remedies struct {
 	Allow       []string
 	Store       Store
+	Face        Face
 	Now         func() time.Time
 	Watch       *Watch
 	MaxRestarts int
@@ -67,7 +68,23 @@ func (r *Remedies) Propose(class, command, why, maintainerSaid string) (string, 
 	if rem.Consent == consentRefused {
 		return decisionRefused, ""
 	}
+	if rem.Consent == consentMaintainer {
+		if err := r.consented(step, rem.ID); err != nil {
+			return decisionRefused, err.Error()
+		}
+	}
 	return decisionAuthorised, ""
+}
+
+func (r *Remedies) consented(step StepKey, id string) error {
+	ev := Event{At: r.now(), Kind: "human", Phase: step.Phase, Step: step.Kind, Fields: map[string]string{"what": "consent", "id": id}}
+	if err := r.Store.Append(step.Run, Record{Kind: RecordEvent, At: ev.At, Event: &ev}); err != nil {
+		return fmt.Errorf("record: %w", err)
+	}
+	if r.Face != nil {
+		r.Face.Emit(ev)
+	}
+	return nil
 }
 
 func (r *Remedies) waitForMaintainer(question string) error {
@@ -156,6 +173,9 @@ func (r *Remedies) Restart(step, addendum, provider, maintainerSaid string) (boo
 		}
 		rem, err := r.decide(key, "provider", fmt.Sprintf("restart %s on %s", step, provider), provider+" is not the row's fallback", func(Remedy) string { return consentMaintainer })
 		if err != nil {
+			return false, err.Error()
+		}
+		if err := r.consented(key, step); err != nil {
 			return false, err.Error()
 		}
 		remedy = rem.ID

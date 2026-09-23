@@ -169,3 +169,50 @@ func TestARestartThatNeedsTheMaintainerShowsTheWatchdogWaitingForThem(t *testing
 		t.Errorf("restart %v, emitted %+v", ok, face.Events)
 	}
 }
+
+func TestARestartTheMaintainerConsentedToIsOneHumanTouch(t *testing.T) {
+	store := &fakeStore{}
+	rem, w := fallbackRemedies(t, store)
+	face := &fakeFace{}
+	rem.Face = face
+	go func() { <-w.Restarts() }()
+
+	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "yes, use gemini")
+
+	if !ok {
+		t.Fatalf("restart %v %q", ok, reason)
+	}
+	var human []Event
+	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == "human" {
+			human = append(human, *rec.Event)
+		}
+	}
+	want := Event{At: remedyT0, Kind: "human", Phase: "2", Step: "implement", Fields: map[string]string{"what": "consent", "id": "phase-2/implement"}}
+	if len(human) != 1 || !reflect.DeepEqual(human[0], want) {
+		t.Errorf("human events %+v, want %+v", human, want)
+	}
+	if !reflect.DeepEqual(face.Events, []Event{want}) {
+		t.Errorf("emitted %+v, want %+v", face.Events, want)
+	}
+}
+
+func TestARestartOnAMaintainerApprovedRemedyCountsNoSecondConsent(t *testing.T) {
+	store := &fakeStore{}
+	rem, w := fallbackRemedies(t, store)
+	rem.Propose("provider", "restart phase-2/implement on gemini", "codex usage limit reached", "yes, go ahead")
+	go func() { <-w.Restarts() }()
+
+	if ok, reason := rem.Restart("phase-2/implement", "", "gemini", "yes, go ahead"); !ok {
+		t.Fatalf("restart %v %q", ok, reason)
+	}
+	var human []Event
+	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == "human" {
+			human = append(human, *rec.Event)
+		}
+	}
+	if len(human) != 1 || human[0].Fields["id"] != "remedy-1" {
+		t.Errorf("human events %+v, want only the consent to remedy-1", human)
+	}
+}

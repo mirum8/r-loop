@@ -422,3 +422,38 @@ func TestAnAuthorisedRemedyDoesNotShowTheWatchdogWaiting(t *testing.T) {
 		t.Errorf("decision %q, emitted %+v", got, face.Events)
 	}
 }
+
+func TestARemedyTheMaintainerConsentedToIsAHumanTouch(t *testing.T) {
+	store := &fakeStore{}
+	w, key := failedImplement(t, store)
+	rem := newRemedies(w, store)
+
+	got, _ := rem.Propose("retry", "true", "the plan named a helper Go does not have", "Yes — retry with the test-local writer.")
+
+	if got != "authorised" {
+		t.Fatalf("decision %q", got)
+	}
+	var human []Event
+	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == "human" {
+			human = append(human, *rec.Event)
+		}
+	}
+	if len(human) != 1 || human[0].Fields["what"] != "consent" || human[0].Phase != key.Phase || human[0].Step != key.Kind || human[0].Fields["id"] != "remedy-1" {
+		t.Errorf("human events %+v, want one consent for remedy-1", human)
+	}
+}
+
+func TestAnAllowListedRemedyIsNoHumanTouch(t *testing.T) {
+	store := &fakeStore{}
+	w, _ := failedImplement(t, store)
+	rem := newRemedies(w, store, "locks")
+
+	rem.Propose("locks", "rm -f .git/index.lock", "a stale git lock", "")
+
+	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == "human" {
+			t.Errorf("human event %+v", rec.Event)
+		}
+	}
+}
