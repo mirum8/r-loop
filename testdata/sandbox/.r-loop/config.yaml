@@ -1,0 +1,46 @@
+steps:
+  plan:
+    provider: claude
+    model: sonnet
+    effort: low
+    timeout: 20m
+    fallback: codex
+    reviewers:
+      - codex
+    rounds: 1
+    reviewTimeout: 10m
+  implement:
+    provider: claude
+    model: sonnet
+    effort: low
+    timeout: 30m
+    fallback: codex
+    reviewers:
+      - codex
+    rounds: 1
+    reviewTimeout: 10m
+  milestone:
+    provider: claude
+    model: sonnet
+    effort: low
+    timeout: 10m
+  gate:
+    provider: claude
+    model: sonnet
+    effort: low
+    timeout: 10m
+
+land:
+  gateTimeout: 5m
+
+watchdog:
+  provider: claude
+  model: sonnet
+  effort: medium
+  checkTimeout: 5m
+  unblockTimeout: 15m
+
+intake:
+  provider: claude
+  model: sonnet
+  effort: low
