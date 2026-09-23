@@ -327,7 +327,7 @@ func TestWireBuildsTheGateFixKindAndTheMilestoneBoundary(t *testing.T) {
 		t.Fatalf("loop kinds=%+v", w.Loop.Kinds)
 	}
 	args, err := w.Loop.Sessions.Resolve("codex", "gpt-x", "high", "", "")
-	if err != nil || args.Kind != "codex" || strings.Join(args.Args, " ") != "-c model=gpt-x -c model_reasoning_effort=high" {
+	if err != nil || args.Kind != "codex" || strings.Join(args.Args, " ") != "-c check_for_update_on_startup=false -c model=gpt-x -c model_reasoning_effort=high" {
 		t.Fatalf("args=%+v err=%v", args, err)
 	}
 }

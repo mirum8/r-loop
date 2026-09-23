@@ -1,4 +1,5 @@
 kind: codex
+flags: "-c check_for_update_on_startup=false"
 modelFlag: "-c model={model}"
 effortFlag: "-c model_reasoning_effort={effort}"
 askFlag: "-c mcp_servers.r-loop.url={url}"

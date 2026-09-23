@@ -51,7 +51,7 @@ func TestShippedCodexBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Provider{Name: "codex", Kind: "codex", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
+	want := Provider{Name: "codex", Kind: "codex", Flags: "-c check_for_update_on_startup=false", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
 		AskFlag: "-c mcp_servers.r-loop.url={url}", DoneSignal: "sentinel", Ask: "mcp", Review: "/review", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
@@ -206,9 +206,9 @@ func TestArgsOfShippedBlocks(t *testing.T) {
 		{"claude without model and effort", claude, "", "",
 			[]string{"--mcp-config", "/run/mcp.json"}},
 		{"codex with model and effort", codex, "gpt-5", "high",
-			[]string{"-c", "model=gpt-5", "-c", "model_reasoning_effort=high", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask"}},
+			[]string{"-c", "check_for_update_on_startup=false", "-c", "model=gpt-5", "-c", "model_reasoning_effort=high", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask"}},
 		{"codex without model and effort", codex, "", "",
-			[]string{"-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask"}},
+			[]string{"-c", "check_for_update_on_startup=false", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -229,7 +229,7 @@ func TestArgsOmitAskFlagWithoutItsValue(t *testing.T) {
 	if got := Args(claude, "opus", "", "http://x", ""); !reflect.DeepEqual(got, []string{"--model", "opus"}) {
 		t.Errorf("claude: %q", got)
 	}
-	if got := Args(codex, "", "low", "", "/run/mcp.json"); !reflect.DeepEqual(got, []string{"-c", "model_reasoning_effort=low"}) {
+	if got := Args(codex, "", "low", "", "/run/mcp.json"); !reflect.DeepEqual(got, []string{"-c", "check_for_update_on_startup=false", "-c", "model_reasoning_effort=low"}) {
 		t.Errorf("codex: %q", got)
 	}
 }
@@ -302,5 +302,32 @@ func TestArgsDoNotReExpandPlaceholdersInValues(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("got %q\nwant %q", got, want)
 		}
+	}
+}
+
+func TestProjectBlockFlagsArePassedFirstOnEveryStart(t *testing.T) {
+	r := NewRegistry(projectBlocks(t, "mine:\n  kind: codex\n  flags: \"-c check_for_update_on_startup=false --no-alt-screen\"\n  modelFlag: \"-c model={model}\"\n  doneSignal: sentinel\n"), nil, t.TempDir())
+
+	p, err := r.Resolve("mine")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"-c", "check_for_update_on_startup=false", "--no-alt-screen", "-c", "model=gpt-5"}
+	if got := Args(p, "gpt-5", "", "", ""); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+	if got := Args(p, "", "", "", ""); !reflect.DeepEqual(got, want[:3]) {
+		t.Errorf("without model: %q", got)
+	}
+}
+
+func TestFlagsWithAPlaceholderAreRefused(t *testing.T) {
+	r := NewRegistry(projectBlocks(t, "mine:\n  kind: codex\n  flags: \"-c model={model}\"\n  doneSignal: sentinel\n"), nil, t.TempDir())
+
+	_, err := r.Resolve("mine")
+
+	if err == nil || !strings.Contains(err.Error(), "flags") {
+		t.Fatalf("err %v", err)
 	}
 }

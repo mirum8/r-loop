@@ -21,7 +21,7 @@ var shipped embed.FS
 const shippedSource = "shipped"
 
 type Provider struct {
-	Name, Kind, ModelFlag, EffortFlag, AskFlag, DoneSignal, Ask, Review, Source string
+	Name, Kind, Flags, ModelFlag, EffortFlag, AskFlag, DoneSignal, Ask, Review, Source string
 }
 
 type Registry struct {
@@ -76,7 +76,7 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 	}
 	p := Provider{Name: name, Source: source}
 	fields := map[string]*string{
-		"kind": &p.Kind, "modelFlag": &p.ModelFlag, "effortFlag": &p.EffortFlag, "askFlag": &p.AskFlag,
+		"kind": &p.Kind, "flags": &p.Flags, "modelFlag": &p.ModelFlag, "effortFlag": &p.EffortFlag, "askFlag": &p.AskFlag,
 		"doneSignal": &p.DoneSignal, "ask": &p.Ask, "review": &p.Review,
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
@@ -93,6 +93,8 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 	switch {
 	case p.Kind == "":
 		return fail("kind", "is required")
+	case hasPlaceholder(p.Flags):
+		return fail("flags", "must not contain a placeholder")
 	case p.ModelFlag != "" && !strings.Contains(p.ModelFlag, "{model}"):
 		return fail("modelFlag", "must contain {model} or be empty")
 	case p.EffortFlag != "" && !strings.Contains(p.EffortFlag, "{effort}"):
@@ -110,9 +112,20 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 	return p, nil
 }
 
+var placeholders = []string{"{model}", "{effort}", "{url}", "{mcpConfig}"}
+
+func hasPlaceholder(s string) bool {
+	for _, ph := range placeholders {
+		if strings.Contains(s, ph) {
+			return true
+		}
+	}
+	return false
+}
+
 func Args(p Provider, model, effort, askURL, mcpConfigPath string) []string {
 	values := map[string]string{"{model}": model, "{effort}": effort, "{url}": askURL, "{mcpConfig}": mcpConfigPath}
-	var args []string
+	args := strings.Fields(p.Flags)
 	for _, tmpl := range []string{p.ModelFlag, p.EffortFlag, p.AskFlag} {
 		if flag, ok := expand(tmpl, values); ok {
 			args = append(args, strings.Fields(flag)...)

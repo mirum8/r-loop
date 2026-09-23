@@ -180,14 +180,15 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 
 ## Milestone 2 — Sessions and providers
 
-- **Provider block** — `providers.<name>`: `kind` (required), `modelFlag` (`{model}`),
+- **Provider block** — `providers.<name>`: `kind` (required), `flags` (fixed, no
+  placeholder, passed first on every start), `modelFlag` (`{model}`),
   `effortFlag` (`{effort}`, may be empty → banner `effort n/a`), `askFlag` (`{url}` or
   `{mcpConfig}`), `doneSignal ∈ {sentinel}`, `ask ∈ {mcp, none}`, `review` (may be empty).
   **Precedence is whole-block**: the project config's block, else
   `~/.config/r-loop/providers/<name>.yaml`, else the shipped block. `Args(p, model, effort, askURL,
   mcpConfigPath)` expands the templates and omits a flag whose template or value is empty.
   Shipped: `claude` (`--model {model}`, `--effort {effort}`, `--mcp-config {mcpConfig}`, `review: /code-review`) and
-  `codex` (`-c model={model}`, `-c model_reasoning_effort={effort}`, `-c
+  `codex` (`flags: -c check_for_update_on_startup=false`, `-c model={model}`, `-c model_reasoning_effort={effort}`, `-c
   mcp_servers.r-loop.url={url}`, `review: /review`).
   `{mcpConfig}` is a per-agent file
   `{"mcpServers":{"r-loop":{"type":"http","url":"<url>"}}}`. Neither sets an MCP tool timeout:

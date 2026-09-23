@@ -1705,7 +1705,7 @@ every provider must now declare a fan-out capability — which creates the failu
 
 <div class="adr">
 <h3 id="adr-6">ADR-6 — A provider is a config block, not driver code</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-54">ADR-54</a> — the block declares a native review command where it has one, and no fan-out capability</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-54">ADR-54</a> — the block declares a native review command where it has one, and no fan-out capability · amended 2026-09-23 — the block may carry <code>flags</code>, fixed flags passed first on every start, because codex's startup update prompt blocks herdr's <code>agent start</code> and the shipped codex block turns it off with <code>-c check_for_update_on_startup=false</code></p>
 <p><span class="f">Context</span> <em>Portability across agents</em> sets the target at one config
 block and zero driver lines. herdr already supports 23 agent kinds, so the driver cannot ship a
 branch per agent and stay honest about the claim.</p>
@@ -3413,6 +3413,7 @@ steps:
 providers:                    # claude and codex ship built in; a block here adds or overrides one
   codex:
     kind: codex               # the herdr --kind value
+    flags: "-c check_for_update_on_startup=false"   # passed first on every start (ADR-6)
     modelFlag: "-c model={model}"
     effortFlag: "-c model_reasoning_effort={effort}"
     doneSignal: sentinel

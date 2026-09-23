@@ -263,6 +263,7 @@ new one, put a block under `providers:` in the project config, or a file at
 | Key | Meaning |
 |---|---|
 | `kind` | Required. The command herdr starts. |
+| `flags` | Flags passed first on every start, split on spaces. No placeholders. |
 | `modelFlag` | Flag template with `{model}`, for example `--model {model}`. |
 | `effortFlag` | Flag template with `{effort}`. May be empty. |
 | `askFlag` | Flag that connects the agent to r-loop's MCP server. Uses `{url}` or `{mcpConfig}`. |

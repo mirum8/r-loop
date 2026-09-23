@@ -19,6 +19,8 @@ a named `ui` reviewer on implement runs the project's `/test-app` skill whenever
 has one. ADR-75 added Milestone 9, Phase 33: free text on the command line goes to a short intake
 session whose proposed command line the driver validates. ADR-76 added Milestone 10, Phase 34:
 `ask_watchdog` returns at once and the driver types the answer into the pane that asked.
+An amendment to ADR-6 added Milestone 11, Phase 35: a provider block's `flags` are passed first on
+every start, and the shipped codex block turns off codex's startup update prompt.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -41,6 +43,7 @@ session whose proposed command line the driver validates. ADR-76 added Milestone
 - Wave 16: Phase 32
 - Wave 17: Phase 33
 - Wave 18: Phase 34
+- Wave 19: Phase 35
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -534,6 +537,19 @@ Contracts: `tech-design.md#milestone-5-the-ask-channel`
 - [x] no MCP tool timeout: `WriteMCPConfig` writes `{"mcpServers":{"r-loop":{"type":"http","url":"<url>"}}}` and the shipped codex `askFlag` is `-c mcp_servers.r-loop.url={url}`
 - [x] the step prompts, the tool description and the nudge say to call `ask_watchdog`, end the turn and wait for the answer as the next message; the watchdog prompt says the agent waits idle until the driver types its answer
 **Done when:** `go test -race ./...` is green and `grep -rn "KeepAlive\|86400\|tool_timeout_sec" internal` prints nothing.
+
+## Milestone 11 — Fixed start flags
+Contracts: `tech-design.md#milestone-2-sessions-and-providers`
+
+### Phase 35 — A provider block's `flags` are passed first on every start
+**Implements:** Run every remaining phase of a plan · Add a provider the driver has never seen
+**Depends on:** Phase 34
+**Files:** `internal/providers/registry.go` (modify) · `internal/providers/shipped/codex.yaml` (modify) · `internal/providers/registry_test.go` (modify) · `internal/app/app_test.go` (modify) · `README.md` (modify)
+**Risk:** none
+- [x] `providers.Provider` gains `Flags`; the block key `flags` is a plain string, split on whitespace and placed first in `Args`, before `modelFlag`, `effortFlag` and `askFlag`, on every start whatever the model, effort and ask values
+- [x] `flags` containing `{model}`, `{effort}`, `{url}` or `{mcpConfig}` is refused on `Resolve`, naming `flags` and the source
+- [x] the shipped codex block sets `flags: "-c check_for_update_on_startup=false"`, so codex's startup update prompt no longer blocks herdr's `agent start`
+**Done when:** `go test -race ./...` is green and `grep -n "check_for_update_on_startup=false" internal/providers/shipped/codex.yaml` prints the `flags` line.
 
 ## Open questions
 
