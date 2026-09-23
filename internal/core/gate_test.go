@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -183,6 +184,7 @@ func TestAnExplicitDoneWhenNeverAsksTheSuite(t *testing.T) {
 type probeHost struct {
 	reportHost
 	command string
+	hook    func()
 }
 
 func (h *probeHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
@@ -192,6 +194,9 @@ func (h *probeHost) Prompt(agent, text string, wait bool, timeout time.Duration)
 	report, sentinel, _ := strings.Cut(text, "\n")
 	if err := os.WriteFile(filepath.Join(cwd, report), []byte("`"+h.command+"`\n\nfrom the Makefile\n"), 0o644); err != nil {
 		return err
+	}
+	if h.hook != nil {
+		h.hook()
 	}
 	data, _ := json.Marshal(map[string]string{"outcome": h.outcome, "reason": "probe failed"})
 	return os.WriteFile(sentinel, data, 0o644)
@@ -309,5 +314,94 @@ func TestGateProbeFailedSessionIsNoGate(t *testing.T) {
 
 	if !errors.Is(err, core.ErrNoGate) || !strings.Contains(err.Error(), "probe failed") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func gateFailure(t *testing.T, err error) *core.FailedStep {
+	t.Helper()
+	var failed *core.FailedStep
+	if !errors.Is(err, core.ErrNoGate) || !errors.As(err, &failed) || failed.Outcome.State != core.StepFailed {
+		t.Fatalf("error = %v, want failed gate step under ErrNoGate", err)
+	}
+	return failed
+}
+
+func TestGateProbeHeadMovedByTheMaintainerNamesTheCommits(t *testing.T) {
+	e := newLandEnv(t)
+	p, host := e.probe("ok", "true")
+	host.hook = func() {
+		gitCmd(t, e.root, "commit", "-q", "--allow-empty", "-m", "maintainer one")
+		gitCmd(t, e.root, "commit", "-q", "--allow-empty", "-m", "maintainer two")
+	}
+	_, err := p.Command(context.Background(), phaseOne(""))
+	failed := gateFailure(t, err)
+	want := "HEAD moved from outside the step: " + gitCmd(t, e.root, "log", "-1", "--format=%h") + " maintainer two, " + gitCmd(t, e.root, "log", "-1", "--format=%h", "HEAD~1") + " maintainer one"
+	if failed.Outcome.Reason != want {
+		t.Fatalf("reason = %q, want %q", failed.Outcome.Reason, want)
+	}
+}
+
+func TestGateProbeAStepsOwnCommitFailsAsCommittedBeforeReview(t *testing.T) {
+	e := newLandEnv(t)
+	p, host := e.probe("ok", "true")
+	host.hook = func() {
+		gitCmd(t, e.root, "commit", "-q", "--allow-empty", "-m", "maintainer work")
+		cmd := exec.Command("git", "-C", e.root, "commit", "-q", "--allow-empty", "-m", "agent work")
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@local", "GIT_COMMITTER_EMAIL=test@local")
+		for k, v := range host.opened[len(host.opened)-1].Env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("agent commit: %v\n%s", err, out)
+		}
+	}
+	_, err := p.Command(context.Background(), phaseOne(""))
+	failed := gateFailure(t, err)
+	if failed.Outcome.Reason != "step committed before review" {
+		t.Errorf("reason = %q", failed.Outcome.Reason)
+	}
+	name := host.opened[0].Env["GIT_COMMITTER_NAME"]
+	if !strings.HasPrefix(name, "r-loop rloop-") || !strings.HasSuffix(name, "-p1-gate") {
+		t.Errorf("committer name = %q", name)
+	}
+}
+
+func TestGateProbeHeadResetToAnEarlierCommitNamesTheNewHead(t *testing.T) {
+	e := newLandEnv(t)
+	gitCmd(t, e.root, "commit", "-q", "--allow-empty", "-m", "second")
+	p, host := e.probe("ok", "true")
+	host.hook = func() { gitCmd(t, e.root, "reset", "-q", "--soft", "HEAD~1") }
+	_, err := p.Command(context.Background(), phaseOne(""))
+	failed := gateFailure(t, err)
+	want := "HEAD moved from outside the step: HEAD is now " + gitCmd(t, e.root, "rev-parse", "HEAD")[:7]
+	if failed.Outcome.Reason != want {
+		t.Errorf("reason = %q, want %q", failed.Outcome.Reason, want)
+	}
+}
+
+func TestGateProbeRestartRunsTheNextAttemptWithTheAddendumAndProvider(t *testing.T) {
+	e := newLandEnv(t)
+	p, _ := e.probe("ok", "true")
+	key := core.StepKey{Run: "run1", Phase: "1", Kind: "gate", Attempt: 1}
+	e.store.Append("run1", core.Record{Kind: core.RecordStep, Step: &key, State: core.StepFailed})
+	e.store.Append("run1", core.Record{Kind: core.RecordEvent, Event: &core.Event{Kind: "restart", Fields: map[string]string{"step": "phase-1/gate", "attempt": "2", "addendum": "ignore the stale lock", "provider": "codex", "model": "gpt-5", "effort": "high"}}})
+	var resolved []string
+	p.Sessions.Resolve = func(provider, model, effort, askURL, mcp string) (core.ProviderArgs, error) {
+		resolved = []string{provider, model, effort}
+		return core.ProviderArgs{Kind: provider}, nil
+	}
+	prompts := &reportPrompts{}
+	p.Sessions.Prompts = prompts
+	if _, err := p.Command(context.Background(), phaseOne("")); err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	if got := prompts.vars[0]["Addendum"]; got != "ignore the stale lock" {
+		t.Errorf("addendum = %v", got)
+	}
+	if !slices.Equal(resolved, []string{"codex", "gpt-5", "high"}) {
+		t.Errorf("resolve = %v", resolved)
+	}
+	if got, _ := prompts.vars[0]["Sentinel"].(string); !strings.HasSuffix(got, "gate-a2.sentinel") {
+		t.Errorf("sentinel = %q", got)
 	}
 }

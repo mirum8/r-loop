@@ -6,11 +6,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 var ErrNoGate = errors.New("no gate")
+
+type FailedStep struct {
+	Ref     StepRef
+	Outcome Outcome
+}
+
+func (f *FailedStep) Error() string {
+	return fmt.Sprintf("%s step %s: %s", f.Ref.Key.Kind, f.Outcome.State, f.Outcome.Reason)
+}
 
 const gateDiscovered = "gate-discovered"
 
@@ -45,7 +55,7 @@ func (p *GateProbe) Command(ctx context.Context, phase Phase) (string, error) {
 	}
 	command, err := p.discover(ctx, phase, st)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrNoGate, err)
+		return "", fmt.Errorf("%w: %w", ErrNoGate, err)
 	}
 	recordEvent(p.Sessions.Store, p.Face, p.RunID, Event{Kind: gateDiscovered, Phase: phase.ID, Step: p.Kind.Name, Fields: map[string]string{"command": command}})
 	p.command = command
@@ -73,6 +83,17 @@ func (p *GateProbe) discover(ctx context.Context, phase Phase, st RunState) (str
 		RunDir:    p.RunDir,
 	}
 	ref.Vars = StepVars(ref, p.Plan, p.Plan.Path, p.RunDir)
+	for i := len(st.Events) - 1; i >= 0; i-- {
+		ev := st.Events[i]
+		if ev.Kind != "restart" || ev.Fields["step"] != "phase-"+phase.ID+"/"+p.Kind.Name || ev.Fields["attempt"] != strconv.Itoa(ref.Key.Attempt) {
+			continue
+		}
+		ref.Vars["Addendum"] = ev.Fields["addendum"]
+		if ev.Fields["provider"] != "" {
+			ref.Kind.Row.Provider, ref.Kind.Row.Model, ref.Kind.Row.Effort = ev.Fields["provider"], ev.Fields["model"], ev.Fields["effort"]
+		}
+		break
+	}
 	ref.Vars["Worktree"] = root
 	ref.Vars["ReportPath"] = report
 	key := ref.Key
@@ -92,7 +113,7 @@ func (p *GateProbe) discover(ctx context.Context, phase Phase, st RunState) (str
 		return "", fmt.Errorf("restore: %w", err)
 	}
 	if out.State != StepOK {
-		return "", fmt.Errorf("gate step %s: %s", out.State, out.Reason)
+		return "", &FailedStep{Ref: ref, Outcome: out}
 	}
 	data, err := os.ReadFile(reportAbs)
 	if err != nil {

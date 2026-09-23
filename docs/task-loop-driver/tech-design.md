@@ -235,8 +235,14 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   The driver reads `## Assumptions` after the plan step ends `ok` and emits each list item (never a
   table row, never a `none` item) as an `Event{Kind: "assumption"}`; the run report lists them per phase.
 - **Two-signal rule** — `ok` only when the sentinel says `ok` **and** the evidence predicate
-  passes **and** `HeadSHA(worktree)` still equals `StartSHA` (an agent commit is
-  `failed(step committed before review)`); sentinel `failed` → `failed(<reason>)`; ok with
+  passes **and** `HeadSHA(worktree)` still equals `StartSHA` (a moved `HEAD` fails the step;
+  in a step worktree, and in the primary checkout when a commit in `StartSHA..HEAD` has the
+  step pane's committer name `r-loop <agent>` (set as `GIT_COMMITTER_NAME` at spawn), the reason
+  is `failed(step committed before review)`; in the primary checkout with no such commit it is
+  `failed(HEAD moved from outside the step: <sha> <subject>, …)`, or
+  `failed(HEAD moved from outside the step: HEAD is now <sha>)` when the range is empty; a failed
+  gate step is held for the remedy window and can be restarted before its phase is blocked);
+  sentinel `failed` → `failed(<reason>)`; ok with
   evidence missing → `failed(evidence missing: <what>)`; `blocked`/`idle`/`done` (herdr's `done`
   is idle with output nobody has looked at, reported until a client focuses the pane, which r-loop
   never does) for

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -285,6 +286,25 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 		return "land", Outcome{}, true
 	}
 	landing, err := lander.Land(ctx, ph)
+	for err != nil {
+		var failed *FailedStep
+		if !errors.As(err, &failed) {
+			break
+		}
+		out := failed.Outcome
+		if _, aborted := l.ended(failed.Ref, out); aborted {
+			return "land", out, true
+		}
+		_, ok, aborted := l.awaitRestart(ctx, failed.Ref, failed.Ref.Kind, &out)
+		if !ok {
+			if aborted || out.Halted {
+				out.Session = last
+				return "land", out, aborted
+			}
+			break
+		}
+		landing, err = lander.Land(ctx, ph)
+	}
 	if err != nil {
 		return "land", Outcome{State: StepFailed, Reason: "land: " + err.Error(), Session: last}, false
 	}

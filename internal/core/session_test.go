@@ -270,7 +270,7 @@ func TestSpawnRecordsSpawnedBeforeOpenThenStartsPromptsAndRecordsRunning(t *test
 		"Repo.Root",
 		"SessionHost.AgentPane rloop-2kuxv-p3-implement",
 		"Store.Append run-1 step",
-		"SessionHost.Open /repo/.r-loop/wt/phase-3 ◆ p3 implement map[R_LOOP_PHASE:3 R_LOOP_RUN:run-1 R_LOOP_SENTINEL:" + sentinel + " R_LOOP_STEP:implement]",
+		"SessionHost.Open /repo/.r-loop/wt/phase-3 ◆ p3 implement map[GIT_COMMITTER_NAME:r-loop rloop-2kuxv-p3-implement R_LOOP_PHASE:3 R_LOOP_RUN:run-1 R_LOOP_SENTINEL:" + sentinel + " R_LOOP_STEP:implement]",
 		"Store.Append run-1 event",
 		"SessionHost.Start pane-1 rloop-2kuxv-p3-implement codex [-c model=gpt-5.6-sol]",
 		"Prompts.Render implement",
@@ -588,6 +588,51 @@ func TestAnAgentCommitFailsTheStep(t *testing.T) {
 
 	if out.State != StepFailed || out.Reason != "step committed before review" {
 		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestAnInPrimaryStepWhoseHeadLogFailsNamesTheLogError(t *testing.T) {
+	r := newRig(t)
+	ref := r.ref(1)
+	ref.InPrimary = true
+	r.repo.RunExit = 128
+	r.repo.RunOutput = "fatal: bad revision\n"
+	s, err := r.sm.Spawn(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.host.script = func(n int) AgentState {
+		r.repo.SHA = "sha-moved"
+		r.writeSentinel(t, s, "ok", "done")
+		return AgentWorking
+	}
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+	if out.State != StepFailed || out.Reason != "head log: exit 128: fatal: bad revision" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	var calls []string
+	for _, call := range r.shared.Calls() {
+		if strings.HasPrefix(call, "Repo.Run") {
+			calls = append(calls, call)
+		}
+	}
+	if len(calls) != 1 || !strings.Contains(calls[0], "sha-start..sha-moved") {
+		t.Errorf("Repo.Run calls = %v", calls)
+	}
+}
+
+func TestAWorktreeStepWithAMovedHeadFailsAsCommittedBeforeReviewWithoutReadingTheLog(t *testing.T) {
+	r := newRig(t)
+	r.repo.RunOutput = "abc1234\ttest\tmaintainer work\n"
+	s := r.spawn(t, 1)
+	r.host.script = func(n int) AgentState {
+		r.repo.SHA = "sha-moved"
+		r.writeSentinel(t, s, "ok", "done")
+		return AgentWorking
+	}
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+	if out.State != StepFailed || out.Reason != "step committed before review" || r.count("Repo.Run") != 0 {
+		t.Fatalf("outcome = %+v; Repo.Run count = %d", out, r.count("Repo.Run"))
 	}
 }
 

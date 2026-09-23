@@ -27,7 +27,7 @@ Verified against `r-loop` @ `main` `feaf292`.
       - A skill that a reviewer runs (such as `/test-app`) can detect from the environment alone that it is inside a live run, and a test proves the variables reach the reviewer's process
       - Step sessions keep exactly the environment they have today
 
-- [ ] [#5] Phase 1's gate "failed" with "step committed before review" when the maintainer committed to main during the step
+- [x] [#5] Phase 1's gate "failed" with "step committed before review" when the maintainer committed to main during the step  <!-- fixed: r-loop/phase-5 -->
       - When `HEAD` moves during a step that runs in the primary checkout, and the new commits were not made by that step's session, the step is not failed as its own fault. The reason names the commits and says `HEAD` moved from outside the step
       - A step that really commits before review is still failed as today, with today's reason
       - The watchdog can restart a step that failed this way without the phase first being marked blocked
