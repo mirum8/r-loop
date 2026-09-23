@@ -30,6 +30,10 @@ func (b *MilestoneBoundary) After(ctx context.Context, phase Phase) {
 	if !ok {
 		return
 	}
+	if err := cleanTree(b.Repo); err != nil {
+		recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "report-skipped", Phase: phase.ID, Step: b.Kind.Name, Fields: map[string]string{"milestone": strconv.Itoa(m.Number), "reason": err.Error()}})
+		return
+	}
 	if reason := b.report(ctx, phase, m); reason != "" {
 		if err := b.restore(); err != nil {
 			reason += "; restore: " + err.Error()

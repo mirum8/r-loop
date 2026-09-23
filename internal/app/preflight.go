@@ -57,11 +57,18 @@ func Preflight(w *Wiring) error {
 	if err := w.clean(); err != nil {
 		return err
 	}
+	if err := w.leftovers(list); err != nil {
+		return err
+	}
+	branch, err := w.Repo.HeadBranch()
+	if err != nil {
+		return exit(2, "head branch: %v", err)
+	}
 	resolved, err := yaml.Marshal(cfg)
 	if err != nil {
 		return exit(2, "%v", err)
 	}
-	id, err := w.Store.Create(core.RunMeta{Todo: w.Todo, ResolvedConfig: resolved, Started: time.Now()})
+	id, err := w.Store.Create(core.RunMeta{Todo: w.Todo, Branch: branch, ResolvedConfig: resolved, Started: time.Now()})
 	if err != nil {
 		return exit(2, "create run: %v", err)
 	}
@@ -162,6 +169,16 @@ func (w *Wiring) checks() ([]core.Phase, []string, error) {
 }
 
 func (w *Wiring) clean() error {
+	merging, err := w.Repo.MergeInProgress()
+	if err != nil {
+		return exit(2, "%v", err)
+	}
+	if merging {
+		return exit(4, "primary tree holds an unfinished merge (MERGE_HEAD): commit it or run git merge --abort, then retry")
+	}
+	if err := store.EnsureExcluded(w.Repo.Root()); err != nil {
+		return exit(2, "%v", err)
+	}
 	dirty, err := w.Repo.Clean()
 	if err != nil {
 		return exit(2, "%v", err)
@@ -172,8 +189,60 @@ func (w *Wiring) clean() error {
 		}
 		return exit(4, "primary tree is not clean: %s", strings.Join(dirty, ", "))
 	}
-	if err := store.EnsureExcluded(w.Repo.Root()); err != nil {
-		return exit(2, "%v", err)
+	return nil
+}
+
+func (w *Wiring) leftovers(list []core.Phase) error {
+	var found []string
+	var remedies []string
+	for _, ph := range list {
+		wt := ".r-loop/wt/phase-" + ph.ID
+		if _, err := os.Lstat(filepath.Join(w.Repo.Root(), wt)); err == nil {
+			found = append(found, wt)
+			remedies = append(remedies, fmt.Sprintf("inspect %s, then use git worktree remove --force %s if registered, or rm -r %s if it is a plain directory", wt, wt, wt))
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return exit(2, "%v", err)
+		}
+		branch := "r-loop/phase-" + ph.ID
+		exists, err := w.Repo.BranchExists(branch)
+		if err != nil {
+			return exit(2, "%v", err)
+		}
+		if exists {
+			registered, err := w.Repo.WorktreePath(branch)
+			if err != nil {
+				return exit(2, "%v", err)
+			}
+			if registered != "" {
+				if _, err := os.Lstat(registered); errors.Is(err, os.ErrNotExist) {
+					found = append(found, registered)
+					remedies = append(remedies, "git worktree prune")
+				} else if err != nil {
+					return exit(2, "%v", err)
+				} else if filepath.Clean(registered) != filepath.Join(w.Repo.Root(), wt) {
+					remedies = append(remedies, "release the branch from worktree "+registered)
+				}
+			}
+			found = append(found, branch)
+			remedies = append(remedies, "git branch -D "+branch)
+		}
+	}
+	if len(found) > 0 {
+		resume := ""
+		id, err := runToShow(w.Store)
+		if err != nil {
+			return exit(2, "%v", err)
+		}
+		if id != "" {
+			run, err := w.Store.Load(id)
+			if err != nil {
+				return exit(2, "load run %s: %v", id, err)
+			}
+			if run.Status != core.RunFinished {
+				resume = "resume run " + id + " with r-loop resume, or "
+			}
+		}
+		return exit(4, "leftover from an earlier run: %s; %sremove the leftovers: %s", strings.Join(found, ", "), resume, strings.Join(remedies, "; "))
 	}
 	return nil
 }

@@ -853,10 +853,10 @@ func TestDeleteBranchDeletesAMergedBranchAndRefusesAnUnmergedOne(t *testing.T) {
 	git(t, dir, "commit", "-q", "-m", "wip")
 	git(t, dir, "checkout", "-q", "main")
 
-	if err := r.DeleteBranch("r-loop/phase-1"); err != nil {
+	if err := r.DeleteBranch("r-loop/phase-1", false); err != nil {
 		t.Fatalf("DeleteBranch merged: %v", err)
 	}
-	if err := r.DeleteBranch("r-loop/phase-2"); err == nil {
+	if err := r.DeleteBranch("r-loop/phase-2", false); err == nil {
 		t.Fatal("DeleteBranch deleted an unmerged branch")
 	}
 	if got := git(t, dir, "branch", "--list", "r-loop/*"); got != "r-loop/phase-2" {

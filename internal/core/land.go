@@ -29,9 +29,46 @@ func gateCommand(doneWhen string) string {
 }
 
 var (
-	ErrGate    = errors.New("gate failed")
-	ErrLanding = errors.New("landing refused")
+	ErrGate            = errors.New("gate failed")
+	ErrLanding         = errors.New("landing refused")
+	ErrDirtyTree       = errors.New("primary tree is not clean")
+	ErrUnfinishedMerge = errors.New("unfinished merge")
 )
+
+func cleanTree(repo Repo) error {
+	dirty, err := repo.Dirty("")
+	if err != nil {
+		return err
+	}
+	if len(dirty) > 0 {
+		return fmt.Errorf("%w: %s", ErrDirtyTree, strings.Join(dirty, ", "))
+	}
+	return nil
+}
+
+func (g *LandGate) guard() error {
+	merging, err := g.Repo.MergeInProgress()
+	if err != nil {
+		return err
+	}
+	if merging {
+		return fmt.Errorf("%w: the primary tree holds an unfinished merge (MERGE_HEAD); commit it or run git merge --abort, then resume", ErrUnfinishedMerge)
+	}
+	st, err := g.Store.Load(g.RunID)
+	if err != nil {
+		return fmt.Errorf("load run: %w", err)
+	}
+	if st.Branch != "" {
+		head, err := g.Repo.HeadBranch()
+		if err != nil {
+			return err
+		}
+		if head != st.Branch {
+			return fmt.Errorf("%w: the primary tree is on %s, but the run started on %s", ErrLanding, head, st.Branch)
+		}
+	}
+	return cleanTree(g.Repo)
+}
 
 type LandGate struct {
 	Repo            Repo
@@ -70,6 +107,9 @@ func (g *LandGate) Land(ctx context.Context, phase Phase) (Landing, error) {
 }
 
 func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, string, error) {
+	if err := g.guard(); err != nil {
+		return Landing{}, "", "", err
+	}
 	n := phase.ID
 	itemGate := g.Suite != nil && phase.DoneWhen == ""
 	var suite string
@@ -78,12 +118,26 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 		if suite, err = g.Suite.Command(ctx, phase); err != nil {
 			return Landing{}, "", "", err
 		}
+		if err := g.guard(); err != nil {
+			return Landing{}, "", "", err
+		}
+	}
+	todoAbs := g.TodoPath
+	if !filepath.IsAbs(todoAbs) {
+		todoAbs = filepath.Join(g.Repo.Root(), todoAbs)
+	}
+	originalTodo, err := os.ReadFile(todoAbs)
+	if err != nil {
+		return Landing{}, "", "", fmt.Errorf("read todo: %w", err)
 	}
 	if err := g.Repo.MergeNoFF(ctx, fmt.Sprintf("r-loop/phase-%s", n)); err != nil {
 		return Landing{}, "", "", err
 	}
+	merged, err := g.Repo.Snapshot("")
+	if err != nil {
+		return Landing{}, "", "", errors.Join(fmt.Errorf("snapshot: %w", err), g.Repo.AbortMerge())
+	}
 	landing := Landing{Phase: n}
-	var err error
 	if landing.Added, landing.Deleted, err = g.Repo.DiffStat("", "HEAD"); err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("diff size: %w", err), g.Repo.AbortMerge())
 	}
@@ -114,18 +168,40 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 	if err := ctx.Err(); err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("interrupted: %w", err), g.Repo.AbortMerge())
 	}
-	if err := g.Plan.Tick(g.TodoPath, phase); err != nil {
-		return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), g.Repo.ResetHard("HEAD"))
-	}
-	sha, err := g.Repo.Commit(ctx, fmt.Sprintf("phase %s: %s", n, phase.Title))
+	now, err := g.Repo.Snapshot("")
 	if err != nil {
-		return Landing{}, "", "", errors.Join(fmt.Errorf("commit: %w", err), g.Repo.ResetHard("HEAD"))
+		return Landing{}, "", "", errors.Join(fmt.Errorf("snapshot: %w", err), g.Repo.AbortMerge())
+	}
+	if now != merged {
+		paths, _ := g.Repo.TreeDiff(merged, now)
+		return Landing{}, "", "", errors.Join(fmt.Errorf("%w: changed while the gate ran: %s", ErrDirtyTree, strings.Join(paths, ", ")), g.Repo.AbortMerge())
+	}
+	before, err := os.ReadFile(todoAbs)
+	if err != nil {
+		return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), g.Repo.AbortMerge())
+	}
+	if err := g.Plan.Tick(g.TodoPath, phase); err != nil {
+		return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
+	}
+	sha, err := g.Repo.Commit(ctx, fmt.Sprintf("phase %s: %s", n, phase.Title), g.todoRel())
+	if err != nil {
+		commitErr := fmt.Errorf("commit: %w", err)
+		if abortErr := g.Repo.AbortMerge(); abortErr == nil {
+			return Landing{}, "", "", errors.Join(commitErr, os.WriteFile(todoAbs, originalTodo, 0o644))
+		} else {
+			restoreErr := os.WriteFile(todoAbs, before, 0o644)
+			if retryErr := g.Repo.AbortMerge(); retryErr == nil {
+				return Landing{}, "", "", errors.Join(commitErr, restoreErr, os.WriteFile(todoAbs, originalTodo, 0o644))
+			} else {
+				return Landing{}, "", "", errors.Join(commitErr, abortErr, restoreErr, retryErr)
+			}
+		}
 	}
 	touched, err := g.Repo.CommitTouches(sha)
 	todo := g.todoRel()
 	if err != nil || !slices.Contains(touched, todo) || len(touched) < 2 {
 		reason := fmt.Errorf("%w: code and ticks land as one commit; %s touched %v", ErrLanding, sha, touched)
-		return Landing{}, "", "", errors.Join(reason, err, g.Repo.ResetHard("HEAD~1"))
+		return Landing{}, "", "", errors.Join(reason, err, g.Repo.ResetKeep("HEAD~1"))
 	}
 	landing.MergeSHA = sha
 	return landing, "", "", nil

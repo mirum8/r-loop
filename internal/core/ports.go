@@ -59,7 +59,7 @@ type Repo interface {
 	HeadSHA(dir string) (string, error)
 	AddWorktree(dir, branch, base string) error
 	RemoveWorktree(dir string) error
-	DeleteBranch(branch string) error
+	DeleteBranch(branch string, force bool) error
 	Dirty(dir string) ([]string, error)
 	CommitAll(dir, message string) (string, error)
 	DiffNonEmpty(dir, ref string) (bool, error)
@@ -69,9 +69,11 @@ type Repo interface {
 	TreeDiff(from, to string) ([]string, error)
 	MergeNoFF(ctx context.Context, branch string) error
 	AbortMerge() error
-	Commit(ctx context.Context, message string) (string, error)
+	MergeInProgress() (bool, error)
+	Commit(ctx context.Context, message string, paths ...string) (string, error)
 	CommitTouches(sha string) ([]string, error)
 	ResetHard(ref string) error
+	ResetKeep(ref string) error
 	Run(ctx context.Context, dir, command string, timeout time.Duration) (int, string, error)
 }
 

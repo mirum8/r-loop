@@ -133,6 +133,7 @@ type Event struct {
 
 type RunMeta struct {
 	Todo           string
+	Branch         string
 	ResolvedConfig []byte
 	Started        time.Time
 }
@@ -165,18 +166,18 @@ type Record struct {
 }
 
 type RunState struct {
-	ID, Todo  string
-	Started   time.Time
-	Status    RunStatus
-	Steps     map[StepKey]StepState
-	LastStep  *StepKey
-	Landed    []Landing
-	Questions []Question
-	Signals   []Signal
-	Remedies  []Remedy
-	Events    []Event
-	Warnings  []string
-	Spans     map[StepKey]StepSpan
+	ID, Todo, Branch string
+	Started          time.Time
+	Status           RunStatus
+	Steps            map[StepKey]StepState
+	LastStep         *StepKey
+	Landed           []Landing
+	Questions        []Question
+	Signals          []Signal
+	Remedies         []Remedy
+	Events           []Event
+	Warnings         []string
+	Spans            map[StepKey]StepSpan
 }
 
 type StepSpan struct {
