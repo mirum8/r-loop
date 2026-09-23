@@ -144,6 +144,34 @@ func TestABacklogItemCheckCarriesTheBlockWithoutFilesOrRisk(t *testing.T) {
 	}
 }
 
+func TestABacklogGroupCheckNamesEveryMember(t *testing.T) {
+	r := newCheckRig(t)
+	r.loop.Plan.Phases[0].Files = nil
+	r.loop.Plan.Phases[0].Risk = ""
+	r.loop.Plan.Phases[0].Members = []string{"1", "3", "5"}
+	r.watch.PhaseCheck.Backlog = true
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	calls := r.shared.Calls()
+	check := indexOf(calls, `SessionHost.Prompt rloop-wd-run-1 "check phase 1`)
+	if check < 0 {
+		t.Fatalf("check prompt absent: %q", calls)
+	}
+	prompt := calls[check]
+	if want := "Backlog group: items 1, 3, 5 fixed by one change; an issues file names no files and no risk"; !strings.Contains(prompt, want) {
+		t.Errorf("check prompt %s\nmissing %q", prompt, want)
+	}
+	if strings.Contains(prompt, "Backlog item") {
+		t.Errorf("group check carries the single-item line: %s", prompt)
+	}
+	r.prompts.mu.Lock()
+	defer r.prompts.mu.Unlock()
+	if got := r.prompts.vars[0]["GroupItems"]; got != "1, 3, 5" {
+		t.Errorf("GroupItems = %q", got)
+	}
+}
+
 func TestAPlanFilePhaseWithoutFilesOrRiskStillSaysNone(t *testing.T) {
 	r := newCheckRig(t)
 	r.loop.Plan.Phases[0].Files = nil

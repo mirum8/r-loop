@@ -6,18 +6,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"r-loop/internal/core"
 )
 
 var ErrNothingToTick = errors.New("nothing to tick")
 
-func (Reader) Tick(path, phase string) error {
+func (Reader) Tick(path string, ph core.Phase) error {
 	lines, err := readLines(path)
 	if err != nil {
 		return err
 	}
 	if isBacklog(lines) {
-		return tickBacklog(path, lines, phase)
+		return tickBacklog(path, lines, ph)
 	}
+	phase := ph.ID
 	start := -1
 	for i, l := range lines {
 		if m := phaseRe.FindStringSubmatch(strings.TrimRight(l, "\r\n")); m != nil && label(m[1]) == phase {

@@ -58,7 +58,7 @@ type Watchdog struct {
 	Provider, Model, Effort                string
 	Allow                                  []string
 	RemedyWindow, CheckTimeout, StallGrace time.Duration
-	UnblockTimeout                         time.Duration
+	UnblockTimeout, TriageTimeout          time.Duration
 	OvertimeFactor, DiffFactor             float64
 	MaxRestarts                            int
 }
@@ -132,7 +132,7 @@ var topSchema = schema{
 	"notify":     schema{"onHalt": nil, "onWarn": nil, "onDone": nil},
 	"watchdog": schema{
 		"provider": nil, "model": nil, "effort": nil, "allow": nil, "maxRestarts": nil,
-		"remedyWindow": nil, "checkTimeout": nil, "stallGrace": nil, "unblockTimeout": nil,
+		"remedyWindow": nil, "checkTimeout": nil, "stallGrace": nil, "unblockTimeout": nil, "triageTimeout": nil,
 		"overtimeFactor": nil, "diffFactor": nil,
 	},
 }
@@ -555,7 +555,7 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 	}{
 		{"watchdog.remedyWindow", &w.RemedyWindow},
 		{"watchdog.checkTimeout", &w.CheckTimeout}, {"watchdog.stallGrace", &w.StallGrace},
-		{"watchdog.unblockTimeout", &w.UnblockTimeout},
+		{"watchdog.unblockTimeout", &w.UnblockTimeout}, {"watchdog.triageTimeout", &w.TriageTimeout},
 		{"land.gateTimeout", &cfg.Land.GateTimeout},
 	} {
 		if *f.dst, err = r.duration(f.path); err != nil {

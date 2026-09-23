@@ -137,10 +137,10 @@ func TestReadBacklogWithNoItemsFails(t *testing.T) {
 func TestTickBacklogMarksTheItemLine(t *testing.T) {
 	path := writeBacklog(t, "# B\n\n- [ ] [#1] first\r\n      - crit\r\n\n- second, no box\n")
 
-	if err := (Reader{}).Tick(path, "1"); err != nil {
+	if err := (Reader{}).Tick(path, core.Phase{ID: "1"}); err != nil {
 		t.Fatalf("Tick 1: %v", err)
 	}
-	if err := (Reader{}).Tick(path, "2"); err != nil {
+	if err := (Reader{}).Tick(path, core.Phase{ID: "2"}); err != nil {
 		t.Fatalf("Tick 2: %v", err)
 	}
 
@@ -155,7 +155,7 @@ func TestTickBacklogMarksTheItemLine(t *testing.T) {
 	if len(p.Unticked()) != 0 {
 		t.Errorf("Unticked after tick = %v", p.Unticked())
 	}
-	if err := (Reader{}).Tick(path, "1"); !errors.Is(err, ErrNothingToTick) {
+	if err := (Reader{}).Tick(path, core.Phase{ID: "1"}); !errors.Is(err, ErrNothingToTick) {
 		t.Errorf("second tick err = %v, want ErrNothingToTick", err)
 	}
 }
@@ -163,7 +163,7 @@ func TestTickBacklogMarksTheItemLine(t *testing.T) {
 func TestTickBacklogKeepsNumberingOfLaterItems(t *testing.T) {
 	path := writeBacklog(t, "- [x] done  <!-- fixed: x -->\n- [ ] a\n- [ ] b\n")
 
-	if err := (Reader{}).Tick(path, "3"); err != nil {
+	if err := (Reader{}).Tick(path, core.Phase{ID: "3"}); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 
@@ -183,5 +183,32 @@ func TestReadRefusesTheNotesFile(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "pass issues-polka-2026-08-18.md") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestTickBacklogTicksEveryMemberWithTheGroupsBranch(t *testing.T) {
+	path := writeBacklog(t, "- [ ] a\n- [ ] b\n- c, no box\n- [ ] d\n")
+
+	if err := (Reader{}).Tick(path, core.Phase{ID: "1", Members: []string{"1", "3", "4"}}); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	want := "- [x] a  <!-- fixed: r-loop/phase-1 -->\n- [ ] b\n- c, no box  <!-- fixed: r-loop/phase-1 -->\n- [x] d  <!-- fixed: r-loop/phase-1 -->\n"
+	if got := strings.Join(fileLines(t, path), ""); got != want {
+		t.Fatalf("file =\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestTickBacklogRefusesAnAlreadyDoneMember(t *testing.T) {
+	const text = "- [ ] a\n- [x] b  <!-- fixed: x -->\n- [ ] c\n"
+	path := writeBacklog(t, text)
+
+	err := Reader{}.Tick(path, core.Phase{ID: "1", Members: []string{"1", "2", "3"}})
+
+	if !errors.Is(err, ErrNothingToTick) || !strings.Contains(err.Error(), "item 2") {
+		t.Fatalf("err = %v, want ErrNothingToTick naming item 2", err)
+	}
+	if got := strings.Join(fileLines(t, path), ""); got != text {
+		t.Errorf("file changed: %q", got)
 	}
 }

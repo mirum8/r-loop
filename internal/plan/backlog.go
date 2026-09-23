@@ -160,24 +160,29 @@ func proseFollows(lines []string, from int) bool {
 	return false
 }
 
-func tickBacklog(path string, lines []string, phase string) error {
+func tickBacklog(path string, lines []string, ph core.Phase) error {
 	items := parseBacklog(lines)
-	n, err := strconv.Atoi(phase)
-	if err != nil || n < 1 || n > len(items) || strconv.Itoa(n) != phase {
-		return fmt.Errorf("%s: no item %s", path, phase)
+	var picked []backlogItem
+	for _, id := range ph.TickIDs() {
+		n, err := strconv.Atoi(id)
+		if err != nil || n < 1 || n > len(items) || strconv.Itoa(n) != id {
+			return fmt.Errorf("%s: no item %s", path, id)
+		}
+		if items[n-1].done {
+			return fmt.Errorf("%s item %s: %w", path, id, ErrNothingToTick)
+		}
+		picked = append(picked, items[n-1])
 	}
-	it := items[n-1]
-	if it.done {
-		return fmt.Errorf("%s item %s: %w", path, phase, ErrNothingToTick)
+	for _, it := range picked {
+		raw := lines[it.line]
+		body := strings.TrimRight(raw, "\r\n")
+		eol := raw[len(body):]
+		if it.hasBox {
+			m := listRe.FindStringSubmatchIndex(body)
+			at := m[2]
+			body = body[:at] + "[x]" + body[at+3:]
+		}
+		lines[it.line] = fmt.Sprintf("%s  <!-- fixed: r-loop/phase-%s -->%s", body, ph.ID, eol)
 	}
-	raw := lines[it.line]
-	body := strings.TrimRight(raw, "\r\n")
-	eol := raw[len(body):]
-	if it.hasBox {
-		m := listRe.FindStringSubmatchIndex(body)
-		at := m[2]
-		body = body[:at] + "[x]" + body[at+3:]
-	}
-	lines[it.line] = fmt.Sprintf("%s  <!-- fixed: r-loop/phase-%s -->%s", body, phase, eol)
 	return writeLines(path, lines)
 }

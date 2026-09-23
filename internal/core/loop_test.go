@@ -891,7 +891,7 @@ func TestStepVarsFillsEveryTemplateVariable(t *testing.T) {
 		"RunDir": "/runs/run-1", "AskURL": "", "PhaseWarnings": "", "ItemGate": false, "ReviewedKind": "", "Round": 0, "Rounds": 0,
 		"ReviewCommand": "", "FindingsPath": "", "ArtifactsDir": "", "RequiredPath": "", "FindingsFiles": []FindingsFile(nil), "PriorFindings": "", "PriorVerdicts": "",
 		"RoundTree": "", "VerdictPath": "", "ReportPath": "", "MilestoneName": "Core", "MilestonePhases": "1, 2, 3, 4",
-		"Addendum": "",
+		"Addendum": "", "GroupItems": "",
 	}
 	if !reflect.DeepEqual(vars, want) {
 		for k, v := range want {

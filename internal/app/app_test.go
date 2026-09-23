@@ -606,6 +606,25 @@ func TestDryRunOfAnIssuesFileWarnsAboutItemsWithoutCriteria(t *testing.T) {
 	}
 }
 
+func TestDryRunPrintsNoControlBytesFromTitles(t *testing.T) {
+	f := newFixture(t)
+	f.write("issues.md", "- [ ] [#1] a | b \x1b[2J\x1b]0;pwned\x07 c\n      - it works\n")
+	f.commit()
+
+	code := f.main(filepath.Join(f.root, "issues.md"), "--dry-run", "--plain")
+
+	out := f.out.String()
+	if code != 0 {
+		t.Fatalf("exit %d: %s%s", code, out, f.err.String())
+	}
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Errorf("control bytes in:\n%q", out)
+	}
+	if !strings.Contains(out, "| 1 | [#1] a \\| b [2J]0;pwned c |\n") {
+		t.Errorf("table row malformed:\n%s", out)
+	}
+}
+
 func TestDryRunNamesAnOpenResolveFirstEntryThatBlocksTheRunList(t *testing.T) {
 	f := newFixture(t)
 	f.write("docs/topic/todo.md", "# Plan\n\n## Resolve first\n- [ ] **Measure it** — how fast?\n      Owner: me. Blocks: Phase 2.\n\n### Phase 1 — One\n- [ ] a\n\n### Phase 2 — Two\n- [ ] b\n")
@@ -619,11 +638,42 @@ func TestDryRunNamesAnOpenResolveFirstEntryThatBlocksTheRunList(t *testing.T) {
 	if code != 0 || code2 != 0 {
 		t.Fatalf("exit %d, %d: %s", code, code2, f.err.String())
 	}
-	if strings.Contains(quiet, "Resolve first") {
+	if strings.Contains(quiet, "Measure it") {
 		t.Errorf("entry named for a run it does not block:\n%s", quiet)
 	}
 	if want := `open ## Resolve first: "Measure it" (unclassified) blocks phase 2 — the watchdog will walk it`; !strings.Contains(f.out.String(), want) {
 		t.Errorf("out:\n%s", f.out.String())
+	}
+}
+
+func TestAPhaseWithNoChecklistExits2(t *testing.T) {
+	f := newFixture(t)
+	f.write("docs/topic/todo.md", "# Plan\n\n### Phase 1 — One\n- [ ] a\n\n### Phase 2 — Two\n**Done when:** `go test ./...`\n")
+	f.commit()
+
+	code := f.main(f.todo, "--dry-run", "--plain")
+
+	if code != 2 || !strings.Contains(f.err.String(), "Phase 2 — Two: no checklist items") {
+		t.Fatalf("code=%d stderr=%q", code, f.err.String())
+	}
+}
+
+func TestDryRunPrintsThePlanCheckNotes(t *testing.T) {
+	f := newFixture(t)
+	f.write("docs/topic/todo.md", "# Plan\n\n### Phase 1 — One\n**Implements:** Story\n**Depends on:** —\n- [ ] a\n**Done when:** `go test ./...`\n\n### Phase 2 — Two\n**Implements:** Story\n**Depends on:** Phase 1\n- [ ] b\n")
+	f.commit()
+
+	code := f.main(f.todo, "--dry-run", "--plain")
+
+	out := f.out.String()
+	if code != 0 {
+		t.Fatalf("exit %d: %s%s", code, out, f.err.String())
+	}
+	if want := "Plan check: 1 note\n- Phase 2 — Two: no 'Done when' check\n"; !strings.Contains(out, want) {
+		t.Errorf("want %q in:\n%s", want, out)
+	}
+	if got := strings.Join(runList(out), ","); got != "1,2" {
+		t.Errorf("run list = %s", got)
 	}
 }
 

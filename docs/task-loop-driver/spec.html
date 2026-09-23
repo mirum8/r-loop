@@ -164,7 +164,7 @@ section:target > h2 { color: var(--clay); }
       </ul></li>
     <li class="p"><a href="#p6">Part 6 · Decisions</a>
       <ul>
-        <li class="s"><a href="#adr-index">ADR-1 … ADR-76</a></li>
+        <li class="s"><a href="#adr-index">ADR-1 … ADR-78</a></li>
       </ul></li>
     <li class="p"><a href="#p7">Part 7 · Technical details</a>
       <ul>
@@ -319,7 +319,12 @@ have every unticked phase planned, implemented, reviewed and merged in order, so
 supervise each step myself.</p>
 <p><em>Given</em> a plan with phases 3–6 unticked and a clean primary tree, <em>when</em> I run
 <code>r-loop docs/x/todo.md</code>, <em>then</em> phases 3, 4, 5 and 6 are each built and merged in
-that order, each as one commit carrying its own ticks, and the run reports which phases landed.</p>
+that order, each as one commit carrying its own ticks, and the run reports which phases landed;
+<em>and</em> before phase 3 opens, the watchdog has checked each phase against the tree and shown me,
+in its own pane, a table the driver built — what runs, what is already built and what is blocked —
+and the run starts only when I say go, leaving out an already-built phase without ticking it. Given
+an issues file instead, the watchdog verifies each item and groups the fixes, and each group is
+built and landed as one phase (<a href="#adr-77">ADR-77</a>, <a href="#adr-78">ADR-78</a>).</p>
 
 <h3>Resume a run that stopped</h3>
 <p>As the <strong>maintainer</strong>, I want a stopped run to pick up at the step it stopped at,
@@ -754,7 +759,9 @@ together. Configurable: no.</em></p>
 <p><strong>The driver keeps the rules; the watchdog keeps the judgement.</strong> Every step state,
 landing, tick, commit and run-list change is made by the driver's code. The watchdog is a full
 session that decides and edits where a duty names it — today, the <code>## Resolve first</code>
-section — and the driver checks its edit and commits it. A step's own signals from the watchdog are
+section — and the driver checks its edit and commits it. At triage the watchdog proposes what the
+run leaves out and how a backlog is grouped; the driver checks the proposal and writes the run list
+itself (<a href="#adr-77">ADR-77</a>). A step's own signals from the watchdog are
 still veto (halt, warn) and remedy only: a signal that would mark a step ok or lift a halt is
 rejected and recorded. <em>Source: some work cannot be done by rule, and an LLM that can only veto
 could not do it (<a href="#adr-71">ADR-71</a>, which replaced the invariant "the watchdog never
@@ -943,6 +950,20 @@ is claimed when it matches the last snapshot recorded for that step, since a ste
 uncommitted until its review ends; a step killed during a review round resumes at that round. The
 one case it refuses is a worktree holding changes no snapshot recorded — that tree is neither safe
 to build on nor safe to discard, and the run stops for a person.</p>
+
+<h4>The watchdog triages the run list</h4>
+<p>After the <code>## Resolve first</code> walk and before the first phase, the driver sends the
+watchdog the run list. The watchdog reads each phase — or each backlog item — against the tree and
+submits its verdicts with <code>submit_triage</code>: a phase is <code>build</code>,
+<code>already-done</code> or <code>blocked</code>; an item is a <code>fix</code> in a group or a
+<code>skip</code> with its reason. The driver refuses a submission it cannot check — a verdict
+missing, an <code>already-done</code> citing no <code>path:line</code> that exists, a group mixing
+<code>cosmetic</code> and <code>deep</code> — and says why, and the watchdog submits again. Once it
+accepts, it returns the table it built, which the watchdog prints and puts to the maintainer in its
+own pane: go, drop, split, merge or abort. The TUI shows the run waiting for them in amber. On go
+the driver leaves out what is done, blocked or dropped — and the phases that depend on the blocked
+and dropped ones — records the run list, and starts. With <code>--unattended</code> or
+<code>--yes</code> nobody is asked (<a href="#adr-77">ADR-77</a>).</p>
 
 <h4>The watchdog checks a phase</h4>
 <p>Before a phase's first step, the driver hands the watchdog the phase block and the tree. The
@@ -1601,7 +1622,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Seventy-six decisions, each with the alternative that was live at the time; ten are superseded and kept in place, and thirty carry a later amendment. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, and ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked.</p>
+<p class="lede">Seventy-eight decisions, each with the alternative that was live at the time; twelve are superseded and kept in place, two more in part, and thirty-seven carry a later amendment. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, and ADR-78 runs an issues backlog in groups, one group to a phase.</p>
 
 <div id="adr-index">
 
@@ -2556,7 +2577,7 @@ runs — it was bought and never used.</p>
 
 <div class="adr">
 <h3 id="adr-53">ADR-53 — The watchdog checks each phase before it runs, and may only warn</h3>
-<p><span class="f">Status</span> accepted · supersedes <a href="#adr-12">ADR-12</a></p>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-12">ADR-12</a> · amended by <a href="#adr-77">ADR-77</a> — the rejected "one pass over every phase at run start" is taken as well: before the first phase the watchdog verifies the whole run list and the maintainer confirms the table; this per-phase check stays, for the drift earlier phases cause</p>
 <p><span class="f">Context</span> A phase's <code>Files:</code> and <code>Risk:</code> are written by
 <code>/r:spec-design</code> from the spec, before any code exists, and by phase five the tree may no
 longer match them. <a href="#adr-12">ADR-12</a> chose to trust them as written; in the decision
@@ -2979,7 +3000,7 @@ effort.</p>
 
 <div class="adr">
 <h3 id="adr-69">ADR-69 — An issues file is a second source: one item is one phase</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-21">ADR-21</a></p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-21">ADR-21</a> · the one-item-one-phase clause and the rejected grouping alternative superseded by <a href="#adr-78">ADR-78</a> — the watchdog groups the items at triage, and one group is one phase; the grammar, the numbering and the done markers stand</p>
 <p><span class="f">Context</span> <code>/r:issues-draft</code> writes <code>issues-&lt;slug&gt;-&lt;date&gt;.md</code>
 and <code>/r:issues-fix</code> reads it, or any hand-written backlog in the same grammar. The file
 has no <code>### Phase</code> headings and, by design, no <code>Depends on:</code>,
@@ -3015,7 +3036,7 @@ those lines with it.</p>
 
 <div class="adr">
 <h3 id="adr-70">ADR-70 — An issues item lands on its own tests, red at base, and on the discovered suite</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-10">ADR-10</a> and <a href="#adr-48">ADR-48</a></p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-10">ADR-10</a> and <a href="#adr-48">ADR-48</a> · amended by <a href="#adr-78">ADR-78</a> — a group has one <code>## Gate</code> running every member's tests, red at base is judged across the group, and an <code>item-skipped</code> skips the whole group</p>
 <p><span class="f">Context</span> An issues item has no <code>Done when:</code>, so under
 <a href="#adr-48">ADR-48</a> a whole backlog would land without a single test being run. A gate
 command written in config was rejected by the maintainer: projects span stacks, and the command
@@ -3054,7 +3075,7 @@ refuses tests a human would accept.</p>
 
 <div class="adr">
 <h3 id="adr-71">ADR-71 — The driver is deterministic; the watchdog is the run's LLM</h3>
-<p><span class="f">Status</span> accepted · supersedes the "never approve" tier of <a href="#adr-32">ADR-32</a> and the invariant "The watchdog never approves" · amends <a href="#adr-53">ADR-53</a> · amended by <a href="#adr-73">ADR-73</a> — its one-channel paragraph is replaced: step agents ask the watchdog, and the watchdog asks the maintainer in its own session; <code>watchdog.fallback</code> is removed · amended by <a href="#adr-75">ADR-75</a> — before a run started from free text, a short intake session turns the text into a command line, which the driver validates</p>
+<p><span class="f">Status</span> accepted · supersedes the "never approve" tier of <a href="#adr-32">ADR-32</a> and the invariant "The watchdog never approves" · amends <a href="#adr-53">ADR-53</a> · amended by <a href="#adr-73">ADR-73</a> — its one-channel paragraph is replaced: step agents ask the watchdog, and the watchdog asks the maintainer in its own session; <code>watchdog.fallback</code> is removed · amended by <a href="#adr-75">ADR-75</a> — before a run started from free text, a short intake session turns the text into a command line, which the driver validates · amended by <a href="#adr-77">ADR-77</a> — the watchdog also verifies the run list before the first phase, through <code>submit_triage</code> and <code>submit_gate</code>; the driver checks both and still keeps the run list</p>
 <p><span class="f">Context</span> Some run-wide work cannot be done by rule: briefing a blocker, judging
 whether a plan drifted, answering an agent's question. The watchdog is the one session that is open
 for the whole run and holds the plan, the spec and what it watched. The three-tier rule kept it to
@@ -3082,7 +3103,7 @@ file cannot carry.</p>
 
 <div class="adr">
 <h3 id="adr-72">ADR-72 — The watchdog walks <code>## Resolve first</code></h3>
-<p><span class="f">Status</span> accepted · supersedes <a href="#adr-42">ADR-42</a></p>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-42">ADR-42</a> · amended by <a href="#adr-77">ADR-77</a> — the walk runs first, then the triage; the driver no longer records the run list after the walk, but after the triage gate</p>
 <p><span class="f">Context</span> <code>/r:plan-unblock</code> closes blockers well: it sorts each
 entry as a decision or a person's, briefs why it blocks with options and their cost, asks with a
 recommendation, and stamps the answer with what settled it. <a href="#adr-42">ADR-42</a> asked the
@@ -3270,6 +3291,120 @@ keeps working delays its own answer until it stops.</p>
 reliably, or a provider cannot take a typed message while its turn is over.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-77">ADR-77 — Before a run starts, the watchdog verifies the run list and the maintainer confirms a table the driver builds</h3>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-53">ADR-53</a>, <a href="#adr-71">ADR-71</a> and <a href="#adr-72">ADR-72</a></p>
+<p><span class="f">Context</span> Before <code>/r:plan-run</code> or <code>/r:issues-fix</code>
+builds anything, the skill-pack checks the plan's shape, verifies the work against the code, and
+shows a summary table for the maintainer to confirm. r-loop ran straight from preflight into the
+first phase: a phase already built was planned and implemented again, a phase that could not be
+built yet was found out four hours in, and nobody saw what the run was about to spend before it
+spent it. <a href="#adr-53">ADR-53</a> had rejected one pass at run start because late verdicts go
+stale; the maintainer chose to have both.</p>
+<p><span class="f">Decision</span> Three parts, in this order after the <code>## Resolve first</code>
+walk (<a href="#adr-72">ADR-72</a>) and before the first phase. <em>The plan check</em>, in Go
+(<code>CheckPlan</code>, ported from the pack's <code>check_todo.py</code>): a phase with no
+checklist items stops the run with exit 2, in preflight and in <code>--dry-run</code>; the rest are
+notes shown in the table — more than 12 open items, no <code>Done when:</code> or one naming no
+runnable command, no <code>Implements:</code>, a risk word with no <code>Risk:</code>, no
+<code>Depends on:</code>, a forward, self or cyclic dependency, and two phases of one wave sharing a
+<code>Files:</code> path. <em>The verification</em>, by the watchdog: the driver records
+<code>triage-start</code> and sends <code>triage plan &lt;plan&gt; phases &lt;ids&gt;</code> or
+<code>triage backlog &lt;plan&gt; items &lt;ids&gt;</code>; the watchdog reads each against the
+primary tree and calls <code>submit_triage</code> with one verdict each — for a phase
+<code>build</code>, <code>already-done</code> or <code>blocked</code>, for an item the
+<code>/r:issues-fix</code> schema and its group (<a href="#adr-78">ADR-78</a>). The driver checks the
+submission and refuses it with the reason, so the watchdog fixes it and submits again: one verdict
+per entry, every value in its enum, and an <code>already-done</code> phase or a <code>stale</code> or
+<code>duplicate</code> item must cite a <code>path:line</code> that exists in the primary tree.
+<em>The gate</em>: an accepted submission returns the table the driver rendered —
+<code>Phase | Title | Risk | Milestone | Wave | Files | Done when | Verified</code> for a plan, with
+the plan-check notes, the deferred entries, a cost line from each step's review rounds and the
+milestones the run completes — and writes <code>triage.json</code> and <code>triage.md</code> to the
+run directory and a <code>triage</code> event to the faces. The watchdog prints the table as it is,
+asks the maintainer in its own session (<a href="#adr-73">ADR-73</a>), and calls
+<code>submit_gate</code> with <code>go</code>, <code>revise</code> (drop phases or items; split or
+merge groups — the new table comes back and it asks again) or <code>abort</code>, quoting the reply
+as <code>maintainer_said</code>. <code>--unattended</code> and <code>--yes</code> skip the gate: the
+run starts when <code>submit_triage</code> is accepted, and <code>submit_gate</code> is refused.
+The driver then writes <code>gate.json</code>, records a <code>triage-skipped</code> event for each
+phase or item left out, and records the <code>run-list</code> event. An <code>already-done</code>
+phase is left out and <em>not ticked</em>, as an <code>item-skipped</code> item is not
+(<a href="#adr-70">ADR-70</a>); a <code>blocked</code> or dropped phase is left out with every phase
+that depends on it. Waves are computed in Go for the table, from the plan's <code>Depends on</code> (<a href="#adr-43">ADR-43</a>); phases
+still run one at a time (<a href="#adr-11">ADR-11</a>). The watchdog not finishing within
+<code>watchdog.triageTimeout</code> (default <code>2h</code>), or an interrupt, exits 4; a
+watchdog that is gone exits 5; <code>abort</code> at the gate, like <code>r-loop abort</code>, exits 1. In each case no <code>run-list</code> is recorded, so
+<code>r-loop resume</code> triages again; a run that has one resumes without triage.
+<code>--dry-run</code> runs the plan check and prints the table without a Verified column and with
+<code>verification: not run</code>: it starts no session. The per-phase check of
+<a href="#adr-53">ADR-53</a> stays, for the drift earlier phases cause.</p>
+<p><span class="f">Alternatives</span> The watchdog writes its verdicts to a marker file the driver
+waits for, as the walk does — rejected: a file is checked only when the watchdog says it is done,
+and a refusal has no way back; an MCP tool checks on the spot and returns the reason, as
+<code>submit_args</code> does (<a href="#adr-75">ADR-75</a>). Tick an already-done phase —
+rejected: a tick is the driver's record that it landed the phase, and ticking on a model's verdict
+is an approval the watchdog may not make. Ask in the TUI — rejected as in
+<a href="#adr-73">ADR-73</a>: two places to answer; the TUI shows the amber
+<code>watchdog-waiting</code> state while the question is in the watchdog's pane. Verify in
+<code>--dry-run</code> — rejected: a dry run starts nothing, and a model call is not free. One pass
+only, dropping the per-phase check — rejected: <a href="#adr-53">ADR-53</a>'s reason still holds
+for late phases.</p>
+<p><span class="f">Consequences</span> A run starts a few minutes later, and the maintainer sees
+what it will spend before it spends it. Every drop the maintainer did not make rests on a verdict
+the driver checked against the tree. That is the weakest point: under <code>--unattended</code> or
+<code>--yes</code>, a phase or item is left out on the watchdog's verdict alone, and the only thing
+the driver checks is that the cited <code>path:line</code> exists, not that it shows what the
+verdict claims. The report lists each <code>triage-skipped</code> with its reason. The driver's
+invariant that every run-list change is its own holds: the watchdog proposes, the driver decides
+what it accepts and writes.</p>
+<p><span class="f">Revisit when</span> an unattended run leaves out a phase or item that was not
+done, or the gate's table is confirmed unchanged in ten runs running.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-78">ADR-78 — An issues backlog runs in groups: one group is one phase</h3>
+<p><span class="f">Status</span> accepted · supersedes the one-item-one-phase clause of <a href="#adr-69">ADR-69</a> and its rejected grouping alternative · amends <a href="#adr-70">ADR-70</a></p>
+<p><span class="f">Context</span> Under <a href="#adr-69">ADR-69</a> each backlog item was one phase:
+three one-line fixes to the same file cost three plan steps, three implement steps, three review
+series and three landings, each one re-reading what the one before had just read.
+<code>/r:issues-fix</code> clusters its items first, and the maintainer chose the same for r-loop,
+with a group running as one phase and landing once.</p>
+<p><span class="f">Decision</span> The watchdog's triage (<a href="#adr-77">ADR-77</a>) gives every
+item a verdict — <code>fix</code> or <code>skip</code>, a category, a confidence, the root cause or
+scope, the files it <code>touches</code> and a risk of <code>cosmetic</code>, <code>local</code> or
+<code>deep</code> — and puts every fix item in exactly one group, with a subsystem and a rationale;
+a one-item group is allowed. It groups items that overlap — the same file, module or tight
+subsystem — at comparable risk. The driver refuses a group that mixes <code>cosmetic</code> and
+<code>deep</code> items, a fix in no group or in two, and a skip in a group. The gate may drop an
+item or a group, split a group or merge groups. A group of two or more items becomes one phase: its
+ID is its lowest member's number, so branches, worktrees and <code>ValidPhaseID</code> are
+unchanged; its items are every member's criteria, each prefixed <code>#&lt;id&gt;</code>; its block
+is the member blocks joined; and <code>Phase.Members</code> lists the members. <code>Files:</code>
+and <code>Risk:</code> are not taken from <code>touches</code>: the per-phase check derives them as
+before. The prompts tell the plan, implement and review steps that every member's criteria are
+obligations. Landing ticks every member in the one landing commit, each marked
+<code>&lt;!-- fixed: r-loop/phase-&lt;id&gt; --&gt;</code>, which keeps <a href="#adr-58">ADR-58</a>,
+and refuses when any member is already ticked. For <a href="#adr-70">ADR-70</a>: one
+<code>## Gate</code> per group, running every member's tests; red at base is judged across the
+group; <code>status: already-done</code> holds only when every member is done, and an
+<code>item-skipped</code> skips the whole group. The <code>run-list</code> event carries the groups
+as JSON, and <code>r-loop resume</code> rebuilds them from it.</p>
+<p><span class="f">Alternatives</span> One item, one phase, as <a href="#adr-69">ADR-69</a> stood —
+superseded: its cost grows with the backlog, not with the work. Group in Go by <code>touches</code> —
+rejected: overlap and comparable risk are judgement. Take the group's <code>Files:</code> and
+<code>Risk:</code> from <code>touches</code> — rejected: a model's list would become a field the
+driver's own checks trust. Leave the cosmetic-and-deep rule to the prompt — rejected: it is a rule,
+so the driver enforces it.</p>
+<p><span class="f">Consequences</span> A backlog runs in fewer phases, and a group fails or lands as
+a whole: one member that cannot be fixed blocks the others with it. The red-at-base check is weaker
+for a group: it passes when the group's tests fail at base, so one member's new tests can fail
+there while another member's pass and hide that they test nothing. The run's phase numbers are no
+longer one per item; the status and the faces show a group as one row, <code>3 (items 3, 5, 7)</code>.</p>
+<p><span class="f">Revisit when</span> a group fails to land because of one member.</p>
+</div>
+
+
 
 
 </div>
@@ -3344,11 +3479,14 @@ named reason on stderr; there is nothing paginated.</p>
       <td>path to the plan; <code>--from N</code>, <code>--phases n,n</code> (phase labels such as <code>10</code> or <code>10a</code>),
           <code>--provider &lt;step&gt;=&lt;name&gt;</code>, <code>--model &lt;step&gt;=&lt;model&gt;</code>,
           <code>--effort &lt;step&gt;=&lt;effort&gt;</code>,
-          <code>--unattended</code>,
+          <code>--unattended</code>, <code>--yes</code> (start after triage without asking),
           <code>--plain</code>, <code>--dry-run</code></td>
-      <td>the TUI, or with <code>--plain</code> a banner naming the resolved rows, one line per step
-          transition and review round, and a final report; <code>--dry-run</code> prints the run
-          list and each open <code>## Resolve first</code> entry that blocks it</td></tr>
+      <td>the TUI, or with <code>--plain</code> a banner naming the resolved rows, the triage table,
+          one line per step transition and review round, and a final report; <code>--dry-run</code>
+          runs the plan check and prints the run list, each open <code>## Resolve first</code> entry
+          that blocks it, and the table without its Verified column, ending
+          <code>verification: not run</code> — it starts no session
+          (<a href="#adr-77">ADR-77</a>)</td></tr>
   <tr><td><code>r-loop &lt;free text&gt;</code></td><td>Say what to run without the flags</td>
       <td>anything but one <code>.md</code> path, such as <code>"the loop plan, phases 3 and 4"</code>;
           real flags may be mixed in</td>
@@ -3360,9 +3498,10 @@ named reason on stderr; there is nothing paginated.</p>
           is gone is named with <code>r-loop resume</code> and no live step, and a phase outside
           the run as <code>not in this run</code></td></tr>
   <tr><td><code>r-loop resume</code></td><td>Pick up a stopped run at its last step</td><td><code>--replan</code> re-runs the phase's plan step first (<a href="#adr-60">ADR-60</a>);
-          <code>--unattended</code>,
+          <code>--unattended</code>, <code>--yes</code>,
           <code>--plain</code></td>
-      <td>as the run command, from the resumed step</td></tr>
+      <td>as the run command, from the resumed step; a run stopped before its triage gate triages
+          again, and one past it keeps its run list and groups</td></tr>
   <tr><td><code>r-loop abort</code></td><td>Stop scheduling, leave everything standing; in the
       TUI, <code>ctrl+c</code> then <code>y</code> does the same</td><td>—</td>
       <td>the workspace and worktree left behind, named</td></tr>
@@ -3432,6 +3571,7 @@ watchdog:                     # always on; the run's LLM (ADR-71)
   model: opus
   effort: high
   unblockTimeout: 2h          # how long the ## Resolve first walk may take (ADR-72)
+  triageTimeout: 2h           # how long the triage and its gate may take (ADR-77)
   maxRestarts: 2              # per step, in every mode (ADR-61)
   allow:                      # deps | ports | containers | locks | restart | retry | provider
     - deps                    # empty or absent = ask about everything
@@ -3484,7 +3624,13 @@ stays open, and
 watchdog calls before it asks the maintainer in its own session: it returns at once, and records
 and shows <code>watchdog-waiting</code> with the question until the watchdog's next call of any
 other tool records <code>watchdog-resumed</code>. A <code>propose_remedy</code> or
-<code>restart_step</code> that needs the maintainer's word marks the same wait itself. A signal whose effect would move the run forward
+<code>restart_step</code> that needs the maintainer's word marks the same wait itself. Before the
+first phase, <code>submit_triage(phases?, items?, groups?) → {accepted, reason?, table?}</code>
+carries the watchdog's verdicts and returns the table the driver built, and
+<code>submit_gate(decision: go|revise|abort, drop?, split?, merge?, maintainer_said) → {accepted,
+reason?, table?}</code> carries the maintainer's answer, returning the new table on
+<code>revise</code>; with <code>--unattended</code> or <code>--yes</code> it is refused
+(<a href="#adr-77">ADR-77</a>, <a href="#adr-78">ADR-78</a>). A signal whose effect would move the run forward
 is rejected by <code>Watch</code> and the rejection is recorded — the tool surface is narrow by
 design, but the enforcement is not the surface. A <code>signal</code> whose step is not
 <code>phase-&lt;N&gt;/&lt;kind&gt;</code> goes through <code>Watch</code> too, is rejected, and
@@ -3498,7 +3644,7 @@ phase block, the plan path, the branch, the sentinel path and the acceptance cri
 the phase check's warnings; the <code>review</code> prompt goes to every reviewer pane, names the
 round, that reviewer's findings path and the earlier rounds' files; the <code>fix</code> prompt goes
 to the reviewed step's own session with every findings file of the round; the
-<code>watchdog</code> prompt carries the phase check beside the rest of its judgement.</p>
+<code>watchdog</code> prompt carries the triage and the phase check beside the rest of its judgement.</p>
 
 <pre><code># .task-plans/phase-&lt;N&gt;-&lt;slug&gt;.md — written by the plan step, read by implement (ADR-59)
 status: planned
@@ -3520,11 +3666,13 @@ from, and the only way a watchdog's threshold can be tuned from rows rather than
   <tr><td><code>0</code></td><td>every phase in the run list landed</td></tr>
   <tr><td><code>1</code></td><td>a phase was blocked — a step failed past its remedies, or a land gate stayed red; the
       phases that did not depend on it still ran, and the run can be resumed. When several phases
-      were blocked, the code is that of the first</td></tr>
-  <tr><td><code>2</code></td><td>usage, git state, or a config the reader rejected</td></tr>
+      were blocked, the code is that of the first. Also an abort at the triage gate; the resume
+      triages again</td></tr>
+  <tr><td><code>2</code></td><td>usage, git state, a config the reader rejected, or a plan the plan check stops — a
+      phase with no checklist items</td></tr>
   <tr><td><code>3</code></td><td>the first block began as a stall: the step went quiet, was nudged, and stayed quiet — never an open question, which has no timer</td></tr>
-  <tr><td><code>5</code></td><td>the first block was a watchdog halt, or the watchdog is gone; its reason is in the run report</td></tr>
-  <tr><td><code>4</code></td><td>preflight refused — herdr unreachable, an unclean tree, an open <code>## Resolve first</code> entry, or a watchdog that did not start</td></tr>
+  <tr><td><code>5</code></td><td>the first block was a watchdog halt, or the watchdog is gone — during the triage too; its reason is in the run report</td></tr>
+  <tr><td><code>4</code></td><td>preflight refused — herdr unreachable, an unclean tree, an open <code>## Resolve first</code> entry, or a watchdog that did not start — or the triage did not finish within <code>watchdog.triageTimeout</code> or was interrupted</td></tr>
   <tr><td><code>127</code></td><td>a required binary is missing</td></tr>
 </table>
 

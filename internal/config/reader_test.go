@@ -91,7 +91,7 @@ func TestDefaults(t *testing.T) {
 		t.Errorf("Unattended = %+v", cfg.Unattended)
 	}
 	wantWatchdog := Watchdog{Provider: "claude", Model: "opus", Effort: "high", Allow: []string{}, RemedyWindow: 10 * time.Minute,
-		CheckTimeout: 10 * time.Minute, StallGrace: 2 * time.Minute, UnblockTimeout: 2 * time.Hour,
+		CheckTimeout: 10 * time.Minute, StallGrace: 2 * time.Minute, UnblockTimeout: 2 * time.Hour, TriageTimeout: 2 * time.Hour,
 		OvertimeFactor: 2, DiffFactor: 3, MaxRestarts: 2}
 	if !reflect.DeepEqual(cfg.Watchdog, wantWatchdog) {
 		t.Errorf("Watchdog = %+v", cfg.Watchdog)
@@ -638,4 +638,18 @@ func TestLabelWithUppercaseOrUnderscoreRejected(t *testing.T) {
 	d.writeProject(t, "label: Test_1\n")
 
 	d.loadErr(t, "label")
+}
+
+func TestTriageTimeoutFromTheProjectFileWithProvenance(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "watchdog:\n  triageTimeout: 30m\n")
+
+	cfg := d.load(t)
+
+	if cfg.Watchdog.TriageTimeout != 30*time.Minute {
+		t.Errorf("TriageTimeout = %v", cfg.Watchdog.TriageTimeout)
+	}
+	if got := cfg.Provenance["watchdog.triageTimeout"]; got != ".r-loop/config.yaml:watchdog.triageTimeout" {
+		t.Errorf("provenance = %q", got)
+	}
 }

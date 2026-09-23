@@ -9,6 +9,10 @@ the uncommitted changes in {{.Worktree}}.
 The phase:
 
 {{.PhaseBlock}}
+{{- if .GroupItems}}
+
+This phase fixes backlog items {{.GroupItems}} with one change. Every member's criteria are obligations, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done.
+{{- end}}
 
 ## Native review
 

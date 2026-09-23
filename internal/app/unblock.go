@@ -15,33 +15,29 @@ import (
 	"r-loop/internal/plan"
 )
 
-func (w *Wiring) unblock(ctx context.Context, opts core.RunOptions) (core.RunOptions, bool, error) {
+func (w *Wiring) unblock(ctx context.Context, opts core.RunOptions) ([]core.Phase, []core.Deferral, bool, error) {
 	list, err := core.RunList(w.Plan, w.Todo, opts)
 	if err != nil {
-		return opts, false, w.halt(exit(2, "%v", err))
+		return nil, nil, false, w.halt(exit(2, "%v", err))
 	}
 	blocking := w.Plan.Blocking(phaseIDs(list))
 	if len(blocking) > 0 && !w.Opts.Unattended {
 		if err := w.walk(ctx, blocking, list); err != nil {
-			return opts, false, w.halt(err)
+			return nil, nil, false, w.halt(err)
 		}
 	}
 	kept, deferrals := core.DeferBlocked(w.Plan, list)
 	for _, d := range deferrals {
 		w.record(core.Event{Kind: "entry-deferred", Fields: map[string]string{"entry": d.Entry, "phases": joinIDs(d.Phases)}})
 	}
-	if err := recordRunList(w.Store, w.Loop.RunID, kept); err != nil {
-		return opts, false, w.halt(exit(2, "%v", err))
-	}
 	if len(list) > 0 && len(kept) == 0 {
 		w.record(core.Event{Kind: "finished", Fields: map[string]string{"reason": "nothing left to run: every phase is blocked by an open ## Resolve first entry"}})
 		if err := w.Store.Append(w.Loop.RunID, core.Record{Kind: core.RecordRun, At: time.Now(), Run: core.RunFinished}); err != nil {
-			return opts, false, exit(2, "%v", err)
+			return nil, nil, false, exit(2, "%v", err)
 		}
-		return opts, true, nil
+		return nil, nil, true, nil
 	}
-	opts.From, opts.Phases = "", phaseIDs(kept)
-	return opts, false, nil
+	return kept, deferrals, false, nil
 }
 
 func (w *Wiring) walk(ctx context.Context, blocking []core.Entry, list []core.Phase) error {

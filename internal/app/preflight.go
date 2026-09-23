@@ -33,10 +33,13 @@ func Preflight(w *Wiring) error {
 		w.banner(env.Stdout, prompts)
 		fmt.Fprintln(env.Stdout, "run list:")
 		for _, ph := range list {
-			fmt.Fprintf(env.Stdout, "phase %s  %s  %s\n", ph.ID, ph.Title, pipeline(w.Loop.Kinds, w.Plan.Backlog))
+			fmt.Fprintf(env.Stdout, "phase %s  %s  %s\n", ph.ID, core.Printable(ph.Title), pipeline(w.Loop.Kinds, w.Plan.Backlog))
 		}
 		w.criteriaWarnings(env.Stdout, list)
 		w.blockingEntries(env.Stdout, list)
+		kept, deferrals := core.DeferBlocked(w.Plan, list)
+		_, table := core.RenderTriage(core.TriageView{Plan: w.Plan, List: kept, Checks: w.Findings, Deferrals: deferrals, Kinds: w.Loop.Kinds}, nil)
+		fmt.Fprint(env.Stdout, "\n"+table)
 		return nil
 	}
 	if err := w.Host.Reachable(); err != nil {
@@ -133,11 +136,6 @@ func (w *Wiring) commitHint(dirty []string) string {
 	return "commit " + strings.Join(dirty, " and ") + " first"
 }
 
-func recordRunList(st *store.Store, id string, list []core.Phase) error {
-	at := time.Now()
-	return st.Append(id, core.Record{Kind: core.RecordEvent, At: at, Event: &core.Event{At: at, Kind: "run-list", Fields: map[string]string{"phases": strings.Join(phaseIDs(list), ",")}}})
-}
-
 func (w *Wiring) checks() ([]core.Phase, []string, error) {
 	opts, env := w.Opts, w.Env
 	if !opts.DryRun {
@@ -147,6 +145,10 @@ func (w *Wiring) checks() ([]core.Phase, []string, error) {
 	}
 	if err := w.validateProviders(); err != nil {
 		return nil, nil, err
+	}
+	w.Findings = core.CheckPlan(w.Plan)
+	if len(w.Findings.Stops) > 0 {
+		return nil, nil, exit(2, "%s", strings.Join(w.Findings.Stops, "; "))
 	}
 	list, err := core.RunList(w.Plan, w.Todo, core.RunOptions{From: opts.From, Phases: opts.Phases})
 	if err != nil {

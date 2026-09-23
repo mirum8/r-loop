@@ -62,6 +62,7 @@ func fullVars() map[string]any {
 		"GateCommand":     "go test ./internal/prompts/...",
 		"GateOutput":      "FAIL",
 		"Addendum":        "",
+		"GroupItems":      "",
 	}
 }
 
@@ -677,5 +678,46 @@ func TestUnattendedIntakeNeverAsks(t *testing.T) {
 
 	if strings.Contains(text, "AskUserQuestion") || !strings.Contains(text, "Do not ask them anything") {
 		t.Errorf("unattended intake:\n%s", text)
+	}
+}
+
+func TestPlanImplementAndReviewNameTheGroupOnlyWhenSet(t *testing.T) {
+	r := New(t.TempDir())
+	const want = "This phase fixes backlog items 3, 5, 7 with one change. Every member's criteria are obligations, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done."
+
+	for _, name := range []string{"plan", "implement", "review"} {
+		if strings.Contains(render(t, r, name, fullVars()), "backlog items") {
+			t.Errorf("%s: group paragraph without GroupItems", name)
+		}
+		if text := render(t, r, name, with("GroupItems", "3, 5, 7")); !strings.Contains(text, want) {
+			t.Errorf("%s: group paragraph missing:\n%s", name, text)
+		}
+	}
+}
+
+func TestWatchdogTriagesTheRunListAndAsksAtTheGate(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"## Triage",
+		"`triage plan <plan> phases <ids>.`",
+		"`triage backlog <plan> items <ids>.`",
+		"`already-done` — the tree already does what the block asks. The `note` cites a `path:line`",
+		"Never put `cosmetic` and `deep` in one group",
+		"Put every fix item in exactly one group",
+		"submit_triage(phases?, items?, groups?)",
+		"submit_gate(decision, drop?, split?, merge?, maintainer_said)",
+		"Print the table `submit_triage` returns, exactly as it is",
+		"go, drop, split, merge and abort",
+		"print it and ask again",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q", want)
+		}
+	}
+
+	unattended := render(t, New(t.TempDir()), "watchdog", with("Unattended", true))
+	if strings.Contains(unattended, "When the request says to ask") || !strings.Contains(unattended, "The run starts when `submit_triage` is accepted") {
+		t.Errorf("unattended triage:\n%s", unattended)
 	}
 }

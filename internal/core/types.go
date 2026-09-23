@@ -26,6 +26,14 @@ type Phase struct {
 	DoneWhen   string
 	Milestone  int
 	Block      string
+	Members    []string
+}
+
+func (p Phase) TickIDs() []string {
+	if len(p.Members) > 0 {
+		return p.Members
+	}
+	return []string{p.ID}
 }
 
 type Item struct {

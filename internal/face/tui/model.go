@@ -195,6 +195,19 @@ func (m Model) Apply(ev core.Event) Model {
 		if ev.Fields["what"] == "resume" {
 			m.log(ev, toneDim, "resumed")
 		}
+	case "triage-start":
+		noun := "phase"
+		if ev.Fields["kind"] == "backlog" {
+			noun = "item"
+		}
+		m.log(ev, toneDim, "triage: watchdog verifying "+core.Plural(len(strings.Split(ev.Fields["phases"], ", ")), noun))
+	case "triage":
+		m.log(ev, toneDim, "triage: "+ev.Fields["summary"])
+	case core.TriageSkipped:
+		m.setPhase(ev.Phase, core.PhaseBlocked)
+		m.log(ev, toneDim, "skipped by triage: "+ev.Fields["reason"])
+	case "run-list":
+		m.group(core.RunListGroups(ev.Fields))
 	case "signal-rejected", "note", "report-skipped", "reviewer-skipped":
 		m.log(ev, toneDim, ev.Fields["reason"])
 	case "finished":
@@ -233,6 +246,23 @@ func (m *Model) setPhase(n string, state core.PhaseState) {
 	if n == m.Current && (state == core.PhaseLanded || state == core.PhaseBlocked) {
 		m.Current = ""
 	}
+}
+
+func (m *Model) group(groups []core.Group) {
+	if len(groups) == 0 {
+		return
+	}
+	state := map[string]core.PhaseState{}
+	var pl core.Plan
+	for _, r := range m.Phases {
+		state[r.ID] = r.State
+		pl.Phases = append(pl.Phases, core.Phase{ID: r.ID, Title: r.Title})
+	}
+	rows := make([]Row, 0, len(m.Phases))
+	for _, ph := range core.GroupBacklog(pl, groups).Phases {
+		rows = append(rows, Row{ID: ph.ID, Title: ph.Title, State: state[ph.ID]})
+	}
+	m.Phases = rows
 }
 
 func (m *Model) step(ev core.Event) {

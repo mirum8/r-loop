@@ -111,7 +111,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 		}
 		landing.GateOutput = output
 	}
-	if err := g.Plan.Tick(g.TodoPath, n); err != nil {
+	if err := g.Plan.Tick(g.TodoPath, phase); err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), g.Repo.ResetHard("HEAD"))
 	}
 	sha, err := g.Repo.Commit(fmt.Sprintf("phase %s: %s", n, phase.Title))

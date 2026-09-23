@@ -127,6 +127,7 @@ func StatusLines(run core.RunState, pl core.Plan, now time.Time, deadPID int) []
 }
 
 func phaseLines(run core.RunState, pl core.Plan) []string {
+	pl = core.GroupBacklog(pl, recordedGroups(run))
 	state := map[string]string{}
 	unticked := pl.Unticked()
 	listed := recordedRunList(run)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ type dogHost struct {
 	stale    map[string]string
 	onPrompt func(text string)
 	question func(id string)
+	triage   func(text string)
 	blocked  string
 	state    core.AgentState
 }
@@ -56,6 +58,13 @@ func (h *dogHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 	}
 	if h.onPrompt != nil {
 		h.onPrompt(text)
+	}
+	if strings.HasPrefix(text, "triage ") {
+		if h.triage != nil {
+			go h.triage(text)
+		} else if w, ok := triagers.Load(agent); ok {
+			go autoTriage(w.(*Wiring), text)
+		}
 	}
 	if rest, ok := strings.CutPrefix(text, "question "); ok && h.question != nil {
 		id, _, _ := strings.Cut(rest, " ")
@@ -363,6 +372,48 @@ func TestAStepSessionProviderWithoutMCPIsRefusedInPreflight(t *testing.T) {
 				t.Fatalf("code=%d err=%v", code, err)
 			}
 		})
+	}
+}
+
+var (
+	triagers   sync.Map
+	triageIDRe = regexp.MustCompile(`(?:phases|items) ([0-9a-z, ]+)\. Follow`)
+)
+
+func triageIDs(text string) []string {
+	m := triageIDRe.FindStringSubmatch(text)
+	if m == nil {
+		return nil
+	}
+	return strings.Split(m[1], ", ")
+}
+
+func allBuild(text string) core.Triage {
+	var t core.Triage
+	if !strings.HasPrefix(text, "triage backlog") {
+		for _, id := range triageIDs(text) {
+			t.Phases = append(t.Phases, core.PhaseVerdict{Phase: id, Status: core.VerdictBuild})
+		}
+		return t
+	}
+	for _, id := range triageIDs(text) {
+		t.Items = append(t.Items, fixItem(id))
+		t.Groups = append(t.Groups, core.Group{ID: "g" + id, Items: []string{id}, Subsystem: "x"})
+	}
+	return t
+}
+
+func fixItem(id string) core.ItemVerdict {
+	return core.ItemVerdict{ID: id, Title: "x", Verdict: core.VerdictFix, Category: "bug", Confidence: "high", RootCause: "x", Touches: []string{"x"}, Risk: core.RiskLocal}
+}
+
+func asksTheMaintainer(text string) bool {
+	return strings.Contains(text, "ask the maintainer, then call submit_gate")
+}
+
+func autoTriage(w *Wiring, text string) {
+	if ok, _, _ := w.submitTriage(allBuild(text)); ok && asksTheMaintainer(text) {
+		w.submitGate(core.GateDecision{Decision: core.GateGo, MaintainerSaid: "go"})
 	}
 }
 

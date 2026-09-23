@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -274,7 +275,7 @@ func TestWatchdogPathListsNoAskTool(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	if want := []string{"answer_question", "ask_maintainer", "propose_remedy", "restart_step", "signal"}; !slices.Equal(names, want) {
+	if want := []string{"answer_question", "ask_maintainer", "propose_remedy", "restart_step", "signal", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
 		t.Fatalf("watchdog tools = %v, want %v", names, want)
 	}
 }
@@ -494,5 +495,87 @@ func TestACallWhoseResumeCannotBeRecordedIsNotHandled(t *testing.T) {
 
 	if out["accepted"] != false || !strings.Contains(out["reason"].(string), "disk full") || called {
 		t.Fatalf("out = %+v, called = %v", out, called)
+	}
+}
+
+func TestSubmitTriageHandsThePayloadToItsHandlerAndReturnsTheTable(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	var got []core.Triage
+	s.Handle(WatchdogHandlers{SubmitTriage: func(tr core.Triage) (bool, string, string) {
+		got = append(got, tr)
+		if len(got) == 1 {
+			return false, "item 4 has no verdict", ""
+		}
+		return true, "", "| Group | Phase |"
+	}})
+	cs := connect(t, s.WatchdogURL())
+	args := map[string]any{
+		"items":  []any{map[string]any{"id": "3", "title": "t", "verdict": "fix", "category": "bug", "confidence": "high", "root_cause_or_scope": "c", "touches": []any{"a.go"}, "risk": "local"}},
+		"groups": []any{map[string]any{"group_id": "G1", "items": []any{"3"}, "subsystem": "store"}},
+	}
+
+	refused := call(t, cs, "submit_triage", args)
+	accepted := call(t, cs, "submit_triage", args)
+
+	if refused["accepted"] != false || refused["reason"] != "item 4 has no verdict" {
+		t.Fatalf("refused = %+v", refused)
+	}
+	if accepted["accepted"] != true || accepted["table"] != "| Group | Phase |" {
+		t.Fatalf("accepted = %+v", accepted)
+	}
+	want := core.Triage{
+		Items:  []core.ItemVerdict{{ID: "3", Title: "t", Verdict: "fix", Category: "bug", Confidence: "high", RootCause: "c", Touches: []string{"a.go"}, Risk: "local"}},
+		Groups: []core.Group{{ID: "G1", Items: []string{"3"}, Subsystem: "store"}},
+	}
+	if len(got) != 2 || !reflect.DeepEqual(got[1], want) {
+		t.Fatalf("handler got %+v", got)
+	}
+	recs := st.records()
+	if len(recs) != 2 || recs[0].Event.Fields["tool"] != "submit_triage" || !strings.Contains(recs[0].Event.Fields["triage"], `"group_id":"G1"`) {
+		t.Fatalf("records = %+v", recs)
+	}
+}
+
+func TestSubmitGateHandsTheDecisionToItsHandler(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	var got core.GateDecision
+	s.Handle(WatchdogHandlers{SubmitGate: func(g core.GateDecision) (bool, string, string) {
+		got = g
+		return true, "", "new table"
+	}})
+
+	out := call(t, connect(t, s.WatchdogURL()), "submit_gate", map[string]any{
+		"decision": "revise", "drop": []any{"4"}, "split": []any{map[string]any{"group": "G1", "into": []any{[]any{"1"}, []any{"2"}}}},
+		"merge": []any{[]any{"G2", "G3"}}, "maintainer_said": "drop 4 and split G1",
+	})
+
+	if out["accepted"] != true || out["table"] != "new table" {
+		t.Fatalf("out = %+v", out)
+	}
+	want := core.GateDecision{Decision: "revise", Drop: []string{"4"}, Split: []core.Split{{Group: "G1", Into: [][]string{{"1"}, {"2"}}}}, Merge: [][]string{{"G2", "G3"}}, MaintainerSaid: "drop 4 and split G1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("handler got %+v", got)
+	}
+	if f := st.records()[0].Event.Fields; f["tool"] != "submit_gate" || f["decision"] != "revise" || f["maintainer_said"] != "drop 4 and split G1" {
+		t.Fatalf("record = %+v", f)
+	}
+}
+
+func TestTriageToolsWithoutAHandlerSayNoTriageIsOpen(t *testing.T) {
+	s := serveWatchdog(t, &memStore{})
+	cs := connect(t, s.WatchdogURL())
+
+	for _, c := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"submit_triage", map[string]any{"phases": []any{map[string]any{"phase": "3", "status": "build"}}}},
+		{"submit_gate", map[string]any{"decision": "go", "maintainer_said": "go"}},
+	} {
+		if out := call(t, cs, c.tool, c.args); out["accepted"] != false || out["reason"] != "no triage is open" {
+			t.Fatalf("%s = %+v", c.tool, out)
+		}
 	}
 }

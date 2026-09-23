@@ -31,8 +31,9 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 	replan := fs.Bool("replan", false, "")
 	plain := fs.Bool("plain", false, "")
 	unattended := fs.Bool("unattended", false, "")
+	yes := fs.Bool("yes", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
-		return nil, core.RunOptions{}, exit(2, "usage: r-loop resume [--replan] [--unattended] [--plain]")
+		return nil, core.RunOptions{}, exit(2, "usage: r-loop resume [--replan] [--unattended] [--yes] [--plain]")
 	}
 	repo, err := gitrepo.Open(env.Dir)
 	if err != nil {
@@ -56,7 +57,7 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 	if run.Status == core.RunFinished {
 		return nil, core.RunOptions{}, exit(2, "nothing to resume: run %s finished", id)
 	}
-	w, err := Wire(Options{Todo: run.Todo, Plain: *plain, Unattended: *unattended}, env)
+	w, err := Wire(Options{Todo: run.Todo, Plain: *plain, Unattended: *unattended, Yes: *yes}, env)
 	if err != nil {
 		return nil, core.RunOptions{}, err
 	}
@@ -69,7 +70,13 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 
 func (w *Wiring) resume(run core.RunState, replan bool) (core.RunOptions, error) {
 	id, env := run.ID, w.Env
-	if recorded := recordedRunList(run); len(recorded) > 0 {
+	if groups := recordedGroups(run); len(groups) > 0 {
+		w.groups = groups
+		w.setPlan(core.GroupBacklog(w.Plan, groups))
+	}
+	recorded := recordedRunList(run)
+	w.Triaged = len(recorded) > 0
+	if len(recorded) > 0 {
 		unticked := w.Plan.Unticked()
 		w.Opts.Phases = slices.DeleteFunc(recorded, func(n string) bool { return !slices.Contains(unticked, n) })
 		if len(w.Opts.Phases) == 0 {

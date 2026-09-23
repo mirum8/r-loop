@@ -773,3 +773,53 @@ func TestResumeReplaysHistoryButNotTheOldEnding(t *testing.T) {
 		t.Fatalf("stale ending: status %q live %+v", m.Status, m.Live)
 	}
 }
+
+func TestARunListWithGroupsMergesTheMemberRowsOnce(t *testing.T) {
+	list := core.Event{At: at(0), Kind: "run-list", Fields: map[string]string{"phases": "1,4", "groups": `[{"group_id":"g1","items":["3","1","2"],"subsystem":"store"}]`}}
+
+	once := newModel([]core.Event{list})
+	twice := once.Apply(list)
+
+	want := []Row{{ID: "1", Title: "store (items 1, 2, 3)", State: core.PhaseUnticked}, {ID: "4", Title: "session manager", State: core.PhaseUnticked}}
+	for _, m := range []Model{once, twice} {
+		if len(m.Phases) != len(want) || m.Phases[0] != want[0] || m.Phases[1] != want[1] {
+			t.Fatalf("rows %+v", m.Phases)
+		}
+	}
+}
+
+func TestTriageIsASummaryLineInTheFeedAndMarksTheSkippedRow(t *testing.T) {
+	m := newModel([]core.Event{
+		{At: at(0), Kind: "triage-start", Fields: map[string]string{"kind": "backlog", "phases": "1, 2, 3, 4"}},
+		{At: at(1), Kind: "triage", Fields: map[string]string{"summary": "2 groups from 4 items, 1 skipped", "table": "| Group |\n"}},
+		{At: at(1), Kind: core.TriageSkipped, Phase: "2", Fields: map[string]string{"reason": "stale: fixed at a.go:3"}},
+		{At: at(1), Kind: core.TriageSkipped, Phase: "9", Fields: map[string]string{"reason": "dropped by the maintainer"}},
+		{At: at(9), Kind: "finished"},
+	})
+
+	var feed []string
+	for _, e := range m.Feed {
+		feed = append(feed, e.Text)
+	}
+	want := []string{"14:00  triage: watchdog verifying 4 items", "14:01  triage: 2 groups from 4 items, 1 skipped", "14:01  phase 2: skipped by triage: stale: fixed at a.go:3", "14:01  phase 9: skipped by triage: dropped by the maintainer"}
+	if strings.Join(feed, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("feed %q", feed)
+	}
+	if m.Phases[1].State != core.PhaseBlocked || len(m.Phases) != len(plan()) {
+		t.Errorf("rows %+v", m.Phases)
+	}
+	if view := m.View(); !strings.Contains(view, "×  2 ") || strings.Contains(view, "·  2 ") {
+		t.Errorf("row 2 not skipped:\n%s", view)
+	}
+}
+
+func TestTriageStartCountsOnePhaseInTheSingular(t *testing.T) {
+	m := newModel([]core.Event{
+		{At: at(0), Kind: "triage-start", Fields: map[string]string{"kind": "plan", "phases": "3"}},
+		{At: at(1), Kind: "triage-start", Fields: map[string]string{"kind": "backlog", "phases": "4"}},
+	})
+
+	if got := m.Feed[0].Text + "\n" + m.Feed[1].Text; got != "14:00  triage: watchdog verifying 1 phase\n14:01  triage: watchdog verifying 1 item" {
+		t.Fatalf("feed %q", got)
+	}
+}

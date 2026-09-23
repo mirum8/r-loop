@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/x/term"
@@ -35,6 +36,7 @@ type Options struct {
 	Phases        []string
 	Overrides     []config.Override
 	Unattended    bool
+	Yes           bool
 	Plain, DryRun bool
 }
 
@@ -63,6 +65,7 @@ type Wiring struct {
 	Env      Env
 	Todo     string
 	Plan     core.Plan
+	Findings core.PlanFindings
 	Config   config.LoopConfig
 	Registry *providers.Registry
 	Store    *store.Store
@@ -81,6 +84,11 @@ type Wiring struct {
 	Dog      *core.Watchdog
 	Remedies *core.Remedies
 	Router   *core.QuestionRouter
+	Triaged  bool
+
+	groups   []core.Group
+	triageMu sync.Mutex
+	triaging *triageRun
 }
 
 type overrides struct {
@@ -136,6 +144,7 @@ func flagSet(o *Options) *flag.FlagSet {
 		fs.Var(overrides{key, &o.Overrides}, key, "set one row's "+key+" for this run, `<step>=<"+key+">`; repeatable")
 	}
 	fs.BoolVar(&o.Unattended, "unattended", false, "never ask the maintainer; the watchdog decides from the repository")
+	fs.BoolVar(&o.Yes, "yes", false, "start after triage without asking the maintainer; verification still runs")
 	fs.BoolVar(&o.Plain, "plain", false, "plain line output instead of the TUI")
 	fs.BoolVar(&o.DryRun, "dry-run", false, "print the banner and the run list, start nothing")
 	return fs
@@ -251,15 +260,7 @@ func (w *Wiring) Execute(opts core.RunOptions) int {
 		code = fail(w.Env, err)
 	} else {
 		w.startTUI()
-		var err error
-		var empty bool
-		if opts, empty, err = w.unblock(ctx, opts); err != nil {
-			code = fail(w.Env, err)
-		} else if empty {
-			code = 0
-		} else {
-			code = w.Loop.Run(ctx, opts)
-		}
+		code = w.run(ctx, opts)
 	}
 	if err := w.Dog.Stop(); err != nil {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: close watchdog: %v\n", err)
@@ -270,6 +271,20 @@ func (w *Wiring) Execute(opts core.RunOptions) int {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: clear current: %v\n", err)
 	}
 	return code
+}
+
+func (w *Wiring) run(ctx context.Context, opts core.RunOptions) int {
+	kept, deferrals, finished, err := w.unblock(ctx, opts)
+	if err == nil && !finished {
+		opts, finished, err = w.triage(ctx, opts, kept, deferrals)
+	}
+	switch {
+	case err != nil:
+		return fail(w.Env, err)
+	case finished:
+		return 0
+	}
+	return w.Loop.Run(ctx, opts)
 }
 
 func Wire(opts Options, env Env) (*Wiring, error) {
@@ -428,7 +443,7 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	w.Watch.PhaseCheck = &core.PhaseCheck{Dog: w.Dog, Repo: w.Loop.Sessions.Repo, Timeout: wd.CheckTimeout, Backlog: w.Plan.Backlog}
 	w.Router.Dog = w.Dog
 	w.Watch.Router = w.Router
-	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume})
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate})
 	return nil
 }
 

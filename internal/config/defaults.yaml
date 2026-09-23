@@ -61,6 +61,7 @@ watchdog:
   remedyWindow: 10m
   checkTimeout: 10m
   unblockTimeout: 2h
+  triageTimeout: 2h
   stallGrace: 2m
   overtimeFactor: 2
   diffFactor: 3

@@ -43,7 +43,11 @@ func (c *PhaseCheck) Run(ctx context.Context, ph Phase, base string) CheckOutcom
 
 func checkText(ph Phase, worktree, base string, backlog bool) string {
 	if backlog {
-		return fmt.Sprintf("check phase %s worktree %s base %s\nBacklog item: an issues file names no files and no risk\n\n%s", ph.ID, worktree, base, ph.Block)
+		line := "Backlog item: an issues file names no files and no risk"
+		if len(ph.Members) > 0 {
+			line = fmt.Sprintf("Backlog group: items %s fixed by one change; an issues file names no files and no risk", strings.Join(ph.Members, ", "))
+		}
+		return fmt.Sprintf("check phase %s worktree %s base %s\n%s\n\n%s", ph.ID, worktree, base, line, ph.Block)
 	}
 	files, risk := strings.Join(ph.Files, ", "), ph.Risk
 	if files == "" {

@@ -55,7 +55,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   not states: a step stays `running` through them, and each round is recorded as events.
 - **Types** — `StepKey{Run string; Phase string; Kind string; Attempt int}` ·
   `Phase{ID string; Title string; Implements []string; DependsOn []string; Files []string; Risk
-  string; Items []Item; DoneWhen string; Milestone int; Block string}` (`ID` is the heading label,
+  string; Items []Item; DoneWhen string; Milestone int; Block string; Members []string}` (`Members`
+  is set only on a backlog group of two or more items, ADR-78; `TickIDs()` returns `Members`, else
+  `[ID]`. `ID` is the heading label,
   `\d+[a-z]?` lowercased with leading zeros dropped — `10`, or `10a` for a phase inserted after 10;
   every phase reference below is that label, so the run dir is `phase-10a/`. Labels run in
   document order, fail-closed: no duplicate, the first is `1`, a bare number is the previous
@@ -81,8 +83,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   Events []Event; Warnings []string; Spans map[StepKey]StepSpan}` · `StepSpan{Started, Ended
   time.Time}` — a step's first `running` record (the moment `Watch.StepStarted` fires) to its `ok`/`failed` record, replayed from the step log.
 - **Ports** (interfaces in `internal/core`, each with a fake in `internal/core/fakes_test.go`):
-  - `PlanSource`: `Read(path) (Plan, error)` · `Tick(path, phase string) error` (the `Stamp` method was removed
-    with ADR-72: the watchdog writes the stamp); `Plan{Path, Topic string; Phases []Phase; Milestones
+  - `PlanSource`: `Read(path) (Plan, error)` · `Tick(path string, ph Phase) error` (the whole phase,
+    so a backlog group ticks every member; the `Stamp` method was removed
+    with ADR-72: the watchdog writes the stamp); `Plan{Path, Topic string; Backlog bool; Phases []Phase; Milestones
     []Milestone; ResolveFirst []Entry}`.
   - `SessionHost`: `Reachable() error` · `Open(OpenSpec{CWD, Label string; Env
     map[string]string}) (Workspace{ID, RootPane string}, error)` · `Start(pane, name, kind
@@ -182,7 +185,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `unattended.allow [deps, ports, locks, restart, retry, provider]`, applied only with
   `--unattended`;
   `watchdog.maxRestarts 2`; `watchdog.provider claude`, `watchdog.model opus`,
-  `watchdog.effort high`, `watchdog.unblockTimeout 2h`, `watchdog.allow []`, `watchdog.remedyWindow 10m`,
+  `watchdog.effort high`, `watchdog.unblockTimeout 2h`, `watchdog.triageTimeout 2h`, `watchdog.allow []`, `watchdog.remedyWindow 10m`,
   `watchdog.checkTimeout 10m`, `watchdog.stallGrace 2m`,
   `watchdog.overtimeFactor 2`, `watchdog.diffFactor 3`; `notify.onHalt/onWarn/onDone ""`. A
   flow-style YAML node is rejected naming the line; an unknown key is rejected naming the key and
@@ -503,9 +506,19 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Stop** — `ctrl+c` on a live run asks `stop the run? … [y/n]`; `y` marks the run aborted,
   exactly as `r-loop abort` does (the live step's session and worktree are left for resume); any
   other key cancels. Before a run exists `y` only says `stopping before the run starts`.
-- **Dry run** — after the run list, each open `## Resolve first` entry that blocks a phase in it
-  is named: `open ## Resolve first: "<name>" blocks phase <n> — the run will ask for it` (TUI) or
-  `… the run refuses until it is resolved: /r:plan-unblock <todo>` (`--plain`).
+- **Dry run** — `--dry-run` always prints plain lines and starts no session. After the banner and
+  `run list:` (one line per phase and its pipeline), a backlog item with no criteria gets
+  `warning: phase N has no acceptance criteria…`, and each open `## Resolve first` entry that
+  blocks a phase in it is named: `open ## Resolve first: "<name>" (<kind>) blocks phase <n> — <then>`.
+  Then the Go-only triage table, `core.RenderTriage(view, nil)` over the list left after
+  `DeferBlocked`: for a plan `Plan: <path> — <n> phases, <n> already done, running <ids>`, the
+  table `Phase | Title | Risk | Milestone | Wave | Files | Done when` (no Verified column),
+  `Plan check: <n> notes` and the notes (or `no notes`), `Resolve first: <entry> → phases <ids>`
+  (or `none outstanding`), the cost line `<n> phases: <n> step sessions (<kinds>), up to <n> review
+  rounds` and `Milestones completed by this run: …`; for a backlog `Backlog: <path> (<n> items)`, an
+  `Item | Title` table and `<n> items: up to <n> phases, up to <n> review rounds`. Both end
+  `verification: not run (--dry-run starts no sessions)`. A plan-check stop exits 2 before any of
+  it.
 
 ## Milestone 7 — The watchdog
 
@@ -661,8 +674,9 @@ and the driver validates that argv before anything of a run exists.
   `Title` = its text verbatim; `Items` = its indented list lines, or the title when it has none;
   no `DependsOn`, `Files`, `DoneWhen`, `Milestone`. `Topic` = file name without extension. No items →
   error (exit 2).
-- **Tick** — rewrites the item line's `[ ]` to `[x]` (box-less items keep their text) and appends
-  `  <!-- fixed: r-loop/phase-N -->`; an item already done → `ErrNothingToTick`.
+- **Tick** — rewrites each of `ph.TickIDs()`' item lines' `[ ]` to `[x]` (box-less items keep their
+  text) and appends `  <!-- fixed: r-loop/phase-<ph.ID> -->`, all in one write; any member already
+  done → `ErrNothingToTick` and nothing is written.
 - **Checks** — `files-outside-plan` and `foreign-test-edit` are quiet when `Phase.Files` is empty.
 - **Item gate** — `SessionManager.ItemGates` (= `Plan.Backlog`) sets `EvidenceContext.NeedGate` for a
   phase with no `Done when:`; `plan-file` then requires `## Gate` holding exactly one code span
@@ -695,8 +709,12 @@ and the driver validates that argv before anything of a run exists.
   watchdog is a full session for judgement. It is always on (no `--no-watchdog`), and its row is
   `watchdog.{provider, model, effort}`.
 - **Order in `Execute`** — `Ask.Serve` → `startWatchdog` (exit 4 on failure) → `startTUI` →
-  `unblock` → `Loop.Run`, which starts `ServeQuestions`. `Preflight` creates and binds the run first; `recordRunList` is written by
-  `unblock`, after deferral. `recordedRunList` reads the last `run-list` event.
+  `unblock` → `triage` → `Loop.Run`, which starts `ServeQuestions`. `Preflight` creates and binds
+  the run first. `unblock` returns the kept phases and the deferrals; `triage` writes the
+  `run-list` event (`recordRunList(kept, groups)`), after its gate. `recordedRunList` reads the
+  last `run-list` event and `recordedGroups` its `groups`. On resume, a recorded `run-list` sets
+  `Wiring.Triaged`: the groups are rebuilt with `core.GroupBacklog` and triage is skipped, only
+  re-recording the run list; with none, the run never passed its gate and triages again.
 - **Sorting** — `plan.classify(head, owner)` sets `Entry.Kind`: `person` when the owner matches
   legal|finance|procurement|hr|people|compliance|security council or a person pattern matches,
   else `decision` on a decision pattern, else `unclassified` (treated as a person's). `Entry` also
@@ -716,8 +734,8 @@ and the driver validates that argv before anything of a run exists.
   `docs: resolve <n> plan blockers`, an `entry-resolved {entry, resolved}` event per newly ticked
   entry, and the new plan swapped into `Loop`, `Gate.Boundary`, `Watch` and `Probe`.
 - **Deferral** — `core.DeferBlocked(plan, list)` drops, for each still-open blocking entry, the
-  phases it blocks and their dependents (`core.Dependents`), records `entry-deferred {entry,
-  phases}` and writes the new run list. An empty result finishes the run with exit 0.
+  phases it blocks and their dependents (`core.Dependents`) and records `entry-deferred {entry,
+  phases}`; the run list is written after triage. An empty result finishes the run with exit 0.
   `--unattended` skips the walk and defers.
 - **Report** — `## Blockers` lists `<entry> → <resolved>` and `<entry> still open: phase <list>
   skipped`.
@@ -736,3 +754,68 @@ and the driver validates that argv before anything of a run exists.
   `propose_remedy` and `restart_step` take `maintainer_said`, the maintainer's reply, quoted; an
   off-list class without it returns `ask` and records nothing, and a non-fallback provider is
   refused with the same instruction.
+
+## Triage (ADR-77, ADR-78)
+
+- **Plan check** — `core.CheckPlan(Plan) PlanFindings{Notes, Stops []string}`, run by
+  `Wiring.checks` into `Wiring.Findings` (a backlog has none). Stop, exit 2 in preflight and the
+  dry run: a phase with no checklist items (duplicate and missing numbers stay stops in the plan
+  reader). Notes, shown in the table: more than 12 open items; no `Done when:`, or one with no
+  runnable command; no `Implements:`; a risk word (auth, money, persistence, concurrency, security,
+  migration, payment) without `Risk:`; no `Depends on:`; a forward or self dependency; a cycle; two
+  phases in one wave sharing a `Files:` path. `core.Waves(Plan) (map[string]int, []string)` is the
+  longest path over `Depends on`, and the phases in a cycle.
+- **Types** (`internal/core/triage.go`) — `PhaseVerdict{Phase, Status, Note}` with `Status ∈
+  {build, already-done, blocked}` · `ItemVerdict{ID, Title, Verdict, Category, Confidence,
+  RootCause (root_cause_or_scope), Touches []string, Risk, SkipReason}` with `Verdict ∈ {fix, skip}`,
+  `Category ∈ {bug, feature, chore, question, docs, duplicate, stale, not-enough-info}`,
+  `Confidence ∈ {low, medium, high}`, `Risk ∈ {cosmetic, local, deep}` · `Group{ID (group_id),
+  Items []string, Subsystem, Risk, Rationale, Confidence}` (Risk is the highest member's, Confidence
+  the lowest, both set by the driver) · `Triage{Phases, Items, Groups, Dropped}` ·
+  `GateDecision{Decision, Drop []string, Split []Split{Group, Into [][]string}, Merge [][]string,
+  MaintainerSaid}` with `Decision ∈ {go, revise, abort}` · `TriageView{Plan, List, Checks,
+  Deferrals, Kinds}`.
+- **Functions** — `TriageText(plan, list, ask)` is the request: `triage plan <path> phases <ids>.`
+  or `triage backlog <path> items <ids>.`, then whether to ask. `ValidateTriage(plan, list, t,
+  cite)` refuses, with the reason: a verdict missing, twice or for an ID not in the list; a value
+  outside its enum; `already-done`, `blocked` without a note; an `already-done` note, or a `stale`
+  or `duplicate` `skip_reason`, citing no `path:line` that `core.CheckCitation` finds in the primary
+  tree; a fix with no `touches`; a skip with no `skip_reason`; a group with no ID, a duplicate ID, no
+  items, two or more items and no rationale, a skip, or a member in two groups; a group mixing
+  `cosmetic` and `deep`; a fix in no group. `ApplyGate(plan, list, t, g)` needs `maintainer_said`;
+  a plan takes `drop` only, a backlog `drop` (an item or a group), `split` (parts named
+  `<group>.<n>`) and `merge`, then validates again. `TriageResult(plan, list, t) (kept, skipped
+  []Event, groups)`: for a plan, already-done, blocked and dropped phases leave, and blocked and
+  dropped take their `core.Dependents`; for a backlog, skips and dropped items leave and the groups
+  are folded with `GroupBacklog`. `GroupBacklog(plan, groups)` is pure: a group of two or more
+  becomes the phase of its lowest member, with `Members`, `Title` `<subsystem> (items <ids>)`,
+  `Items` each prefixed `#<id>` and the member blocks joined; `Files` and `Risk` are not taken from
+  `touches`. `RenderTriage(view, *Triage) (summary, table)`; a nil triage is the dry run's table.
+- **Tools** (watchdog surface, `askmcp.WatchdogHandlers.SubmitTriage/SubmitGate`) —
+  `submit_triage{phases?, items?, groups?}` and `submit_gate{decision, drop?, split?, merge?,
+  maintainer_said}`, each returning `{accepted, reason?, table?}`; with no triage open, `no triage
+  is open`. `submit_gate` is refused when the run does not ask (`--unattended`, `--yes`) and before
+  a `submit_triage` is accepted. An accepted `submit_triage` that does not ask ends the triage as
+  `go`.
+- **Flow** (`app.Wiring.triage`) — with nothing to run, or `Triaged` on resume, only the run list
+  is recorded. Otherwise it records `triage-start {kind, phases}`, sends `TriageText` with
+  `Dog.Notify(…, false, watchdog.triageTimeout)`, and polls every 100 ms for the tools' end,
+  `Store.Aborted`, `Dog.Gone()`, the timeout and ctx. Each accepted submission writes
+  `triage.json` and `triage.md` in the run directory and emits `triage {summary, table, path}`. On
+  `go` it records one `triage-skipped {phase, status, reason}` per phase or item left out, writes
+  `gate.json` (`{decision, by: maintainer|yes|unattended, maintainer_said, triage}`, with
+  `maintainer_said` present only when the maintainer answered), swaps in the grouped plan
+  (`setPlan`) and records `run-list {phases, groups}`; nothing left → exit 0. Left-out phases are
+  never ticked.
+- **Exit codes** — timeout (`the watchdog did not finish triage within <d>; r-loop resume triages
+  again`) or ctx → 4; the watchdog gone → 5; `abort` at the gate or `r-loop abort` → the run marked
+  aborted and exit 1. None records a `run-list`, so resume triages again.
+- **Config** — `watchdog.triageTimeout` (duration, default `2h`). Flag `--yes` on the run and on
+  `r-loop resume`: triage runs, the gate is skipped.
+- **Faces** — plain prints the `triage` table in full, each `triage-skipped`, and
+  `run list: 3 (items 3, 5, 7), 9`; the TUI shows the summary in the feed and, on a `run-list`
+  with groups, merges member rows into the group's row. `r-loop status` shows a group as one row.
+- **Groups downstream** — `StepVars.GroupItems` turns on a paragraph in `plan.md`, `implement.md`
+  and `review.md`: every member's criteria are obligations, `## Gate` runs every member's tests,
+  `status: already-done` holds only when every member is done. The phase check sends a
+  `Backlog group: items <ids> fixed by one change` line in place of `Backlog item`.

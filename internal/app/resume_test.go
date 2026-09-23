@@ -192,6 +192,8 @@ func (f *fixture) sim(w *Wiring, sim *simHost) *landRecorder {
 	w.Loop.Sessions.Host = sim
 	w.Loop.Sessions.Poll = 5 * time.Millisecond
 	w.Dog.Host = answeringDog(w, "sqlite", "docs/topic/todo.md:1")
+	triagers.Store(core.WatchdogName(w.Loop.RunID), w)
+	w.Config.Watchdog.TriageTimeout = 10 * time.Second
 	w.Loop.RemedyWindow = 0
 	lander := &landRecorder{st: w.Store}
 	w.Loop.Lander = lander
@@ -752,7 +754,7 @@ func TestResumeUsageNamesEveryFlag(t *testing.T) {
 
 	code := f.main("resume", "--bogus")
 
-	if code != 2 || !strings.Contains(f.err.String(), "usage: r-loop resume [--replan] [--unattended] [--plain]") {
+	if code != 2 || !strings.Contains(f.err.String(), "usage: r-loop resume [--replan] [--unattended] [--yes] [--plain]") {
 		t.Fatalf("code=%d stderr=%q", code, f.err)
 	}
 }

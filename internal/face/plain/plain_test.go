@@ -163,3 +163,50 @@ func TestStepEventWithoutDetailHasNoTrailingSpace(t *testing.T) {
 		t.Fatalf("got %q, want %q", out.String(), want)
 	}
 }
+
+func TestTriagePrintsTheSummaryThenTheWholeTable(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+	table := "| Phase | Title |\n|---|---|\n| 3 | three |\n"
+
+	f.Emit(core.Event{At: at, Kind: "triage-start", Fields: map[string]string{"kind": "plan", "phases": "3, 9"}})
+	f.Emit(core.Event{At: at, Kind: "triage", Fields: map[string]string{"summary": "1 phase to run", "table": table}})
+	f.Emit(core.Event{At: at, Kind: core.TriageSkipped, Phase: "9", Fields: map[string]string{"reason": "already done: a.go:3"}})
+
+	want := "14:03:09  triage: watchdog verifying 2 phases\n14:03:09  triage: 1 phase to run\n" + table + "14:03:09  phase 9  skipped by triage: already done: a.go:3\n"
+	if out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
+func TestTheRunListNamesAGroupsItems(t *testing.T) {
+	for _, tc := range []struct {
+		name, groups, want string
+	}{
+		{"groups", `[{"group_id":"g1","items":["7","3","5"],"subsystem":"x"},{"group_id":"g2","items":["9"],"subsystem":"y"}]`, "run list: 3 (items 3, 5, 7), 9\n"},
+		{"ids", "", "run list: 3, 9\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			f := &Face{Out: &out}
+
+			f.Emit(core.Event{At: at, Kind: "run-list", Fields: map[string]string{"phases": "3,9", "groups": tc.groups}})
+
+			if out.String() != tc.want {
+				t.Fatalf("got %q, want %q", out.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestTriageStartCountsOneItemInTheSingular(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	f.Emit(core.Event{At: at, Kind: "triage-start", Fields: map[string]string{"kind": "plan", "phases": "3"}})
+	f.Emit(core.Event{At: at, Kind: "triage-start", Fields: map[string]string{"kind": "backlog", "phases": "4"}})
+
+	if want := "14:03:09  triage: watchdog verifying 1 phase\n14:03:09  triage: watchdog verifying 1 item\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}

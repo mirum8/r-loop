@@ -306,6 +306,10 @@ func (d *Watchdog) lazy() {
 	}
 }
 
+func (d *Watchdog) Gone() bool {
+	return !d.live()
+}
+
 func (d *Watchdog) live() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()

@@ -3,6 +3,7 @@ package plain
 import (
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -38,6 +39,18 @@ func (f *Face) Emit(ev core.Event) {
 		}
 	case "phase-check-start", "phase-check", "phase-check-timeout", "phase-check-skipped":
 		fmt.Fprintf(f.Out, "%s  phase %s  phase check  %s\n", ev.At.Format("15:04:05"), ev.Phase, checkDetail(ev))
+	case "triage-start":
+		noun := "phase"
+		if ev.Fields["kind"] == "backlog" {
+			noun = "item"
+		}
+		fmt.Fprintf(f.Out, "%s  triage: watchdog verifying %s\n", ev.At.Format("15:04:05"), core.Plural(len(strings.Split(ev.Fields["phases"], ", ")), noun))
+	case "triage":
+		fmt.Fprintf(f.Out, "%s  triage: %s\n%s", ev.At.Format("15:04:05"), ev.Fields["summary"], ev.Fields["table"])
+	case core.TriageSkipped:
+		fmt.Fprintf(f.Out, "%s  phase %s  skipped by triage: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["reason"])
+	case "run-list":
+		fmt.Fprintf(f.Out, "run list: %s\n", runList(ev.Fields))
 	case "warning", "error":
 		fmt.Fprintf(f.Out, "!  %s%s\n", where(ev.Phase, ev.Step), ev.Fields["reason"])
 	case "review-find":
@@ -71,6 +84,31 @@ func (f *Face) Close() {
 	if f.Report != "" {
 		fmt.Fprintf(f.Out, "report: %s\n", f.Report)
 	}
+}
+
+func runList(fields map[string]string) string {
+	heads := map[string][]string{}
+	for _, g := range core.RunListGroups(fields) {
+		ids := slices.Clone(g.Items)
+		slices.SortFunc(ids, core.ComparePhaseIDs)
+		if len(ids) > 1 {
+			heads[ids[0]] = ids
+		}
+	}
+	var parts []string
+	for _, id := range strings.Split(fields["phases"], ",") {
+		if id == "" {
+			continue
+		}
+		if members, ok := heads[id]; ok {
+			id = fmt.Sprintf("%s (items %s)", id, strings.Join(members, ", "))
+		}
+		parts = append(parts, id)
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func where(phase, step string) string {

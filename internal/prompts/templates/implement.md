@@ -5,6 +5,10 @@ Work in the worktree `{{.Worktree}}` (branch `{{.Branch}}`, cut from `{{.Base}}`
 {{.PhaseBlock}}
 
 A `Resolved first:` list under the phase records decisions the maintainer has already taken: follow each `Resolved:` line and never ask about it again.
+{{- if .GroupItems}}
+
+This phase fixes backlog items {{.GroupItems}} with one change. Every member's criteria are obligations, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done.
+{{- end}}
 
 1. Read the plan at `{{.PlanPath}}` first. It is the contract for this step.
 2. Write the tests from its `## Tests` section before any production code, and see them fail for the right reason.

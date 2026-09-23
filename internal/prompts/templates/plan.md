@@ -13,6 +13,10 @@ A `Resolved first:` list under the phase records decisions the maintainer has al
 Its open items:
 
 {{.Criteria}}
+{{- if .GroupItems}}
+
+This phase fixes backlog items {{.GroupItems}} with one change. Every member's criteria are obligations, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done.
+{{- end}}
 {{- if .PhaseWarnings}}
 
 ## The watchdog's phase check warned:

@@ -54,13 +54,13 @@ const todoText = "# Plan\n\n## Milestone 1 — The core\n\n### Phase 1 — First
 
 type tickPlan struct {
 	root  string
-	ticks []string
+	ticks [][]string
 }
 
 func (p *tickPlan) Read(path string) (core.Plan, error) { return core.Plan{}, nil }
 
-func (p *tickPlan) Tick(path, phase string) error {
-	p.ticks = append(p.ticks, phase)
+func (p *tickPlan) Tick(path string, ph core.Phase) error {
+	p.ticks = append(p.ticks, ph.TickIDs())
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(p.root, path)
 	}
@@ -68,8 +68,11 @@ func (p *tickPlan) Tick(path, phase string) error {
 	if err != nil {
 		return err
 	}
-	box := fmt.Sprintf("- [ ] p%s ", phase)
-	return os.WriteFile(path, []byte(strings.ReplaceAll(string(data), box, fmt.Sprintf("- [x] p%s ", phase))), 0o644)
+	text := string(data)
+	for _, id := range ph.TickIDs() {
+		text = strings.ReplaceAll(text, fmt.Sprintf("- [ ] p%s ", id), fmt.Sprintf("- [x] p%s ", id))
+	}
+	return os.WriteFile(path, []byte(text), 0o644)
 }
 
 type memStore struct {
@@ -279,6 +282,34 @@ func TestLandGatePassesOnlyBecauseItRunsAfterTheMerge(t *testing.T) {
 	}
 	if _, err := os.Stat(e.worktree(1)); err != nil {
 		t.Errorf("phase worktree removed: %v", err)
+	}
+}
+
+func TestLandGateTicksEveryGroupMemberInTheOneLandingCommit(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	before := e.head()
+	group := phaseOne("")
+	group.Members = []string{"1", "2"}
+
+	landing, err := e.gate().Land(context.Background(), group)
+
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if len(e.plan.ticks) != 1 || !slices.Equal(e.plan.ticks[0], []string{"1", "2"}) {
+		t.Errorf("ticks = %v, want one call with [1 2]", e.plan.ticks)
+	}
+	todo := readFile(t, e.todo)
+	if !strings.Contains(todo, "- [x] p1 item") || !strings.Contains(todo, "- [x] p2 item") {
+		t.Errorf("members not ticked:\n%s", todo)
+	}
+	if landing.MergeSHA != e.head() || gitCmd(t, e.root, "rev-parse", "HEAD^1") != before {
+		t.Errorf("landing %+v is not one commit on %s", landing, before)
+	}
+	touched := strings.Fields(gitCmd(t, e.root, "show", "--name-only", "--format=", "--diff-merges=first-parent", "HEAD"))
+	if !slices.Equal(touched, []string{"docs/demo/todo.md", "feature.txt"}) {
+		t.Errorf("landing commit touches %v", touched)
 	}
 }
 

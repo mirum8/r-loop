@@ -74,6 +74,10 @@ func (r *QuestionRouter) rejectCitation(citation string) string {
 	if citation == maintainerCitation {
 		return ""
 	}
+	return CheckCitation(r.Repo.Root(), citation)
+}
+
+func CheckCitation(root, citation string) string {
 	if citation == "" {
 		return "citation is empty: cite path:line, or maintainer once the maintainer answered in your session"
 	}
@@ -87,7 +91,7 @@ func (r *QuestionRouter) rejectCitation(citation string) string {
 	if path == ".r-loop" || strings.HasPrefix(path, ".r-loop/") {
 		return fmt.Sprintf("citation %s is under .r-loop/", path)
 	}
-	info, err := os.Stat(filepath.Join(r.Repo.Root(), path))
+	info, err := os.Stat(filepath.Join(root, path))
 	if err != nil || !info.Mode().IsRegular() {
 		return fmt.Sprintf("citation %s is not a file in the primary tree", path)
 	}

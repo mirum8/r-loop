@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -46,9 +47,9 @@ func (f *fakePlanSource) Read(path string) (Plan, error) {
 	return f.Plan, f.Err
 }
 
-func (f *fakePlanSource) Tick(path, phase string) error {
-	f.record("PlanSource.Tick %s %s", path, phase)
-	f.Ticks = append(f.Ticks, phase)
+func (f *fakePlanSource) Tick(path string, ph Phase) error {
+	f.record("PlanSource.Tick %s %s", path, strings.Join(ph.TickIDs(), ","))
+	f.Ticks = append(f.Ticks, ph.TickIDs()...)
 	return f.Err
 }
 

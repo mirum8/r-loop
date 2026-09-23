@@ -17,8 +17,9 @@ after the last review round.
 r-loop does not trust what an agent says. It checks real evidence on disk: the plan file, the
 diff and the review verdict.
 
-One more agent, the **watchdog**, runs for the whole run. It watches the steps, answers the
-agents' questions, and asks you when it cannot answer. It is the only agent that talks to you.
+One more agent, the **watchdog**, runs for the whole run. Before the first phase it checks the
+work against the code and shows you a table of what will run. Then it watches the steps, answers
+the agents' questions, and asks you when it cannot answer. It is the only agent that talks to you.
 
 ## Requirements
 
@@ -43,7 +44,7 @@ state.
 ## Quick start
 
 ```sh
-r-loop docs/my-feature/todo.md --dry-run   # check the plan and config, run nothing
+r-loop docs/my-feature/todo.md --dry-run   # check the plan and config, print the table, run nothing
 r-loop docs/my-feature/todo.md             # run every open phase
 ```
 
@@ -68,11 +69,29 @@ A `## Resolve first` section lists open questions and paperwork that block phase
 of a run, the watchdog walks through these entries with you. Phases blocked by an entry that is
 still open are skipped for this run.
 
+r-loop checks the plan before it runs. A phase with no `- [ ]` items stops the run (exit 2).
+Other problems are notes in the table: a phase with more than 12 open items, no `Done when:` or
+one with no command, no `Implements:`, a risky topic with no `Risk:` line, no `Depends on:`, a
+dependency on a later phase or a cycle, and two phases of one wave that change the same file.
+
+Then the watchdog reads each phase against the code: still to **build**, **already done** (it
+must cite the line that shows it), or **blocked**. It shows you the table in its pane and asks:
+go, drop phases, or abort. Already-done and blocked phases are left out of the run, and so are the
+phases that depend on a blocked one. r-loop does not tick an already-done phase.
+
 **Issues file** — any markdown file with no `### Phase` heading, such as a backlog. Each
-top-level list item is one "phase". Items marked `[x]`, crossed out or tagged
-`<!-- fixed: … -->` are done. An issue has no `Done when:` line, so the plan step must write a
-test command for it. At land time this test must fail on the old code and pass on the new code,
-and the project's full test suite must also pass.
+top-level list item is one issue, numbered by its place in the file. Items marked `[x]`, crossed
+out or tagged `<!-- fixed: … -->` are done.
+
+Before the first phase, the watchdog verifies each open issue against the code: fix it, or skip
+it (stale, duplicate, not code work, …) with a reason. It groups the fixes that touch the same
+code at a similar risk, and never puts a cosmetic fix with a deep one. Each group is one phase,
+named after its lowest issue number, and lands in one commit that ticks every issue in it. You
+see the groups in a table and can go, drop, split, merge or abort.
+
+An issue has no `Done when:` line, so the plan step must write a test command for it (one for the
+whole group). At land time this test must fail on the old code and pass on the new code, and the
+project's full test suite must also pass.
 
 ## Command line
 
@@ -80,7 +99,7 @@ and the project's full test suite must also pass.
 r-loop <todo.md> [flags]
 r-loop <free text> [flags]
 r-loop status [--plain]
-r-loop resume [--replan] [--unattended] [--plain]
+r-loop resume [--replan] [--unattended] [--yes] [--plain]
 r-loop abort
 r-loop --create-config
 r-loop --version
@@ -95,9 +114,10 @@ r-loop --version
 | `--provider <step>=<name>` | Use another provider for one step, for example `--provider implement=claude`. If you name the step's fallback, the fallback and the main provider swap. |
 | `--model <step>=<model>` | Use another model for one step. |
 | `--effort <step>=<level>` | Use another effort level for one step. |
-| `--unattended` | Run with no person present. Skip the `## Resolve first` walk. Allow the remedies in `unattended.allow` without asking. |
+| `--unattended` | Run with no person present. Skip the `## Resolve first` walk and the question after the triage table (the watchdog still verifies the work). Allow the remedies in `unattended.allow` without asking. |
+| `--yes` | Start right after the triage without asking you. The watchdog still verifies the work, and a phase or issue it finds done or blocked is still left out. |
 | `--plain` | Print plain text lines instead of the full-screen TUI. Plain is also used when stdin or stdout is not a terminal. |
-| `--dry-run` | Check the plan, config, prompts and tools, print the banner and the run list, then stop. |
+| `--dry-run` | Check the plan, config, prompts and tools, print the banner, the run list, the plan-check notes and the table, then stop. It starts no session, so the table ends with `verification: not run`. |
 
 A phase is named by its heading label: `10`, or `10a` for a phase inserted after 10 (`--phases 10a,10b`, `--from 10a`). Order is the order of the headings in the plan.
 
@@ -117,14 +137,15 @@ intake session in herdr (the `intake:` row). The session finds the plan, works o
 and shows you the full command. Say yes, and r-loop checks the command the same way as a typed
 one. It prints `r-loop: resolved: r-loop <argv>` and starts that run. If the command is wrong
 (a ticked phase, an unknown step), the session gets the reason and asks you again.
-`--unattended` skips the confirmation. Ctrl-C cancels (exit 2).
+With `--unattended`, the intake session starts the command without asking you. Ctrl-C cancels
+(exit 2).
 
 ### Subcommands
 
 | Command | Meaning |
 |---|---|
 | `status` | Show the current or last run: phases, steps, questions. |
-| `resume` | Continue the last halted run. Landed phases and finished steps are skipped. The step that stopped runs again as a new attempt. |
+| `resume` | Continue the last halted run. Landed phases and finished steps are skipped. The step that stopped runs again as a new attempt. A run that stopped before you confirmed its table is triaged again; one that passed it keeps its run list and groups. |
 | `resume --replan` | Also run the phase's `plan` step again before the step that failed. The failure reason goes into the new plan. |
 | `abort` | Stop the live run. The run can be resumed later. |
 
@@ -133,11 +154,11 @@ one. It prints `r-loop: resolved: r-loop <argv>` and starts that run. If the com
 | Code | Meaning |
 |---|---|
 | `0` | All phases landed, or nothing was left to run. |
-| `1` | A step failed, or the run was aborted. |
+| `1` | A step failed, or the run was aborted (also at the triage question). |
 | `2` | Bad usage, bad config or plan, or a git state problem. |
 | `3` | A step stalled (no activity) and then failed. |
-| `4` | Preflight refused to start: dirty tree, herdr not reachable, watchdog did not start, and similar. |
-| `5` | The watchdog halted the run. |
+| `4` | Preflight refused to start: dirty tree, herdr not reachable, watchdog did not start, and similar. Also: the triage did not finish within `watchdog.triageTimeout`, or was interrupted. |
+| `5` | The watchdog halted the run, or is gone (also during the triage). |
 | `127` | `git` or `herdr` was not found. |
 
 When a run halts, r-loop prints `r-loop resume`. The exit code comes from the first blocked
@@ -222,6 +243,7 @@ The `ui` reviewer runs the project's `/test-app` skill (claude, opus, high). It 
 | `remedyWindow` | `10m` | How long a failed step waits for a remedy before its phase is blocked. |
 | `checkTimeout` | `10m` | Time limit for the watchdog's check of a phase before it starts. |
 | `unblockTimeout` | `2h` | Time limit for the `## Resolve first` walk. Entries still open are deferred. |
+| `triageTimeout` | `2h` | Time limit for the triage: the watchdog's check of the run list and your answer to the table. On timeout the run stops (exit 4) and `r-loop resume` triages again. |
 | `stallGrace` | `2m` | Quiet time before a step counts as stalled and gets one nudge. If it is still quiet after one more `stallGrace`, it fails. |
 | `overtimeFactor` | `2` | Warn when a step runs longer than this many times the longest landed step of the same kind. |
 | `diffFactor` | `3` | Warn when a diff is bigger than this many times the largest landed phase. |
@@ -304,6 +326,7 @@ Each run lives in `.r-loop/runs/<runID>/`:
 - `events.jsonl`, `questions.jsonl`, `signals.jsonl`, `remedies.jsonl` — append-only run state
 - `config.resolved.yaml` — the config this run used
 - `report.md` — what happened, updated after every change
+- `triage.json`, `triage.md`, `gate.json` — the watchdog's verdicts, the table you saw, and the decision
 - `phase-<N>/` — step logs, sentinels, review findings and verdicts
 
 Phase plans are written to `.task-plans/phase-<N>-<title>.md` and committed with the phase.
