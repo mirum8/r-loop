@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -14,17 +15,18 @@ import (
 
 type reviewRig struct {
 	*rig
-	worker   *Session
-	reviews  []map[string]any
-	behave   func(vars map[string]any)
-	resolved [][]string
-	noReview map[string]bool
-	fixes    []map[string]any
-	onFix    func(vars map[string]any)
+	worker    *Session
+	reviews   []map[string]any
+	behave    func(vars map[string]any)
+	resolved  [][]string
+	noReview  map[string]bool
+	reviewCmd map[string]string
+	fixes     []map[string]any
+	onFix     func(vars map[string]any)
 }
 
 func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
-	r := &reviewRig{rig: newRig(t), noReview: map[string]bool{}}
+	r := &reviewRig{rig: newRig(t), noReview: map[string]bool{}, reviewCmd: map[string]string{}}
 	r.sm.Prompts = promptsFunc(func(name string, vars map[string]any) (string, string, error) {
 		if name != "review" && name != "review-ui" && name != "fix" {
 			return "do phase 3", "embedded", nil
@@ -52,6 +54,9 @@ func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
 		review := "/" + provider + "-review"
 		if r.noReview[provider] {
 			review = ""
+		}
+		if cmd := r.reviewCmd[provider]; cmd != "" {
+			review = cmd
 		}
 		var args []string
 		if model != "" {
@@ -97,8 +102,20 @@ func (r *reviewRig) callsFrom(prefixes ...string) []string {
 
 func writeReview(t *testing.T, vars map[string]any, outcome string, findings int) {
 	t.Helper()
-	provider := strings.TrimPrefix(vars["ReviewCommand"].(string), "/")
-	provider = strings.TrimSuffix(provider, "-review")
+	if vars["prompt"] == "review" {
+		if err := os.MkdirAll(vars["ArtifactsDir"].(string), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(vars["ArtifactsDir"].(string), "native-review.txt"), []byte("native review output\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFindings(t, vars, outcome, findings)
+}
+
+func writeFindings(t *testing.T, vars map[string]any, outcome string, findings int) {
+	t.Helper()
+	provider := findingsName.FindStringSubmatch(filepath.Base(vars["FindingsPath"].(string)))[1]
 	var items []string
 	for i := 1; i <= findings; i++ {
 		items = append(items, fmt.Sprintf(`{"id":"%s-r%d-%d","title":"t","detail":"d","files":["a.go"]}`, provider, vars["Round"], i))
@@ -110,6 +127,128 @@ func writeReview(t *testing.T, vars map[string]any, outcome string, findings int
 	sentinel := `{"outcome":"` + outcome + `","reason":""}`
 	if err := os.WriteFile(vars["Sentinel"].(string), []byte(sentinel), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNativeReviewCommandPointsAtTheOutputFileInItsArtifactsDir(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"}, Reviewer{Provider: "claude"})
+	r.reviewCmd["codex"] = "codex exec review --uncommitted -o {output}"
+	r.behave = func(vars map[string]any) {
+		if _, err := os.Stat(vars["ArtifactsDir"].(string)); err != nil {
+			t.Fatal(err)
+		}
+		writeReview(t, vars, "ok", 0)
+	}
+	if out := r.run(); out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	want := "codex exec review --uncommitted -o '" + filepath.Join(r.runDir, "phase-3", "implement-rv-codex-r1-a1", "native-review.txt") + "'"
+	if got := r.reviews[0]["ReviewCommand"]; got != want {
+		t.Fatalf("command = %q, want %q", got, want)
+	}
+	if got := r.reviews[1]["ReviewCommand"]; got != "/claude-review" {
+		t.Fatalf("claude command = %q", got)
+	}
+}
+
+func TestNativeReviewerWithoutOutputFailsTheStepNamingTheCommand(t *testing.T) {
+	for _, tc := range []string{"missing", "blank"} {
+		t.Run(tc, func(t *testing.T) {
+			r := newReviewRig(t, Reviewer{Provider: "codex"})
+			r.behave = func(vars map[string]any) {
+				if tc == "blank" {
+					if err := os.WriteFile(filepath.Join(vars["ArtifactsDir"].(string), "native-review.txt"), []byte("  \n"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				writeFindings(t, vars, "ok", 0)
+			}
+			out := r.run()
+			if out.State != StepFailed || out.Reason != "reviewer codex: evidence missing: native review `/codex-review` produced no output" {
+				t.Fatalf("outcome = %+v", out)
+			}
+			if f := r.events("review-find"); len(f) != 1 || f[0].Fields["state"] != "failed" {
+				t.Fatalf("finds = %+v", f)
+			}
+			if len(r.events("review-clean")) != 0 || len(r.fixes) != 0 {
+				t.Fatal("review was treated as clean")
+			}
+		})
+	}
+}
+
+func TestClaudeReviewerWithoutOutputFailsTheSameWay(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) { writeFindings(t, vars, "ok", 0) }
+	out := r.run()
+	if out.State != StepFailed || out.Reason != "reviewer claude: evidence missing: native review `/claude-review` produced no output" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestReviewerThatCannotRunItsCommandFailsTheStep(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.behave = func(vars map[string]any) {
+		writeFindings(t, vars, "failed", 0)
+		if err := os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"failed","reason":"/review is not available in this session"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := r.run()
+	if out.State != StepFailed || out.Reason != "reviewer codex: /review is not available in this session" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if len(r.events("review-clean")) != 0 {
+		t.Fatal("clean review")
+	}
+}
+
+func TestShellQuoteKeepsAPathOneShellArgument(t *testing.T) {
+	for _, p := range []string{"/runs/r1/x.txt", "/Users/me/Work Projects/r-loop/x.txt", "/tmp/it's here/x.txt"} {
+		got, err := exec.Command("sh", "-c", "printf %s "+shellQuote(p)).Output()
+		if err != nil || string(got) != p {
+			t.Fatalf("path %q: got %q, err %v", p, got, err)
+		}
+	}
+}
+
+func TestARetriedAttemptCannotPassOnAnEarlierAttemptsNativeOutput(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.worker.Ref.Key.Attempt = 2
+	old := filepath.Join(r.runDir, "phase-3", "implement-rv-codex-r1-a1")
+	if err := os.MkdirAll(old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, "native-review.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.behave = func(vars map[string]any) { writeFindings(t, vars, "ok", 0) }
+	out := r.run()
+	if out.State != StepFailed || out.Reason != "reviewer codex: evidence missing: native review `/codex-review` produced no output" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if got := r.reviews[0]["ArtifactsDir"]; got != filepath.Join(r.runDir, "phase-3", "implement-rv-codex-r1-a2") {
+		t.Fatalf("artifacts = %q", got)
+	}
+}
+
+func TestReviewFindNamesTheCommandEachReviewerRan(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, uiReviewer)
+	r.worker.Dir = t.TempDir()
+	writeSkill(t, r.worker.Dir)
+	r.behave = func(vars map[string]any) {
+		if vars["prompt"] == "review" {
+			writeReview(t, vars, "ok", 0)
+		} else {
+			writeNamedReview(t, vars, 0)
+		}
+	}
+	if out := r.run(); out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	f := r.events("review-find")
+	if len(f) != 2 || f[0].Fields["command"] != "/claude-review" || f[1].Fields["command"] != "prompt review-ui" || len(r.events("review-clean")) != 1 {
+		t.Fatalf("finds = %+v", f)
 	}
 }
 
@@ -369,7 +508,7 @@ func TestInvalidFindingsFileFailsTheStepNamingIt(t *testing.T) {
 		t.Fatalf("outcome = %+v", out)
 	}
 	finds := r.events("review-find")
-	if len(finds) != 1 || !reflect.DeepEqual(finds[0].Fields, map[string]string{"step": "implement", "round": "1", "reviewer": "codex", "state": "failed", "findings": "0"}) {
+	if len(finds) != 1 || !reflect.DeepEqual(finds[0].Fields, map[string]string{"step": "implement", "round": "1", "reviewer": "codex", "state": "failed", "findings": "0", "command": "/codex-review"}) {
 		t.Fatalf("review-find = %+v", finds)
 	}
 }
@@ -453,7 +592,7 @@ func TestZeroFindingsEndsTheHalfClean(t *testing.T) {
 		t.Fatalf("events = %+v", r.store.Records["run-1"])
 	}
 	finds := r.events("review-find")
-	want := map[string]string{"step": "implement", "round": "1", "reviewer": "claude", "state": "ok", "findings": "0"}
+	want := map[string]string{"step": "implement", "round": "1", "reviewer": "claude", "state": "ok", "findings": "0", "command": "/claude-review"}
 	if len(finds) != 2 || !reflect.DeepEqual(finds[0].Fields, want) {
 		t.Fatalf("review-find = %+v", finds)
 	}
@@ -773,21 +912,7 @@ func writeSkill(t *testing.T, dir string) string {
 
 func writeNamedReview(t *testing.T, vars map[string]any, findings int) {
 	t.Helper()
-	name := "claude"
-	if strings.Contains(vars["FindingsPath"].(string), "-findings-ui-") {
-		name = "ui"
-	}
-	var items []string
-	for i := 1; i <= findings; i++ {
-		items = append(items, fmt.Sprintf(`{"id":"%s-r%d-%d","title":"t","detail":"d","files":["a.go"]}`, name, vars["Round"], i))
-	}
-	body := fmt.Sprintf(`{"reviewer":%q,"findings":[%s]}`, name, strings.Join(items, ","))
-	if err := os.WriteFile(vars["FindingsPath"].(string), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"ok","reason":""}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeReview(t, vars, "ok", findings)
 }
 
 func TestReviewerWhoseRequiredFileIsMissingIsSkippedAndRecorded(t *testing.T) {
@@ -851,7 +976,7 @@ func TestNamedUIReviewerRunsBesideTheSameProviderWithItsOwnPromptAndFiles(t *tes
 		"prompt":       "review-ui",
 		"FindingsPath": filepath.Join(dir, "implement-findings-ui-r1.json"),
 		"Sentinel":     filepath.Join(dir, "implement-rv-ui-r1-a1.sentinel"),
-		"ArtifactsDir": filepath.Join(dir, "implement-rv-ui-r1"),
+		"ArtifactsDir": filepath.Join(dir, "implement-rv-ui-r1-a1"),
 		"RequiredPath": skill,
 	} {
 		if ui[k] != v {

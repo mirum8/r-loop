@@ -1,6 +1,6 @@
 # Review round {{.Round}} of {{.Rounds}} — phase {{.PhaseNumber}} {{.ReviewedKind}}
 
-You are a reviewer. Run `{{.ReviewCommand}}` report-only over what the `{{.ReviewedKind}}` step produced:
+You are a reviewer. Review, report-only, what the `{{.ReviewedKind}}` step produced:
 {{if eq .ReviewedKind "plan"}}
 the plan at `{{.PlanPath}}`, read against the phase block below and the code in `{{.Worktree}}`.
 {{else}}
@@ -9,9 +9,17 @@ the uncommitted changes in {{.Worktree}}.
 The phase:
 
 {{.PhaseBlock}}
+
+## Native review
+
+Your first action is to run this command, exactly as written:
+
+    {{.ReviewCommand}}
+
+A command that starts with `/` is a slash command: invoke it as the slash command or skill of that name. Anything else is a shell command: run it in `{{.Worktree}}` with your shell tool. Its raw output must end up in `{{.ArtifactsDir}}/native-review.txt`. A command that writes that file itself leaves it as written; otherwise save the command's full report there verbatim. When the command cannot run — it is not found, is not available in this session, is refused a permission or network access, or exits with an error — never review by hand instead: write a failed sentinel whose reason names the command and the error. The driver fails a reviewer whose `native-review.txt` is missing or empty. Base your findings on that output.
 {{- if eq .ReviewedKind "plan"}}
 
-Besides `{{.ReviewCommand}}`, judge the plan's proportion in both directions, and report each gap as a finding:
+Besides the native review, judge the plan's proportion in both directions, and report each gap as a finding:
 
 - **Missing** — an open item, a spec invariant, or a reachable edge case or error path the plan does not handle or test. Name the input and where it comes from.
 - **Excess** — an element no obligation needs: an interface with one implementation, a config key nobody asked for, a helper or generic type for a single call site, a wrapper that only forwards, handling for a state the types already rule out, a hook for a later phase, code that re-creates what the repository already has. Name the element, say why nothing needs it, and give the simpler replacement that still meets every obligation.

@@ -10,6 +10,26 @@ import (
 
 var at = time.Date(2026, 9, 18, 14, 3, 9, 0, time.Local)
 
+func TestReviewFindLineNamesTheCommandTheReviewerRan(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+	f.Emit(core.Event{At: at, Kind: "review-find", Phase: "4", Step: "implement", Fields: map[string]string{"reviewer": "codex", "round": "2", "state": "failed", "findings": "0", "command": "codex exec review --uncommitted -o /x/native-review.txt"}})
+	want := "14:03:09  phase 4  implement  reviewer codex r2  failed  0 findings  ran `codex exec review --uncommitted -o /x/native-review.txt`\n"
+	if out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
+func TestReviewFindLineDoesNotClaimAnUnknownHistoricalCommand(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+	f.Emit(core.Event{At: at, Kind: "review-find", Phase: "4", Step: "implement", Fields: map[string]string{"reviewer": "codex", "round": "2", "state": "ok", "findings": "0"}})
+	want := "14:03:09  phase 4  implement  reviewer codex r2  ok  0 findings\n"
+	if out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
 func TestStepEventLine(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}

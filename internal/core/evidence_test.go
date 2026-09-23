@@ -252,6 +252,40 @@ func findingsCtx(body string) EvidenceContext {
 	}
 }
 
+func TestFindingsCheckRequiresTheNativeOutputWhenNamed(t *testing.T) {
+	const native = "implement-rv-codex-r1/native-review.txt"
+	const body = `{"reviewer":"codex","findings":[]}`
+	for _, tc := range []struct {
+		name, output  string
+		named, wantOK bool
+	}{
+		{"absent", "", true, false},
+		{"blank", "\n\t ", true, false},
+		{"present", "P1: nil map", true, true},
+		{"unnamed", "", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := findingsCtx(body)
+			files := fstest.MapFS{findingsPath: {Data: []byte(body)}}
+			if tc.name != "absent" && tc.name != "unnamed" {
+				files[native] = &fstest.MapFile{Data: []byte(tc.output)}
+			}
+			ctx.FS = files
+			if tc.named {
+				ctx.NativeOutput, ctx.ReviewCommand = native, "codex exec review"
+			}
+			ok, missing := runCheck(t, "findings", ctx)
+			want := ""
+			if !tc.wantOK {
+				want = "native review `codex exec review` produced no output"
+			}
+			if ok != tc.wantOK || missing != want {
+				t.Fatalf("ok = %v, missing = %q", ok, missing)
+			}
+		})
+	}
+}
+
 func TestFindingsCheckPassesOnAWellFormedFile(t *testing.T) {
 	body := `{"reviewer":"codex","findings":[
 		{"id":"codex-r2-1","title":"nil map","detail":"writes to a nil map","files":["a.go"]},

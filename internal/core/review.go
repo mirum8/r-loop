@@ -196,6 +196,9 @@ func (h ReviewHalf) open(worker *Session, rows []Reviewer, required []string, ar
 		if err := os.Remove(s.Ref.Vars["FindingsPath"].(string)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, sm.fail(worker, "reviewer "+s.Reviewer+": "+err.Error())
 		}
+		if err := os.MkdirAll(s.Ref.Vars["ArtifactsDir"].(string), 0o755); err != nil {
+			return nil, sm.fail(worker, "reviewer "+s.Reviewer+": "+err.Error())
+		}
 		if _, err := sm.Host.Start(s.Pane, s.Agent, args[i].Kind, args[i].Args); err != nil {
 			return nil, sm.fail(worker, "reviewer "+s.Reviewer+": "+err.Error())
 		}
@@ -259,6 +262,7 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 	dir := stepDir(worker)
 	id := rv.ID()
 	base := fmt.Sprintf("%s-rv-%s-r%d", key.Kind, id, rd.n)
+	artifacts := filepath.Join(dir, fmt.Sprintf("%s-a%d", base, key.Attempt))
 	vars := make(map[string]any, len(worker.Ref.Vars)+11)
 	for k, v := range worker.Ref.Vars {
 		vars[k] = v
@@ -281,9 +285,9 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 	vars["ReviewedKind"] = key.Kind
 	vars["Round"] = rd.n
 	vars["Rounds"] = rd.rounds
-	vars["ReviewCommand"] = args.Review
+	vars["ReviewCommand"] = strings.ReplaceAll(args.Review, "{output}", shellQuote(filepath.Join(artifacts, "native-review.txt")))
 	vars["FindingsPath"] = filepath.Join(dir, fmt.Sprintf("%s-findings-%s-r%d.json", key.Kind, id, rd.n))
-	vars["ArtifactsDir"] = filepath.Join(dir, base)
+	vars["ArtifactsDir"] = artifacts
 	vars["RequiredPath"] = required
 	vars["RoundTree"] = rd.prevTree
 	vars["PriorFindings"] = bullets(rd.prior)
@@ -313,7 +317,7 @@ func (h ReviewHalf) join(worker *Session, reviewers []*Session, outs []Outcome, 
 			n = len(f.Findings)
 		}
 		total += n
-		if err := h.event(worker, "review-find", map[string]string{"round": strconv.Itoa(round), "reviewer": s.Reviewer, "state": string(outs[i].State), "findings": strconv.Itoa(n)}); err != nil {
+		if err := h.event(worker, "review-find", map[string]string{"round": strconv.Itoa(round), "reviewer": s.Reviewer, "state": string(outs[i].State), "findings": strconv.Itoa(n), "command": reviewCommand(s)}); err != nil {
 			return 0, h.Sessions.fail(worker, "record: "+err.Error())
 		}
 		if outs[i].State != StepOK && failed.State == "" {
@@ -321,6 +325,13 @@ func (h ReviewHalf) join(worker *Session, reviewers []*Session, outs []Outcome, 
 		}
 	}
 	return total, failed
+}
+
+func reviewCommand(s *Session) string {
+	if s.Ref.Kind.Prompt == "review" {
+		return s.Ref.Vars["ReviewCommand"].(string)
+	}
+	return "prompt " + s.Ref.Kind.Prompt
 }
 
 func (h ReviewHalf) checkTree(worker *Session, roundTree string) Outcome {

@@ -56,6 +56,25 @@ func fullVars() map[string]any {
 	}
 }
 
+func TestReviewRunsTheNativeCommandFirstAndKeepsItsOutput(t *testing.T) {
+	for _, kind := range []string{"implement", "plan"} {
+		t.Run(kind, func(t *testing.T) {
+			vars := fullVars()
+			vars["ReviewedKind"] = kind
+			vars["ReviewCommand"] = "codex exec review --uncommitted -o /runs/r1/phase-7/implement-rv-codex-r1/native-review.txt"
+			got := render(t, New(t.TempDir()), "review", vars)
+			for _, want := range []string{"## Native review", "    " + vars["ReviewCommand"].(string) + "\n", "/runs/r1/phase-7/implement-rv-ui-r1/native-review.txt", "never review by hand", "write a failed sentinel whose reason names the command"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("prompt lacks %q:\n%s", want, got)
+				}
+			}
+			if strings.Contains(got, "Run `codex exec review") {
+				t.Fatalf("command is prose:\n%s", got)
+			}
+		})
+	}
+}
+
 func with(key string, value any) map[string]any {
 	vars := fullVars()
 	vars[key] = value

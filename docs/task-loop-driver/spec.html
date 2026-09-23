@@ -2613,7 +2613,7 @@ across three runs.</p>
 
 <div class="adr">
 <h3 id="adr-55">ADR-55 — Every review runs inside a session; there is no headless review step</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-23">ADR-23</a></p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-23">ADR-23</a> · amended 2026-09-23 — codex's native reviewer is <code>codex exec review --uncommitted -o {output}</code>, run by the reviewer session from its shell, because an interactive <code>/review</code> typed inside a prompt never runs (it opens a preset picker, and inside prose codex reviewed by hand). The reviewer stays a session the watchdog can read; the driver fails a native reviewer that leaves no <code>&lt;ArtifactsDir&gt;/native-review.txt</code></p>
 <p><span class="f">Context</span> <a href="#adr-23">ADR-23</a> accepted two step shapes because
 <code>codex review</code> runs headless. The maintainer pointed out that Codex CLI 0.154.0 also
 carries an interactive <code>/review</code> command, so its reviewer can run inside a herdr session
@@ -3308,13 +3308,13 @@ reliably, or a provider cannot take a typed message while its turn is over.</p>
       <td>One provider — herdr kind <code>claude</code></td>
       <td>the pack's existing agent, and the reference implementation of the adapter</td></tr>
   <tr><td>Codex CLI</td><td>0.154.0</td>
-      <td>One provider — herdr kind <code>codex</code>; its <code>/review</code> command is the
-          native reviewer, run inside the session</td>
+      <td>One provider — herdr kind <code>codex</code>; its <code>codex exec review</code> is the
+          native reviewer, run from the reviewer session's shell (ADR-55, amended)</td>
       <td>a second vendor is what proves <a href="#adr-6">ADR-6</a> rather than asserting it</td></tr>
 </table>
 
 <p>Both native reviewers run inside a session (<a href="#adr-55">ADR-55</a>): Codex's
-<code>/review</code> and Claude Code's <code>/code-review</code>. Both report only here —
+<code>codex exec review</code> and Claude Code's <code>/code-review</code>. Both report only here —
 <code>/code-review</code>'s <code>--fix</code> is deliberately not used: the reviewed step's own
 session applies what survives its verdict (<a href="#adr-56">ADR-56</a>). Their native outputs
 differ, so each reviewer's prompt asks for one fixed findings shape.</p>
@@ -3419,7 +3419,7 @@ providers:                    # claude and codex ship built in; a block here add
     effortFlag: "-c model_reasoning_effort={effort}"
     doneSignal: sentinel
     ask: mcp                  # mcp | none
-    review: "/review"         # the native reviewer, run inside the session (ADR-55)
+    review: "codex exec review --uncommitted -o {output}"   # the native reviewer, run by the reviewer session (ADR-55)
 
 land:
   fixRounds: 1                # a red Done when: gets this many gate-fix steps (ADR-64)

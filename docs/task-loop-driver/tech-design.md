@@ -193,13 +193,13 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Provider block** — `providers.<name>`: `kind` (required), `flags` (fixed, no
   placeholder, passed first on every start), `modelFlag` (`{model}`),
   `effortFlag` (`{effort}`, may be empty → banner `effort n/a`), `askFlag` (`{url}` or
-  `{mcpConfig}`), `doneSignal ∈ {sentinel}`, `ask ∈ {mcp, none}`, `review` (may be empty).
+  `{mcpConfig}`), `doneSignal ∈ {sentinel}`, `ask ∈ {mcp, none}`, `review` (may be empty; `{args}` is replaced with `Args(p, model, effort, "", "")`, and `{output}` with the shell-quoted `<ArtifactsDir>/native-review.txt`).
   **Precedence is whole-block**: the project config's block, else
   `~/.config/r-loop/providers/<name>.yaml`, else the shipped block. `Args(p, model, effort, askURL,
   mcpConfigPath)` expands the templates and omits a flag whose template or value is empty.
   Shipped: `claude` (`--model {model}`, `--effort {effort}`, `--mcp-config {mcpConfig}`, `review: /code-review`) and
   `codex` (`flags: -c check_for_update_on_startup=false`, `-c model={model}`, `-c model_reasoning_effort={effort}`, `-c
-  mcp_servers.r-loop.url={url}`, `review: /review`).
+  mcp_servers.r-loop.url={url}`, `review: codex exec review --uncommitted {args} -o {output}`).
   `{mcpConfig}` is a per-agent file
   `{"mcpServers":{"r-loop":{"type":"http","url":"<url>"}}}`. Neither sets an MCP tool timeout:
   every call returns at once (ADR-76), so the clients' defaults are enough. The core sees a provider only as
@@ -407,7 +407,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   Fields{step, round, tree}}` before any reviewer starts; (2) resolve every reviewer (one with no
   `review` command fails the step before any pane opens); start every reviewer agent, then prompt
   each with the `review` template; (3) join on every reviewer sentinel; any `failed` or `stalled`
-  reviewer fails the step naming it; every findings file must pass the `findings` check; then
+  reviewer fails the step naming it; every findings file must pass the `findings` check; a native reviewer's `<ArtifactsDir>/native-review.txt` must exist and be non-empty, else ``evidence missing: native review `<cmd>` produced no output``; then
   `TreeDiff(RoundTree, Snapshot(worktree))` must be empty, else `failed(reviewer modified the
   tree: <paths>)`; (4) no findings in any file → the review half ends clean; (5) prompt the author
   with the `fix` template; join on its sentinel; run the `verdict` check against `RoundTree`, then
@@ -578,7 +578,7 @@ reviewer.
   path (`filepath.IsLocal`). A `fallback` or `land.fix` block rejects the three new keys.
 - **Identity** — `ID()` keys the reviewer's `StepKey.Kind` suffix `-rv-<name>`, agent, sentinel,
   MCP config, ask URL path, `FindingsPath`, the findings file's `reviewer` and id prefix, and the
-  `review-find` and `finding` events. `Provider` alone picks the CLI, model and effort.
+  `review-find` (including its `command` field) and `finding` events. `Provider` alone picks the CLI, model and effort.
 - **Native command** — only a reviewer whose `Template()` is `review` needs `ProviderArgs.Review`,
   in `ReviewHalf.Run` and in preflight.
 - **Requirement** — once, before the first round (or the resumed round), each reviewer with
@@ -588,7 +588,7 @@ reviewer.
   it. Another stat error fails the step `reviewer <name>: <err>`. No reviewer left: the half is
   `ok` with no round and no event beyond the skips.
 - **Prompt vars** — two keys join `StepVars` as empty strings and are set per reviewer:
-  `ArtifactsDir` = `<RunDir>/phase-<N>/<kind>-rv-<name>-r<round>` (every reviewer) and
+  `ArtifactsDir` = `<RunDir>/phase-<N>/<kind>-rv-<name>-r<round>-a<attempt>` (every reviewer) and
   `RequiredPath` = the absolute path the requirement resolved to (else empty).
 - **`review-ui` prompt** — embedded, overridable as `.r-loop/prompts/review-ui.md`. It keeps
   `review.md`'s findings contract, earlier-rounds block and sentinel partial, and tells the agent

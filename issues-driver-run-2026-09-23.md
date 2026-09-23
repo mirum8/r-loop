@@ -7,7 +7,7 @@ order they were made.
 
 Verified against `r-loop` @ `main` `feaf292`.
 
-- [ ] [#1] The /review skill is not available in this session, so I'll perform the same report-only review directly
+- [x] [#1] The /review skill is not available in this session, so I'll perform the same report-only review directly  <!-- fixed: r-loop/phase-1 -->
       - A codex reviewer actually runs codex's own review command, rather than reading `/review` as prose inside the round prompt and falling back to an ad-hoc review
       - When a reviewer's `review` command cannot run in its session, the round records that as a reviewer failure or a warning the Face shows, never as a clean review
       - The claude reviewer's `/code-review` path is checked the same way, and the plain face and `report.md` name which command each reviewer really ran

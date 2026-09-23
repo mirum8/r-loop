@@ -449,6 +449,10 @@ func (m *SessionManager) evidence(s *Session) EvidenceContext {
 	if s.Reviewer != "" {
 		p := str("FindingsPath")
 		ctx.FS, ctx.FindingsFiles = os.DirFS(filepath.Dir(p)), []string{filepath.Base(p)}
+		if s.Ref.Kind.Prompt == "review" {
+			ctx.NativeOutput = filepath.ToSlash(filepath.Join(filepath.Base(str("ArtifactsDir")), "native-review.txt"))
+			ctx.ReviewCommand = str("ReviewCommand")
+		}
 	}
 	return ctx
 }
