@@ -156,6 +156,9 @@ func (c Client) Start(pane, name, kind string, args []string) (core.Agent, error
 			if !accepted {
 				return core.Agent{}, err
 			}
+			if err := c.awaitUnblocked(name); err != nil {
+				return core.Agent{}, err
+			}
 			return core.Agent{Name: name, Pane: pane}, nil
 		}
 		if err != nil {
@@ -196,6 +199,20 @@ func (c Client) acceptTrust(agent, marker string, keys ...string) (bool, error) 
 		}
 		if time.Now().After(deadline) {
 			return true, fmt.Errorf("herdr: agent %s still asks to trust its directory", agent)
+		}
+		time.Sleep(paneBusyBackoff)
+	}
+}
+
+func (c Client) awaitUnblocked(agent string) error {
+	deadline := time.Now().Add(paneBusyBudget)
+	for {
+		st, err := c.State(agent)
+		if err != nil || st != core.AgentBlocked {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("herdr: agent %s stays blocked after the trust dialog", agent)
 		}
 		time.Sleep(paneBusyBackoff)
 	}

@@ -90,7 +90,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
     `agent_pane_busy` every 250 ms within a 20 s budget and accepts codex's "Do you trust the
     contents of this directory?" dialog with `enter`, and — when a claude start fails
     `agent_not_ready` on a screen showing "Yes, I trust this folder" — claude's trust dialog
-    with `down` then `enter`, returning `Agent{name, pane}` from its own arguments; either fails
+    with `down` then `enter`, then polls `State` every 250 ms within the 20 s budget until herdr
+    no longer reports the agent `blocked` (failing `herdr: agent <name> stays blocked after the
+    trust dialog`), returning `Agent{name, pane}` from its own arguments; either fails
     when the dialog has not cleared in 20 s, and any other not-ready screen returns the
     `agent_not_ready` error with no key pressed — the driver arranging trust for the sessions it
     opens, spec ADR-1) · `Prompt(agent, text string, wait

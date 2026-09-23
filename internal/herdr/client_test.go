@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -467,8 +468,13 @@ func TestStartFailsWhenTrustDialogDoesNotClear(t *testing.T) {
 const claudeTrustScreen = " Accessing workspace:\n /repo\n Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team).\n Claude Code'll be able to read, edit, and execute files here.\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel\n"
 
 func notReadyThenTrusted(t *testing.T, before, after string) (Client, func() [][]string) {
+	return notReadyThenTrustedBlocked(t, before, after, 0)
+}
+
+func notReadyThenTrustedBlocked(t *testing.T, before, after string, blockedGets int) (Client, func() [][]string) {
 	t.Helper()
 	dir := t.TempDir()
+	gets := filepath.Join(dir, "gets")
 	log := filepath.Join(dir, "calls")
 	entered := filepath.Join(dir, "entered")
 	for name, screen := range map[string]string{"before": before, "after": after} {
@@ -483,6 +489,7 @@ func notReadyThenTrusted(t *testing.T, before, after string) (Client, func() [][
 		"case \"$2\" in\n" +
 		"start) printf '%s' '{\"error\":{\"code\":\"agent_not_ready\",\"message\":\"agent '\"$3\"' is blocked during startup and is not ready for prompts\"}}' >&2; exit 1 ;;\n" +
 		"send-keys) if [ \"$4\" = enter ]; then touch \"" + entered + "\"; fi; printf '%s' '{\"result\":{\"type\":\"ok\"}}' ;;\n" +
+		"get) n=$(cat \"" + gets + "\" 2>/dev/null || echo 0); n=$((n+1)); echo $n > \"" + gets + "\"; if [ $n -le " + strconv.Itoa(blockedGets) + " ]; then s=blocked; else s=idle; fi; printf '%s' '{\"result\":{\"agent\":{\"agent_status\":\"'$s'\"}}}' ;;\n" +
 		"read) if [ -e \"" + entered + "\" ]; then cat \"" + filepath.Join(dir, "after") + "\"; else cat \"" + filepath.Join(dir, "before") + "\"; fi ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -519,6 +526,7 @@ func TestStartAcceptsClaudesTrustDialogThatHerdrReportsNotReady(t *testing.T) {
 		{"agent", "send-keys", "rloop-wd-run-1", "down"},
 		{"agent", "send-keys", "rloop-wd-run-1", "enter"},
 		{"agent", "read", "rloop-wd-run-1", "--source", "visible"},
+		{"agent", "get", "rloop-wd-run-1"},
 	})
 }
 
@@ -546,6 +554,39 @@ func TestStartFailsWhenClaudesTrustDialogDoesNotClear(t *testing.T) {
 	_, err := c.Start("w8P:p1", "a1", "claude", nil)
 
 	if err == nil || !strings.Contains(err.Error(), "trust") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestStartWaitsUntilHerdrNoLongerReportsTheTrustedClaudeBlocked(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := notReadyThenTrustedBlocked(t, claudeTrustScreen, "❯ \n", 2)
+
+	if _, err := c.Start("w8P:p1", "rloop-wd-run-1", "claude", nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	gets := 0
+	for _, call := range calls() {
+		if call[1] == "get" {
+			gets++
+		}
+	}
+	if gets != 3 {
+		t.Fatalf("agent get called %d times, want Start to wait through 2 blocked states until idle", gets)
+	}
+	if st, err := c.State("rloop-wd-run-1"); err != nil || st != core.AgentIdle {
+		t.Fatalf("state after Start = %s, %v", st, err)
+	}
+}
+
+func TestStartFailsWhenTheTrustedClaudeStaysBlocked(t *testing.T) {
+	shrinkPaneBusyWait(t, 20*time.Millisecond)
+	c, _ := notReadyThenTrustedBlocked(t, claudeTrustScreen, "❯ \n", 1<<30)
+
+	_, err := c.Start("w8P:p1", "a1", "claude", nil)
+
+	if err == nil || err.Error() != "herdr: agent a1 stays blocked after the trust dialog" {
 		t.Fatalf("got %v", err)
 	}
 }
