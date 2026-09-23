@@ -128,11 +128,13 @@ func (m Model) panel(w int) []string {
 			add(th.Text, field("waiting", q))
 		}
 		add(th.Text, field("started", s.Started.Format("15:04:05")+"   elapsed "+s.Elapsed(m.clock()).String()))
-		backstop := "paused"
-		if left, paused := s.Remaining(m.clock()); !paused {
-			backstop = left.Truncate(time.Second).String() + " left"
+		if s.Ended.IsZero() {
+			backstop := "paused"
+			if left, paused := s.Remaining(m.clock()); !paused {
+				backstop = left.Truncate(time.Second).String() + " left"
+			}
+			add(th.Text, field("backstop", backstop))
 		}
-		add(th.Text, field("backstop", backstop))
 	} else {
 		add(th.Label, "no step running")
 	}
