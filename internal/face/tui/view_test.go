@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -85,6 +86,88 @@ func TestFrameAt70x30StacksTheRailAboveThePanel(t *testing.T) {
 	if rail < 0 || panel < rail {
 		t.Fatalf("rail row %d, panel row %d", rail, panel)
 	}
+}
+
+func TestTheStepsLineStaysOneRowWithNoAmberOrBold(t *testing.T) {
+	r := lipgloss.NewRenderer(io.Discard)
+	r.SetColorProfile(termenv.TrueColor)
+	m := NewModel(Header{RunID: "r1", Todo: "todo.md", Started: t0, Steps: []string{"plan", "implement", "document"}}, plan(), NewTheme(r, false))
+	m = m.Apply(core.Event{At: at(0), Kind: "phase-start", Phase: "1"})
+	for i, kind := range []string{"plan", "implement", "document"} {
+		m = m.Apply(step(i*2+1, 1, kind, "running", "claude", "opus", "high", "ws-x"))
+		m = m.Apply(step(i*2+2, 1, kind, "ok", "claude", "opus", "high", "ws-x"))
+	}
+	m = m.Apply(step(7, 1, "milestone", "running", "claude", "opus", "high", "ws-m"))
+	for _, tc := range []struct {
+		width int
+		want  string
+	}{
+		{80, "steps      … › document ✓ › milestone"},
+		{70, "steps      plan ✓ › implement ✓ › document ✓ › milestone"},
+		{50, "steps      … › document ✓ › milestone"},
+	} {
+		t.Run(strconv.Itoa(tc.width), func(t *testing.T) {
+			m.Width, m.Height = tc.width, 40
+			view := m.View()
+			fits(t, view, tc.width, 40)
+			lines := strings.Split(view, "\n")
+			count := 0
+			for i, line := range lines {
+				if !strings.Contains(ansiStrip(line), "steps") {
+					continue
+				}
+				count++
+				start := strings.LastIndex(line[:strings.Index(line, "steps")], "\x1b[")
+				if start < 0 {
+					t.Fatalf("steps label has no style: %q", line)
+				}
+				stepsLine := line[start:]
+				if i+1 >= len(lines) || !strings.Contains(ansiStrip(lines[i+1]), "provider") {
+					t.Fatalf("steps line is not followed by provider:\n%s", view)
+				}
+				if got := strings.TrimSpace(ansiStrip(stepsLine)); got != tc.want {
+					t.Errorf("steps line %q, want %q", got, tc.want)
+				}
+				if !regexp.MustCompile(`\x1b\[38;2;110;159;19[56]mmilestone`).MatchString(stepsLine) {
+					t.Errorf("live milestone is not primary: %q", stepsLine)
+				}
+				if regexp.MustCompile(`\x1b\[38;2;224;16[34];88`).MatchString(stepsLine) {
+					t.Errorf("steps line is amber: %q", stepsLine)
+				}
+				for _, sgr := range regexp.MustCompile(`\x1b\[([0-9;]*)m`).FindAllStringSubmatch(stepsLine, -1) {
+					params := strings.Split(sgr[1], ";")
+					for j := 0; j < len(params); j++ {
+						if (params[j] == "38" || params[j] == "48") && j+1 < len(params) && params[j+1] == "2" {
+							j += 4
+							continue
+						}
+						if params[j] == "1" {
+							t.Errorf("steps line is bold: %q", stepsLine)
+						}
+					}
+				}
+			}
+			if count != 1 {
+				t.Errorf("found %d steps lines:\n%s", count, view)
+			}
+		})
+	}
+
+	first := NewModel(Header{RunID: "r1", Todo: "todo.md", Started: t0, Steps: []string{"plan", "implement", "document"}}, plan(), NewTheme(r, false))
+	first = first.Apply(core.Event{At: at(0), Kind: "phase-start", Phase: "1"})
+	first = first.Apply(step(1, 1, "plan", "running", "claude", "opus", "high", "ws-x"))
+	first.Width, first.Height = 30, 40
+	view := first.View()
+	fits(t, view, 30, 40)
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(ansiStrip(line), "steps") {
+			if got := strings.TrimSpace(ansiStrip(line)); got != "steps      plan › impleme…" {
+				t.Fatalf("narrow steps line %q", got)
+			}
+			return
+		}
+	}
+	t.Fatalf("no steps line:\n%s", view)
 }
 
 func TestRailGlyphPerPhaseState(t *testing.T) {

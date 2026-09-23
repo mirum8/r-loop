@@ -1,7 +1,7 @@
   r-loop  20260918-140000  docs/x/todo.md                                        watchdog live · started 14:00 · 43m0s
 
   PHASES                    │  PHASE 2 · implement
-  ✓  1 scaffold             │  steps      plan ✓ › implement › land
+  ✓  1 scaffold             │  steps      plan ✓ › implement
   p  2 config reader        │  provider   codex · gpt-5 · medium
   ·  3 state store          │  session    ws-4
   ·  4 session manager      │  state      waiting-input

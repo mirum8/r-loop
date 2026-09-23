@@ -68,7 +68,7 @@ func recorded() []core.Event {
 }
 
 func newModel(events []core.Event) Model {
-	m := NewModel(Header{RunID: "20260918-140000", Todo: "docs/x/todo.md", Started: t0, Steps: []string{"plan", "implement", "land"}}, plan(), NewTheme(lipgloss.NewRenderer(io.Discard), false))
+	m := NewModel(Header{RunID: "20260918-140000", Todo: "docs/x/todo.md", Started: t0, Steps: []string{"plan", "implement"}}, plan(), NewTheme(lipgloss.NewRenderer(io.Discard), false))
 	for _, ev := range events {
 		m = m.Apply(ev)
 	}
@@ -287,9 +287,13 @@ func TestAFinishedRunDropsTheWatchdogMarker(t *testing.T) {
 }
 
 func TestTheStepsLineTracksDoneFailedLiveAndPendingKinds(t *testing.T) {
-	m := newModel(recorded())
+	m := newModel(recorded()[:11])
+	if got := ansiStrip(m.pipeline(m.Live, 200)); got != "plan › implement" {
+		t.Fatalf("pending %q", got)
+	}
 
-	if got := ansiStrip(m.pipeline(m.Live)); got != "plan ✓ › implement › land" {
+	m = newModel(recorded())
+	if got := ansiStrip(m.pipeline(m.Live, 200)); got != "plan ✓ › implement" {
 		t.Fatalf("pipeline %q", got)
 	}
 
@@ -298,14 +302,83 @@ func TestTheStepsLineTracksDoneFailedLiveAndPendingKinds(t *testing.T) {
 	retry.Fields["attempt"] = "2"
 	retry.Fields["round"], retry.Fields["half"] = "1", "fix"
 	m = m.Apply(fail)
-	land := step(50, 2, "land", "running", "claude", "", "", "ws-6")
-	if got := ansiStrip(m.Apply(land).pipeline(m.Apply(land).Live)); got != "plan ✓ › implement × › land" {
+	if got := ansiStrip(m.pipeline(m.Live, 200)); got != "plan ✓ › implement ×" {
 		t.Fatalf("after failure %q", got)
 	}
 
 	m = m.Apply(retry)
+	if got := ansiStrip(m.pipeline(m.Live, 200)); got != "plan ✓ › implement" {
+		t.Fatalf("after retry %q", got)
+	}
 	if got := m.Live.Label(); got != "implement a2 · review r1/2 fix" {
 		t.Fatalf("label %q", got)
+	}
+}
+
+func TestTheStepsLineShowsTheMilestoneWhileItRunsAndWhenItEnds(t *testing.T) {
+	m := newModel(recorded()[:9]).Apply(step(22, 1, "milestone", "running", "claude", "opus", "high", "ws-m"))
+	if got := ansiStrip(m.pipeline(m.Live, 200)); got != "plan ✓ › implement ✓ › milestone" {
+		t.Fatalf("running %q", got)
+	}
+	if view := m.View(); !strings.Contains(view, "PHASE 1 · milestone") {
+		t.Fatalf("title missing:\n%s", view)
+	}
+	for _, tc := range []struct{ state, want string }{
+		{"ok", "plan ✓ › implement ✓ › milestone ✓"},
+		{"failed", "plan ✓ › implement ✓ › milestone ×"},
+	} {
+		ended := m.Apply(step(23, 1, "milestone", tc.state, "claude", "opus", "high", "ws-m"))
+		if got := ansiStrip(ended.pipeline(ended.Live, 200)); got != tc.want {
+			t.Errorf("%s: %q", tc.state, got)
+		}
+	}
+}
+
+func TestTheStepsLineShowsNoMilestoneForAPhaseThatClosesNone(t *testing.T) {
+	m := newModel(recorded()[:9])
+	if got := ansiStrip(m.pipeline(m.Live, 200)); got != "plan ✓ › implement ✓" {
+		t.Fatalf("without milestone %q", got)
+	}
+	m = m.Apply(step(22, 1, "milestone", "running", "claude", "opus", "high", "ws-m"))
+	m = m.Apply(step(23, 1, "milestone", "ok", "claude", "opus", "high", "ws-m"))
+	m = m.Apply(core.Event{At: at(24), Kind: "phase-start", Phase: "2"})
+	m = m.Apply(step(24, 2, "plan", "running", "claude", "opus", "high", "ws-3"))
+	if got := ansiStrip(m.pipeline(m.Live, 200)); got != "plan › implement" {
+		t.Fatalf("next phase %q", got)
+	}
+}
+
+func TestTheStepsLineShowsEveryKindTheTitleNames(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		kinds  []string
+		states []string
+		title  string
+		want   string
+	}{
+		{"gatefix running", []string{"gatefix"}, []string{"running"}, "gatefix", "plan ✓ › implement ✓ › gatefix"},
+		{"gatefix ok", []string{"gatefix", "gatefix"}, []string{"running", "ok"}, "gatefix", "plan ✓ › implement ✓ › gatefix ✓"},
+		{"backlog gate", []string{"gate"}, []string{"running"}, "gate", "plan ✓ › implement ✓ › gate"},
+		{"milestone after gatefix", []string{"gatefix", "gatefix", "milestone"}, []string{"running", "ok", "running"}, "milestone", "plan ✓ › implement ✓ › milestone"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel(recorded()[:9])
+			for i, kind := range tc.kinds {
+				m = m.Apply(step(22+i, 1, kind, tc.states[i], "claude", "opus", "high", "ws-x"))
+			}
+			if view := m.View(); !strings.Contains(view, "PHASE 1 · "+tc.title) {
+				t.Fatalf("title missing:\n%s", view)
+			}
+			if got := ansiStrip(m.pipeline(m.Live, 200)); got != tc.want {
+				t.Fatalf("pipeline %q", got)
+			}
+		})
+	}
+
+	m := NewModel(Header{RunID: "r1", Todo: "todo.md", Started: t0}, plan(), NewTheme(lipgloss.NewRenderer(io.Discard), false))
+	m = m.Apply(step(1, 1, "milestone", "running", "claude", "opus", "high", "ws-m"))
+	if view := m.View(); !strings.Contains(view, "steps      milestone") {
+		t.Fatalf("empty pipeline missing milestone:\n%s", view)
 	}
 }
 
