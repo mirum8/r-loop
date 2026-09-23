@@ -84,7 +84,7 @@ func TestOpenCreatesWorkspaceAndParsesIDs(t *testing.T) {
 func TestSplitByPaneID(t *testing.T) {
 	c, argv := fake(t, `{"id":"cli:pane:split","result":{"pane":{"pane_id":"w3A:p2","workspace_id":"w3A"},"type":"pane_info"}}`)
 
-	pane, err := c.Split("w3A:p1", "right", "/repo/wt")
+	pane, err := c.Split("w3A:p1", "right", "/repo/wt", nil)
 
 	if err != nil || pane != "w3A:p2" {
 		t.Fatalf("got %q, %v", pane, err)
@@ -92,10 +92,19 @@ func TestSplitByPaneID(t *testing.T) {
 	assertArgv(t, argv(), []string{"pane", "split", "--pane", "w3A:p1", "--direction", "right", "--cwd", "/repo/wt", "--no-focus"})
 }
 
+func TestSplitPassesEnvAsSortedEnvFlagsBeforeNoFocus(t *testing.T) {
+	c, argv := fake(t, `{"id":"cli:pane:split","result":{"pane":{"pane_id":"w3A:p2","workspace_id":"w3A"},"type":"pane_info"}}`)
+	pane, err := c.Split("w3A:p1", "right", "/repo/wt", map[string]string{"R_LOOP_STEP": "implement", "R_LOOP_RUN": "r1"})
+	if err != nil || pane != "w3A:p2" {
+		t.Fatalf("got %q, %v", pane, err)
+	}
+	assertArgv(t, argv(), []string{"pane", "split", "--pane", "w3A:p1", "--direction", "right", "--cwd", "/repo/wt", "--env", "R_LOOP_RUN=r1", "--env", "R_LOOP_STEP=implement", "--no-focus"})
+}
+
 func TestSplitCurrentPaneWhenPaneIsEmpty(t *testing.T) {
 	c, argv := fake(t, `{"id":"cli:pane:split","result":{"pane":{"pane_id":"w3A:p3"},"type":"pane_info"}}`)
 
-	pane, err := c.Split("", "down", "/repo")
+	pane, err := c.Split("", "down", "/repo", nil)
 
 	if err != nil || pane != "w3A:p3" {
 		t.Fatalf("got %q, %v", pane, err)
@@ -309,7 +318,7 @@ func TestExitOneWithoutJSONKeepsStderr(t *testing.T) {
 func TestUnparsableStdoutIsAnError(t *testing.T) {
 	c, _ := fake(t, "not json")
 
-	if _, err := c.Split("w3A:p1", "right", "/repo"); err == nil {
+	if _, err := c.Split("w3A:p1", "right", "/repo", nil); err == nil {
 		t.Fatal("want error")
 	}
 }

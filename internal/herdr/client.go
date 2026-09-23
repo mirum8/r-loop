@@ -81,14 +81,7 @@ func (c Client) Reachable() error {
 
 func (c Client) Open(spec core.OpenSpec) (core.Workspace, error) {
 	args := []string{"workspace", "create", "--cwd", spec.CWD, "--label", spec.Label}
-	keys := make([]string, 0, len(spec.Env))
-	for k := range spec.Env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		args = append(args, "--env", k+"="+spec.Env[k])
-	}
+	args = append(args, envFlags(spec.Env)...)
 	args = append(args, "--no-focus")
 	var out struct {
 		Result struct {
@@ -106,14 +99,32 @@ func (c Client) Open(spec core.OpenSpec) (core.Workspace, error) {
 	return core.Workspace{ID: out.Result.Workspace.ID, RootPane: out.Result.RootPane.ID}, nil
 }
 
-func (c Client) Split(pane, direction, cwd string) (string, error) {
+func envFlags(env map[string]string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	flags := make([]string, 0, 2*len(env))
+	for _, k := range keys {
+		flags = append(flags, "--env", k+"="+env[k])
+	}
+	return flags
+}
+
+func (c Client) Split(pane, direction, cwd string, env map[string]string) (string, error) {
 	args := []string{"pane", "split"}
 	if pane == "" {
 		args = append(args, "--current")
 	} else {
 		args = append(args, "--pane", pane)
 	}
-	args = append(args, "--direction", direction, "--cwd", cwd, "--no-focus")
+	args = append(args, "--direction", direction, "--cwd", cwd)
+	args = append(args, envFlags(env)...)
+	args = append(args, "--no-focus")
 	var out struct {
 		Result struct {
 			Pane struct {

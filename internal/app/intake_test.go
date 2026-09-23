@@ -48,8 +48,10 @@ func (h *intakeHost) AgentPane(agent string) (string, error)                 { r
 func (h *intakeHost) Read(agent string, lines int) (string, error)           { return "", nil }
 func (h *intakeHost) Interrupt(agent string) error                           { return nil }
 func (h *intakeHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
-func (h *intakeHost) Split(pane, direction, cwd string) (string, error)      { return "", nil }
-func (h *intakeHost) ClosePane(pane string) error                            { return nil }
+func (h *intakeHost) Split(pane, direction, cwd string, env map[string]string) (string, error) {
+	return "", nil
+}
+func (h *intakeHost) ClosePane(pane string) error { return nil }
 func (h *intakeHost) Close(workspaceID string) error {
 	h.mu.Lock()
 	h.closed = true

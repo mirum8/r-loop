@@ -124,6 +124,19 @@ func TestAReviewerOfARetriedStepKeepsRoundAndAttempt(t *testing.T) {
 	}
 }
 
+func TestAReviewerOfARetriedStepGetsTheSameStepEnv(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.worker.Ref.Key.Attempt = 2
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+	if out := r.run(); out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	want := map[string]string{"R_LOOP_RUN": "run-1", "R_LOOP_PHASE": "3", "R_LOOP_STEP": "implement", "R_LOOP_REVIEWER": "codex"}
+	if len(r.host.Splits) != 1 || !reflect.DeepEqual(r.host.Splits[0], want) {
+		t.Fatalf("splits = %v, want [%v]", r.host.Splits, want)
+	}
+}
+
 func TestTwoRunsNameTheSameReviewerApart(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "codex"})
 	r.worker.Ref.Key.Run = "run-7"
@@ -312,6 +325,36 @@ func TestReviewFindNamesTheCommandEachReviewerRan(t *testing.T) {
 	}
 }
 
+func TestReviewerPanesAreSplitWithTheStepsRunPhaseStepAndReviewerEnv(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex", Name: "second"})
+	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
+		findings := 0
+		if vars["Round"] == 1 {
+			findings = 1
+		}
+		writeReview(t, vars, "ok", findings)
+	}
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("claude-r1-1", "real", "P1", true, ""), entry("second-r1-1", "real", "P2", true, ""))
+	}
+	if out := r.run(); out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	first := map[string]string{"R_LOOP_RUN": "run-1", "R_LOOP_PHASE": "3", "R_LOOP_STEP": "implement", "R_LOOP_REVIEWER": "claude"}
+	second := map[string]string{"R_LOOP_RUN": "run-1", "R_LOOP_PHASE": "3", "R_LOOP_STEP": "implement", "R_LOOP_REVIEWER": "second"}
+	want := []map[string]string{first, second, first, second}
+	if !reflect.DeepEqual(r.host.Splits, want) {
+		t.Fatalf("splits = %v, want %v", r.host.Splits, want)
+	}
+	for _, env := range r.host.Splits {
+		if _, ok := env["R_LOOP_SENTINEL"]; ok {
+			t.Fatalf("reviewer received step sentinel: %v", env)
+		}
+	}
+}
+
 func TestReviewSplitsStartsThenPromptsAndReplacesPanesWithFreshAgentsInRound2(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
 	r.behave = func(vars map[string]any) {
@@ -495,8 +538,8 @@ type splitFailHost struct {
 	splits int
 }
 
-func (h *splitFailHost) Split(pane, direction, cwd string) (string, error) {
-	p, _ := h.scriptedHost.Split(pane, direction, cwd)
+func (h *splitFailHost) Split(pane, direction, cwd string, env map[string]string) (string, error) {
+	p, _ := h.scriptedHost.Split(pane, direction, cwd, env)
 	h.splits++
 	if h.splits == h.failOn {
 		return "", fmt.Errorf("pane_not_found")

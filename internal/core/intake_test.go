@@ -50,6 +50,9 @@ func TestIntakeInsideHerdrSplitsBesideTheDriverAndClosesThePane(t *testing.T) {
 	if calls[0] != "SessionHost.Split driver-pane right /repo" || calls[len(calls)-1] != "SessionHost.ClosePane pane-1" {
 		t.Fatalf("calls %q", calls)
 	}
+	if len(host.Splits) != 1 || host.Splits[0] != nil {
+		t.Fatalf("splits = %v, want [nil]", host.Splits)
+	}
 }
 
 func TestIntakeWhoseAgentIsGoneFailsAndClosesItsWorkspace(t *testing.T) {

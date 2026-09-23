@@ -190,7 +190,12 @@ func (h ReviewHalf) open(worker *Session, rows []Reviewer, required []string, ar
 		if i > 0 {
 			target, direction = sessions[i-1].Pane, "down"
 		}
-		pane, err := sm.Host.Split(target, direction, worker.Dir)
+		pane, err := sm.Host.Split(target, direction, worker.Dir, map[string]string{
+			"R_LOOP_RUN":      worker.Ref.Key.Run,
+			"R_LOOP_PHASE":    worker.Ref.Key.Phase,
+			"R_LOOP_STEP":     worker.Ref.Key.Kind,
+			"R_LOOP_REVIEWER": rv.ID(),
+		})
 		if err != nil {
 			return nil, sm.fail(worker, "reviewer "+rv.ID()+": "+err.Error())
 		}

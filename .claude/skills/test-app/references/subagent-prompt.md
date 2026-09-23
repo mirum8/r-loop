@@ -116,7 +116,7 @@ On this surface the app's own output is the UI, so the log is a file or a debug 
     cd "$SANDBOX"
 
    r-loop keeps its run state in the target repo's `.r-loop/` (`runs/`, `wt/`), so **never point it at the r-loop checkout itself**. Always use a fresh sandbox copy, one per subagent. It also reads `~/.config/r-loop/config.yaml`, which it never writes unless `--create-config` is used. Test `--create-config` only with `HOME="$SANDBOX/home"`, and never override `HOME` for a live run, because the claude/codex logins live there. Remove the sandbox (`rm -rf "$SANDBOX"`) when you finish, unless it holds evidence for a failure.
-3. Run `e2e/no_agent.sh`. Then, **only if the repo root is not under `.r-loop/wt/` (you are not inside an r-loop review), `HERDR_PANE_ID` is set and `herdr status server` is up**, `start` `"$BIN" docs/plan/todo-tiny.md --unattended` in the sandbox, so its watchdog never waits on a person, set the `trap` and `wait-for` its first frame. Otherwise mark steps 3–6 **NOT RUN**, name the reason (inside an r-loop review, or no herdr pane), and go to 7.
+3. Run `e2e/no_agent.sh`. Then, **only if `R_LOOP_RUN` is unset or empty (`[ -z "$R_LOOP_RUN" ]`), the repo root is not under `.r-loop/wt/`, `HERDR_PANE_ID` is set and `herdr status server` is up**, `start` `"$BIN" docs/plan/todo-tiny.md --unattended` in the sandbox, so its watchdog never waits on a person, set the `trap` and `wait-for` its first frame. Otherwise mark steps 3–6 **NOT RUN**, name the reason (inside an r-loop run, or no herdr pane), and go to 7.
 4. Run the catalog items that fit the change.
 5. Run the geometry sweep on any screen the change touches.
 6. Quit through the documented path and run `stop --expect-exited` — the restoration check.

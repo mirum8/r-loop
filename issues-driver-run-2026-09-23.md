@@ -22,7 +22,7 @@ Verified against `r-loop` @ `main` `feaf292`.
       - `r-loop resume` still finds a run's step and reviewer agents under the new names, including for a run started before this change
       - A labelled run keeps its label in workspace and agent names, as `4077431` built it
 
-- [ ] [#4] Reviewer panes get no `R_LOOP_*` environment, so a reviewer cannot tell it runs inside an r-loop step
+- [x] [#4] Reviewer panes get no `R_LOOP_*` environment, so a reviewer cannot tell it runs inside an r-loop step  <!-- fixed: r-loop/phase-4 -->
       - A reviewer pane split beside a step starts with `R_LOOP_RUN`, `R_LOOP_PHASE` and `R_LOOP_STEP` set as a step session's are, plus a variable naming the reviewer
       - A skill that a reviewer runs (such as `/test-app`) can detect from the environment alone that it is inside a live run, and a test proves the variables reach the reviewer's process
       - Step sessions keep exactly the environment they have today
