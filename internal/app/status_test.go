@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,6 +37,51 @@ const statusTodo = `# t
 `
 
 var t0 = time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+
+func TestStatusAndAbortLeaveAFreshRepositoryUntouched(t *testing.T) {
+	f := newFixture(t)
+	for _, args := range [][]string{{"status", "--plain"}, {"abort"}} {
+		f.out.Reset()
+		f.err.Reset()
+		code := f.main(args...)
+		if args[0] == "status" && (code != 0 || f.out.String() != "no run\n") {
+			t.Fatalf("status code=%d stdout=%q stderr=%q", code, f.out.String(), f.err.String())
+		}
+		if args[0] == "abort" && code != 2 {
+			t.Fatalf("abort code=%d stderr=%q", code, f.err.String())
+		}
+		if _, err := os.Stat(filepath.Join(f.root, ".r-loop")); !os.IsNotExist(err) {
+			t.Fatalf("%s created .r-loop: %v", args[0], err)
+		}
+	}
+}
+
+func TestStatusSelectsANewerCreatedRunWithRecordedEvents(t *testing.T) {
+	f := newFixture(t)
+	older := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
+	newer := f.seedRun(core.Record{Kind: core.RecordEvent, Event: &core.Event{Kind: "triage-start"}})
+	if older >= newer {
+		t.Fatalf("ids %s %s", older, newer)
+	}
+	if code := f.main("status", "--plain"); code != 0 || !strings.HasPrefix(f.out.String(), "run "+newer+" created\n") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, f.out.String(), f.err.String())
+	}
+}
+
+func TestStatusSkipsANewerCreatedRunWithOnlyWatchdogStart(t *testing.T) {
+	f := newFixture(t)
+	older := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
+	newer := f.seedRun(
+		core.Record{Kind: core.RecordEvent, Event: &core.Event{Kind: "watchdog-stale-closed"}},
+		core.Record{Kind: core.RecordEvent, Event: &core.Event{Kind: "watchdog-start"}},
+	)
+	if older >= newer {
+		t.Fatalf("ids %s %s", older, newer)
+	}
+	if code := f.main("status", "--plain"); code != 0 || !strings.HasPrefix(f.out.String(), "run "+older+" halted\n") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, f.out.String(), f.err.String())
+	}
+}
 
 func (f *fixture) seedRun(recs ...core.Record) string {
 	f.t.Helper()
@@ -112,9 +158,16 @@ func TestStatusReadsTheCurrentRunOverTheNewest(t *testing.T) {
 		t.Fatalf("newest: %q", f.out.String())
 	}
 
-	if err := store.New(f.root).SetCurrent(older, 1); err != nil {
+	st := store.New(f.root)
+	lock, err := st.Lock()
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer lock.Release("", 0)
+	if err := st.SetCurrent(older, 1); err != nil {
+		t.Fatal(err)
+	}
+	lock.Publish()
 	f.out.Reset()
 	f.main("status", "--plain")
 	if !strings.HasPrefix(f.out.String(), "run "+older+" halted\n") {
@@ -202,5 +255,62 @@ func TestWirePassesTheShellNotifierAndTheConfiguredHooks(t *testing.T) {
 	}
 	if w.Loop.Hooks != (core.Hooks{OnHalt: "say halted", OnWarn: "say warn", OnDone: "say done"}) {
 		t.Fatalf("hooks %+v", w.Loop.Hooks)
+	}
+}
+
+func TestStatusShowsANamedRunOverANewerOne(t *testing.T) {
+	f := newFixture(t)
+	older := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
+	newer := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunFinished})
+	if older >= newer {
+		t.Fatalf("ids %s %s", older, newer)
+	}
+	if code := f.main("status", "--plain", older); code != 0 || !strings.HasPrefix(f.out.String(), "run "+older+" halted\n") {
+		t.Fatalf("code=%d out=%q err=%q", code, f.out, f.err)
+	}
+}
+
+func TestStatusUnknownRunIDExits2NamingIt(t *testing.T) {
+	for _, id := range []string{"20990101-000000", "../x"} {
+		t.Run(id, func(t *testing.T) {
+			f := newFixture(t)
+			if code := f.main("status", id); code != 2 || !strings.Contains(f.err.String(), "no run "+id) {
+				t.Fatalf("code=%d err=%q", code, f.err)
+			}
+		})
+	}
+}
+
+func TestStatusSkipsANewerRunThatRecordedNoProgress(t *testing.T) {
+	f := newFixture(t)
+	older := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
+	f.seedRun()
+	if code := f.main("status", "--plain"); code != 0 || !strings.HasPrefix(f.out.String(), "run "+older+" halted\n") {
+		t.Fatalf("code=%d out=%q err=%q", code, f.out, f.err)
+	}
+}
+
+func TestStatusSkipsARunWithUnreadableMetaWithAWarning(t *testing.T) {
+	f := newFixture(t)
+	older := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
+	newer := f.seedRun()
+	if err := os.Remove(filepath.Join(store.New(f.root).Dir(newer), "meta.json")); err != nil {
+		t.Fatal(err)
+	}
+	if code := f.main("status", "--plain"); code != 0 || !strings.HasPrefix(f.out.String(), "run "+older+" halted\n") || !strings.Contains(f.err.String(), "skipped run "+newer) {
+		t.Fatalf("code=%d out=%q err=%q", code, f.out, f.err)
+	}
+}
+
+func TestStatusDoesNotSkipARunWithACorruptRecordLine(t *testing.T) {
+	f := newFixture(t)
+	f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
+	newer := f.seedRun()
+	path := filepath.Join(store.New(f.root).Dir(newer), "events.jsonl")
+	if err := os.WriteFile(path, []byte("garbage\n{\"Kind\":\"run\",\"Run\":\"running\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := f.main("status", "--plain"); code != 2 || !strings.Contains(f.err.String(), "events.jsonl line 1") {
+		t.Fatalf("code=%d err=%q", code, f.err)
 	}
 }

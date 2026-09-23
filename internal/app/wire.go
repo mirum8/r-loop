@@ -91,6 +91,7 @@ type Wiring struct {
 	groups   []core.Group
 	triageMu sync.Mutex
 	triaging *triageRun
+	lock     *store.Lock
 }
 
 type overrides struct {
@@ -155,10 +156,15 @@ func flagSet(o *Options) *flag.FlagSet {
 func parseFlags(args []string) (Options, []string, error) {
 	var o Options
 	fs := flagSet(&o)
+	positional, err := parsePositional(fs, args)
+	return o, positional, err
+}
+
+func parsePositional(fs *flag.FlagSet, args []string) ([]string, error) {
 	var positional []string
 	for {
 		if err := fs.Parse(args); err != nil {
-			return o, nil, err
+			return nil, err
 		}
 		if fs.NArg() == 0 {
 			break
@@ -166,7 +172,7 @@ func parseFlags(args []string) (Options, []string, error) {
 		positional = append(positional, fs.Arg(0))
 		args = fs.Args()[1:]
 	}
-	return o, positional, nil
+	return positional, nil
 }
 
 func ParseArgs(args []string) (Options, error) {
@@ -294,11 +300,17 @@ func (w *Wiring) Execute(opts core.RunOptions) int {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: close watchdog: %v\n", err)
 	}
 	cancel(nil)
+	w.Ask.Wait()
+	w.release()
 	w.Face.Close()
-	if err := w.Store.ClearCurrent(); err != nil {
-		fmt.Fprintf(w.Env.Stderr, "r-loop: clear current: %v\n", err)
-	}
 	return code
+}
+
+func (w *Wiring) release() {
+	if err := w.lock.Release(w.Loop.RunID, w.Env.PID); err != nil {
+		fmt.Fprintf(w.Env.Stderr, "r-loop: release run lock: %v\n", err)
+	}
+	w.lock = nil
 }
 
 func signalName(sig os.Signal) string {

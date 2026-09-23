@@ -300,7 +300,7 @@ func (s *memStore) Load(runID string) (core.RunState, error) {
 }
 func (s *memStore) Current() (string, int, bool)           { return "", 0, false }
 func (s *memStore) SetCurrent(runID string, pid int) error { return nil }
-func (s *memStore) ClearCurrent() error                    { return nil }
+func (s *memStore) ClearCurrent(string, int) error         { return nil }
 func (s *memStore) Aborted(runID string) bool              { return false }
 func (s *memStore) MarkAbort(runID string) error           { return nil }
 func (s *memStore) Dir(runID string) string                { return s.dir }

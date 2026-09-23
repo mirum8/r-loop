@@ -602,6 +602,29 @@ func TestCtrlCDuringALiveStepAsksBeforeStopping(t *testing.T) {
 	}
 }
 
+func TestConfirmingAStopAfterTheRunEndedDoesNotAbort(t *testing.T) {
+	m := newModel(recorded())
+	aborted := 0
+	m.abort = func() error { aborted++; return nil }
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = next.(Model)
+	if !m.stopping {
+		t.Fatal("ctrl+c did not open the stop prompt")
+	}
+	m = m.Apply(core.Event{At: at(90), Kind: "halt", Fields: map[string]string{"resume": "r-loop resume"}})
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = next.(Model)
+	if aborted != 0 || m.stopping {
+		t.Fatalf("abort calls = %d, stop prompt open = %v", aborted, m.stopping)
+	}
+	if m.Notice != "" {
+		t.Fatalf("notice after the run ended = %q", m.Notice)
+	}
+	if view := m.View(); !strings.Contains(view, "halted") {
+		t.Fatalf("halted banner missing:\n%s", view)
+	}
+}
+
 func TestAnyKeyButYCancelsTheStop(t *testing.T) {
 	m := newModel(recorded())
 	aborted := 0

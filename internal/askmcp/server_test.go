@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -101,6 +103,151 @@ func returned(t *testing.T, done <-chan result) result {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the call never returned")
 		return result{}
+	}
+}
+
+func TestWaitReturnsOnlyAfterAnInFlightHandlerHasReturned(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run-7")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	s := &Server{RunDir: dir, RunID: "run-7", Store: &memStore{steps: map[core.StepKey]core.StepState{
+		{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 1}: core.StepRunning,
+	}}}
+	if _, err := s.Serve(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	var finished atomic.Bool
+	s.Handle(WatchdogHandlers{Signal: func(core.Signal) (bool, string) {
+		close(entered)
+		<-release
+		finished.Store(true)
+		return true, ""
+	}})
+	cs := connect(t, s.WatchdogURL())
+	callDone := make(chan result, 1)
+	go func() {
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "signal", Arguments: map[string]any{"kind": "halt", "step": "phase-3/implement", "reason": "test", "evidence": "test"}})
+		callDone <- result{res, err}
+	}()
+	select {
+	case <-entered:
+	case got := <-callDone:
+		if got.res != nil {
+			t.Fatalf("signal call returned before the handler was entered: %s, %v", text(got), got.err)
+		}
+		t.Fatalf("signal call returned before the handler was entered: %v", got.err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("signal handler was not entered")
+	}
+
+	waitDone := make(chan struct{})
+	cancel()
+	go func() {
+		s.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+		t.Fatal("Wait returned while the signal handler was still running")
+	case <-time.After(200 * time.Millisecond):
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case <-waitDone:
+		if !finished.Load() {
+			t.Fatal("Wait returned before the signal handler finished")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not return after the handler finished")
+	}
+	select {
+	case <-callDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("signal call did not return")
+	}
+}
+
+func TestWaitWithoutServeReturns(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		(&Server{}).Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Wait blocked before Serve")
+	}
+}
+
+func TestWaitTracksAToolHandlerAfterTheClientDisconnects(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run-7")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancelServer := context.WithCancel(context.Background())
+	t.Cleanup(cancelServer)
+	s := &Server{RunDir: dir, RunID: "run-7", Store: &memStore{steps: map[core.StepKey]core.StepState{
+		{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 1}: core.StepRunning,
+	}}}
+	if _, err := s.Serve(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	var finished atomic.Bool
+	s.Handle(WatchdogHandlers{Signal: func(core.Signal) (bool, string) {
+		close(entered)
+		<-release
+		finished.Store(true)
+		return true, ""
+	}})
+	cs := connect(t, s.WatchdogURL())
+	callCtx, cancelCall := context.WithCancel(context.Background())
+	callDone := make(chan struct{})
+	go func() {
+		cs.CallTool(callCtx, &mcp.CallToolParams{Name: "signal", Arguments: map[string]any{"kind": "halt", "step": "phase-3/implement", "reason": "test", "evidence": "test"}})
+		close(callDone)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("signal handler was not entered")
+	}
+	cancelCall()
+	select {
+	case <-callDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("client call did not disconnect")
+	}
+	cancelServer()
+	waitDone := make(chan struct{})
+	go func() {
+		s.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+		t.Fatal("Wait returned while the disconnected client's tool handler was still running")
+	case <-time.After(1500 * time.Millisecond):
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case <-waitDone:
+		if !finished.Load() {
+			t.Fatal("Wait returned before the tool handler finished")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not return after the tool handler finished")
 	}
 }
 

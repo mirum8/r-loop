@@ -35,12 +35,12 @@ func (m *memStore) Append(runID string, rec core.Record) error {
 func (m *memStore) Load(runID string) (core.RunState, error) {
 	return core.RunState{ID: runID, Steps: m.steps}, m.loadErr
 }
-func (m *memStore) Current() (string, int, bool) { return "", 0, false }
-func (m *memStore) SetCurrent(string, int) error { return nil }
-func (m *memStore) ClearCurrent() error          { return nil }
-func (m *memStore) Aborted(string) bool          { return false }
-func (m *memStore) MarkAbort(string) error       { return nil }
-func (m *memStore) Dir(runID string) string      { return "" }
+func (m *memStore) Current() (string, int, bool)   { return "", 0, false }
+func (m *memStore) SetCurrent(string, int) error   { return nil }
+func (m *memStore) ClearCurrent(string, int) error { return nil }
+func (m *memStore) Aborted(string) bool            { return false }
+func (m *memStore) MarkAbort(string) error         { return nil }
+func (m *memStore) Dir(runID string) string        { return "" }
 func (m *memStore) records() []core.Record {
 	m.mu.Lock()
 	defer m.mu.Unlock()

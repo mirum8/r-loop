@@ -42,6 +42,6 @@ func (in *Intake) Serve(ctx context.Context) (string, error) {
 		}
 		handler.ServeHTTP(w, r)
 	})}
-	serveHTTP(ctx, srv, ln)
+	serveHTTP(ctx, srv, ln, make(chan struct{}))
 	return "http://" + ln.Addr().String() + path, nil
 }

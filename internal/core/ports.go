@@ -83,7 +83,7 @@ type Store interface {
 	Load(runID string) (RunState, error)
 	Current() (string, int, bool)
 	SetCurrent(runID string, pid int) error
-	ClearCurrent() error
+	ClearCurrent(runID string, pid int) error
 	Aborted(runID string) bool
 	MarkAbort(runID string) error
 	Dir(runID string) string

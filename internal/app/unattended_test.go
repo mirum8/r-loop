@@ -74,7 +74,7 @@ func TestResumeUnattendedAppliesTheModeToTheResumedRun(t *testing.T) {
 	if !strings.Contains(f.out.String(), "mode: unattended") {
 		t.Errorf("banner:\n%s", f.out.String())
 	}
-	w.Store.ClearCurrent()
+	w.release()
 }
 
 const unattendedTodo = `# t

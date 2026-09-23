@@ -32,7 +32,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - Uncommitted files in a leftover worktree never end up in a step commit of a fresh run
       - A phase that ends on the item-skipped path leaves no worktree and no phase branch behind
 
-- [ ] [#5] A torn last JSONL line plus the next append makes the run permanently unloadable
+- [x] [#5] A torn last JSONL line plus the next append makes the run permanently unloadable  <!-- fixed: r-loop/phase-5 -->
       - Given a record file whose last line is a torn JSON prefix with no trailing newline, `Append` followed by `Load` returns every complete record plus the new one, at most with a warning about the torn bytes
       - After such an append, no line in the file merges the torn prefix with the new record
       - An unparseable line in the middle of a file still makes `Load` fail with an error naming the file and the line
@@ -90,13 +90,13 @@ Verified against `r-loop` @ `main` `058c81b`.
       - A panic in a question, watch-tick or watchdog-deliver goroutine is recovered and recorded; if the run cannot continue, a halted record is written
       - After a fatal panic that was recovered, the TUI is stopped and the terminal restored before the process exits
 
-- [ ] [#14] `resume` always takes the newest run directory, even one left empty by a failed start, and accepts no run ID
+- [x] [#14] `resume` always takes the newest run directory, even one left empty by a failed start, and accepts no run ID  <!-- fixed: r-loop/phase-5 -->
       - `r-loop resume <run-id>` resumes the named run even when a newer run directory exists; an unknown ID exits 2 and names it
       - With no ID, resume never picks a run that recorded no progress (for example, a start that failed before its first step)
       - `meta.json` is written atomically, and a run dir whose `meta.json` can't be read is skipped with a warning rather than failing `resume`/`status` when another run is valid
       - `status` accepts the same optional run ID and chooses the run by the same rule
 
-- [ ] [#15] A finished TUI run counts as live until `q`, so resume and new runs are refused
+- [x] [#15] A finished TUI run counts as live until `q`, so resume and new runs are refused  <!-- fixed: r-loop/phase-5 -->
       - As soon as the loop returns, the run's final status is recorded and `current` is cleared, before the TUI waits for `q`
       - While a finished TUI is still on screen, `r-loop resume` and a new run from another terminal do not refuse with "live in pid"
       - The TUI still stays open on the final state until `q`, and the report path is still printed after it closes
@@ -139,7 +139,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - A question withdrawn before routing is never sent to the watchdog and has no open entry in the router
       - Under normal admission the question is recorded open once, then routed
 
-- [ ] [#23] The single-run lock is check-then-act and PID-based: two starts both proceed, and a reused PID blocks everything
+- [x] [#23] The single-run lock is check-then-act and PID-based: two starts both proceed, and a reused PID blocks everything  <!-- fixed: r-loop/phase-5 -->
       - Of two concurrent starts in the same repo, exactly one proceeds and the other exits 4 naming the live run
       - A `current` file whose PID now belongs to an unrelated process does not block a new start or a resume
       - An exiting driver clears `current` only when it still names this driver's run and never removes another process's pointer

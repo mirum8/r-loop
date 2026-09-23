@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -23,7 +22,7 @@ import (
 	"r-loop/internal/store"
 )
 
-func Preflight(w *Wiring) error {
+func Preflight(w *Wiring) (err error) {
 	opts, env, cfg := w.Opts, w.Env, w.Config
 	list, prompts, err := w.checks()
 	if err != nil {
@@ -45,14 +44,26 @@ func Preflight(w *Wiring) error {
 	if err := w.Host.Reachable(); err != nil {
 		return exit(4, "herdr server unreachable: %v", err)
 	}
-	if id, pid, ok := w.Store.Current(); ok {
-		if alive(pid) {
-			return exit(4, "run %s is live in pid %d; use r-loop status, resume or abort", id, pid)
+	lock, lerr := w.Store.Lock()
+	var live *store.LockedError
+	if errors.As(lerr, &live) {
+		return exit(4, "%v; use r-loop status, resume or abort", live)
+	}
+	if lerr != nil {
+		return exit(2, "%v", lerr)
+	}
+	w.lock = lock
+	defer func() {
+		if err != nil {
+			lock.Release("", 0)
+			w.lock = nil
 		}
-		if err := w.Store.ClearCurrent(); err != nil {
+	}()
+	if id, pid, ok := w.Store.Current(); ok {
+		if err := w.Store.ClearCurrent(id, pid); err != nil {
 			return exit(2, "%v", err)
 		}
-		fmt.Fprintf(env.Stdout, "cleared run %s: pid %d is gone\n", id, pid)
+		fmt.Fprintf(env.Stdout, "cleared stale run pointer %s: pid %d holds no run lock\n", id, pid)
 	}
 	if err := w.clean(); err != nil {
 		return err
@@ -75,6 +86,7 @@ func Preflight(w *Wiring) error {
 	if err := w.Store.SetCurrent(id, env.PID); err != nil {
 		return exit(2, "%v", err)
 	}
+	w.lock.Publish()
 	w.bind(id)
 	w.banner(env.Stdout, prompts)
 	w.criteriaWarnings(env.Stdout, list)
@@ -229,7 +241,7 @@ func (w *Wiring) leftovers(list []core.Phase) error {
 	}
 	if len(found) > 0 {
 		resume := ""
-		id, err := runToShow(w.Store)
+		id, err := newestProgressed(w.Store, w.Env.Stderr)
 		if err != nil {
 			return exit(2, "%v", err)
 		}
@@ -381,12 +393,4 @@ func pipeline(kinds []core.StepKind, backlog bool) string {
 		land = "land (gate: item tests red at base, then item tests && discovered suite)"
 	}
 	return strings.Join(append(parts, land), " → ")
-}
-
-func alive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
 }
