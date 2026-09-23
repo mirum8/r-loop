@@ -86,3 +86,19 @@ func TestIntakeThatCannotStartClosesWhatItOpened(t *testing.T) {
 		t.Fatalf("err %v calls %q", err, calls)
 	}
 }
+
+func TestALabelledIntakeOpensALabelledWorkspace(t *testing.T) {
+	host := &fakeSessionHost{}
+	accepted := make(chan []string, 1)
+	accepted <- []string{"todo.md"}
+	in := newIntake(host, "")
+	in.Label = "test"
+
+	if _, err := in.Run(context.Background(), accepted); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := host.Opened[0].Label; got != "◆ test intake" {
+		t.Fatalf("label = %q", got)
+	}
+}

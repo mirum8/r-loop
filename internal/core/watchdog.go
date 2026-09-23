@@ -22,7 +22,7 @@ type Watchdog struct {
 	Face                                   Face
 	Provider                               ProviderArgs
 	RunID, Root, TodoPath, SpecDir, RunDir string
-	Pane                                   string
+	Pane, Label                            string
 	Allow                                  []string
 	Unattended                             bool
 	Sleep                                  func(time.Duration)
@@ -108,7 +108,7 @@ func (d *Watchdog) open() (string, string, error) {
 		}
 		return pane, "", nil
 	}
-	ws, err := d.Host.Open(OpenSpec{CWD: d.Root, Label: "◆ watchdog"})
+	ws, err := d.Host.Open(OpenSpec{CWD: d.Root, Label: "◆ " + labelPrefix(d.Label) + "watchdog"})
 	if err != nil {
 		return "", "", fmt.Errorf("open workspace: %w", err)
 	}

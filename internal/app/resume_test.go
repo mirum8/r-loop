@@ -870,6 +870,34 @@ func TestResumeInterruptsTheKilledDriversStillWorkingStepAgentBeforeItClaims(t *
 	}
 }
 
+func TestResumeOfALabelledRunInterruptsTheLabelledStepAgent(t *testing.T) {
+	f := newResumeFixture(t, "label: test\n"+noReviewConfig)
+	id, _ := f.seedKilledImplement()
+	script := "#!/bin/sh\necho \"$@\" >> \"$0.calls\"\n" +
+		"if [ \"$1 $2 $3\" = \"agent get rloop-test-p1-implement\" ]; then echo '{\"result\":{\"agent\":{\"name\":\"rloop-test-p1-implement\",\"pane_id\":\"w2:p1\",\"agent_status\":\"working\"}}}'; exit 0; fi\n" +
+		"echo '{}'\n"
+	if err := os.WriteFile(f.herdr, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, err := f.resume(newSim())
+
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v\n%s", code, err, f.out)
+	}
+	calls, _ := os.ReadFile(f.herdr + ".calls")
+	if !strings.Contains(string(calls), "agent send-keys rloop-test-p1-implement esc\n") {
+		t.Fatalf("herdr calls:\n%s", calls)
+	}
+	stale := stepEvents(f.load(id), "stale-interrupted")
+	if len(stale) != 1 || stale[0].Fields["agent"] != "rloop-test-p1-implement" {
+		t.Fatalf("stale-interrupted events %+v", stale)
+	}
+	if !strings.Contains(f.out.String(), "previous session rloop-test-p1-implement left in workspace w2") {
+		t.Fatalf("out:\n%s", f.out)
+	}
+}
+
 func TestResumeLeavesAPreviousSessionThatIsNoLongerWorkingAlone(t *testing.T) {
 	f := newResumeFixture(t, noReviewConfig)
 	id, _ := f.seedKilledImplement()

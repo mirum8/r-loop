@@ -335,6 +335,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Now:        time.Now,
 		StallGrace: cfg.Watchdog.StallGrace,
 		ItemGates:  pl.Backlog,
+		Label:      cfg.Label,
 	}
 	runners := core.DefaultRunners(sm, kinds)
 	impl := rows["implement"]
@@ -400,7 +401,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		fallbacks[k.Name] = k.Row.Fallback
 	}
 	w.Remedies = &core.Remedies{Allow: allow, Store: w.Store, Face: w.Face, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks, Asks: w.asks}
-	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, Pane: env.Pane, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow, Unattended: opts.Unattended}
+	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, Pane: env.Pane, Label: cfg.Label, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow, Unattended: opts.Unattended}
 	w.Remedies.Dog = w.Dog
 	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Repo: repo}
 	w.Loop.RemedyWindow = cfg.Watchdog.RemedyWindow

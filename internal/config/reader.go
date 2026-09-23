@@ -82,6 +82,7 @@ type Notify struct {
 }
 
 type LoopConfig struct {
+	Label      string
 	Pipeline   []string
 	Steps      map[string]StepRow
 	Providers  map[string]yaml.Node
@@ -118,6 +119,7 @@ type schema map[string]schema
 var roleSchema = schema{"provider": nil, "model": nil, "effort": nil}
 
 var topSchema = schema{
+	"label":    nil,
 	"pipeline": nil,
 	"steps": schema{"*": schema{
 		"prompt": nil, "check": nil, "provider": nil, "model": nil, "effort": nil, "timeout": nil,
@@ -416,7 +418,14 @@ func Load(projectDir, homeDir string, overrides []Override) (LoopConfig, error) 
 
 func (r *resolver) resolve() (LoopConfig, error) {
 	cfg := LoopConfig{Steps: map[string]StepRow{}, Providers: map[string]yaml.Node{}, Provenance: r.prov}
-	var err error
+	label, n, l, err := r.scalar("label")
+	if err != nil {
+		return cfg, err
+	}
+	if label != "" && !reviewerName.MatchString(label) {
+		return cfg, errAt(l.file, n, "label must be lowercase letters, digits and dashes, got %q", label)
+	}
+	cfg.Label = label
 	if cfg.Pipeline, err = r.names("pipeline"); err != nil {
 		return cfg, err
 	}

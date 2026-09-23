@@ -607,3 +607,35 @@ func TestCreateRefusesToOverwrite(t *testing.T) {
 		t.Fatalf("err=%v data=%q", err, data)
 	}
 }
+
+func TestLabelLoadsWithItsProvenanceAndShowsInTheBanner(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "label: test\n")
+
+	cfg := d.load(t)
+
+	if cfg.Label != "test" || cfg.Provenance["label"] != ".r-loop/config.yaml:label" {
+		t.Fatalf("label = %q from %q", cfg.Label, cfg.Provenance["label"])
+	}
+	if !strings.Contains(Banner(cfg), "label: test  ← .r-loop/config.yaml:label\n") {
+		t.Errorf("banner:\n%s", Banner(cfg))
+	}
+}
+
+func TestLabelDefaultsToEmptyAndStaysOutOfTheBanner(t *testing.T) {
+	cfg := newDirs(t).load(t)
+
+	if cfg.Label != "" || cfg.Provenance["label"] != "default" {
+		t.Fatalf("label = %q from %q", cfg.Label, cfg.Provenance["label"])
+	}
+	if strings.Contains(Banner(cfg), "label:") {
+		t.Errorf("banner:\n%s", Banner(cfg))
+	}
+}
+
+func TestLabelWithUppercaseOrUnderscoreRejected(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "label: Test_1\n")
+
+	d.loadErr(t, "label")
+}

@@ -10,6 +10,9 @@ import (
 func Banner(cfg LoopConfig, extra ...string) string {
 	var b strings.Builder
 	p := cfg.Provenance
+	if cfg.Label != "" {
+		fmt.Fprintf(&b, "label: %s  ← %s\n", cfg.Label, p["label"])
+	}
 	for _, name := range append(append(append([]string{}, cfg.Pipeline...), "milestone"), extra...) {
 		row := cfg.Steps[name]
 		k := "steps." + name + "."

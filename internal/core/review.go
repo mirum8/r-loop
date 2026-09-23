@@ -268,7 +268,7 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 		StartSHA:  worker.StartSHA,
 		StartTree: rd.tree,
 		Workspace: worker.Workspace,
-		Agent:     agentName(fmt.Sprintf("rloop-p%s-%s-rv-%s", key.Phase, key.Kind, id), agentSuffix(rd.n, key.Attempt)),
+		Agent:     agentName(AgentBase(h.Sessions.Label, key.Phase, key.Kind)+"-rv-"+id, agentSuffix(rd.n, key.Attempt)),
 		Sentinel:  filepath.Join(dir, fmt.Sprintf("%s-a%d.sentinel", base, key.Attempt)),
 		Reviewer:  id,
 		owner:     worker,

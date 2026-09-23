@@ -675,3 +675,18 @@ func TestAWatchdogAskingThenBlockedOnTheMaintainerIsShownWaitingOnce(t *testing.
 		t.Errorf("recorded %v, want %v", got, want)
 	}
 }
+
+func TestALabelledWatchdogOpensALabelledWorkspace(t *testing.T) {
+	host := &fakeSessionHost{}
+	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	dog.Pane = ""
+	dog.Label = "test"
+
+	if err := dog.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := host.Opened[0].Label; got != "◆ test watchdog" {
+		t.Fatalf("label = %q", got)
+	}
+}

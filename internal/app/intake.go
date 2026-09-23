@@ -30,6 +30,7 @@ type intake struct {
 	text     string
 	given    Options
 	cfg      config.Intake
+	label    string
 	provider providers.Provider
 	host     core.SessionHost
 	prompts  core.Prompts
@@ -75,7 +76,7 @@ func newIntake(args []string, given Options, env Env) (*intake, error) {
 		return nil, exit(127, "herdr binary %s not found", env.Herdr)
 	}
 	return &intake{
-		env: env, root: root, text: strings.Join(args, " "), given: given, cfg: cfg.Intake, provider: p,
+		env: env, root: root, text: strings.Join(args, " "), given: given, cfg: cfg.Intake, label: cfg.Label, provider: p,
 		host: herdr.Client{Bin: env.Herdr}, prompts: prompts.New(root), poll: time.Second, accepted: make(chan []string, 1),
 	}, nil
 }
@@ -101,7 +102,7 @@ func (in *intake) run(ctx context.Context) (Options, error) {
 	}
 	session := &core.Intake{
 		Host: in.host, Prompts: in.prompts, Provider: args, Poll: in.poll,
-		Name: "rloop-intake-" + strconv.Itoa(in.env.PID), Root: in.root, Pane: in.env.Pane,
+		Name: "rloop-intake-" + strconv.Itoa(in.env.PID), Root: in.root, Pane: in.env.Pane, Label: in.label,
 		Vars: map[string]any{"Text": in.text, "Dir": in.env.Dir, "Root": in.root, "Usage": usage(), "Unattended": in.given.Unattended},
 	}
 	argv, err := session.Run(ctx, in.accepted)

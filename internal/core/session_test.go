@@ -788,3 +788,25 @@ func TestFinishRecordsNothingForAStepWhoseFailureIsAlreadyRecorded(t *testing.T)
 		t.Fatalf("failed records %q", failed)
 	}
 }
+
+func TestALabelledRunNamesTheStepAgentAndWorkspaceWithTheLabel(t *testing.T) {
+	r := newRig(t)
+	r.sm.Label = "test"
+
+	s := r.spawn(t, 1)
+
+	if s.Agent != "rloop-test-p3-implement" || r.host.Opened[0].Label != "◆ test p3 implement" {
+		t.Fatalf("agent = %q, label = %q", s.Agent, r.host.Opened[0].Label)
+	}
+}
+
+func TestALabelledRetryKeepsTheAttemptSuffix(t *testing.T) {
+	r := newRig(t)
+	r.sm.Label = "test"
+
+	s := r.spawn(t, 2)
+
+	if s.Agent != "rloop-test-p3-implement-a2" || r.host.Opened[0].Label != "◆ test p3 implement·a2" {
+		t.Fatalf("agent = %q, label = %q", s.Agent, r.host.Opened[0].Label)
+	}
+}

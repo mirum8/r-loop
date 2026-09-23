@@ -943,3 +943,15 @@ func TestResumedReviewNamesEarlierFindingsByReviewerName(t *testing.T) {
 		t.Fatalf("reviews = %+v", r.reviews)
 	}
 }
+
+func TestALabelledRunNamesTheReviewerWithTheLabel(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.sm.Label = "test"
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	r.run()
+
+	if n := len(r.callsFrom("SessionHost.Start pane-2 rloop-test-p3-implement-rv-co-r1 codex")); n != 1 {
+		t.Fatalf("starts = %q", r.callsFrom("SessionHost.Start"))
+	}
+}

@@ -16,6 +16,7 @@ type Intake struct {
 	Name     string
 	Root     string
 	Pane     string
+	Label    string
 	Vars     map[string]any
 	Poll     time.Duration
 }
@@ -49,7 +50,7 @@ func (in *Intake) open() (string, string, error) {
 		}
 		return pane, "", nil
 	}
-	ws, err := in.Host.Open(OpenSpec{CWD: in.Root, Label: "◆ intake"})
+	ws, err := in.Host.Open(OpenSpec{CWD: in.Root, Label: "◆ " + labelPrefix(in.Label) + "intake"})
 	if err != nil {
 		return "", "", fmt.Errorf("open workspace: %w", err)
 	}

@@ -109,7 +109,7 @@ func (w *Wiring) resume(run core.RunState, replan bool) (core.RunOptions, error)
 	}
 	w.bind(id)
 	for _, n := range halted {
-		if agent, ws := previousSession(run, n); agent != "" {
+		if agent, ws := previousSession(run, n, w.Config.Label); agent != "" {
 			fmt.Fprintf(env.Stdout, "previous session %s left in workspace %s\n", agent, ws)
 		}
 	}
@@ -155,7 +155,7 @@ func (w *Wiring) stopStale(run core.RunState, phase string) error {
 	if kind == "" {
 		return nil
 	}
-	agent := fmt.Sprintf("rloop-p%s-%s", phase, kind)
+	agent := core.AgentBase(w.Config.Label, phase, kind)
 	if a, _ := strconv.Atoi(attempt); a > 1 {
 		agent += "-a" + attempt
 	}
@@ -276,13 +276,13 @@ func recordedTree(run core.RunState, phase string) string {
 	return tree
 }
 
-func previousSession(run core.RunState, phase string) (string, string) {
+func previousSession(run core.RunState, phase, label string) (string, string) {
 	agent, ws := "", ""
 	for _, e := range run.Events {
 		if e.Kind != "step" || e.Phase != phase || e.Fields["workspace"] == "" {
 			continue
 		}
-		agent, ws = fmt.Sprintf("rloop-p%s-%s", phase, e.Step), e.Fields["workspace"]
+		agent, ws = core.AgentBase(label, phase, e.Step), e.Fields["workspace"]
 		if a, _ := strconv.Atoi(e.Fields["attempt"]); a > 1 {
 			agent += "-a" + strconv.Itoa(a)
 		}

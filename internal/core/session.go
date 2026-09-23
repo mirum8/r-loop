@@ -30,6 +30,7 @@ type SessionManager struct {
 	Poll       time.Duration
 	StallGrace time.Duration
 	ItemGates  bool
+	Label      string
 }
 
 type StepRef struct {
@@ -145,7 +146,7 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 		return s, fmt.Errorf("spawn: %w", err)
 	}
 	s.Sentinel = filepath.Join(stepDir, base+".sentinel")
-	s.Agent = fmt.Sprintf("rloop-p%s-%s", key.Phase, key.Kind)
+	s.Agent = AgentBase(m.Label, key.Phase, key.Kind)
 	if key.Attempt > 1 {
 		s.Agent += fmt.Sprintf("-a%d", key.Attempt)
 	}
@@ -155,7 +156,7 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 	if err := m.record(key, StepSpawned, ""); err != nil {
 		return s, err
 	}
-	ws, err := m.Host.Open(OpenSpec{CWD: s.Dir, Label: stepLabel(key), Env: map[string]string{
+	ws, err := m.Host.Open(OpenSpec{CWD: s.Dir, Label: stepLabel(m.Label, key), Env: map[string]string{
 		"R_LOOP_SENTINEL": s.Sentinel,
 		"R_LOOP_RUN":      key.Run,
 		"R_LOOP_PHASE":    key.Phase,
@@ -171,12 +172,26 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 	return s, m.record(key, StepRunning, "")
 }
 
-func stepLabel(key StepKey) string {
-	label := fmt.Sprintf("◆ p%s %s", key.Phase, key.Kind)
+func AgentBase(label, phase, kind string) string {
+	if label == "" {
+		return fmt.Sprintf("rloop-p%s-%s", phase, kind)
+	}
+	return fmt.Sprintf("rloop-%s-p%s-%s", label, phase, kind)
+}
+
+func stepLabel(runLabel string, key StepKey) string {
+	label := fmt.Sprintf("◆ %sp%s %s", labelPrefix(runLabel), key.Phase, key.Kind)
 	if key.Attempt > 1 {
 		label += fmt.Sprintf("·a%d", key.Attempt)
 	}
 	return label
+}
+
+func labelPrefix(label string) string {
+	if label == "" {
+		return ""
+	}
+	return label + " "
 }
 
 func (m *SessionManager) start(s *Session, stepDir string) error {
