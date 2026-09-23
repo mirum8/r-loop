@@ -155,27 +155,78 @@ func (w *Wiring) stopStale(run core.RunState, phase string) error {
 	if kind == "" {
 		return nil
 	}
-	agent := core.AgentBase(w.Config.Label, phase, kind)
-	if a, _ := strconv.Atoi(attempt); a > 1 {
-		agent += "-a" + attempt
+	var ids []string
+	for _, rv := range w.Config.Steps[kind].Reviewers {
+		ids = append(ids, core.Reviewer(rv).ID())
 	}
-	state, err := w.Host.State(agent)
-	if err != nil {
-		return exit(4, "previous session %s: %v", agent, err)
+	for _, agent := range previousAgents(run, phase, kind, attempt, w.Config.Label, ids) {
+		state, err := w.Host.State(agent)
+		if err != nil {
+			return exit(4, "previous session %s: %v", agent, err)
+		}
+		if state != core.AgentWorking && state != core.AgentBlocked {
+			continue
+		}
+		at := time.Now()
+		ev := core.Event{At: at, Kind: "stale-interrupted", Phase: phase, Step: kind, Fields: map[string]string{"agent": agent, "state": string(state)}}
+		if err := w.Store.Append(run.ID, core.Record{Kind: core.RecordEvent, At: at, Event: &ev}); err != nil {
+			return exit(2, "%v", err)
+		}
+		if err := w.Host.Interrupt(agent); err != nil {
+			return exit(4, "interrupt previous session %s: %v", agent, err)
+		}
+		fmt.Fprintf(w.Env.Stdout, "interrupted previous session %s: still %s\n", agent, state)
 	}
-	if state != core.AgentWorking && state != core.AgentBlocked {
-		return nil
-	}
-	at := time.Now()
-	ev := core.Event{At: at, Kind: "stale-interrupted", Phase: phase, Step: kind, Fields: map[string]string{"agent": agent, "state": string(state)}}
-	if err := w.Store.Append(run.ID, core.Record{Kind: core.RecordEvent, At: at, Event: &ev}); err != nil {
-		return exit(2, "%v", err)
-	}
-	if err := w.Host.Interrupt(agent); err != nil {
-		return exit(4, "interrupt previous session %s: %v", agent, err)
-	}
-	fmt.Fprintf(w.Env.Stdout, "interrupted previous session %s: still %s\n", agent, state)
 	return nil
+}
+
+func legacyAgent(label, phase, kind, attempt string) string {
+	name := "rloop-"
+	if label != "" {
+		name += label + "-"
+	}
+	name += "p" + phase + "-" + kind
+	if a, _ := strconv.Atoi(attempt); a > 1 {
+		name += "-a" + attempt
+	}
+	return name
+}
+
+func legacyReviewer(label, phase, kind, id, round, attempt string) string {
+	prefix := legacyAgent(label, phase, kind, "1") + "-rv-" + id
+	suffix := "-r" + round
+	if a, _ := strconv.Atoi(attempt); a > 1 {
+		suffix += "-a" + attempt
+	}
+	if len(prefix)+len(suffix) > 32 {
+		prefix = strings.TrimRight(prefix[:32-len(suffix)], "-")
+	}
+	return prefix + suffix
+}
+
+func previousAgents(run core.RunState, phase, kind, attempt, label string, reviewers []string) []string {
+	var agents []string
+	for _, e := range run.Events {
+		if e.Kind == "agent-named" && e.Phase == phase && e.Step == kind && e.Fields["attempt"] == attempt {
+			agents = append(agents, e.Fields["agent"])
+		}
+	}
+	if len(agents) > 0 {
+		return agents
+	}
+	agents = append(agents, legacyAgent(label, phase, kind, attempt))
+	round := ""
+	for _, e := range run.Events {
+		if e.Kind == "review-round" && e.Phase == phase && e.Step == kind && e.Fields["attempt"] == attempt {
+			round = e.Fields["round"]
+		}
+	}
+	if round != "" {
+		for _, id := range reviewers {
+			agents = append(agents, legacyReviewer(label, phase, kind, id, round, attempt))
+		}
+	}
+	return agents
 }
 
 func (w *Wiring) closeInterrupted(run core.RunState, phase string) error {
@@ -282,10 +333,8 @@ func previousSession(run core.RunState, phase, label string) (string, string) {
 		if e.Kind != "step" || e.Phase != phase || e.Fields["workspace"] == "" {
 			continue
 		}
-		agent, ws = core.AgentBase(label, phase, e.Step), e.Fields["workspace"]
-		if a, _ := strconv.Atoi(e.Fields["attempt"]); a > 1 {
-			agent += "-a" + strconv.Itoa(a)
-		}
+		agents := previousAgents(run, phase, e.Step, e.Fields["attempt"], label, nil)
+		agent, ws = agents[0], e.Fields["workspace"]
 	}
 	return agent, ws
 }

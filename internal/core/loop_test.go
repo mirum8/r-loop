@@ -31,7 +31,7 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 	spec := h.Started[agent]
 	sentinel := spec.Env["R_LOOP_SENTINEL"]
 	h.mu.Lock()
-	behaviour := h.behaviour[agent]
+	behaviour := h.behaviour[role(agent)]
 	h.mu.Unlock()
 	switch behaviour {
 	case "hold":
@@ -39,7 +39,7 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 		writeFile(sentinel, `{"outcome":"failed","reason":"tests red"}`)
 	case "stall":
 		h.mu.Lock()
-		h.idle[agent] = true
+		h.idle[role(agent)] = true
 		h.mu.Unlock()
 	case "abort":
 		h.store.MarkAbort(spec.Env["R_LOOP_RUN"])
@@ -62,7 +62,7 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 func (h *agentSim) State(agent string) (AgentState, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.idle[agent] {
+	if h.idle[role(agent)] {
 		return AgentIdle, nil
 	}
 	return AgentWorking, nil
@@ -185,7 +185,7 @@ func (r *loopRig) calls(prefix string) []string {
 	var out []string
 	for _, c := range r.shared.Calls() {
 		if strings.HasPrefix(c, prefix) {
-			out = append(out, strings.TrimPrefix(c, prefix))
+			out = append(out, role(strings.TrimPrefix(c, prefix)))
 		}
 	}
 	return out
@@ -592,7 +592,10 @@ func TestResumeSkipsLandedPhasesAndOkStepsAndRerunsTheStoppedStep(t *testing.T) 
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	agents := r.host.Agents
+	agents := append([]string(nil), r.host.Agents...)
+	for i := range agents {
+		agents[i] = role(agents[i])
+	}
 	want := []string{"rloop-p1-implement-a2", "rloop-p3-plan", "rloop-p3-implement"}
 	if !reflect.DeepEqual(agents, want) {
 		t.Errorf("spawned %v, want %v", agents, want)

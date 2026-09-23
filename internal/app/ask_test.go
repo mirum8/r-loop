@@ -46,7 +46,7 @@ type askHost struct {
 }
 
 func (h *askHost) Start(pane, name, kind string, args []string) (core.Agent, error) {
-	if name == "rloop-p1-implement" {
+	if agentRole(name) == "rloop-p1-implement" {
 		for _, a := range args {
 			if u, ok := strings.CutPrefix(a, "mcp_servers.r-loop.url="); ok {
 				h.mu.Lock()
@@ -59,13 +59,14 @@ func (h *askHost) Start(pane, name, kind string, args []string) (core.Agent, err
 }
 
 func (h *askHost) State(agent string) (core.AgentState, error) {
-	if agent == "rloop-p1-implement" {
+	if agentRole(agent) == "rloop-p1-implement" {
 		return core.AgentIdle, nil
 	}
 	return h.simHost.State(agent)
 }
 
 func (h *askHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	agent = agentRole(agent)
 	if agent == "rloop-p1-implement" && strings.HasPrefix(text, "r-loop: answer to ") {
 		h.mu.Lock()
 		defer h.mu.Unlock()

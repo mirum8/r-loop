@@ -155,6 +155,107 @@ func (o *recObserver) Resumed(*Session) { o.resumed++ }
 
 func (o *recObserver) Reviewing(_ *Session, round int) { o.rounds = append(o.rounds, round) }
 
+func TestTwoRunsNameTheSameStepApart(t *testing.T) {
+	r := newRig(t)
+	first := r.spawn(t, 1)
+	ref := r.ref(1)
+	ref.Key.Run = "run-7"
+	second, err := r.sm.Spawn(context.Background(), ref)
+	if err != nil || first.Agent != "rloop-2kuxv-p3-implement" || second.Agent != "rloop-qih3p-p3-implement" {
+		t.Fatalf("agents %q, %q; err %v", first.Agent, second.Agent, err)
+	}
+}
+
+func TestTheSameRunIDInAnotherRepositoryIsNamedApart(t *testing.T) {
+	r := newRig(t)
+	r.repo.RootDir = "/other"
+	if s := r.spawn(t, 1); s.Agent != "rloop-jkmip-p3-implement" {
+		t.Fatalf("agent %q", s.Agent)
+	}
+}
+
+func TestASpawnWhoseNameIsTakenMovesToTheNextToken(t *testing.T) {
+	r := newRig(t)
+	r.host.Panes = map[string]string{"rloop-2kuxv-p3-implement": "pane-9"}
+	if s := r.spawn(t, 1); s.Agent != "rloop-uiz4e-p3-implement" {
+		t.Fatalf("agent %q", s.Agent)
+	}
+}
+
+func TestASpawnWithEveryAlternateNameTakenFails(t *testing.T) {
+	r := newRig(t)
+	r.host.Panes = map[string]string{"rloop-2kuxv-p3-implement": "pane-9", "rloop-uiz4e-p3-implement": "pane-8", "rloop-kjdff-p3-implement": "pane-7"}
+	_, err := r.sm.Spawn(context.Background(), r.ref(1))
+	if err == nil || err.Error() != "spawn: agent name rloop-2kuxv-p3-implement taken, and its alternates" || r.count("SessionHost.Open") != 0 || r.count("SessionHost.Start") != 0 || len(r.steps()) != 0 {
+		t.Fatalf("err %v; calls %v; steps %v", err, r.shared.Calls(), r.steps())
+	}
+}
+
+func TestASpawnFailsWhenHerdrCannotBeAskedForTheName(t *testing.T) {
+	r := newRig(t)
+	r.host.Err = errors.New("herdr down")
+	_, err := r.sm.Spawn(context.Background(), r.ref(1))
+	if err == nil || !strings.HasPrefix(err.Error(), "spawn: ") || !errors.Is(err, r.host.Err) || r.count("SessionHost.Start") != 0 {
+		t.Fatalf("err %v; calls %v", err, r.shared.Calls())
+	}
+}
+
+func TestSpawnRecordsTheAgentNameBeforeStartingIt(t *testing.T) {
+	r := newRig(t)
+	r.spawn(t, 1)
+	events := r.events("agent-named")
+	want := map[string]string{"attempt": "1", "agent": "rloop-2kuxv-p3-implement"}
+	if len(events) != 1 || events[0].Phase != "3" || events[0].Step != "implement" || !reflect.DeepEqual(events[0].Fields, want) {
+		t.Fatalf("events %+v", events)
+	}
+	calls := r.shared.Calls()
+	start := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "SessionHost.Start pane-1") })
+	if start < 1 || calls[start-1] != "Store.Append run-1 event" {
+		t.Fatalf("calls %v", calls)
+	}
+}
+
+func TestASpawnWhoseNameCannotBeRecordedNeverStartsTheAgent(t *testing.T) {
+	r := newRig(t)
+	r.sm.Store = failingEventStore{fakeStore: r.store, kind: "agent-named"}
+	_, err := r.sm.Spawn(context.Background(), r.ref(1))
+	if err == nil || !strings.Contains(err.Error(), "disk full") || r.count("SessionHost.Start") != 0 {
+		t.Fatalf("err %v; calls %v", err, r.shared.Calls())
+	}
+}
+
+func TestALongStepNameIsCutToTheLimitKeepingTheRunTokenAndAttempt(t *testing.T) {
+	r := newRig(t)
+	r.sm.Label = "test"
+	ref := r.ref(2)
+	ref.Key.Phase = "12"
+	s, err := r.sm.Spawn(context.Background(), ref)
+	if err != nil || s.Agent != "rloop-test-2kuxv-p12-im-4cdh5-a2" || len(s.Agent) != 32 {
+		t.Fatalf("agent %q; err %v", s.Agent, err)
+	}
+}
+
+func TestTwoRunsWithALongLabelStillNameTheStepApart(t *testing.T) {
+	r := newRig(t)
+	r.sm.Label = "a-very-long-label-name"
+	first := r.spawn(t, 1)
+	ref := r.ref(1)
+	ref.Key.Run = "run-7"
+	second, err := r.sm.Spawn(context.Background(), ref)
+	if err != nil || first.Agent != "rloop-a-very-long-label-na-hykpv" || second.Agent != "rloop-a-very-long-label-na-bzyxw" {
+		t.Fatalf("agents %q, %q; err %v", first.Agent, second.Agent, err)
+	}
+}
+
+func TestAGateStepIsNamedWithTheRunToken(t *testing.T) {
+	r := newRig(t)
+	ref := r.ref(1)
+	ref.Key.Phase, ref.Key.Kind, ref.Kind.Name = "1", "gate", "gate"
+	if s, err := r.sm.Spawn(context.Background(), ref); err != nil || s.Agent != "rloop-2kuxv-p1-gate" {
+		t.Fatalf("session %+v; err %v", s, err)
+	}
+}
+
 func TestSpawnRecordsSpawnedBeforeOpenThenStartsPromptsAndRecordsRunning(t *testing.T) {
 	r := newRig(t)
 
@@ -166,11 +267,14 @@ func TestSpawnRecordsSpawnedBeforeOpenThenStartsPromptsAndRecordsRunning(t *test
 		"Repo.HeadSHA /repo/.r-loop/wt/phase-3",
 		"Repo.Snapshot /repo/.r-loop/wt/phase-3",
 		"Store.Append run-1 event",
+		"Repo.Root",
+		"SessionHost.AgentPane rloop-2kuxv-p3-implement",
 		"Store.Append run-1 step",
 		"SessionHost.Open /repo/.r-loop/wt/phase-3 ◆ p3 implement map[R_LOOP_PHASE:3 R_LOOP_RUN:run-1 R_LOOP_SENTINEL:" + sentinel + " R_LOOP_STEP:implement]",
-		"SessionHost.Start pane-1 rloop-p3-implement codex [-c model=gpt-5.6-sol]",
+		"Store.Append run-1 event",
+		"SessionHost.Start pane-1 rloop-2kuxv-p3-implement codex [-c model=gpt-5.6-sol]",
 		"Prompts.Render implement",
-		`SessionHost.Prompt rloop-p3-implement "do phase 3" false 0s`,
+		`SessionHost.Prompt rloop-2kuxv-p3-implement "do phase 3" false 0s`,
 		"Store.Append run-1 step",
 	}
 	if got := r.shared.Calls(); !reflect.DeepEqual(got, want) {
@@ -182,7 +286,7 @@ func TestSpawnRecordsSpawnedBeforeOpenThenStartsPromptsAndRecordsRunning(t *test
 	if s.StartSHA != "sha-start" || s.StartTree != "tree-start" || s.Dir != "/repo/.r-loop/wt/phase-3" {
 		t.Fatalf("session = %+v", s)
 	}
-	if s.Workspace != "ws-1" || s.Agent != "rloop-p3-implement" || s.Sentinel != sentinel {
+	if s.Workspace != "ws-1" || s.Agent != "rloop-2kuxv-p3-implement" || s.Sentinel != sentinel {
 		t.Fatalf("session = %+v", s)
 	}
 	if !reflect.DeepEqual(r.resolve, []string{"codex", "gpt-5.6-sol", "medium", "", ""}) {
@@ -242,7 +346,7 @@ func TestAnAskingProviderGetsTheStepURLAndAnMCPConfigWrittenBeforeItStarts(t *te
 	r := newRig(t)
 	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
 	r.sm.Resolve = claudeLikeResolve(r)
-	path := filepath.Join(r.runDir, "phase-3", "rloop-p3-implement.mcp.json")
+	path := filepath.Join(r.runDir, "phase-3", "rloop-2kuxv-p3-implement.mcp.json")
 	host := &configCheckingHost{scriptedHost: r.host, path: path}
 	r.sm.Host = host
 	var vars map[string]any
@@ -285,7 +389,7 @@ func TestAProviderTakingTheURLDirectlyGetsNoMCPConfigFile(t *testing.T) {
 	if s.Ref.AskURL != url {
 		t.Fatalf("ask url = %q", s.Ref.AskURL)
 	}
-	if got := r.count("SessionHost.Start pane-1 rloop-p3-implement codex [-c model=gpt-5.6-sol]"); got != 1 {
+	if got := r.count("SessionHost.Start pane-1 rloop-2kuxv-p3-implement codex [-c model=gpt-5.6-sol]"); got != 1 {
 		t.Fatalf("calls =\n%s", strings.Join(r.shared.Calls(), "\n"))
 	}
 	matches, _ := filepath.Glob(filepath.Join(r.runDir, "phase-3", "*.mcp.json"))
@@ -360,7 +464,7 @@ func TestAttemptTwoGetsTheSuffixedNameAndSentinel(t *testing.T) {
 
 	s := r.spawn(t, 2)
 
-	if s.Agent != "rloop-p3-implement-a2" || r.host.Opened[0].Label != "◆ p3 implement·a2" {
+	if s.Agent != "rloop-2kuxv-p3-implement-a2" || r.host.Opened[0].Label != "◆ p3 implement·a2" {
 		t.Fatalf("agent = %q, label = %q", s.Agent, r.host.Opened[0].Label)
 	}
 	if filepath.Base(s.Sentinel) != "implement-a2.sentinel" {
@@ -543,8 +647,8 @@ func TestIdleForTheGraceStallsAndNudgesOnceThenWorkingResumes(t *testing.T) {
 	}
 	nudges := slices.DeleteFunc(r.shared.Calls(), func(c string) bool { return !strings.HasPrefix(c, "SessionHost.Prompt") })
 	want := []string{
-		`SessionHost.Prompt rloop-p3-implement "do phase 3" false 0s`,
-		"SessionHost.Prompt rloop-p3-implement \"" + nudgeText + "\" false 0s",
+		`SessionHost.Prompt rloop-2kuxv-p3-implement "do phase 3" false 0s`,
+		"SessionHost.Prompt rloop-2kuxv-p3-implement \"" + nudgeText + "\" false 0s",
 	}
 	if !reflect.DeepEqual(nudges, want) {
 		t.Fatalf("prompts = %q", nudges)
@@ -676,7 +780,7 @@ func TestStopInterruptsTheAgentAndNeverClosesTheWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if r.count("SessionHost.Interrupt rloop-p3-implement") != 1 || r.count("SessionHost.Close") != 0 {
+	if r.count("SessionHost.Interrupt rloop-2kuxv-p3-implement") != 1 || r.count("SessionHost.Close") != 0 {
 		t.Fatalf("calls = %q", r.shared.Calls())
 	}
 }
@@ -759,7 +863,7 @@ func TestTheMCPConfigIsReadableOnlyByItsOwner(t *testing.T) {
 
 	r.spawn(t, 1)
 
-	info, err := os.Stat(filepath.Join(r.runDir, "phase-3", "rloop-p3-implement.mcp.json"))
+	info, err := os.Stat(filepath.Join(r.runDir, "phase-3", "rloop-2kuxv-p3-implement.mcp.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -795,7 +899,7 @@ func TestALabelledRunNamesTheStepAgentAndWorkspaceWithTheLabel(t *testing.T) {
 
 	s := r.spawn(t, 1)
 
-	if s.Agent != "rloop-test-p3-implement" || r.host.Opened[0].Label != "◆ test p3 implement" {
+	if s.Agent != "rloop-test-2kuxv-p3-implement" || r.host.Opened[0].Label != "◆ test p3 implement" {
 		t.Fatalf("agent = %q, label = %q", s.Agent, r.host.Opened[0].Label)
 	}
 }
@@ -806,7 +910,7 @@ func TestALabelledRetryKeepsTheAttemptSuffix(t *testing.T) {
 
 	s := r.spawn(t, 2)
 
-	if s.Agent != "rloop-test-p3-implement-a2" || r.host.Opened[0].Label != "◆ test p3 implement·a2" {
+	if s.Agent != "rloop-test-2kuxv-p3-implement-a2" || r.host.Opened[0].Label != "◆ test p3 implement·a2" {
 		t.Fatalf("agent = %q, label = %q", s.Agent, r.host.Opened[0].Label)
 	}
 }

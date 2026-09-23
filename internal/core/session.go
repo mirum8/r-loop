@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -146,9 +148,13 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 		return s, fmt.Errorf("spawn: %w", err)
 	}
 	s.Sentinel = filepath.Join(stepDir, base+".sentinel")
-	s.Agent = AgentBase(m.Label, key.Phase, key.Kind)
+	suffix := ""
 	if key.Attempt > 1 {
-		s.Agent += fmt.Sprintf("-a%d", key.Attempt)
+		suffix = fmt.Sprintf("-a%d", key.Attempt)
+	}
+	s.Agent, err = m.freeAgent(key, "", suffix)
+	if err != nil {
+		return s, fmt.Errorf("spawn: %w", err)
 	}
 	if err := os.MkdirAll(stepDir, 0o755); err != nil {
 		return s, fmt.Errorf("spawn: %w", err)
@@ -172,11 +178,41 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 	return s, m.record(key, StepRunning, "")
 }
 
-func AgentBase(label, phase, kind string) string {
-	if label == "" {
-		return fmt.Sprintf("rloop-p%s-%s", phase, kind)
+func shortHash(s string) string {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	value := strconv.FormatUint(uint64(h.Sum32()%60466176), 36)
+	return strings.Repeat("0", 5-len(value)) + value
+}
+
+func (m *SessionManager) agentBase(key StepKey, salt int) string {
+	seed := m.Repo.Root() + "\n" + key.Run
+	if salt > 0 {
+		seed += "\n" + strconv.Itoa(salt)
 	}
-	return fmt.Sprintf("rloop-%s-p%s-%s", label, phase, kind)
+	label := ""
+	if m.Label != "" {
+		label = m.Label + "-"
+	}
+	return "rloop-" + label + shortHash(seed) + "-p" + key.Phase + "-" + key.Kind
+}
+
+func (m *SessionManager) freeAgent(key StepKey, tail, suffix string) (string, error) {
+	first := ""
+	for salt := 0; salt < 3; salt++ {
+		name := agentName(m.agentBase(key, salt)+tail, suffix)
+		if salt == 0 {
+			first = name
+		}
+		pane, err := m.Host.AgentPane(name)
+		if err != nil {
+			return "", err
+		}
+		if pane == "" {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("agent name %s taken, and its alternates", first)
 }
 
 func stepLabel(runLabel string, key StepKey) string {
@@ -202,6 +238,12 @@ func (m *SessionManager) start(s *Session, stepDir string) error {
 	}
 	s.Ref.AskURL = url
 	ref := s.Ref
+	key := ref.Key
+	at := m.now()
+	ev := Event{At: at, Kind: "agent-named", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"attempt": strconv.Itoa(key.Attempt), "agent": s.Agent}}
+	if err := m.Store.Append(key.Run, Record{Kind: RecordEvent, At: at, Event: &ev}); err != nil {
+		return err
+	}
 	if _, err := m.Host.Start(s.Pane, s.Agent, args.Kind, args.Args); err != nil {
 		return err
 	}

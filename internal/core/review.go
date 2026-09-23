@@ -181,6 +181,11 @@ func (h ReviewHalf) open(worker *Session, rows []Reviewer, required []string, ar
 	sessions := make([]*Session, len(rows))
 	for i, rv := range rows {
 		sessions[i] = h.reviewer(worker, rv, required[i], args[i], urls[i], rd)
+		name, err := sm.freeAgent(worker.Ref.Key, "-rv-"+rv.ID(), agentSuffix(rd.n, worker.Ref.Key.Attempt))
+		if err != nil {
+			return nil, sm.fail(worker, "reviewer "+rv.ID()+": "+err.Error())
+		}
+		sessions[i].Agent = name
 		target, direction := worker.Pane, "right"
 		if i > 0 {
 			target, direction = sessions[i-1].Pane, "down"
@@ -198,6 +203,9 @@ func (h ReviewHalf) open(worker *Session, rows []Reviewer, required []string, ar
 		}
 		if err := os.MkdirAll(s.Ref.Vars["ArtifactsDir"].(string), 0o755); err != nil {
 			return nil, sm.fail(worker, "reviewer "+s.Reviewer+": "+err.Error())
+		}
+		if err := h.event(worker, "agent-named", map[string]string{"attempt": strconv.Itoa(worker.Ref.Key.Attempt), "agent": s.Agent, "reviewer": s.Reviewer, "round": strconv.Itoa(rd.n)}); err != nil {
+			return nil, sm.fail(worker, "record: "+err.Error())
 		}
 		if _, err := sm.Host.Start(s.Pane, s.Agent, args[i].Kind, args[i].Args); err != nil {
 			return nil, sm.fail(worker, "reviewer "+s.Reviewer+": "+err.Error())
@@ -272,7 +280,6 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 		StartSHA:  worker.StartSHA,
 		StartTree: rd.tree,
 		Workspace: worker.Workspace,
-		Agent:     agentName(AgentBase(h.Sessions.Label, key.Phase, key.Kind)+"-rv-"+id, agentSuffix(rd.n, key.Attempt)),
 		Sentinel:  filepath.Join(dir, fmt.Sprintf("%s-a%d.sentinel", base, key.Attempt)),
 		Reviewer:  id,
 		owner:     worker,
@@ -362,8 +369,10 @@ func stepDir(s *Session) string {
 }
 
 func agentName(prefix, suffix string) string {
-	if room := maxAgentName - len(suffix); len(prefix) > room {
-		prefix = strings.TrimRight(prefix[:room], "-")
+	if len(prefix)+len(suffix) > maxAgentName {
+		sum := shortHash(prefix)
+		room := maxAgentName - len(suffix) - len(sum) - 1
+		prefix = strings.TrimRight(prefix[:room], "-") + "-" + sum
 	}
 	return prefix + suffix
 }
