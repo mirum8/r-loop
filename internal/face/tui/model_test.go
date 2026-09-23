@@ -487,6 +487,89 @@ func TestElapsedTicksEverySecond(t *testing.T) {
 	}
 }
 
+func TestARunningStepShowsBackstopCountdown(t *testing.T) {
+	events := recorded()
+	m := newModel(events[:len(events)-1])
+	next, _ := m.Update(tickMsg(at(33)))
+	if view := next.(Model).View(); !strings.Contains(view, "backstop   3h58m0s left") {
+		t.Fatalf("running step lacks countdown:\n%s", view)
+	}
+}
+
+func TestARunningGateFixRetryStartsFresh(t *testing.T) {
+	first := step(10, 2, "gatefix", "running", "claude", "opus", "high", "ws-5")
+	ended := step(15, 2, "gatefix", "ok", "claude", "opus", "high", "ws-5")
+	retry := step(17, 2, "gatefix", "running", "claude", "opus", "high", "ws-6")
+	retry.Fields["attempt"] = "2"
+	m := newModel([]core.Event{
+		{At: at(0), Kind: "phase-start", Phase: "2", Fields: map[string]string{"phase": "2"}},
+		first,
+		ended,
+		{At: at(16), Kind: "gate-fix", Phase: "2", Step: "land", Fields: map[string]string{"phase": "2", "round": "2"}},
+		retry,
+	})
+	next, _ := m.Update(tickMsg(at(30)))
+	m = next.(Model)
+	view := m.View()
+	for _, want := range []string{"PHASE 2 · gatefix a2", "state      running", "elapsed 13m0s", "backstop   3h47m0s left"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("retry view lacks %q:\n%s", want, view)
+		}
+	}
+	if m.Live == nil || !m.Live.Started.Equal(at(17)) || !m.Live.Ended.IsZero() {
+		t.Errorf("retry step has stale timing: %+v", m.Live)
+	}
+}
+
+func TestAnEndedStepShowsNoBackstopCountdown(t *testing.T) {
+	cases := []struct {
+		kind  string
+		state string
+	}{
+		{"plan", "ok"},
+		{"implement", "failed"},
+		{"milestone", "ok"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind+"-"+tc.state, func(t *testing.T) {
+			m := newModel([]core.Event{
+				{At: at(0), Kind: "phase-start", Phase: "3", Fields: map[string]string{"phase": "3"}},
+				step(0, 3, tc.kind, "running", "claude", "opus", "high", "ws-9"),
+				step(4, 3, tc.kind, tc.state, "claude", "opus", "high", "ws-9"),
+			})
+			next, _ := m.Update(tickMsg(at(30)))
+			view := next.(Model).View()
+			for _, want := range []string{"PHASE 3 · " + tc.kind, "state      " + tc.state} {
+				if !strings.Contains(view, want) {
+					t.Errorf("view lacks %q:\n%s", want, view)
+				}
+			}
+			for _, unwanted := range []string{"backstop", " left"} {
+				if strings.Contains(view, unwanted) {
+					t.Errorf("view contains %q:\n%s", unwanted, view)
+				}
+			}
+		})
+	}
+}
+
+func TestAnEndedStepsElapsedStaysEndedMinusStarted(t *testing.T) {
+	m := newModel([]core.Event{
+		step(31, 2, "implement", "running", "codex", "gpt-5", "medium", "ws-4"),
+		step(40, 2, "implement", "ok", "codex", "gpt-5", "medium", "ws-4"),
+	})
+	for _, minute := range []int{60, 90} {
+		next, _ := m.Update(tickMsg(at(minute)))
+		m = next.(Model)
+		if view := m.View(); !strings.Contains(view, "elapsed 9m0s") {
+			t.Errorf("at %d, view lacks frozen elapsed:\n%s", minute, view)
+		}
+	}
+	if got := m.Live.Elapsed(at(90)); got != 9*time.Minute {
+		t.Errorf("elapsed at 90 = %v, want 9m", got)
+	}
+}
+
 func TestCtrlCDuringALiveStepAsksBeforeStopping(t *testing.T) {
 	m := newModel(recorded())
 	aborted := 0
@@ -580,10 +663,47 @@ func TestAFinishedRunStopsTheClocks(t *testing.T) {
 	next, _ := m.Update(tickMsg(at(120)))
 
 	view := next.(Model).View()
-	for _, want := range []string{"started 14:00 · 1h30m0s", "elapsed 59m0s", "3h1m0s left"} {
+	for _, want := range []string{"started 14:00 · 1h30m0s", "no step running"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view lacks %q:\n%s", want, view)
 		}
+	}
+	for _, unwanted := range []string{"PHASE 2 · implement", "elapsed", " left"} {
+		if strings.Contains(view, unwanted) {
+			t.Errorf("view contains %q:\n%s", unwanted, view)
+		}
+	}
+	if next.(Model).Live != nil {
+		t.Errorf("finished run still has a live step: %+v", next.(Model).Live)
+	}
+}
+
+func TestAHaltedOrAbortedRunShowsNoLiveStep(t *testing.T) {
+	cases := []struct {
+		name string
+		ev   core.Event
+	}{
+		{"halt", core.Event{At: at(90), Kind: "halt", Fields: map[string]string{"blocked": "2", "resume": "r-loop resume"}}},
+		{"aborted", core.Event{At: at(90), Kind: "aborted", Phase: "2", Step: "implement"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			events := recorded()
+			m := newModel(events[:len(events)-1])
+			m = m.Apply(tc.ev)
+			next, _ := m.Update(tickMsg(at(120)))
+			view := next.(Model).View()
+			for _, want := range []string{"no step running", "halted"} {
+				if !strings.Contains(view, want) {
+					t.Errorf("view lacks %q:\n%s", want, view)
+				}
+			}
+			for _, unwanted := range []string{"PHASE 2 · implement", " left"} {
+				if strings.Contains(view, unwanted) {
+					t.Errorf("view contains %q:\n%s", unwanted, view)
+				}
+			}
+		})
 	}
 }
 

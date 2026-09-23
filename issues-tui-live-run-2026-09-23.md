@@ -8,7 +8,7 @@ and every row stays one line down to 80 columns.
 
 Verified against `r-loop` @ `main` `2db8b3b`.
 
-- [ ] [#1] Stale detail pane after the run
+- [x] [#1] Stale detail pane after the run  <!-- fixed: r-loop/phase-1 -->
       - Once a step's terminal `step` event (ok or failed) has been applied, whatever its kind, the panel no longer shows `backstop <d> left` for that step
       - An ended step's elapsed value is `Ended - Started` and does not change on later ticks
       - After `finished`, `halt` or `aborted`, the panel shows neither the last step as live nor any `left` countdown; `TestAFinishedRunStopsTheClocks` is updated to match

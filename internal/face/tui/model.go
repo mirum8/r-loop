@@ -238,7 +238,9 @@ func (m *Model) setPhase(n string, state core.PhaseState) {
 func (m *Model) step(ev core.Event) {
 	f := ev.Fields
 	var s Step
-	if m.Live != nil && m.Live.Phase == ev.Phase && m.Live.Kind == ev.Step && f["state"] != string(core.StepQueued) {
+	attempt, _ := strconv.Atoi(f["attempt"])
+	terminal := f["state"] == string(core.StepOK) || f["state"] == string(core.StepFailed)
+	if m.Live != nil && m.Live.Phase == ev.Phase && m.Live.Kind == ev.Step && m.Live.Attempt == attempt && f["state"] != string(core.StepQueued) && (m.Live.Ended.IsZero() || terminal) {
 		s = *m.Live
 	} else {
 		s = Step{Phase: ev.Phase, Kind: ev.Step, Started: ev.At}
@@ -247,7 +249,7 @@ func (m *Model) step(ev core.Event) {
 		s.Started = ev.At
 	}
 	s.State, s.Provider, s.Model, s.Effort, s.Half = f["state"], f["provider"], f["model"], f["effort"], f["half"]
-	s.Attempt, _ = strconv.Atoi(f["attempt"])
+	s.Attempt = attempt
 	if f["workspace"] != "" {
 		s.Workspace = f["workspace"]
 	}
@@ -333,6 +335,7 @@ func (m *Model) end(status string, at time.Time) {
 	m.Status = status
 	m.ended = at
 	m.Current = ""
+	m.Live = nil
 	m.Notice = ""
 }
 
