@@ -21,6 +21,8 @@ session whose proposed command line the driver validates. ADR-76 added Milestone
 `ask_watchdog` returns at once and the driver types the answer into the pane that asked.
 An amendment to ADR-6 added Milestone 11, Phase 35: a provider block's `flags` are passed first on
 every start, and the shipped codex block turns off codex's startup update prompt.
+An amendment to ADR-73 added Milestone 12, Phase 36: the watchdog calls `ask_maintainer` before it
+asks the maintainer in its own pane, and the run shows it waiting for them with the question.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -44,6 +46,7 @@ every start, and the shipped codex block turns off codex's startup update prompt
 - Wave 17: Phase 33
 - Wave 18: Phase 34
 - Wave 19: Phase 35
+- Wave 20: Phase 36
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -550,6 +553,22 @@ Contracts: `tech-design.md#milestone-2-sessions-and-providers`
 - [x] `flags` containing `{model}`, `{effort}`, `{url}` or `{mcpConfig}` is refused on `Resolve`, naming `flags` and the source
 - [x] the shipped codex block sets `flags: "-c check_for_update_on_startup=false"`, so codex's startup update prompt no longer blocks herdr's `agent start`
 **Done when:** `go test -race ./...` is green and `grep -n "check_for_update_on_startup=false" internal/providers/shipped/codex.yaml` prints the `flags` line.
+
+## Milestone 12 — Waiting for the maintainer
+Contracts: `tech-design.md#milestone-7-the-watchdog`
+
+### Phase 36 — The watchdog shows the run waiting for the maintainer with its question
+**Implements:** Answer an agent's question without leaving the loop · Fix what is blocking a step
+**Depends on:** Phase 35
+**Files:** `internal/askmcp/watchdog.go` (modify) · `internal/core/watchdog.go` (modify) · `internal/core/remedies.go` (modify) · `internal/app/wire.go` (modify) · `internal/face/tui/model.go` (modify) · `internal/face/plain/plain.go` (modify) · `internal/prompts/templates/watchdog.md` (modify) · `internal/askmcp/watchdog_test.go` (modify) · `internal/core/watchdog_test.go` (modify) · `internal/core/remedies_test.go` (modify) · `internal/core/unattended_test.go` (modify) · `internal/face/tui/model_test.go` (modify) · `internal/face/plain/plain_test.go` (modify) · `internal/prompts/render_test.go` (modify) · `DESIGN.md` (modify)
+**Risk:** concurrency
+- [x] the watchdog surface gains `ask_maintainer(question, options?, recommended?) → {accepted, reason?}`, recorded as `watchdog-call` before its handler runs like the other tools; it returns at once, refuses an empty question, and delegates to `WatchdogHandlers.AskMaintainer`, wired to `Watchdog.AskMaintainer`, which records and emits `watchdog-waiting` with `question` (and `options`, `recommended`) in its fields
+- [x] `Remedies.Propose` returning `ask`, and `Remedies.Restart` refusing a non-fallback provider without `maintainer_said`, mark the same wait through `Remedies.Dog`, with the remedy as the question
+- [x] every other watchdog tool first calls `WatchdogHandlers.Resume`, wired to `Watchdog.Resume`, which records and emits `watchdog-resumed` once; a resume that cannot be recorded refuses the call
+- [x] the wait is one flag shared with the `agent_blocked` wait, its transitions serialised apart from `send`, so the two never double-emit; an accepted prompt ends it only when herdr reported the watchdog blocked during it
+- [x] the TUI keeps `watchdog waiting for you` amber in the header and adds an amber feed line `watchdog asks you: <question>` on one line; the plain face prints `!  watchdog waiting for you: <question>`
+- [x] the watchdog prompt says to call `ask_maintainer` first, then ask in its pane (AskUserQuestion when it has one, otherwise plain text), then wait for the reply
+**Done when:** `go test -race ./...` is green and `grep -n "ask_maintainer" internal/askmcp/watchdog.go internal/prompts/templates/watchdog.md` prints the tool and the prompt line.
 
 ## Open questions
 

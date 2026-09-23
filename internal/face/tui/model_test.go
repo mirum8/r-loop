@@ -199,6 +199,7 @@ func TestTheFeedNamesWhatHappenedInItsTone(t *testing.T) {
 		{core.Event{Kind: "question-answered", Phase: "2", Step: "implement", Fields: map[string]string{"id": "q2", "by": "maintainer"}}, "q2 answered by maintainer", toneDim},
 		{core.Event{Kind: "human", Fields: map[string]string{"what": "resume"}}, "resumed", toneDim},
 		{core.Event{Kind: "signal-rejected", Fields: map[string]string{"reason": "step is not running"}}, "step is not running", toneDim},
+		{core.Event{Kind: "watchdog-waiting", Fields: map[string]string{"question": "Retry phase 2\n  with the helper renamed?"}}, "watchdog asks you: Retry phase 2 with the helper renamed?", toneWarn},
 	}
 	for _, c := range cases {
 		c.ev.At = at(5)
@@ -207,7 +208,7 @@ func TestTheFeedNamesWhatHappenedInItsTone(t *testing.T) {
 			t.Errorf("%s: feed %+v, want %q tone %d", c.ev.Kind, m.Feed, c.text, c.tone)
 		}
 	}
-	for _, kind := range []string{"workspace-closed", "worktree-removed"} {
+	for _, kind := range []string{"workspace-closed", "worktree-removed", "watchdog-waiting", "watchdog-resumed"} {
 		if m := newModel([]core.Event{{At: at(5), Kind: kind, Phase: "1"}}); len(m.Feed) != 0 {
 			t.Errorf("%s logged: %+v", kind, m.Feed)
 		}

@@ -563,6 +563,8 @@ func TestOnlyTheWatchdogAsksTheMaintainerInItsOwnSession(t *testing.T) {
 	for _, want := range []string{
 		"## Talking to the maintainer",
 		"Only you ask the maintainer, and only here, in your own session",
+		"ask_maintainer(question, options?, recommended?)",
+		"First call `ask_maintainer` with the question",
 		"AskUserQuestion",
 		"a person who has not read the logs",
 		"Offer what you can do yourself as an option",

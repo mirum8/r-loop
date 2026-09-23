@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -21,6 +22,15 @@ type WatchdogHandlers struct {
 	Propose func(class, command, why, maintainerSaid string) (string, string)
 	Restart func(step, addendum, provider, maintainerSaid string) (bool, string)
 	Answer  func(id, answer, citation string) (bool, string)
+
+	AskMaintainer func(question string, options []string, recommended string) error
+	Resume        func() error
+}
+
+type askMaintainerInput struct {
+	Question    string   `json:"question"`
+	Options     []string `json:"options,omitempty"`
+	Recommended string   `json:"recommended,omitempty"`
 }
 
 type signalInput struct {
@@ -60,7 +70,7 @@ type decisionOutput struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
-var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true}
+var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "ask_maintainer": true}
 
 func (s *Server) Handle(h WatchdogHandlers) {
 	s.mu.Lock()
@@ -81,6 +91,9 @@ func (s *Server) watchdogServer() *mcp.Server {
 		Description: "Report a step going the wrong way: kind warn or halt, step phase-<N>/<kind>, with the reason and the evidence.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in signalInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("signal", in.Step, map[string]string{"kind": in.Kind, "step": in.Step, "reason": in.Reason, "evidence": in.Evidence}); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		if err := s.resume(); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
 		key, err := s.resolve(in.Step)
@@ -104,6 +117,9 @@ func (s *Server) watchdogServer() *mcp.Server {
 		if err := s.record("propose_remedy", "", map[string]string{"class": in.Class, "command": in.Command, "why": in.Why, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
 		}
+		if err := s.resume(); err != nil {
+			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
+		}
 		h := s.handlersNow().Propose
 		if h == nil {
 			return nil, decisionOutput{Decision: "refused", Reason: notAvailable}, nil
@@ -116,6 +132,9 @@ func (s *Server) watchdogServer() *mcp.Server {
 		Description: "Restart a failed or stalled step phase-<N>/<kind> as a new attempt, optionally with an addendum or another provider. A provider that is not the row's fallback needs maintainer_said: the maintainer's reply, quoted, after you asked them in your own session.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in restartInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("restart_step", in.Step, map[string]string{"step": in.Step, "addendum": in.Addendum, "provider": in.Provider, "maintainer_said": in.MaintainerSaid}); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		if err := s.resume(); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
 		h := s.handlersNow().Restart
@@ -132,6 +151,9 @@ func (s *Server) watchdogServer() *mcp.Server {
 		if err := s.record("answer_question", "", map[string]string{"id": in.ID, "answer": in.Answer, "citation": in.Citation}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
+		if err := s.resume(); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
 		h := s.handlersNow().Answer
 		if h == nil {
 			return nil, acceptedOutput{Reason: notAvailable}, nil
@@ -139,7 +161,33 @@ func (s *Server) watchdogServer() *mcp.Server {
 		ok, reason := h(in.ID, in.Answer, in.Citation)
 		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
 	})
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "ask_maintainer",
+		Description: "Call this first whenever you need the maintainer: it shows them that you are waiting for them, with the question, and returns at once. Then ask them in your own session and wait for the reply. Your next call of any other tool marks the wait over.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in askMaintainerInput) (*mcp.CallToolResult, acceptedOutput, error) {
+		if err := s.record("ask_maintainer", "", map[string]string{"question": in.Question, "options": strings.Join(in.Options, "; "), "recommended": in.Recommended}); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		if strings.TrimSpace(in.Question) == "" {
+			return nil, acceptedOutput{Reason: "question is empty"}, nil
+		}
+		h := s.handlersNow().AskMaintainer
+		if h == nil {
+			return nil, acceptedOutput{Reason: notAvailable}, nil
+		}
+		if err := h(in.Question, in.Options, in.Recommended); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		return nil, acceptedOutput{Accepted: true}, nil
+	})
 	return srv
+}
+
+func (s *Server) resume() error {
+	if h := s.handlersNow().Resume; h != nil {
+		return h()
+	}
+	return nil
 }
 
 func (s *Server) record(tool, step string, fields map[string]string) error {

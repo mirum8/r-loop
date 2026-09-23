@@ -507,9 +507,21 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   evidence) → {accepted, reason?}` · `propose_remedy(class, command, why, maintainer_said?) →
   {decision: authorised|refused|ask, reason?}` ·
   `restart_step(step, addendum?, provider?, maintainer_said?) → {accepted, reason?}` ·
-  `answer_question(id, answer, citation) → {accepted, reason?}`; `step` is `phase-<N>/<kind>`,
+  `answer_question(id, answer, citation) → {accepted, reason?}` ·
+  `ask_maintainer(question, options?, recommended?) → {accepted, reason?}`; `step` is `phase-<N>/<kind>`,
   resolved to the latest attempt. None of these is reachable from a step path, and this path
-  serves no ask tool.
+  serves no `ask_watchdog`. Every call is recorded as `watchdog-call` before its handler runs.
+- **Waiting for the maintainer (ADR-73, amended 2026-09-23)** — `ask_maintainer` returns at once;
+  an empty question is refused. It calls `Watchdog.AskMaintainer`, which records and emits
+  `Event{Kind: "watchdog-waiting", Fields: {question, options?, recommended?}}` (`options` joined
+  with `; `). `Remedies.Propose` returning `ask`, and `Remedies.Restart` refusing a provider that
+  is not the row's fallback without `maintainer_said`, mark the same wait with the remedy as the
+  question. Every other watchdog tool first calls `Watchdog.Resume`, which records and emits
+  `watchdog-resumed` once; a resume that cannot be recorded refuses the call. The wait is one
+  flag shared with the `agent_blocked` wait above, so neither path double-emits; an accepted
+  prompt ends it only when herdr reported the watchdog blocked during it, since a codex watchdog
+  asking in plain text accepts prompts while it waits. The TUI adds an amber feed line
+  `watchdog asks you: <question>`; the plain face prints `!  watchdog waiting for you: <question>`.
 - **Acceptance** — `Watch.Accept`: `warn` or `halt` naming the live step, or one that ended within
   the last poll tick, is accepted; anything else is recorded `Rejected` with its reason. A
   `signal` whose `step` is not `phase-<N>/<kind>` still goes through `Accept` and is rejected. A

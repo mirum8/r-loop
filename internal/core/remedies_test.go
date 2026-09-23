@@ -387,3 +387,38 @@ func TestARestartOnAProviderWithoutAnAskChannelIsRefused(t *testing.T) {
 		t.Errorf("records %+v", recs)
 	}
 }
+
+func TestARemedyThatNeedsTheMaintainerShowsTheWatchdogWaitingForThem(t *testing.T) {
+	store := &fakeStore{}
+	w, _ := failedImplement(t, store)
+	face := &fakeFace{}
+	rem := newRemedies(w, store)
+	rem.Dog = &Watchdog{RunID: "run-1", Store: store, Face: face}
+
+	got, _ := rem.Propose("retry", "true", "the plan named a helper Go does not have", "")
+
+	if got != "ask" {
+		t.Fatalf("decision %q", got)
+	}
+	var kinds []string
+	for _, ev := range face.Events {
+		kinds = append(kinds, ev.Kind)
+	}
+	if !reflect.DeepEqual(kinds, []string{"watchdog-waiting"}) {
+		t.Errorf("emitted %v, want the watchdog shown waiting for the maintainer", kinds)
+	}
+}
+
+func TestAnAuthorisedRemedyDoesNotShowTheWatchdogWaiting(t *testing.T) {
+	store := &fakeStore{}
+	w, _ := failedImplement(t, store)
+	face := &fakeFace{}
+	rem := newRemedies(w, store, "locks")
+	rem.Dog = &Watchdog{RunID: "run-1", Store: store, Face: face}
+
+	got, _ := rem.Propose("locks", "rm -f .git/index.lock", "a stale git lock", "")
+
+	if got != "authorised" || len(face.Events) != 0 {
+		t.Errorf("decision %q, emitted %+v", got, face.Events)
+	}
+}

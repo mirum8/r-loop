@@ -30,6 +30,7 @@ type Watchdog struct {
 
 	mu        sync.Mutex
 	send      sync.Mutex
+	wait      sync.Mutex
 	cond      *sync.Cond
 	quit      chan struct{}
 	drained   chan struct{}
@@ -37,6 +38,7 @@ type Watchdog struct {
 	stopping  bool
 	gone      bool
 	asking    bool
+	blocked   bool
 	pane      string
 	workspace string
 }
@@ -193,7 +195,7 @@ func (d *Watchdog) prompt(text string, wait bool, timeout time.Duration) error {
 		if state == AgentGone {
 			break
 		}
-		if werr := d.waiting(true, "watchdog-waiting"); werr != nil {
+		if werr := d.markWaiting(nil, true); werr != nil {
 			return werr
 		}
 		if !d.pause() {
@@ -203,7 +205,7 @@ func (d *Watchdog) prompt(text string, wait bool, timeout time.Duration) error {
 	}
 	if !blocked(err) {
 		if err == nil {
-			if werr := d.waiting(false, "watchdog-resumed"); werr != nil {
+			if werr := d.markResumed(true); werr != nil {
 				return werr
 			}
 		}
@@ -218,14 +220,46 @@ func (d *Watchdog) prompt(text string, wait bool, timeout time.Duration) error {
 	return err
 }
 
-func (d *Watchdog) waiting(now bool, kind string) error {
+func (d *Watchdog) AskMaintainer(question string, options []string, recommended string) error {
+	fields := map[string]string{"question": question}
+	if len(options) > 0 {
+		fields["options"] = strings.Join(options, "; ")
+	}
+	if recommended != "" {
+		fields["recommended"] = recommended
+	}
+	return d.markWaiting(fields, false)
+}
+
+func (d *Watchdog) Resume() error {
+	return d.markResumed(false)
+}
+
+func (d *Watchdog) markWaiting(fields map[string]string, byPrompt bool) error {
+	d.wait.Lock()
+	defer d.wait.Unlock()
 	d.mu.Lock()
 	was := d.asking
+	if was && byPrompt {
+		d.blocked = true
+	}
 	d.mu.Unlock()
-	if was == now {
+	if was {
 		return nil
 	}
-	return d.emit(kind, nil, func() { d.asking = now })
+	return d.emit("watchdog-waiting", fields, func() { d.asking, d.blocked = true, byPrompt })
+}
+
+func (d *Watchdog) markResumed(byPrompt bool) error {
+	d.wait.Lock()
+	defer d.wait.Unlock()
+	d.mu.Lock()
+	was := d.asking && (d.blocked || !byPrompt)
+	d.mu.Unlock()
+	if !was {
+		return nil
+	}
+	return d.emit("watchdog-resumed", nil, func() { d.asking, d.blocked = false, false })
 }
 
 func (d *Watchdog) emit(kind string, fields map[string]string, apply func()) error {

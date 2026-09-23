@@ -401,6 +401,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	}
 	w.Remedies = &core.Remedies{Allow: allow, Store: w.Store, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks, Asks: w.asks}
 	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, Pane: env.Pane, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow, Unattended: opts.Unattended}
+	w.Remedies.Dog = w.Dog
 	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Repo: repo}
 	w.Loop.RemedyWindow = cfg.Watchdog.RemedyWindow
 	return w, nil
@@ -426,7 +427,7 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	w.Watch.PhaseCheck = &core.PhaseCheck{Dog: w.Dog, Repo: w.Loop.Sessions.Repo, Timeout: wd.CheckTimeout}
 	w.Router.Dog = w.Dog
 	w.Watch.Router = w.Router
-	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer})
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume})
 	return nil
 }
 

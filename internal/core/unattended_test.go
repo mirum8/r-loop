@@ -156,3 +156,16 @@ func TestAMaintainerApprovedProviderRemedyNamingTheProviderIsNotAskedAgain(t *te
 		t.Errorf("records %+v", recs)
 	}
 }
+
+func TestARestartThatNeedsTheMaintainerShowsTheWatchdogWaitingForThem(t *testing.T) {
+	store := &fakeStore{}
+	rem, _ := fallbackRemedies(t, store, "provider")
+	face := &fakeFace{}
+	rem.Dog = &Watchdog{RunID: "run-1", Store: store, Face: face}
+
+	ok, _ := rem.Restart("phase-2/implement", "", "gemini", "")
+
+	if ok || len(face.Events) != 1 || face.Events[0].Kind != "watchdog-waiting" || !strings.Contains(face.Events[0].Fields["question"], "gemini") {
+		t.Errorf("restart %v, emitted %+v", ok, face.Events)
+	}
+}

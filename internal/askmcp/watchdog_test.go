@@ -224,6 +224,7 @@ func TestANilHandlerAnswersNotAvailable(t *testing.T) {
 		{"signal", map[string]any{"kind": "halt", "step": "phase-3/implement", "reason": "r", "evidence": "e"}},
 		{"restart_step", map[string]any{"step": "phase-3/implement"}},
 		{"answer_question", map[string]any{"id": "q1", "answer": "a", "citation": "spec.md:1"}},
+		{"ask_maintainer", map[string]any{"question": "q"}},
 	} {
 		if out := call(t, cs, c.tool, c.args); out["accepted"] != false || out["reason"] != "not available" {
 			t.Fatalf("%s = %+v", c.tool, out)
@@ -273,7 +274,7 @@ func TestWatchdogPathListsNoAskTool(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	if want := []string{"answer_question", "propose_remedy", "restart_step", "signal"}; !slices.Equal(names, want) {
+	if want := []string{"answer_question", "ask_maintainer", "propose_remedy", "restart_step", "signal"}; !slices.Equal(names, want) {
 		t.Fatalf("watchdog tools = %v, want %v", names, want)
 	}
 }
@@ -323,7 +324,7 @@ func TestWatchdogToolsOnAStepPathAre404(t *testing.T) {
 	if len(tools.Tools) != 1 || tools.Tools[0].Name != "ask_watchdog" {
 		t.Fatalf("step tools = %+v", tools.Tools)
 	}
-	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question"} {
+	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "ask_maintainer"} {
 		_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{"kind": "halt", "step": "phase-3/implement"}})
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not found") {
 			t.Fatalf("%s on a step path: err = %v", name, err)
@@ -388,6 +389,110 @@ func TestASignalWhoseAttemptCannotBeResolvedIsNotAccepted(t *testing.T) {
 	out := call(t, connect(t, s.WatchdogURL()), "signal", map[string]any{"kind": "halt", "step": "phase-3/implement", "reason": "r", "evidence": "e"})
 
 	if out["accepted"] != false || !strings.Contains(out["reason"].(string), "corrupt") || called {
+		t.Fatalf("out = %+v, called = %v", out, called)
+	}
+}
+
+func TestAskMaintainerIsRecordedThenDelegatedAndReturnsAtOnce(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	var seen []core.Record
+	var got []string
+	s.Handle(WatchdogHandlers{AskMaintainer: func(question string, options []string, recommended string) error {
+		seen = st.records()
+		got = append(append([]string{question}, options...), recommended)
+		return nil
+	}})
+
+	out := call(t, connect(t, s.WatchdogURL()), "ask_maintainer", map[string]any{"question": "retry with the helper renamed?", "options": []string{"yes", "no"}, "recommended": "yes"})
+
+	if out["accepted"] != true {
+		t.Fatalf("out = %+v", out)
+	}
+	if !slices.Equal(got, []string{"retry with the helper renamed?", "yes", "no", "yes"}) {
+		t.Fatalf("handler got %q", got)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("records seen by the handler = %+v", seen)
+	}
+	ev := seen[0].Event
+	if ev.Kind != "watchdog-call" || ev.Fields["tool"] != "ask_maintainer" || ev.Fields["question"] != "retry with the helper renamed?" || ev.Fields["options"] != "yes; no" || ev.Fields["recommended"] != "yes" {
+		t.Fatalf("record = %+v", ev)
+	}
+}
+
+func TestAskMaintainerWithoutAQuestionIsRefused(t *testing.T) {
+	s := serveWatchdog(t, &memStore{})
+	called := false
+	s.Handle(WatchdogHandlers{AskMaintainer: func(string, []string, string) error {
+		called = true
+		return nil
+	}})
+
+	out := call(t, connect(t, s.WatchdogURL()), "ask_maintainer", map[string]any{"question": "  "})
+
+	if out["accepted"] != false || out["reason"] != "question is empty" || called {
+		t.Fatalf("out = %+v, called = %v", out, called)
+	}
+}
+
+func TestEveryOtherWatchdogCallResumesBeforeItsHandlerRuns(t *testing.T) {
+	s := serveWatchdog(t, &memStore{})
+	var calls []string
+	s.Handle(WatchdogHandlers{
+		Resume: func() error {
+			calls = append(calls, "resume")
+			return nil
+		},
+		AskMaintainer: func(string, []string, string) error {
+			calls = append(calls, "ask")
+			return nil
+		},
+		Signal: func(core.Signal) (bool, string) {
+			calls = append(calls, "signal")
+			return true, ""
+		},
+		Propose: func(string, string, string, string) (string, string) {
+			calls = append(calls, "propose")
+			return "ask", ""
+		},
+		Restart: func(string, string, string, string) (bool, string) {
+			calls = append(calls, "restart")
+			return true, ""
+		},
+		Answer: func(string, string, string) (bool, string) {
+			calls = append(calls, "answer")
+			return true, ""
+		},
+	})
+	cs := connect(t, s.WatchdogURL())
+
+	call(t, cs, "ask_maintainer", map[string]any{"question": "q"})
+	call(t, cs, "answer_question", map[string]any{"id": "q1", "answer": "a", "citation": "maintainer"})
+	call(t, cs, "propose_remedy", map[string]any{"class": "retry", "command": "c", "why": "w"})
+	call(t, cs, "restart_step", map[string]any{"step": "phase-3/implement"})
+	call(t, cs, "signal", map[string]any{"kind": "warn", "step": "phase-3/implement", "reason": "r", "evidence": "e"})
+
+	want := "ask,resume,answer,resume,propose,resume,restart,resume,signal"
+	if strings.Join(calls, ",") != want {
+		t.Fatalf("calls = %v", calls)
+	}
+}
+
+func TestACallWhoseResumeCannotBeRecordedIsNotHandled(t *testing.T) {
+	s := serveWatchdog(t, &memStore{})
+	called := false
+	s.Handle(WatchdogHandlers{
+		Resume: func() error { return errors.New("record watchdog-resumed: disk full") },
+		Answer: func(string, string, string) (bool, string) {
+			called = true
+			return true, ""
+		},
+	})
+
+	out := call(t, connect(t, s.WatchdogURL()), "answer_question", map[string]any{"id": "q1", "answer": "a", "citation": "maintainer"})
+
+	if out["accepted"] != false || !strings.Contains(out["reason"].(string), "disk full") || called {
 		t.Fatalf("out = %+v, called = %v", out, called)
 	}
 }

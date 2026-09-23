@@ -30,6 +30,7 @@ type Remedies struct {
 	MaxRestarts int
 	Fallbacks   map[string]Fallback
 	Asks        func(provider string) bool
+	Dog         *Watchdog
 
 	mu sync.Mutex
 }
@@ -52,6 +53,9 @@ func (r *Remedies) Propose(class, command, why, maintainerSaid string) (string, 
 	consent := consentAllowList
 	if !slices.Contains(r.Allow, class) {
 		if strings.TrimSpace(maintainerSaid) == "" {
+			if err := r.waitForMaintainer(fmt.Sprintf("allow the %s remedy `%s`? %s", class, command, why)); err != nil {
+				return decisionRefused, err.Error()
+			}
 			return decisionAsk, askForConsent
 		}
 		consent = consentMaintainer
@@ -64,6 +68,13 @@ func (r *Remedies) Propose(class, command, why, maintainerSaid string) (string, 
 		return decisionRefused, ""
 	}
 	return decisionAuthorised, ""
+}
+
+func (r *Remedies) waitForMaintainer(question string) error {
+	if r.Dog == nil {
+		return nil
+	}
+	return r.Dog.AskMaintainer(question, nil, "")
 }
 
 func (r *Remedies) decide(step StepKey, class, command, why string, consent func(Remedy) string) (Remedy, error) {
@@ -138,6 +149,9 @@ func (r *Remedies) Restart(step, addendum, provider, maintainerSaid string) (boo
 	}
 	if remedy == "" && !fallback {
 		if strings.TrimSpace(maintainerSaid) == "" {
+			if err := r.waitForMaintainer(fmt.Sprintf("restart %s on %s? It is not the row's fallback", step, provider)); err != nil {
+				return false, err.Error()
+			}
 			return false, provider + " is not the row's fallback: " + askForConsent
 		}
 		rem, err := r.decide(key, "provider", fmt.Sprintf("restart %s on %s", step, provider), provider+" is not the row's fallback", func(Remedy) string { return consentMaintainer })

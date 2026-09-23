@@ -3112,7 +3112,7 @@ phases.</p>
 
 <div class="adr">
 <h3 id="adr-73">ADR-73 — Step agents ask the watchdog; only the watchdog asks the maintainer, in its own session</h3>
-<p><span class="f">Status</span> accepted · supersedes <a href="#adr-63">ADR-63</a>, <a href="#adr-67">ADR-67</a> and the one-channel paragraph of <a href="#adr-71">ADR-71</a> · amends <a href="#adr-28">ADR-28</a>, <a href="#adr-29">ADR-29</a>, <a href="#adr-38">ADR-38</a>, <a href="#adr-39">ADR-39</a> and <a href="#adr-62">ADR-62</a> · amended by <a href="#adr-76">ADR-76</a> — <code>ask_watchdog</code> returns at once, the agent ends its turn, and the driver types the answer into the pane that asked</p>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-63">ADR-63</a>, <a href="#adr-67">ADR-67</a> and the one-channel paragraph of <a href="#adr-71">ADR-71</a> · amends <a href="#adr-28">ADR-28</a>, <a href="#adr-29">ADR-29</a>, <a href="#adr-38">ADR-38</a>, <a href="#adr-39">ADR-39</a> and <a href="#adr-62">ADR-62</a> · amended by <a href="#adr-76">ADR-76</a> — <code>ask_watchdog</code> returns at once, the agent ends its turn, and the driver types the answer into the pane that asked · amended 2026-09-23 — the watchdog's surface gains <code>ask_maintainer(question, options?, recommended?)</code>, which returns at once and records and shows <code>watchdog-waiting</code> with the question: a watchdog asking in plain text is reported <code>done</code> by herdr, not <code>blocked</code>, so nothing showed the run waiting for the maintainer. The watchdog calls it before it asks in its own session; a <code>propose_remedy</code> or <code>restart_step</code> that comes back <code>ask</code> marks the same wait from the driver, and the watchdog's next call of any other tool ends it with <code>watchdog-resumed</code>, sharing one waiting state with a watchdog herdr reports blocked</p>
 <p><span class="f">Context</span> The maintainer talks to the watchdog in its pane, and the watchdog
 asked them through <code>ask_user</code>, which put the question in the TUI's questions panel — a
 second place to answer, beside the conversation the question came from. A question the watchdog
@@ -3471,14 +3471,19 @@ or <code>(by maintainer)</code>. A step or reviewer has one open question at a t
 while one is open is a tool error naming the open id (<a href="#adr-76">ADR-76</a>). The driver
 hands the watchdog
 <code>question &lt;id&gt; from phase-&lt;N&gt;/&lt;kind&gt;: &lt;text&gt; options: … recommended: …</code>.
-The watchdog session gets its own tools, offered to no other session, and no ask tool — it asks the
+The watchdog session gets its own tools, offered to no other session, and no <code>ask_watchdog</code> — it asks the
 maintainer in its own session (<a href="#adr-73">ADR-73</a>):
 <code>signal(kind: warn|halt, step, reason, evidence)</code>,
 <code>propose_remedy(class, command, why, maintainer_said?) → {decision: authorised|refused|ask, reason}</code>,
 <code>restart_step(step, addendum?, provider?, maintainer_said?)</code>, and
 <code>answer_question(id, answer, citation)</code>, whose citation is a <code>path:line</code> in
 the primary tree or <code>maintainer</code>; an empty or invalid one is refused and the question
-stays open. A signal whose effect would move the run forward
+stays open, and
+<code>ask_maintainer(question, options?, recommended?) → {accepted, reason?}</code>, which the
+watchdog calls before it asks the maintainer in its own session: it returns at once, and records
+and shows <code>watchdog-waiting</code> with the question until the watchdog's next call of any
+other tool records <code>watchdog-resumed</code>. A <code>propose_remedy</code> or
+<code>restart_step</code> that needs the maintainer's word marks the same wait itself. A signal whose effect would move the run forward
 is rejected by <code>Watch</code> and the rejection is recorded — the tool surface is narrow by
 design, but the enforcement is not the surface. A <code>signal</code> whose step is not
 <code>phase-&lt;N&gt;/&lt;kind&gt;</code> goes through <code>Watch</code> too, is rejected, and

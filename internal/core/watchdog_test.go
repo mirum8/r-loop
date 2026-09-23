@@ -612,3 +612,66 @@ func TestAStoppedWatchdogDoesNotHaltTheRun(t *testing.T) {
 		t.Errorf("exit %d, want 0", code)
 	}
 }
+
+func TestAskingTheMaintainerShowsTheQuestionUntilTheWatchdogsNextCall(t *testing.T) {
+	host := &askingHost{}
+	store := &fakeStore{}
+	face := &fakeFace{}
+	dog := newWatchdog(host, store, ProviderArgs{Kind: "codex"})
+	dog.Face = face
+
+	if err := dog.AskMaintainer("retry phase-2/implement with the helper renamed?", []string{"yes", "no"}, "yes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.Notify("step ended phase-3/plan ok ", false, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.AskMaintainer("again?", nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.Resume(); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"watchdog-waiting", "watchdog-resumed"}
+	if got := recordedKinds(store); !reflect.DeepEqual(got, want) {
+		t.Errorf("recorded %v, want %v", got, want)
+	}
+	if got := emittedKinds(face); !reflect.DeepEqual(got, want) {
+		t.Fatalf("emitted %v, want %v", got, want)
+	}
+	wantFields := map[string]string{"question": "retry phase-2/implement with the helper renamed?", "options": "yes; no", "recommended": "yes"}
+	if got := face.Events[0].Fields; !reflect.DeepEqual(got, wantFields) {
+		t.Errorf("fields %v, want %v", got, wantFields)
+	}
+}
+
+func TestAWatchdogAskingThenBlockedOnTheMaintainerIsShownWaitingOnce(t *testing.T) {
+	host := &askingHost{blockedFor: 2}
+	host.States = map[string]AgentState{"rloop-wd-run-1": AgentBlocked}
+	store := &fakeStore{}
+	face := &fakeFace{}
+	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+	dog.Face = face
+
+	if err := dog.AskMaintainer("which store?", nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.Notify("step started phase-2/implement", false, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.Resume(); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"watchdog-waiting", "watchdog-resumed"}
+	if got := emittedKinds(face); !reflect.DeepEqual(got, want) {
+		t.Errorf("emitted %v, want %v", got, want)
+	}
+	if got := recordedKinds(store); !reflect.DeepEqual(got, want) {
+		t.Errorf("recorded %v, want %v", got, want)
+	}
+}

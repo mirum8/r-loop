@@ -157,6 +157,9 @@ func (m Model) Apply(ev core.Event) Model {
 		m.log(ev, toneError, ev.Fields["reason"])
 	case "watchdog-waiting":
 		m.DogWaiting = true
+		if q := ev.Fields["question"]; q != "" {
+			m.log(ev, toneWarn, "watchdog asks you: "+strings.Join(strings.Fields(q), " "))
+		}
 	case "watchdog-resumed":
 		m.DogWaiting = false
 	case "watchdog-unreachable":

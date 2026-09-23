@@ -64,6 +64,17 @@ func TestAWatchdogAskingTheMaintainerIsFlagged(t *testing.T) {
 	}
 }
 
+func TestAWatchdogAskingTheMaintainerShowsTheQuestion(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	f.Emit(core.Event{At: at, Kind: "watchdog-waiting", Fields: map[string]string{"question": "Retry phase 2 with the helper renamed?", "options": "yes; no"}})
+
+	if want := "!  watchdog waiting for you: Retry phase 2 with the helper renamed?\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
 func TestNudgeLineNamesTheStep(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}
