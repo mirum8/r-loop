@@ -301,6 +301,17 @@ func TestStepTemplatesSendRealChoicesToTheWatchdog(t *testing.T) {
 		if strings.Contains(text, "ask_user") {
 			t.Errorf("%s names ask_user", name)
 		}
+		if !strings.Contains(text, "It returns at once: end your turn then and do nothing else until the answer arrives as your next message") {
+			t.Errorf("%s does not say to end the turn after asking:\n%s", name, text)
+		}
+	}
+}
+
+func TestWatchdogKnowsTheAskingAgentWaitsIdleForItsAnswer(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	if !strings.Contains(text, "The agent has ended its turn and waits idle, its backstop frozen, until you answer with `answer_question`; the driver then types your answer into its pane.") {
+		t.Errorf("watchdog does not say how the answer reaches the agent:\n%s", text)
 	}
 }
 

@@ -267,7 +267,7 @@ func TestAnAskingProviderGetsTheStepURLAndAnMCPConfigWrittenBeforeItStarts(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"mcpServers":{"r-loop":{"timeout":86400000,"type":"http","url":"` + url + `"}}}`; string(data) != want {
+	if want := `{"mcpServers":{"r-loop":{"type":"http","url":"` + url + `"}}}`; string(data) != want {
 		t.Fatalf("mcp config = %s", data)
 	}
 	if len(r.events("ask-none")) != 0 {
@@ -514,7 +514,7 @@ func TestAGoneAgentFailsTheStep(t *testing.T) {
 	}
 }
 
-const nudgeText = "r-loop: no sentinel and no activity for 2m0s. If your work is done, write the sentinel now. If you are blocked, call ask_watchdog, or write a failed sentinel with the reason."
+const nudgeText = "r-loop: no sentinel and no activity for 2m0s. If your work is done, write the sentinel now. If you are blocked, call ask_watchdog and end your turn to wait for its answer, or write a failed sentinel with the reason."
 
 func TestIdleForTheGraceStallsAndNudgesOnceThenWorkingResumes(t *testing.T) {
 	r := newRig(t)

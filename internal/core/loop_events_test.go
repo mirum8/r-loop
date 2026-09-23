@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 	"strconv"
@@ -49,11 +50,26 @@ func (w *fakeWatcher) Route(ctx context.Context, q Question) bool {
 
 type eventsHost struct {
 	*agentSim
-	ask   *eventsAsk
-	asked map[string]int
+	ask     *eventsAsk
+	asked   map[string]int
+	typed   map[string]bool
+	refuse  map[string]int
+	stopped map[string]AgentState
 }
 
 func (h *eventsHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	if strings.HasPrefix(text, "r-loop: answer to ") {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.refuse[agent] > 0 {
+			h.refuse[agent]--
+			h.record("SessionHost.Refused %s", agent)
+			return errors.New("herdr agent prompt: agent_blocked")
+		}
+		h.typed[agent] = true
+		h.record("SessionHost.Typed %s %q", agent, text)
+		return nil
+	}
 	h.mu.Lock()
 	b := h.behaviour[agent]
 	h.mu.Unlock()
@@ -78,7 +94,12 @@ func (h *eventsHost) State(agent string) (AgentState, error) {
 	b := h.behaviour[agent]
 	n := h.asked[agent]
 	h.asked[agent] = n + 1
+	typed := h.typed[agent]
+	stopped, isStopped := h.stopped[agent]
 	h.mu.Unlock()
+	if isStopped {
+		return stopped, nil
+	}
 	if b != "ask" && b != "ask-noinput" && b != "ask-fail" {
 		return h.agentSim.State(agent)
 	}
@@ -89,7 +110,10 @@ func (h *eventsHost) State(agent string) (AgentState, error) {
 		h.ask.Asked <- Question{ID: "q1", Step: key, Text: "which db?", Options: []string{"sqlite", "postgres"}}
 		h.waitRecord(key, StepWaitingInput, 1)
 	}
-	if b == "ask" && n == 1 {
+	if b == "ask" && !typed {
+		return AgentIdle, nil
+	}
+	if b == "ask" {
 		h.waitRecord(StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}, StepRunning, 2)
 		h.finish(agent)
 	}
@@ -158,7 +182,7 @@ func newEventsRig(t *testing.T) *eventsRig {
 	r := &eventsRig{loopRig: newLoopRig(t)}
 	r.watcher = &fakeWatcher{log: r.shared, signals: make(chan Signal), restarts: make(chan Restart, 8)}
 	r.ask = &eventsAsk{fakeAskChannel: fakeAskChannel{callLog: callLog{Shared: r.shared}, Asked: make(chan Question, 1)}}
-	r.ehost = &eventsHost{agentSim: r.host, ask: r.ask, asked: map[string]int{}}
+	r.ehost = &eventsHost{agentSim: r.host, ask: r.ask, asked: map[string]int{}, typed: map[string]bool{}, refuse: map[string]int{}, stopped: map[string]AgentState{}}
 	r.prompts = &varsPrompts{addendums: map[string]string{}}
 	sm := r.loop.Sessions
 	sm.Host = r.ehost
@@ -435,6 +459,9 @@ func TestAQuestionTheWatcherAnswersReturnsTheStepToRunning(t *testing.T) {
 	if got := r.calls("AskChannel.Answer "); !reflect.DeepEqual(got, []string{`q1 "sqlite" watchdog "docs/spec.html:3"`}) {
 		t.Errorf("answers %v", got)
 	}
+	if got := r.calls("SessionHost.Typed "); !reflect.DeepEqual(got, []string{`rloop-p2-implement "r-loop: answer to q1 (by watchdog, citing docs/spec.html:3): sqlite"`}) {
+		t.Errorf("typed %v", got)
+	}
 	var order []string
 	for _, c := range r.shared.Calls() {
 		switch {
@@ -442,7 +469,12 @@ func TestAQuestionTheWatcherAnswersReturnsTheStepToRunning(t *testing.T) {
 			order = append(order, strings.Fields(c)[0])
 		}
 	}
-	wantOrder := []string{"Store.Append", "Face.Emit", "Watcher.Route", "Store.Append", "AskChannel.Answer"}
+	for _, c := range r.shared.Calls() {
+		if strings.HasPrefix(c, "SessionHost.Typed") {
+			order = append(order, strings.Fields(c)[0])
+		}
+	}
+	wantOrder := []string{"Store.Append", "Face.Emit", "Watcher.Route", "Store.Append", "AskChannel.Answer", "SessionHost.Typed"}
 	if !reflect.DeepEqual(order, wantOrder) {
 		t.Errorf("order %v, want %v", order, wantOrder)
 	}
@@ -658,7 +690,8 @@ func TestTheStepStaysWaitingUntilItsLastQuestionIsAnswered(t *testing.T) {
 		r.loop.Deliver(q.ID, "yes", "watchdog", "docs/spec.html:1")
 		return true
 	}
-	s := &Session{Ref: StepRef{Key: StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}}}
+	s := &Session{Ref: StepRef{Key: StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}}, Agent: "rloop-p2-implement"}
+	r.host.idle["rloop-p2-implement"] = true
 	r.loop.runDir = r.store.dir
 	r.loop.setLive(s)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -671,14 +704,16 @@ func TestTheStepStaysWaitingUntilItsLastQuestionIsAnswered(t *testing.T) {
 	waitFor(t, func() bool { return len(r.calls("Watcher.Route ")) == 2 })
 	gate <- struct{}{}
 	<-done
+	waitFor(t, func() bool { return len(r.calls("SessionHost.Typed ")) == 1 })
 
 	if !s.OpenQuestion.Load() {
 		t.Error("backstop resumed with a question still open")
 	}
 	gate <- struct{}{}
 	<-done
-	if s.OpenQuestion.Load() {
-		t.Error("step still frozen after the last answer")
+	waitFor(t, func() bool { return !s.OpenQuestion.Load() })
+	if got := r.calls("SessionHost.Typed "); len(got) != 2 {
+		t.Errorf("typed %v", got)
 	}
 }
 

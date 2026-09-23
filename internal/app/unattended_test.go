@@ -114,6 +114,8 @@ type unattendedHost struct {
 	asking string
 	mu     sync.Mutex
 	url    string
+	asked  bool
+	prompt string
 	answer string
 }
 
@@ -131,18 +133,30 @@ func (h *unattendedHost) Start(pane, name, kind string, args []string) (core.Age
 }
 
 func (h *unattendedHost) State(agent string) (core.AgentState, error) {
-	if h.idle[agent] {
+	h.mu.Lock()
+	asked := agent == h.asking && h.asked
+	h.mu.Unlock()
+	if h.idle[agent] || asked {
 		return core.AgentIdle, nil
 	}
 	return core.AgentWorking, nil
 }
 
 func (h *unattendedHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	if _, answer, ok := strings.Cut(text, "r-loop: answer to "); ok && agent == h.asking {
+		h.mu.Lock()
+		_, h.answer, _ = strings.Cut(answer, "): ")
+		h.asked = false
+		prompt := h.prompt
+		h.mu.Unlock()
+		return h.simHost.Prompt(agent, prompt, wait, timeout)
+	}
 	if agent != h.asking || strings.HasPrefix(text, "r-loop:") {
 		return h.simHost.Prompt(agent, text, wait, timeout)
 	}
 	h.mu.Lock()
 	url := h.url
+	h.prompt = text
 	h.mu.Unlock()
 	go func() {
 		cs, err := mcp.NewClient(&mcp.Implementation{Name: "agent", Version: "1"}, nil).Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: url, MaxRetries: -1}, nil)
@@ -152,15 +166,13 @@ func (h *unattendedHost) Prompt(agent, text string, wait bool, timeout time.Dura
 		}
 		defer cs.Close()
 		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "ask_watchdog", Arguments: map[string]any{"question": "which db?", "options": []string{"sqlite", "postgres"}, "recommended": "sqlite"}})
-		if err != nil {
-			h.t.Error(err)
+		if err != nil || res.IsError {
+			h.t.Error(err, res)
 			return
 		}
-		out, _ := res.StructuredContent.(map[string]any)
 		h.mu.Lock()
-		h.answer, _ = out["answer"].(string)
+		h.asked = true
 		h.mu.Unlock()
-		h.simHost.Prompt(agent, text, wait, timeout)
 	}()
 	return nil
 }
@@ -235,7 +247,10 @@ func TestAnUnattendedFourPhaseRunFinishesWithNoHumanTouch(t *testing.T) {
 	if want := []string{"phase-1/implement accepted", "phase-2/implement accepted", "phase-2/implement restart limit 1 reached"}; !slices.Equal(replies, want) {
 		t.Errorf("restart replies %q, want %q", replies, want)
 	}
-	if host.answer != "sqlite" {
+	host.mu.Lock()
+	answer := host.answer
+	host.mu.Unlock()
+	if answer != "sqlite" {
 		t.Errorf("the agent received %q", host.answer)
 	}
 	st := f.load(w.Loop.RunID)

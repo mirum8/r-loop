@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -43,7 +45,17 @@ func run() error {
 		return fmt.Errorf("ask_watchdog failed: %v", res.Content)
 	}
 	out, _ := res.StructuredContent.(map[string]any)
-	answer, _ := out["answer"].(string)
+	if out["id"] != "q1" || out["status"] != "asked" {
+		return fmt.Errorf("ask_watchdog returned %v", out)
+	}
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("no answer typed: %w", err)
+	}
+	_, answer, ok := strings.Cut(strings.TrimSpace(line), "r-loop: answer to q1 (")
+	if _, answer, ok = strings.Cut(answer, "): "); !ok {
+		return fmt.Errorf("typed %q", line)
+	}
 	if err := os.WriteFile("answer.txt", []byte(answer), 0o644); err != nil {
 		return err
 	}

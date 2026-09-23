@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,11 +25,10 @@ import (
 const maxBody = 4 << 20
 
 type Server struct {
-	RunDir    string
-	RunID     string
-	Store     core.Store
-	Seq       int
-	KeepAlive time.Duration
+	RunDir string
+	RunID  string
+	Store  core.Store
+	Seq    int
 
 	mu        sync.Mutex
 	ctx       context.Context
@@ -41,17 +39,7 @@ type Server struct {
 	handlers  WatchdogHandlers
 	steps     map[string]core.StepKey
 	questions chan core.Question
-	pending   map[string]*pending
-}
-
-type pending struct {
-	q         core.Question
-	seq       int
-	delivered bool
-	answered  bool
-	handed    bool
-	waiters   int
-	done      chan struct{}
+	open      map[string]core.StepKey
 }
 
 type askInput struct {
@@ -61,8 +49,11 @@ type askInput struct {
 }
 
 type askOutput struct {
-	Answer string `json:"answer"`
+	ID     string `json:"id"`
+	Status string `json:"status"`
 }
+
+const askedText = "Question %s is asked: the answer will arrive as your next message; end your turn now and do nothing else until it arrives."
 
 func (s *Server) Serve(ctx context.Context) (string, error) {
 	token, err := s.token("token")
@@ -84,7 +75,7 @@ func (s *Server) Serve(ctx context.Context) (string, error) {
 	s.wdPath = "/mcp/watchdog/" + wdToken
 	s.wdURL = "http://" + ln.Addr().String() + s.wdPath
 	s.questions = make(chan core.Question)
-	s.pending = map[string]*pending{}
+	s.open = map[string]core.StepKey{}
 	s.steps = map[string]core.StepKey{}
 	s.mu.Unlock()
 
@@ -175,16 +166,10 @@ func (s *Server) Questions() <-chan core.Question {
 func (s *Server) Answer(id, answer, by, citation string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, ok := s.pending[id]
-	switch {
-	case !ok:
-		return fmt.Errorf("no question %s", id)
-	case p.answered:
-		return fmt.Errorf("question %s is already answered", id)
+	if _, ok := s.open[id]; !ok {
+		return fmt.Errorf("question %s is not open", id)
 	}
-	p.answered = true
-	p.q.Answer, p.q.AnsweredBy, p.q.Citation, p.q.AnsweredAt = answer, by, citation, time.Now()
-	close(p.done)
+	delete(s.open, id)
 	return nil
 }
 
@@ -203,121 +188,45 @@ func (s *Server) mcpServer(key core.StepKey) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "r-loop", Version: "1"}, nil)
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "ask_watchdog",
-		Description: "Ask the run's watchdog a real choice the repository cannot answer, with the options and your recommendation. Blocks until answered.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in askInput) (*mcp.CallToolResult, askOutput, error) {
-		_, answer, err := s.ask(ctx, key, in, keepAlive(req))
-		return nil, askOutput{Answer: answer}, err
+		Description: "Ask the run's watchdog a real choice the repository cannot answer, with the options and your recommendation. Returns at once with the question's id: end your turn then, and the answer arrives as your next message. One open question at a time.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in askInput) (*mcp.CallToolResult, askOutput, error) {
+		id, err := s.ask(ctx, key, in)
+		if err != nil {
+			return nil, askOutput{}, err
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(askedText, id)}}}, askOutput{ID: id, Status: "asked"}, nil
 	})
 	return srv
 }
 
-func keepAlive(req *mcp.CallToolRequest) func(context.Context, float64) error {
-	if req == nil || req.Session == nil || req.Params == nil {
-		return nil
-	}
-	token := req.Params.GetProgressToken()
-	if token == nil {
-		return nil
-	}
-	return func(ctx context.Context, n float64) error {
-		return req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{ProgressToken: token, Progress: n, Message: "waiting for the watchdog's answer"})
-	}
-}
-
-func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput, notify func(context.Context, float64) error) (string, string, error) {
+func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput) (string, error) {
 	s.mu.Lock()
-	p, serverCtx := s.open(key, in), s.ctx
-	if p != nil {
-		p.waiters++
-		s.mu.Unlock()
-		answer, err := s.await(ctx, serverCtx, p, notify)
-		return p.q.ID, answer, err
+	for id, k := range s.open {
+		if k == key {
+			s.mu.Unlock()
+			return "", fmt.Errorf("question %s is still open: end your turn now and wait for its answer as your next message", id)
+		}
 	}
 	s.Seq++
-	p = &pending{
-		q:       core.Question{ID: "q" + strconv.Itoa(s.Seq), Step: key, Text: in.Question, Options: in.Options, Recommended: in.Recommended, AskedAt: time.Now()},
-		seq:     s.Seq,
-		waiters: 1,
-		done:    make(chan struct{}),
-	}
-	s.pending[p.q.ID] = p
-	out := s.questions
+	q := core.Question{ID: "q" + strconv.Itoa(s.Seq), Step: key, Text: in.Question, Options: in.Options, Recommended: in.Recommended, AskedAt: time.Now()}
+	s.open[q.ID] = key
+	out, serverCtx := s.questions, s.ctx
 	s.mu.Unlock()
 
 	select {
-	case out <- p.q:
+	case out <- q:
+		return q.ID, nil
 	case <-serverCtx.Done():
-		s.abandon(p)
-		return p.q.ID, "", errors.New("r-loop stopped before the question was delivered")
+		s.drop(q.ID)
+		return "", errors.New("r-loop stopped before the question was delivered")
 	case <-ctx.Done():
-		s.abandon(p)
-		return p.q.ID, "", ctx.Err()
+		s.drop(q.ID)
+		return "", ctx.Err()
 	}
-	s.mu.Lock()
-	p.delivered = true
-	s.mu.Unlock()
-	answer, err := s.await(ctx, serverCtx, p, notify)
-	return p.q.ID, answer, err
 }
 
-func (s *Server) open(key core.StepKey, in askInput) *pending {
-	var orphan *pending
-	for _, p := range s.pending {
-		if !p.delivered || p.q.Step != key {
-			continue
-		}
-		if !p.answered && p.q.Text == in.Question && slices.Equal(p.q.Options, in.Options) {
-			return p
-		}
-		if p.waiters == 0 && !p.handed && (orphan == nil || p.seq < orphan.seq) {
-			orphan = p
-		}
-	}
-	return orphan
-}
-
-func (s *Server) leave(p *pending) {
+func (s *Server) drop(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p.waiters--
-}
-
-func (s *Server) abandon(p *pending) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	p.waiters--
-	if p.waiters == 0 && !p.delivered {
-		delete(s.pending, p.q.ID)
-	}
-}
-
-func (s *Server) await(ctx, serverCtx context.Context, p *pending, notify func(context.Context, float64) error) (string, error) {
-	defer s.leave(p)
-	var tick <-chan time.Time
-	if notify != nil {
-		every := s.KeepAlive
-		if every <= 0 {
-			every = 30 * time.Second
-		}
-		ticker := time.NewTicker(every)
-		defer ticker.Stop()
-		tick = ticker.C
-	}
-	for n := 1; ; n++ {
-		select {
-		case <-p.done:
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			p.handed = true
-			return p.q.Answer, nil
-		case <-serverCtx.Done():
-			return "", errors.New("r-loop stopped before the question was answered")
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-tick:
-			if err := notify(ctx, float64(n)); err != nil {
-				return "", fmt.Errorf("the caller is gone: %w", err)
-			}
-		}
-	}
+	delete(s.open, id)
 }

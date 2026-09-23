@@ -2,13 +2,11 @@ package askmcp
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -71,7 +69,7 @@ func next(t *testing.T, s *Server) core.Question {
 	}
 }
 
-func answerText(t *testing.T, r result) string {
+func asked(t *testing.T, r result) (string, string) {
 	t.Helper()
 	if r.err != nil {
 		t.Fatal(r.err)
@@ -80,8 +78,30 @@ func answerText(t *testing.T, r result) string {
 		t.Fatalf("tool error: %+v", r.res.Content)
 	}
 	m, _ := r.res.StructuredContent.(map[string]any)
-	a, _ := m["answer"].(string)
-	return a
+	id, _ := m["id"].(string)
+	status, _ := m["status"].(string)
+	return id, status
+}
+
+func text(r result) string {
+	var b strings.Builder
+	for _, c := range r.res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	return b.String()
+}
+
+func returned(t *testing.T, done <-chan result) result {
+	t.Helper()
+	select {
+	case r := <-done:
+		return r
+	case <-time.After(5 * time.Second):
+		t.Fatal("the call never returned")
+		return result{}
+	}
 }
 
 func TestServeWritesAPrivateTokenAndReturnsTheBaseURL(t *testing.T) {
@@ -115,31 +135,66 @@ func TestStepURLNamesThePhaseKindAndAttempt(t *testing.T) {
 	}
 }
 
-func TestAskUserBlocksUntilAnsweredAndReturnsTheAnswer(t *testing.T) {
+func TestAskReturnsAtOnceWithTheIDAndTellsTheAgentToEndItsTurn(t *testing.T) {
 	s, _, _ := serve(t)
 	key := core.StepKey{Run: "run-7", Phase: "3", Kind: "plan", Attempt: 1}
 	cs := connect(t, s.StepURL(key))
 
 	done := ask(cs, map[string]any{"question": "Which store?", "options": []string{"jsonl", "sqlite"}, "recommended": "jsonl"})
 	q := next(t, s)
+	r := returned(t, done)
 
 	if q.ID != "q1" || q.Step != key || q.Text != "Which store?" || q.Recommended != "jsonl" || strings.Join(q.Options, ",") != "jsonl,sqlite" || q.AskedAt.IsZero() {
 		t.Fatalf("question = %+v", q)
 	}
-	select {
-	case r := <-done:
-		t.Fatalf("returned before the answer: %+v", r)
-	case <-time.After(100 * time.Millisecond):
+	if id, status := asked(t, r); id != "q1" || status != "asked" {
+		t.Fatalf("result = %q %q", id, status)
 	}
-	if err := s.Answer("q1", "jsonl", "person", ""); err != nil {
-		t.Fatal(err)
-	}
-	if got := answerText(t, <-done); got != "jsonl" {
-		t.Fatalf("answer = %q", got)
+	if got := text(r); !strings.Contains(got, "the answer will arrive as your next message; end your turn now and do nothing else until it arrives") {
+		t.Fatalf("text = %q", got)
 	}
 }
 
-func TestAnswerRejectsAnUnknownOrAlreadyAnsweredID(t *testing.T) {
+func TestASecondAskFromTheSameStepWhileOneIsOpenIsAToolErrorNamingIt(t *testing.T) {
+	s, _, _ := serve(t)
+	key := core.StepKey{Run: "run-7", Phase: "3", Kind: "implement-rv-claude", Attempt: 1}
+	cs := connect(t, s.StepURL(key))
+	done := ask(cs, map[string]any{"question": "Which store?"})
+	next(t, s)
+	asked(t, returned(t, done))
+
+	r := returned(t, ask(cs, map[string]any{"question": "Which port?"}))
+
+	if r.err != nil || !r.res.IsError {
+		t.Fatalf("second ask = %+v %v", r.res, r.err)
+	}
+	if got := text(r); !strings.Contains(got, "q1") || !strings.Contains(got, "end your turn") {
+		t.Fatalf("error text = %q", got)
+	}
+	noQuestion(t, s)
+}
+
+func TestAnAnsweredQuestionLetsTheStepAskAgain(t *testing.T) {
+	s, _, _ := serve(t)
+	cs := connect(t, s.StepURL(core.StepKey{Run: "run-7", Phase: "3", Kind: "plan", Attempt: 1}))
+	done := ask(cs, map[string]any{"question": "Which store?"})
+	next(t, s)
+	asked(t, returned(t, done))
+
+	if err := s.Answer("q1", "jsonl", "watchdog", "spec.html:3"); err != nil {
+		t.Fatal(err)
+	}
+	done = ask(cs, map[string]any{"question": "Which port?"})
+
+	if q := next(t, s); q.ID != "q2" || q.Text != "Which port?" {
+		t.Fatalf("question = %+v", q)
+	}
+	if id, _ := asked(t, returned(t, done)); id != "q2" {
+		t.Fatalf("id = %q", id)
+	}
+}
+
+func TestAnswerRejectsAnUnknownOrAlreadyClosedID(t *testing.T) {
 	s, _, _ := serve(t)
 	cs := connect(t, s.StepURL(core.StepKey{Run: "run-7", Phase: "1", Kind: "implement", Attempt: 1}))
 
@@ -148,10 +203,10 @@ func TestAnswerRejectsAnUnknownOrAlreadyAnsweredID(t *testing.T) {
 	}
 	done := ask(cs, map[string]any{"question": "Go on?"})
 	next(t, s)
+	returned(t, done)
 	if err := s.Answer("q1", "yes", "watchdog", "spec §3"); err != nil {
 		t.Fatal(err)
 	}
-	<-done
 	if err := s.Answer("q1", "no", "person", ""); err == nil {
 		t.Fatal("answered the same id twice")
 	}
@@ -173,7 +228,7 @@ func TestAWrongTokenOrUnknownPathIs404(t *testing.T) {
 	}
 }
 
-func TestTwoConcurrentQuestionsGetDistinctIDsAndTheirOwnAnswers(t *testing.T) {
+func TestEachStepHasItsOwnOpenQuestion(t *testing.T) {
 	s, _, _ := serve(t)
 	planKey := core.StepKey{Run: "run-7", Phase: "2", Kind: "plan", Attempt: 1}
 	rvKey := core.StepKey{Run: "run-7", Phase: "5", Kind: "implement-rv-claude", Attempt: 1}
@@ -185,38 +240,11 @@ func TestTwoConcurrentQuestionsGetDistinctIDsAndTheirOwnAnswers(t *testing.T) {
 		q := next(t, s)
 		byStep[q.Step] = q
 	}
-	if byStep[planKey].Text != "plan?" || byStep[rvKey].Text != "review?" || byStep[planKey].ID == byStep[rvKey].ID {
-		t.Fatalf("questions = %+v", byStep)
-	}
-	if err := s.Answer(byStep[rvKey].ID, "rv answer", "person", ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Answer(byStep[planKey].ID, "plan answer", "person", ""); err != nil {
-		t.Fatal(err)
-	}
-	if got := answerText(t, <-planDone); got != "plan answer" {
-		t.Fatalf("plan got %q", got)
-	}
-	if got := answerText(t, <-rvDone); got != "rv answer" {
-		t.Fatalf("reviewer got %q", got)
-	}
-}
+	planID, _ := asked(t, returned(t, planDone))
+	rvID, _ := asked(t, returned(t, rvDone))
 
-func TestCancellingTheContextReturnsAnErrorAndNoAnswer(t *testing.T) {
-	s, _, cancel := serve(t)
-	cs := connect(t, s.StepURL(core.StepKey{Run: "run-7", Phase: "3", Kind: "plan", Attempt: 1}))
-	done := ask(cs, map[string]any{"question": "Which store?", "recommended": "jsonl"})
-	next(t, s)
-
-	cancel()
-
-	select {
-	case r := <-done:
-		if r.err == nil && !r.res.IsError {
-			t.Fatalf("got an answer: %+v", r.res)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the call never returned")
+	if byStep[planKey].Text != "plan?" || byStep[rvKey].Text != "review?" || planID == rvID || byStep[planKey].ID != planID || byStep[rvKey].ID != rvID {
+		t.Fatalf("questions = %+v, ids %q %q", byStep, planID, rvID)
 	}
 }
 
@@ -238,236 +266,21 @@ func TestAResumedServerContinuesTheRunsQuestionSequence(t *testing.T) {
 	if q := next(t, s); q.ID != "q5" {
 		t.Fatalf("id = %q", q.ID)
 	}
-	if err := s.Answer("q5", "yes", "person", ""); err != nil {
-		t.Fatal(err)
+	if id, _ := asked(t, returned(t, done)); id != "q5" {
+		t.Fatalf("returned id = %q", id)
 	}
-	<-done
-}
-
-func TestARepeatedAskFromTheSameStepReusesTheOpenQuestionAndGetsItsAnswer(t *testing.T) {
-	s, _, _ := serve(t)
-	key := core.StepKey{Run: "run-7", Phase: "3", Kind: "implement-rv-claude", Attempt: 1}
-	args := map[string]any{"question": "Which store?", "options": []string{"jsonl", "sqlite"}}
-	callCtx, hangUp := context.WithCancel(context.Background())
-	gone := make(chan error, 1)
-	go func() {
-		_, err := connect(t, s.StepURL(key)).CallTool(callCtx, &mcp.CallToolParams{Name: "ask_watchdog", Arguments: args})
-		gone <- err
-	}()
-	if q := next(t, s); q.ID != "q1" {
-		t.Fatalf("id = %q", q.ID)
-	}
-	hangUp()
-	<-gone
-
-	again := ask(connect(t, s.StepURL(key)), args)
-
-	select {
-	case q := <-s.Questions():
-		s.Answer(q.ID, "", "person", "")
-		t.Fatalf("a second question was escalated: %s", q.ID)
-	case <-time.After(200 * time.Millisecond):
-	}
-	if err := s.Answer("q1", "jsonl", "person", ""); err != nil {
-		t.Fatal(err)
-	}
-	if got := answerText(t, <-again); got != "jsonl" {
-		t.Fatalf("answer = %q", got)
-	}
-}
-
-func TestTheSameQuestionFromAnotherStepOrWithOtherOptionsIsNew(t *testing.T) {
-	s, _, _ := serve(t)
-	key := core.StepKey{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 1}
-	other := core.StepKey{Run: "run-7", Phase: "3", Kind: "implement-rv-claude", Attempt: 1}
-	calls := []<-chan result{ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which store?", "options": []string{"jsonl", "sqlite"}})}
-	next(t, s)
-
-	calls = append(calls,
-		ask(connect(t, s.StepURL(other)), map[string]any{"question": "Which store?", "options": []string{"jsonl", "sqlite"}}),
-		ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which store?", "options": []string{"jsonl"}}))
-
-	ids := map[string]bool{next(t, s).ID: true, next(t, s).ID: true}
-	for _, id := range []string{"q1", "q2", "q3"} {
-		s.Answer(id, "jsonl", "person", "")
-	}
-	for _, c := range calls {
-		<-c
-	}
-	if !ids["q2"] || !ids["q3"] {
-		t.Fatalf("ids = %v", ids)
-	}
-}
-
-func dropCall(t *testing.T, s *Server, key core.StepKey, args map[string]any) core.Question {
-	t.Helper()
-	callCtx, hangUp := context.WithCancel(context.Background())
-	gone := make(chan error, 1)
-	go func() {
-		_, err := connect(t, s.StepURL(key)).CallTool(callCtx, &mcp.CallToolParams{Name: "ask_watchdog", Arguments: args})
-		gone <- err
-	}()
-	q := next(t, s)
-	hangUp()
-	<-gone
-	time.Sleep(50 * time.Millisecond)
-	return q
 }
 
 func noQuestion(t *testing.T, s *Server) {
 	t.Helper()
 	select {
 	case q := <-s.Questions():
-		s.Answer(q.ID, "", "person", "")
-		t.Fatalf("a second question was escalated: %s", q.ID)
+		t.Fatalf("another question was sent: %s", q.ID)
 	case <-time.After(200 * time.Millisecond):
 	}
 }
 
-func TestARewordedRetryAfterADroppedCallRejoinsTheOrphanedQuestion(t *testing.T) {
-	s, _, _ := serve(t)
-	key := core.StepKey{Run: "run-7", Phase: "10c", Kind: "plan", Attempt: 1}
-	dropCall(t, s, key, map[string]any{"question": "Which store?", "options": []string{"jsonl", "sqlite"}})
-
-	again := ask(connect(t, s.StepURL(key)), map[string]any{"question": "Retrying: which store should the run use?", "options": []string{"jsonl", "sqlite", "both"}})
-
-	noQuestion(t, s)
-	if err := s.Answer("q1", "jsonl", "watchdog", ""); err != nil {
-		t.Fatal(err)
-	}
-	if got := answerText(t, <-again); got != "jsonl" {
-		t.Fatalf("answer = %q", got)
-	}
-}
-
-func TestARetryAfterTheOrphanedQuestionWasAnsweredGetsThatAnswer(t *testing.T) {
-	s, _, _ := serve(t)
-	key := core.StepKey{Run: "run-7", Phase: "10c", Kind: "plan", Attempt: 1}
-	dropCall(t, s, key, map[string]any{"question": "Which store?"})
-	if err := s.Answer("q1", "jsonl", "watchdog", ""); err != nil {
-		t.Fatal(err)
-	}
-
-	again := ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which store, again?"})
-
-	noQuestion(t, s)
-	select {
-	case r := <-again:
-		if got := answerText(t, r); got != "jsonl" {
-			t.Fatalf("answer = %q", got)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the retry never got the answer")
-	}
-}
-
-func TestAnOrphanedQuestionAnswerIsHandedOverOnlyOnce(t *testing.T) {
-	s, _, _ := serve(t)
-	key := core.StepKey{Run: "run-7", Phase: "10c", Kind: "plan", Attempt: 1}
-	dropCall(t, s, key, map[string]any{"question": "Which store?"})
-	s.Answer("q1", "jsonl", "watchdog", "")
-	answerText(t, <-ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which store, again?"}))
-
-	later := ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which port?"})
-
-	if q := next(t, s); q.ID != "q2" {
-		t.Fatalf("id = %q", q.ID)
-	}
-	s.Answer("q2", "8080", "watchdog", "")
-	if got := answerText(t, <-later); got != "8080" {
-		t.Fatalf("answer = %q", got)
-	}
-}
-
-func TestAWaitingCallGetsProgressNotificationsSoTheClientKeepsItsStreamOpen(t *testing.T) {
-	s, _, _ := serve(t)
-	s.KeepAlive = 20 * time.Millisecond
-	progress := make(chan struct{}, 16)
-	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, &mcp.ClientOptions{
-		ProgressNotificationHandler: func(context.Context, *mcp.ProgressNotificationClientRequest) {
-			select {
-			case progress <- struct{}{}:
-			default:
-			}
-		},
-	})
-	cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: s.StepURL(core.StepKey{Run: "run-7", Phase: "3", Kind: "plan", Attempt: 1}), MaxRetries: -1}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cs.Close() })
-	params := &mcp.CallToolParams{Name: "ask_watchdog", Arguments: map[string]any{"question": "Which store?"}}
-	params.SetProgressToken("p1")
-	done := make(chan result, 1)
-	go func() {
-		res, err := cs.CallTool(context.Background(), params)
-		done <- result{res, err}
-	}()
-	next(t, s)
-
-	for range 2 {
-		select {
-		case <-progress:
-		case <-time.After(5 * time.Second):
-			t.Fatal("no progress notification while waiting")
-		}
-	}
-	s.Answer("q1", "jsonl", "watchdog", "")
-	if got := answerText(t, <-done); got != "jsonl" {
-		t.Fatalf("answer = %q", got)
-	}
-}
-
-type conns struct {
-	mu  sync.Mutex
-	all []net.Conn
-}
-
-func (c *conns) dial(ctx context.Context, network, addr string) (net.Conn, error) {
-	conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
-	if err == nil {
-		c.mu.Lock()
-		c.all = append(c.all, conn)
-		c.mu.Unlock()
-	}
-	return conn, err
-}
-
-func (c *conns) cut() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, conn := range c.all {
-		conn.Close()
-	}
-}
-
-func TestARetryAfterTheConnectionItselfDroppedRejoinsTheQuestion(t *testing.T) {
-	s, _, _ := serve(t)
-	s.KeepAlive = 20 * time.Millisecond
-	key := core.StepKey{Run: "run-7", Phase: "10c", Kind: "plan", Attempt: 1}
-	link := &conns{}
-	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-	cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: s.StepURL(key), MaxRetries: -1, HTTPClient: &http.Client{Transport: &http.Transport{DialContext: link.dial}}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	params := &mcp.CallToolParams{Name: "ask_watchdog", Arguments: map[string]any{"question": "Which store?"}}
-	params.SetProgressToken("p1")
-	go cs.CallTool(context.Background(), params)
-	next(t, s)
-	link.cut()
-	time.Sleep(200 * time.Millisecond)
-
-	again := ask(connect(t, s.StepURL(key)), map[string]any{"question": "Retrying: which store?"})
-
-	noQuestion(t, s)
-	s.Answer("q1", "jsonl", "watchdog", "")
-	if got := answerText(t, <-again); got != "jsonl" {
-		t.Fatalf("answer = %q", got)
-	}
-}
-
-func TestAQuestionAbandonedBeforeItReachesTheWatchdogIsDropped(t *testing.T) {
+func TestACallThatEndsBeforeTheDriverTakesItsQuestionDropsIt(t *testing.T) {
 	s, _, _ := serve(t)
 	key := core.StepKey{Run: "run-7", Phase: "10c", Kind: "plan", Attempt: 1}
 	callCtx, hangUp := context.WithCancel(context.Background())
@@ -479,19 +292,27 @@ func TestAQuestionAbandonedBeforeItReachesTheWatchdogIsDropped(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	hangUp()
 	<-gone
+	time.Sleep(50 * time.Millisecond)
 
-	again := ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which store, again?"})
+	done := ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which store, again?"})
 
-	if q := next(t, s); q.ID != "q2" {
-		t.Fatalf("id = %q", q.ID)
+	if q := next(t, s); q.ID != "q2" || q.Text != "Which store, again?" {
+		t.Fatalf("question = %+v", q)
 	}
-	s.Answer("q2", "jsonl", "watchdog", "")
-	if got := answerText(t, <-again); got != "jsonl" {
-		t.Fatalf("answer = %q", got)
+	if id, _ := asked(t, returned(t, done)); id != "q2" {
+		t.Fatalf("id = %q", id)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, kept := s.pending["q1"]; kept {
-		t.Error("the abandoned question is still held")
+}
+
+func TestStoppingTheServerBeforeTheQuestionIsTakenFailsTheCall(t *testing.T) {
+	s, _, cancel := serve(t)
+	cs := connect(t, s.StepURL(core.StepKey{Run: "run-7", Phase: "3", Kind: "plan", Attempt: 1}))
+	done := ask(cs, map[string]any{"question": "Which store?"})
+	time.Sleep(100 * time.Millisecond)
+
+	cancel()
+
+	if r := returned(t, done); r.err == nil && !r.res.IsError {
+		t.Fatalf("the call succeeded: %+v", r.res)
 	}
 }

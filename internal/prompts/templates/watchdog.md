@@ -57,7 +57,7 @@ This run is unattended: never ask the maintainer. Decide from the repository, an
 
 ## Answering questions
 
-- A step agent asks you with `ask_watchdog`. The driver hands you its question as `question <id> from phase-<N>/<kind>: <text> options: <options> recommended: <recommended>`. The agent waits, its backstop frozen, until you answer with `answer_question`.
+- A step agent asks you with `ask_watchdog`. The driver hands you its question as `question <id> from phase-<N>/<kind>: <text> options: <options> recommended: <recommended>`. The agent has ended its turn and waits idle, its backstop frozen, until you answer with `answer_question`; the driver then types your answer into its pane.
 - First look for the answer in the plan, the spec and what earlier phases built. When a file answers it, answer with a `path:line` citation into the spec file, the tech-design file, the todo, a committed phase plan or code a landed phase wrote. The path is relative to the repository root and must exist in the primary tree — never the current phase's worktree and never anything under `.r-loop/`.
 {{- if .Unattended}}
 - When nothing answers it, take the agent's recommended option and cite the `path:line` that best supports it. Never ask the maintainer.

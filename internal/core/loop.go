@@ -30,7 +30,7 @@ type Watcher interface {
 	StepEnded(ref StepRef, out Outcome)
 	Signals() <-chan Signal
 	Restarts() <-chan Restart
-	Route(ctx context.Context, q Question) (answered bool)
+	Route(ctx context.Context, q Question) (routed bool)
 }
 
 type Restart struct {
@@ -43,11 +43,11 @@ type nopWatcher struct{}
 func (nopWatcher) BeforePhase(ctx context.Context, ph Phase, base string) CheckOutcome {
 	return CheckOutcome{}
 }
-func (nopWatcher) StepStarted(ref StepRef, s *Session)                   {}
-func (nopWatcher) StepEnded(ref StepRef, out Outcome)                    {}
-func (nopWatcher) Signals() <-chan Signal                                { return nil }
-func (nopWatcher) Restarts() <-chan Restart                              { return nil }
-func (nopWatcher) Route(ctx context.Context, q Question) (answered bool) { return false }
+func (nopWatcher) StepStarted(ref StepRef, s *Session)                 {}
+func (nopWatcher) StepEnded(ref StepRef, out Outcome)                  {}
+func (nopWatcher) Signals() <-chan Signal                              { return nil }
+func (nopWatcher) Restarts() <-chan Restart                            { return nil }
+func (nopWatcher) Route(ctx context.Context, q Question) (routed bool) { return false }
 
 const invariantQuestion = "invariant: a question never kills a step"
 
@@ -91,8 +91,10 @@ type RunLoop struct {
 }
 
 type openAsk struct {
-	q Question
-	s *Session
+	q        Question
+	s        *Session
+	agent    string
+	answered bool
 }
 
 func (l *RunLoop) watcher() Watcher {
@@ -694,8 +696,9 @@ func (l *RunLoop) question(ctx context.Context, q Question) {
 	if s == nil {
 		return
 	}
-	admitted := s.live(func() {
-		l.track(q, s)
+	agent := s.asker(q.Step.Kind)
+	admitted := agent != "" && s.live(func() {
+		l.track(q, s, agent)
 		if l.openQuestion(s, 1) == 1 {
 			l.stepState(s, StepWaitingInput)
 		}
@@ -710,73 +713,150 @@ func (l *RunLoop) question(ctx context.Context, q Question) {
 }
 
 func (l *RunLoop) Deliver(id, text, by, citation string) error {
-	open, ok := l.settle(id)
+	open, ok := l.answer(id, text, by, citation)
 	if !ok {
 		err := fmt.Errorf("question %s is not open", id)
 		l.emit(Event{Kind: "note", Fields: map[string]string{"reason": "answer dropped: " + err.Error()}})
 		return err
 	}
 	q := open.q
-	q.Answer, q.AnsweredBy, q.Citation, q.AnsweredAt = text, by, citation, time.Now()
-	l.recordQuestion(q)
 	l.emit(Event{Kind: "question-answered", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"id": id, "answer": text, "by": by, "citation": citation}})
 	if by == maintainerCitation {
 		l.emit(Event{Kind: "human", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"what": "answer", "id": id}})
 	}
 	if err := l.Ask.Answer(id, text, by, citation); err != nil {
 		l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": "answer " + id + ": " + err.Error()}})
-		return err
 	}
+	go l.hand(open, answerMessage(id, text, by, citation))
 	return nil
 }
 
-func (l *RunLoop) settle(id string) (openAsk, bool) {
+func answerMessage(id, text, by, citation string) string {
+	source := "by " + by
+	if citation != "" {
+		source += ", citing " + citation
+	}
+	return fmt.Sprintf("r-loop: answer to %s (%s): %s", id, source, text)
+}
+
+func (l *RunLoop) answer(id, text, by, citation string) (openAsk, bool) {
 	l.mu.Lock()
 	open, ok := l.asked[id]
 	l.mu.Unlock()
-	if !ok {
+	if !ok || open.answered {
 		return open, false
 	}
 	claimed := false
 	open.s.live(func() {
-		if open, claimed = l.claim(id); claimed {
-			l.release(open.s)
+		l.mu.Lock()
+		open, claimed = l.asked[id]
+		claimed = claimed && !open.answered
+		if claimed {
+			open.answered = true
+			l.asked[id] = open
+		}
+		l.mu.Unlock()
+		if claimed {
+			q := open.q
+			q.Answer, q.AnsweredBy, q.Citation, q.AnsweredAt = text, by, citation, time.Now()
+			l.recordQuestion(q)
 		}
 	})
 	return open, claimed
 }
 
+func (l *RunLoop) hand(open openAsk, text string) {
+	id := open.q.ID
+	poll := l.Sessions.Poll
+	if poll <= 0 {
+		poll = defaultPoll
+	}
+	for l.asking(id) {
+		state, err := l.Sessions.Host.State(open.agent)
+		if err == nil && state == AgentGone {
+			l.undeliverable(open, "agent gone")
+			return
+		}
+		if err == nil && state != AgentWorking {
+			delivered := false
+			open.s.live(func() {
+				if !l.asking(id) {
+					return
+				}
+				if err = l.Sessions.Host.Prompt(open.agent, text, false, 0); err == nil {
+					delivered = true
+					l.claim(id)
+					l.release(open.s)
+				}
+			})
+			if delivered {
+				return
+			}
+			if err != nil && !blocked(err) {
+				l.emit(Event{Kind: "warning", Phase: open.q.Step.Phase, Step: open.q.Step.Kind, Fields: map[string]string{"reason": "answer " + id + " not delivered: " + err.Error()}})
+				l.undeliverable(open, "not delivered: "+err.Error())
+				return
+			}
+		}
+		time.Sleep(poll)
+	}
+}
+
+func (l *RunLoop) asking(id string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, ok := l.asked[id]
+	return ok
+}
+
+func (l *RunLoop) undeliverable(open openAsk, reason string) {
+	open.s.live(func() {
+		if _, ok := l.claim(open.q.ID); !ok {
+			return
+		}
+		l.recordWithdrawn(open.q, reason)
+		l.release(open.s)
+	})
+}
+
 func (l *RunLoop) withdrawStep(key StepKey, state StepState) {
 	l.mu.Lock()
-	var qs []Question
+	var asks []openAsk
 	for id, a := range l.asked {
 		if a.s != nil && a.s.Ref.Key == key {
-			qs = append(qs, a.q)
+			asks = append(asks, a)
 			delete(l.asked, id)
 			delete(l.open, a.s)
 		}
 	}
 	l.mu.Unlock()
-	slices.SortFunc(qs, func(a, b Question) int { return strings.Compare(a.ID, b.ID) })
-	for _, q := range qs {
-		l.withdraw(q, state)
+	slices.SortFunc(asks, func(a, b openAsk) int { return strings.Compare(a.q.ID, b.q.ID) })
+	for _, a := range asks {
+		if a.answered {
+			l.recordWithdrawn(a.q, "step "+string(state))
+		} else {
+			l.withdraw(a.q, state)
+		}
 	}
 }
 
 func (l *RunLoop) withdraw(q Question, state StepState) {
-	text := fmt.Sprintf("r-loop: phase-%s/%s has ended; this question is withdrawn.", q.Step.Phase, q.Step.Kind)
-	q.Answer, q.AnsweredBy, q.AnsweredAt = "step "+string(state), "withdrawn", time.Now()
-	l.recordQuestion(q)
-	l.Ask.Answer(q.ID, text, "withdrawn", "")
+	l.recordWithdrawn(q, "step "+string(state))
+	l.Ask.Answer(q.ID, fmt.Sprintf("r-loop: phase-%s/%s has ended; this question is withdrawn.", q.Step.Phase, q.Step.Kind), "withdrawn", "")
 }
 
-func (l *RunLoop) track(q Question, s *Session) {
+func (l *RunLoop) recordWithdrawn(q Question, reason string) {
+	q.Answer, q.AnsweredBy, q.AnsweredAt = reason, "withdrawn", time.Now()
+	l.recordQuestion(q)
+}
+
+func (l *RunLoop) track(q Question, s *Session, agent string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.asked == nil {
 		l.asked = map[string]openAsk{}
 	}
-	l.asked[q.ID] = openAsk{q: q, s: s}
+	l.asked[q.ID] = openAsk{q: q, s: s, agent: agent}
 }
 
 func (l *RunLoop) claim(id string) (openAsk, bool) {

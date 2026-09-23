@@ -2,20 +2,25 @@ package core
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
 
+const askingAgent = "rloop-p3-implement"
+
 type routerRig struct {
 	*eventsRig
-	root   string
-	host   *fakeSessionHost
-	router *QuestionRouter
+	root    string
+	host    *fakeSessionHost
+	router  *QuestionRouter
+	session *Session
 }
 
-func newRouterRig(t *testing.T, poll time.Duration) *routerRig {
+func newRouterRig(t *testing.T) *routerRig {
 	r := &routerRig{eventsRig: newEventsRig(t), host: &fakeSessionHost{}}
 	r.root = r.repo.RootDir
 	for _, f := range []string{"docs/x/spec.html", "internal/landed.go", ".r-loop/runs/run-1/notes.md", ".r-loop/wt/phase-3/internal/fresh.go"} {
@@ -26,8 +31,9 @@ func newRouterRig(t *testing.T, poll time.Duration) *routerRig {
 		Dog:     newWatchdog(r.host, r.store, ProviderArgs{Kind: "claude"}),
 		Deliver: r.loop.Deliver,
 		Repo:    r.repo,
-		poll:    poll,
 	}
+	r.session = &Session{Ref: StepRef{Key: routedQuestion().Step}, Agent: askingAgent}
+	r.ehost.idle[askingAgent] = true
 	return r
 }
 
@@ -35,13 +41,18 @@ func routedQuestion() Question {
 	return Question{ID: "q1", Step: StepKey{Run: "run-1", Phase: "3", Kind: "implement", Attempt: 1}, Text: "which db?", Options: []string{"sqlite", "postgres"}, Recommended: "sqlite"}
 }
 
-func (r *routerRig) route(t *testing.T) <-chan bool {
+func (r *routerRig) route(t *testing.T) {
 	t.Helper()
-	r.loop.track(routedQuestion(), &Session{Ref: StepRef{Key: routedQuestion().Step}})
-	routed := make(chan bool, 1)
-	go func() { routed <- r.router.Route(context.Background(), routedQuestion()) }()
-	waitFor(t, func() bool { return len(r.host.Calls()) == 1 })
-	return routed
+	r.routeAs(t, routedQuestion(), askingAgent)
+}
+
+func (r *routerRig) routeAs(t *testing.T, q Question, agent string) {
+	t.Helper()
+	r.loop.track(q, r.session, agent)
+	r.loop.openQuestion(r.session, 1)
+	if !r.router.Route(context.Background(), q) {
+		t.Fatal("Route returned false with a live watchdog")
+	}
 }
 
 func (r *routerRig) questions() []Question {
@@ -49,32 +60,41 @@ func (r *routerRig) questions() []Question {
 	return st.Questions
 }
 
-func routeResult(t *testing.T, routed <-chan bool) bool {
+func (r *routerRig) typed() []string {
+	return r.calls("SessionHost.Typed ")
+}
+
+func (r *routerRig) waitTyped(t *testing.T, n int) []string {
 	t.Helper()
-	select {
-	case ok := <-routed:
-		return ok
-	case <-time.After(5 * time.Second):
-		t.Fatal("Route did not return")
-		return false
+	waitFor(t, func() bool { return len(r.typed()) >= n })
+	return r.typed()
+}
+
+func TestRouteHandsTheQuestionToTheWatchdogAndReturns(t *testing.T) {
+	r := newRouterRig(t)
+
+	r.route(t)
+
+	want := `SessionHost.Prompt rloop-wd-run-1 "question q1 from phase-3/implement: which db? options: sqlite, postgres recommended: sqlite" false 0s`
+	if got := r.host.Calls(); len(got) != 1 || got[0] != want {
+		t.Errorf("watchdog prompts %q", got)
+	}
+	if got := r.calls("AskChannel.Answer "); len(got) != 0 {
+		t.Errorf("answered %q", got)
 	}
 }
 
-func TestACitedAnswerReachesTheSessionWithItsCitationLogged(t *testing.T) {
-	r := newRouterRig(t, time.Hour)
+func TestACitedAnswerIsLoggedAndTypedIntoTheAskingPane(t *testing.T) {
+	r := newRouterRig(t)
 
-	routed := r.route(t)
+	r.route(t)
 	ok, reason := r.router.Answer("q1", "sqlite", "docs/x/spec.html:2")
 
 	if !ok || reason != "" {
 		t.Fatalf("answer %t %q", ok, reason)
 	}
-	if !routeResult(t, routed) {
-		t.Fatal("Route returned false for an accepted answer")
-	}
-	want := `SessionHost.Prompt rloop-wd-run-1 "question q1 from phase-3/implement: which db? options: sqlite, postgres recommended: sqlite" false 0s`
-	if got := r.host.Calls(); len(got) != 1 || got[0] != want {
-		t.Errorf("watchdog prompts %q", got)
+	if got := r.waitTyped(t, 1); len(got) != 1 || got[0] != askingAgent+` "r-loop: answer to q1 (by watchdog, citing docs/x/spec.html:2): sqlite"` {
+		t.Errorf("typed %q", got)
 	}
 	if got := r.calls("AskChannel.Answer "); len(got) != 1 || got[0] != `q1 "sqlite" watchdog "docs/x/spec.html:2"` {
 		t.Errorf("ask %q", got)
@@ -87,50 +107,47 @@ func TestACitedAnswerReachesTheSessionWithItsCitationLogged(t *testing.T) {
 		t.Fatalf("events %+v", r.face.Events)
 	}
 	ev := evs[0]
-	if ev.Kind != "question-answered" || ev.Phase != "3" || ev.Step != "implement" || ev.Fields["by"] != "watchdog" || ev.Fields["citation"] != "docs/x/spec.html:2" || ev.Fields["answer"] != "sqlite" {
+	if ev.Phase != "3" || ev.Step != "implement" || ev.Fields["by"] != "watchdog" || ev.Fields["citation"] != "docs/x/spec.html:2" || ev.Fields["answer"] != "sqlite" {
 		t.Errorf("event %+v", ev)
 	}
+	waitFor(t, func() bool { return !r.session.OpenQuestion.Load() })
 }
 
-func stillOpen(t *testing.T, r *routerRig, routed <-chan bool) {
+func stillOpen(t *testing.T, r *routerRig) {
 	t.Helper()
-	select {
-	case ok := <-routed:
-		t.Fatalf("Route returned %t for a refused answer", ok)
-	case <-time.After(30 * time.Millisecond):
-	}
 	if got := r.calls("AskChannel.Answer "); len(got) != 0 {
 		t.Errorf("ask %q", got)
 	}
-	if ok, reason := r.router.Answer("q1", "sqlite", "docs/x/spec.html:1"); !ok || !routeResult(t, routed) {
-		t.Fatalf("the question did not stay open: %t %q", ok, reason)
+	if ok, reason := r.router.Answer("q1", "sqlite", "docs/x/spec.html:1"); !ok {
+		t.Fatalf("the question did not stay open: %q", reason)
 	}
+	r.waitTyped(t, 1)
 }
 
 func TestACitationToAFileOnlyInTheWorktreeIsRefusedAndTheQuestionStaysOpen(t *testing.T) {
-	r := newRouterRig(t, time.Hour)
+	r := newRouterRig(t)
 
-	routed := r.route(t)
+	r.route(t)
 	ok, reason := r.router.Answer("q1", "sqlite", "internal/fresh.go:1")
 
 	if ok || !strings.Contains(reason, "internal/fresh.go") {
 		t.Fatalf("answer %t %q", ok, reason)
 	}
-	stillOpen(t, r, routed)
+	stillOpen(t, r)
 }
 
 func TestACitationUnderRLoopIsRefused(t *testing.T) {
 	for _, citation := range []string{".r-loop/runs/run-1/notes.md:1", ".r-loop/wt/phase-3/internal/fresh.go:1", "./.r-loop/runs/run-1/notes.md:1"} {
 		t.Run(citation, func(t *testing.T) {
-			r := newRouterRig(t, time.Hour)
+			r := newRouterRig(t)
 
-			routed := r.route(t)
+			r.route(t)
 			ok, reason := r.router.Answer("q1", "sqlite", citation)
 
 			if ok || !strings.Contains(reason, ".r-loop") {
 				t.Fatalf("answer %t %q", ok, reason)
 			}
-			stillOpen(t, r, routed)
+			stillOpen(t, r)
 		})
 	}
 }
@@ -138,28 +155,31 @@ func TestACitationUnderRLoopIsRefused(t *testing.T) {
 func TestAMalformedEscapingOrEmptyCitationIsRefused(t *testing.T) {
 	for _, citation := range []string{"", "  ", "docs/x/spec.html", "docs/x/spec.html:two", "docs/x spec.html:2", "../outside.go:1", "/etc/hosts:1", "docs/x:1", "maintainer:q7"} {
 		t.Run(citation, func(t *testing.T) {
-			r := newRouterRig(t, time.Hour)
+			r := newRouterRig(t)
 			writeFile(filepath.Join(filepath.Dir(r.root), "outside.go"), "x\n")
 
-			routed := r.route(t)
+			r.route(t)
 			ok, reason := r.router.Answer("q1", "sqlite", citation)
 
 			if ok || !strings.Contains(reason, "stays open") {
 				t.Fatalf("citation %q: %t %q", citation, ok, reason)
 			}
-			stillOpen(t, r, routed)
+			stillOpen(t, r)
 		})
 	}
 }
 
-func TestAnAnswerTheMaintainerGaveTheWatchdogIsDeliveredAsTheMaintainers(t *testing.T) {
-	r := newRouterRig(t, time.Hour)
+func TestAnAnswerTheMaintainerGaveTheWatchdogIsTypedAsTheMaintainers(t *testing.T) {
+	r := newRouterRig(t)
 
-	routed := r.route(t)
+	r.route(t)
 	ok, reason := r.router.Answer("q1", "postgres", "maintainer")
 
-	if !ok || !routeResult(t, routed) {
+	if !ok {
 		t.Fatalf("answer %t %q", ok, reason)
+	}
+	if got := r.waitTyped(t, 1); got[0] != askingAgent+` "r-loop: answer to q1 (by maintainer): postgres"` {
+		t.Errorf("typed %q", got)
 	}
 	if got := r.calls("AskChannel.Answer "); len(got) != 1 || got[0] != `q1 "postgres" maintainer ""` {
 		t.Errorf("ask %q", got)
@@ -173,7 +193,7 @@ func TestAnAnswerTheMaintainerGaveTheWatchdogIsDeliveredAsTheMaintainers(t *test
 }
 
 func TestAnAnswerForAQuestionThatIsNotOpenIsRefused(t *testing.T) {
-	r := newRouterRig(t, time.Hour)
+	r := newRouterRig(t)
 
 	ok, reason := r.router.Answer("q9", "sqlite", "docs/x/spec.html:1")
 
@@ -182,94 +202,157 @@ func TestAnAnswerForAQuestionThatIsNotOpenIsRefused(t *testing.T) {
 	}
 }
 
-func TestAQuestionStaysWithALiveWatchdog(t *testing.T) {
-	r := newRouterRig(t, 5*time.Millisecond)
+func TestASecondAnswerToTheSameQuestionIsRefused(t *testing.T) {
+	r := newRouterRig(t)
+	r.route(t)
+	r.router.Answer("q1", "sqlite", "docs/x/spec.html:1")
 
-	routed := r.route(t)
+	ok, reason := r.router.Answer("q1", "postgres", "docs/x/spec.html:1")
 
-	select {
-	case ok := <-routed:
-		t.Fatalf("Route returned %t while the watchdog is live", ok)
-	case <-time.After(50 * time.Millisecond):
+	if ok || !strings.Contains(reason, "not open") {
+		t.Errorf("second answer %t %q", ok, reason)
 	}
-	if ok, reason := r.router.Answer("q1", "sqlite", "docs/x/spec.html:1"); !ok || !routeResult(t, routed) {
-		t.Fatalf("answer %t %q", ok, reason)
-	}
-}
-
-func TestAWatchdogThatGoesAwayHandsTheQuestionBack(t *testing.T) {
-	r := newRouterRig(t, 5*time.Millisecond)
-
-	routed := r.route(t)
-	r.router.Dog.mu.Lock()
-	r.router.Dog.gone = true
-	r.router.Dog.mu.Unlock()
-
-	if routeResult(t, routed) {
-		t.Fatal("Route returned true after the watchdog went away")
-	}
-	if ok, reason := r.router.Answer("q1", "sqlite", "docs/x/spec.html:1"); ok || !strings.Contains(reason, "not open") {
-		t.Errorf("late answer %t %q", ok, reason)
+	if got := r.waitTyped(t, 1); len(got) != 1 {
+		t.Errorf("typed %q", got)
 	}
 }
 
-func TestWithoutAWatchdogRouteReturnsFalseAtOnce(t *testing.T) {
-	r := newRouterRig(t, time.Hour)
-	r.router.Dog = nil
+func TestTheAnswerWaitsUntilTheAgentStopsWorking(t *testing.T) {
+	r := newRouterRig(t)
+	r.ehost.idle[askingAgent] = false
+	r.route(t)
 
-	if r.router.Route(context.Background(), routedQuestion()) {
-		t.Fatal("Route returned true with no watchdog")
+	r.router.Answer("q1", "sqlite", "docs/x/spec.html:1")
+
+	time.Sleep(30 * time.Millisecond)
+	if got := r.typed(); len(got) != 0 {
+		t.Fatalf("typed into a working agent: %q", got)
+	}
+	if !r.session.OpenQuestion.Load() {
+		t.Fatal("the step left waiting-input before its answer was typed")
+	}
+	r.ehost.mu.Lock()
+	r.ehost.idle[askingAgent] = true
+	r.ehost.mu.Unlock()
+	r.waitTyped(t, 1)
+	waitFor(t, func() bool { return !r.session.OpenQuestion.Load() })
+}
+
+func TestABlockedAgentGetsTheAnswerOnALaterTry(t *testing.T) {
+	r := newRouterRig(t)
+	r.ehost.refuse[askingAgent] = 2
+	r.route(t)
+
+	r.router.Answer("q1", "sqlite", "docs/x/spec.html:1")
+
+	if got := r.waitTyped(t, 1); len(got) != 1 {
+		t.Errorf("typed %q", got)
+	}
+	if got := r.calls("SessionHost.Refused "); len(got) != 2 {
+		t.Errorf("refused %q", got)
 	}
 }
 
-func TestAnUnreachableWatchdogIsNotAskedAgain(t *testing.T) {
-	r := newRouterRig(t, time.Hour)
-	r.router.Dog.gone = true
+func TestAReviewerQuestionIsTypedIntoTheReviewerPane(t *testing.T) {
+	r := newRouterRig(t)
+	reviewer := &Session{Reviewer: "claude", Agent: "rloop-p3-implement-rv-claude-r2"}
+	r.session.setReviewers([]*Session{{Reviewer: "codex", Agent: "rloop-p3-implement-rv-codex-r2"}, reviewer})
+	r.ehost.idle[reviewer.Agent] = true
+	r.loop.setLive(r.session)
+	r.watcher.route = r.router.Route
+	q := routedQuestion()
+	q.Step.Kind = "implement-rv-claude"
 
-	if r.router.Route(context.Background(), routedQuestion()) {
-		t.Fatal("Route returned true")
+	r.loop.question(context.Background(), q)
+	if ok, reason := r.router.Answer("q1", "sqlite", "docs/x/spec.html:1"); !ok {
+		t.Fatalf("answer refused: %s", reason)
 	}
-	if got := r.host.Calls(); len(got) != 0 {
-		t.Errorf("prompted %q", got)
+
+	if got := r.waitTyped(t, 1); len(got) != 1 || !strings.HasPrefix(got[0], reviewer.Agent+" ") {
+		t.Errorf("typed %q", got)
+	}
+	waitFor(t, func() bool { return !r.session.OpenQuestion.Load() })
+}
+
+func TestAnAgentGoneBeforeItsAnswerIsTypedWithdrawsTheQuestion(t *testing.T) {
+	r := newRouterRig(t)
+	r.ehost.stopped[askingAgent] = AgentGone
+	r.route(t)
+
+	r.router.Answer("q1", "sqlite", "docs/x/spec.html:1")
+
+	waitFor(t, func() bool {
+		qs := r.questions()
+		return len(qs) == 1 && qs[0].AnsweredBy == "withdrawn"
+	})
+	if qs := r.questions(); qs[0].Answer != "agent gone" {
+		t.Errorf("questions %+v", qs)
+	}
+	if r.session.OpenQuestion.Load() {
+		t.Error("the step stayed in waiting-input")
+	}
+	if got := r.typed(); len(got) != 0 {
+		t.Errorf("typed %q", got)
 	}
 }
 
-func loopQuestion(t *testing.T, router *QuestionRouter, r *eventsRig) (*Session, context.CancelFunc, chan struct{}) {
+func TestAStepThatEndsBeforeTheAnswerIsTypedGetsNothing(t *testing.T) {
+	r := newRouterRig(t)
+	r.ehost.idle[askingAgent] = false
+	r.route(t)
+	r.router.Answer("q1", "sqlite", "docs/x/spec.html:1")
+
+	r.session.end()
+	r.loop.withdrawStep(r.session.Ref.Key, StepFailed)
+	r.ehost.mu.Lock()
+	r.ehost.idle[askingAgent] = true
+	r.ehost.mu.Unlock()
+
+	time.Sleep(30 * time.Millisecond)
+	if got := r.typed(); len(got) != 0 {
+		t.Errorf("typed into an ended step: %q", got)
+	}
+	if qs := r.questions(); len(qs) != 1 || qs[0].AnsweredBy != "withdrawn" || qs[0].Answer != "step failed" {
+		t.Errorf("questions %+v", qs)
+	}
+}
+
+func loopQuestion(t *testing.T, router *QuestionRouter, r *eventsRig) (*Session, *Watch) {
 	t.Helper()
 	w := &Watch{Store: r.store, Router: router}
 	r.loop.Watcher = w
-	s := &Session{Ref: StepRef{Key: StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}}}
+	s := &Session{Ref: StepRef{Key: StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}}, Agent: "rloop-p2-implement"}
+	r.host.idle[s.Agent] = true
 	w.StepStarted(s.Ref, s)
 	r.loop.runDir = r.store.dir
 	r.loop.setLive(s)
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	done := make(chan struct{})
-	go func() { r.loop.question(ctx, Question{ID: "q1", Step: s.Ref.Key, Text: "which db?"}); close(done) }()
-	return s, cancel, done
+	r.loop.question(context.Background(), Question{ID: "q1", Step: s.Ref.Key, Text: "which db?"})
+	return s, w
 }
 
 func TestAStepQuestionReachesTheWatchdogAndItsAnswerReleasesTheStep(t *testing.T) {
 	r := newEventsRig(t)
 	host := &fakeSessionHost{}
 	writeFile(filepath.Join(r.repo.RootDir, "docs/x/spec.html"), "one\ntwo\n")
-	router := &QuestionRouter{Dog: newWatchdog(host, r.store, ProviderArgs{Kind: "claude"}), Deliver: r.loop.Deliver, Repo: r.repo, poll: time.Hour}
-	s, _, done := loopQuestion(t, router, r)
+	router := &QuestionRouter{Dog: newWatchdog(host, r.store, ProviderArgs{Kind: "claude"}), Deliver: r.loop.Deliver, Repo: r.repo}
+	s, _ := loopQuestion(t, router, r)
 
-	waitFor(t, func() bool { return len(host.Calls()) == 1 })
+	if got := host.Calls(); len(got) != 1 {
+		t.Fatalf("watchdog prompts %q", got)
+	}
 	if !s.OpenQuestion.Load() {
 		t.Error("backstop running while the watchdog holds the question")
 	}
 	if ok, reason := router.Answer("q1", "sqlite", "docs/x/spec.html:2"); !ok {
 		t.Fatalf("answer refused: %s", reason)
 	}
-	<-done
 
-	if s.OpenQuestion.Load() {
-		t.Error("step still frozen after the watchdog answered")
+	waitFor(t, func() bool { return !s.OpenQuestion.Load() })
+	if got := r.calls("SessionHost.Typed "); !reflect.DeepEqual(got, []string{`rloop-p2-implement "r-loop: answer to q1 (by watchdog, citing docs/x/spec.html:2): sqlite"`}) {
+		t.Errorf("typed %q", got)
 	}
-	if got := r.calls("AskChannel.Answer "); len(got) != 1 || got[0] != `q1 "sqlite" watchdog "docs/x/spec.html:2"` {
-		t.Errorf("answered %q", got)
+	if got := r.stepStates("implement"); !reflect.DeepEqual(got, []string{"waiting-input", "running"}) {
+		t.Errorf("states %v", got)
 	}
 }
 
@@ -284,11 +367,16 @@ func goneHalt(t *testing.T, r *eventsRig) Signal {
 	}
 }
 
-func assertNeverAnswered(t *testing.T, r *eventsRig, s *Session, sig Signal) {
+func assertOneHaltAndNeverAnswered(t *testing.T, r *eventsRig, s *Session, sig Signal) {
 	t.Helper()
 	want := Signal{Seq: 1, Kind: SignalHalt, Source: SourceDriver, Step: s.Ref.Key, Reason: "the watchdog is gone", At: sig.At}
 	if sig != want {
 		t.Errorf("signal %+v, want %+v", sig, want)
+	}
+	select {
+	case more := <-r.loop.Watcher.Signals():
+		t.Errorf("a second signal %+v", more)
+	case <-time.After(30 * time.Millisecond):
 	}
 	st, _ := r.store.Load("run-1")
 	if len(st.Signals) != 1 || st.Signals[0].Reason != "the watchdog is gone" || st.Signals[0].Source != SourceDriver {
@@ -305,49 +393,52 @@ func assertNeverAnswered(t *testing.T, r *eventsRig, s *Session, sig Signal) {
 	}
 }
 
-func TestAWatchdogThatGoesAwayHaltsTheRunAndTheQuestionIsNeverAnswered(t *testing.T) {
+func TestAQuestionTheWatchdogCannotBeToldOfHaltsTheRunOnce(t *testing.T) {
+	r := newEventsRig(t)
+	host := &fakeSessionHost{Err: errors.New("herdr agent prompt: pane closed")}
+	router := &QuestionRouter{Dog: newWatchdog(host, r.store, ProviderArgs{Kind: "claude"}), Deliver: r.loop.Deliver, Repo: r.repo}
+	s, _ := loopQuestion(t, router, r)
+
+	sig := goneHalt(t, r)
+
+	assertOneHaltAndNeverAnswered(t, r, s, sig)
+}
+
+func TestAWatchdogThatGoesWhileItHoldsAQuestionHaltsTheRunOnce(t *testing.T) {
 	r := newEventsRig(t)
 	host := &fakeSessionHost{}
-	router := &QuestionRouter{Dog: newWatchdog(host, r.store, ProviderArgs{Kind: "claude"}), Deliver: r.loop.Deliver, Repo: r.repo, poll: 5 * time.Millisecond}
-	s, _, done := loopQuestion(t, router, r)
+	router := &QuestionRouter{Dog: newWatchdog(host, r.store, ProviderArgs{Kind: "claude"}), Deliver: r.loop.Deliver, Repo: r.repo}
+	s, w := loopQuestion(t, router, r)
 
-	waitFor(t, func() bool { return len(host.Calls()) == 1 })
 	router.Dog.mu.Lock()
 	router.Dog.gone = true
 	router.Dog.mu.Unlock()
+	w.WatchdogGone()
 	sig := goneHalt(t, r)
-	<-done
 
-	assertNeverAnswered(t, r, s, sig)
+	assertOneHaltAndNeverAnswered(t, r, s, sig)
 }
 
 func TestAQuestionForAGoneWatchdogHaltsTheRunAtOnce(t *testing.T) {
 	r := newEventsRig(t)
 	host := &fakeSessionHost{}
-	router := &QuestionRouter{Dog: newWatchdog(host, r.store, ProviderArgs{Kind: "claude"}), Deliver: r.loop.Deliver, Repo: r.repo, poll: time.Hour}
+	router := &QuestionRouter{Dog: newWatchdog(host, r.store, ProviderArgs{Kind: "claude"}), Deliver: r.loop.Deliver, Repo: r.repo}
 	router.Dog.gone = true
-	s, _, done := loopQuestion(t, router, r)
+	s, _ := loopQuestion(t, router, r)
 
 	sig := goneHalt(t, r)
-	<-done
 
-	assertNeverAnswered(t, r, s, sig)
+	assertOneHaltAndNeverAnswered(t, r, s, sig)
 	if got := host.Calls(); len(got) != 0 {
 		t.Errorf("prompted a gone watchdog %q", got)
 	}
 }
 
-func TestARunThatEndsWhileTheWatchdogHoldsAQuestionAnswersNothing(t *testing.T) {
-	r := newEventsRig(t)
-	host := &fakeSessionHost{}
-	router := &QuestionRouter{Dog: newWatchdog(host, r.store, ProviderArgs{Kind: "claude"}), Deliver: r.loop.Deliver, Repo: r.repo, poll: time.Hour}
-	_, cancel, done := loopQuestion(t, router, r)
+func TestWithoutAWatchdogRouteReturnsFalseAtOnce(t *testing.T) {
+	r := newRouterRig(t)
+	r.router.Dog = nil
 
-	waitFor(t, func() bool { return len(host.Calls()) == 1 })
-	cancel()
-	<-done
-
-	if got := r.calls("AskChannel.Answer "); len(got) != 0 {
-		t.Errorf("answered after the run ended: %q", got)
+	if r.router.Route(context.Background(), routedQuestion()) {
+		t.Fatal("Route returned true with no watchdog")
 	}
 }

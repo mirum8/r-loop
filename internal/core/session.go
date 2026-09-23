@@ -17,7 +17,6 @@ import (
 const (
 	defaultPoll       = 10 * time.Second
 	defaultStallGrace = 2 * time.Minute
-	mcpToolTimeout    = 24 * time.Hour
 )
 
 type SessionManager struct {
@@ -54,8 +53,29 @@ type Session struct {
 	owner                            *Session
 	fix                              *fixHalf
 
-	mu    sync.Mutex
-	ended bool
+	mu        sync.Mutex
+	ended     bool
+	reviewers []*Session
+}
+
+func (s *Session) setReviewers(reviewers []*Session) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reviewers = reviewers
+}
+
+func (s *Session) asker(kind string) string {
+	if kind == s.Ref.Key.Kind {
+		return s.Agent
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.reviewers {
+		if kind == reviewerKey(s.Ref.Key, r.Reviewer).Kind {
+			return r.Agent
+		}
+	}
+	return ""
 }
 
 func (s *Session) live(fn func()) bool {
@@ -350,7 +370,7 @@ func (m *SessionManager) recordState(at time.Time, s *Session, state StepState) 
 }
 
 func writeMCPConfig(path, url string) error {
-	data, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"r-loop": map[string]any{"type": "http", "url": url, "timeout": mcpToolTimeout.Milliseconds()}}})
+	data, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"r-loop": map[string]any{"type": "http", "url": url}}})
 	if err != nil {
 		return err
 	}
@@ -360,7 +380,7 @@ func writeMCPConfig(path, url string) error {
 func nudge(grace time.Duration, ask bool) string {
 	blocked := "If you are blocked, write a failed sentinel with the reason."
 	if ask {
-		blocked = "If you are blocked, call ask_watchdog, or write a failed sentinel with the reason."
+		blocked = "If you are blocked, call ask_watchdog and end your turn to wait for its answer, or write a failed sentinel with the reason."
 	}
 	return "r-loop: no sentinel and no activity for " + grace.String() + ". If your work is done, write the sentinel now. " + blocked
 }

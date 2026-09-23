@@ -191,6 +191,7 @@ func (h ReviewHalf) open(worker *Session, rows []Reviewer, required []string, ar
 		}
 		sessions[i].Pane = pane
 	}
+	worker.setReviewers(sessions)
 	for i, s := range sessions {
 		if err := os.Remove(s.Ref.Vars["FindingsPath"].(string)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, sm.fail(worker, "reviewer "+s.Reviewer+": "+err.Error())

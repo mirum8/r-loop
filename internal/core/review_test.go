@@ -183,6 +183,9 @@ func TestReviewSplitsStartsThenPromptsAndReplacesPanesWithFreshAgentsInRound2(t 
 	if len(clean) != 1 || !reflect.DeepEqual(clean[0].Fields, map[string]string{"step": "implement", "round": "2"}) {
 		t.Fatalf("review-clean events = %+v", clean)
 	}
+	if got := r.worker.asker("implement-rv-codex"); got != "rloop-p3-implement-rv-codex-r2" {
+		t.Errorf("a codex reviewer question goes to %q", got)
+	}
 }
 
 func TestReviewPromptVariablesPerRound(t *testing.T) {
@@ -578,7 +581,7 @@ func TestReviewerIsStartedWithItsOwnAskURLAndMCPConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"mcpServers":{"r-loop":{"timeout":86400000,"type":"http","url":"` + url + `"}}}`; string(data) != want {
+	if want := `{"mcpServers":{"r-loop":{"type":"http","url":"` + url + `"}}}`; string(data) != want {
 		t.Fatalf("mcp config = %s", data)
 	}
 }

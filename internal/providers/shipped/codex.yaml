@@ -1,7 +1,7 @@
 kind: codex
 modelFlag: "-c model={model}"
 effortFlag: "-c model_reasoning_effort={effort}"
-askFlag: "-c mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.tool_timeout_sec=86400"
+askFlag: "-c mcp_servers.r-loop.url={url}"
 doneSignal: sentinel
 ask: mcp
 review: "/review"

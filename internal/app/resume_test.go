@@ -952,3 +952,28 @@ func TestResumeClosesTheAttemptTheKilledDriverLeftRunningBeforeTheRerun(t *testi
 		t.Fatalf("implement records %q", trail)
 	}
 }
+
+func TestResumeWithdrawsAQuestionTheKilledDriverLeftOpen(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _ := f.seedKilledImplement()
+	impl := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
+	st := store.New(f.root)
+	for _, r := range []core.Record{
+		{Kind: core.RecordStep, Step: &impl, State: core.StepWaitingInput},
+		{Kind: core.RecordQuestion, Question: &core.Question{ID: "q1", Step: impl, Text: "Which database?", AskedAt: t0}},
+	} {
+		if err := st.Append(id, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	code, _, err := f.resume(newSim())
+
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v\n%s", code, err, f.out)
+	}
+	qs := f.load(id).Questions
+	if len(qs) != 1 || qs[0].ID != "q1" || qs[0].AnsweredBy != "withdrawn" || qs[0].Answer != "step failed" {
+		t.Fatalf("questions %+v", qs)
+	}
+}

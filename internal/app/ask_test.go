@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +41,8 @@ type askHost struct {
 	url    string
 	stderr bytes.Buffer
 	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	typed  []string
 }
 
 func (h *askHost) Start(pane, name, kind string, args []string) (core.Agent, error) {
@@ -55,7 +58,21 @@ func (h *askHost) Start(pane, name, kind string, args []string) (core.Agent, err
 	return h.simHost.Start(pane, name, kind, args)
 }
 
+func (h *askHost) State(agent string) (core.AgentState, error) {
+	if agent == "rloop-p1-implement" {
+		return core.AgentIdle, nil
+	}
+	return h.simHost.State(agent)
+}
+
 func (h *askHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	if agent == "rloop-p1-implement" && strings.HasPrefix(text, "r-loop: answer to ") {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.typed = append(h.typed, text)
+		_, err := io.WriteString(h.stdin, text+"\n")
+		return err
+	}
 	if agent != "rloop-p1-implement" || strings.HasPrefix(text, "r-loop:") {
 		return h.simHost.Prompt(agent, text, wait, timeout)
 	}
@@ -72,6 +89,11 @@ func (h *askHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 	h.cmd.Dir = spec.CWD
 	h.cmd.Env = append(os.Environ(), "R_LOOP_SENTINEL="+spec.Env["R_LOOP_SENTINEL"])
 	h.cmd.Stderr = &h.stderr
+	stdin, err := h.cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	h.stdin = stdin
 	return h.cmd.Start()
 }
 
@@ -213,6 +235,9 @@ func TestAStepQuestionReachesTheWatchdogNotTheFaceAndWaitsPastTheBackstop(t *tes
 	if got := r.answerFile(); got != "postgres" {
 		t.Errorf("agent received %q", got)
 	}
+	if got := r.host.typed; !slices.Equal(got, []string{"r-loop: answer to q1 (by maintainer): postgres"}) {
+		t.Errorf("typed %q", got)
+	}
 	if !dog.prompted("question q1 from phase-1/implement: Which database? options: sqlite, postgres recommended: sqlite") {
 		t.Errorf("the watchdog never got the question: %q", dog.Calls())
 	}
@@ -239,6 +264,9 @@ func TestAWatchdogAnswerCitingTheRepositoryReachesTheAgent(t *testing.T) {
 
 	if got := r.answerFile(); got != "sqlite" {
 		t.Errorf("agent received %q", got)
+	}
+	if got := r.host.typed; !slices.Equal(got, []string{"r-loop: answer to q1 (by watchdog, citing docs/topic/todo.md:1): sqlite"}) {
+		t.Errorf("typed %q", got)
 	}
 	if len(st.Questions) != 1 || st.Questions[0].AnsweredBy != "watchdog" || st.Questions[0].Citation != "docs/topic/todo.md:1" {
 		t.Errorf("questions %+v", st.Questions)

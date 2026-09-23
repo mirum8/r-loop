@@ -98,6 +98,9 @@ func (w *Wiring) resume(run core.RunState, replan bool) (core.RunOptions, error)
 			return core.RunOptions{}, err
 		}
 	}
+	if err := w.withdrawOpenQuestions(run); err != nil {
+		return core.RunOptions{}, err
+	}
 	if err := w.Store.ClearAbort(id); err != nil {
 		return core.RunOptions{}, exit(2, "%v", err)
 	}
@@ -185,6 +188,19 @@ func (w *Wiring) closeInterrupted(run core.RunState, phase string) error {
 	slices.SortFunc(open, func(a, b core.StepKey) int { return strings.Compare(fmt.Sprint(a), fmt.Sprint(b)) })
 	for _, key := range open {
 		if err := w.Store.Append(run.ID, core.Record{Kind: core.RecordStep, At: time.Now(), Step: &key, State: core.StepFailed, Reason: "interrupted: driver died"}); err != nil {
+			return exit(2, "%v", err)
+		}
+	}
+	return nil
+}
+
+func (w *Wiring) withdrawOpenQuestions(run core.RunState) error {
+	for _, q := range run.Questions {
+		if q.AnsweredBy != "" {
+			continue
+		}
+		q.Answer, q.AnsweredBy, q.AnsweredAt = "step "+string(core.StepFailed), "withdrawn", time.Now()
+		if err := w.Store.Append(run.ID, core.Record{Kind: core.RecordQuestion, At: q.AnsweredAt, Question: &q}); err != nil {
 			return exit(2, "%v", err)
 		}
 	}
