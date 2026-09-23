@@ -65,6 +65,22 @@ reviewer's `/test-app` had no signal that a run was already live, and it started
 skill now falls back to spotting a working directory under `.r-loop/wt/`, which works but relies on
 a path.
 
+**[#3] Partly done in `4077431`.** A `label` config key now marks a run's workspaces
+(`◆ test p1 plan`) and agent names (`rloop-test-p1-plan`), and the sandbox config sets
+`label: test`. What is left is uniqueness for runs that have no label.
+
+**[#5] The guard cannot tell who moved `HEAD`.** `SessionManager.judge` compares `HEAD` with the
+step's `StartSHA` and fails on any difference (`internal/core/session.go:408-413`). For a step that
+runs in the primary checkout (the gate, the milestone), a commit by anyone, here the maintainer at
+16:08:11, reads as the step's own. Phase 1's gate failed at 16:08:32, the phase was blocked, and
+the watchdog's restart was refused because the phase was already blocked. Only `r-loop resume`,
+after the run ended, landed it (`0b8472e`, 17:11).
+
+**[#6] Seen in phase 3's implement step.** Codex ran `go test ./...` and reported "tests that open
+local TCP listeners failed with 'bind: operation not permitted', and some app integration tests
+stalled". Only the land gate, outside the sandbox, ran the whole suite. The shipped codex block
+passes only `-c check_for_update_on_startup=false` (`internal/providers/shipped/codex.yaml`).
+
 ## Moves architecture or the estimate
 
 Nothing does. #1 changes how a reviewer session is started (`internal/core/review.go`,

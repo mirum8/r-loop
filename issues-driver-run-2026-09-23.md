@@ -18,11 +18,21 @@ Verified against `r-loop` @ `main` `feaf292`.
       - A plan-file phase with an explicit `Files:` line is checked exactly as today
 
 - [ ] [#3] Mark test runs' phases, so a sandbox run under `/test-app` can't be mistaken for the real run
-      - A run carries a label that goes on every herdr workspace label (`p1 plan`, `◆ watchdog`, `◆ intake`) and the sidebar `rloop` token. It defaults to the repo's directory name, and the sandbox's `.r-loop/config.yaml` sets it to `test`, so a nested run reads `test p9 plan`
-      - Herdr agent names (`rloop-p<N>-<kind>`, reviewer and watchdog names) are unique per run, so two runs on one machine never clash over a name, whatever their phase numbers
-      - `--dry-run` shows the label and where it came from, like every other key, and an unknown or flow-style value is still rejected
+      - Two unlabelled runs on one machine never clash over a herdr agent name, whatever their phase numbers. Every step, reviewer and gate agent name carries something unique to its run, still within herdr's name limit
+      - `r-loop resume` still finds a run's step and reviewer agents under the new names, including for a run started before this change
+      - A labelled run keeps its label in workspace and agent names, as `4077431` built it
 
 - [ ] [#4] Reviewer panes get no `R_LOOP_*` environment, so a reviewer cannot tell it runs inside an r-loop step
       - A reviewer pane split beside a step starts with `R_LOOP_RUN`, `R_LOOP_PHASE` and `R_LOOP_STEP` set as a step session's are, plus a variable naming the reviewer
       - A skill that a reviewer runs (such as `/test-app`) can detect from the environment alone that it is inside a live run, and a test proves the variables reach the reviewer's process
       - Step sessions keep exactly the environment they have today
+
+- [ ] [#5] Phase 1's gate "failed" with "step committed before review" when the maintainer committed to main during the step
+      - When `HEAD` moves during a step that runs in the primary checkout, and the new commits were not made by that step's session, the step is not failed as its own fault. The reason names the commits and says `HEAD` moved from outside the step
+      - A step that really commits before review is still failed as today, with today's reason
+      - The watchdog can restart a step that failed this way without the phase first being marked blocked
+
+- [ ] [#6] A codex implement step cannot run the full test suite: its sandbox forbids local listeners (`bind: operation not permitted`)
+      - A codex step session can run the repository's full `go test ./...`, including the `internal/askmcp` and `internal/app` tests that open local TCP listeners, or the implement prompt names exactly which packages it cannot run and why
+      - The shipped codex provider block's `flags` carry whatever codex needs for that, and a provider test pins them
+
