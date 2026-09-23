@@ -7,6 +7,9 @@ order they were made.
 
 Verified against `r-loop` @ `main` `feaf292`.
 
+Second batch (`[#n/2]`), from watching run `20260923-171431`, which fixed the first six. Only these
+items were checked, against `main` `cb62983`.
+
 - [x] [#1] The /review skill is not available in this session, so I'll perform the same report-only review directly  <!-- fixed: r-loop/phase-1 -->
       - A codex reviewer actually runs codex's own review command, rather than reading `/review` as prose inside the round prompt and falling back to an ad-hoc review
       - When a reviewer's `review` command cannot run in its session, the round records that as a reviewer failure or a warning the Face shows, never as a clean review
@@ -35,4 +38,29 @@ Verified against `r-loop` @ `main` `feaf292`.
 - [x] [#6] A codex implement step cannot run the full test suite: its sandbox forbids local listeners (`bind: operation not permitted`)  <!-- fixed: r-loop/phase-6 -->
       - A codex step session can run the repository's full `go test ./...`, including the `internal/askmcp` and `internal/app` tests that open local TCP listeners, or the implement prompt names exactly which packages it cannot run and why
       - The shipped codex provider block's `flags` carry whatever codex needs for that, and a provider test pins them
+
+- [ ] [#1/2] A finding the author judges "not real" or "out of scope" closes the round with no second look
+      - A P1 or P2 finding the step's own session judges `not-real` or `out-of-scope` does not by itself make the round clean: the next round's reviewers, or the watchdog when no round is left, see the dismissal and its evidence and can reopen it
+      - An `out-of-scope` verdict names where the work goes instead (another backlog item, or a new one), and the face and `report.md` show every dismissed P1/P2 with its reason
+      - A `real` verdict and a P3 dismissal behave as today
+
+- [ ] [#2/2] A late edit by the step's own session is reported as "reviewer modified the tree"
+      - When the tree changes during a review round, the failure names who changed it: the step's own session, a reviewer, or unknown, not always the reviewer
+      - The step's session cannot change the tree after writing its sentinel without the driver saying so, and the round's reason says which file changed after the sentinel
+
+- [ ] [#3/2] Reviewer agent names lose their `-rv-<name>` part under the 32-character cap
+      - A reviewer's agent name always shows which reviewer it is (`-rv-<name>` or a stable short form of it), whatever the label and run token, and still fits the 32-character cap
+      - `tech-design.md` ("Names and paths") and the code say the same thing about which part of a name survives the cut, and a test pins it for a codex, a claude and a named (`ui`) reviewer
+
+- [ ] [#4/2] Interactive-only start flags break the nested `codex exec review`
+      - The `{args}` a provider's `review` command receives are only the flags that command accepts: flags `codex exec review` rejects are not passed to it
+      - A test runs the shipped codex `review` command's argument list through codex's own `exec review` parser, or pins the accepted set, so a flag that breaks it fails a test and not a live run
+
+- [ ] [#5/2] `TestLiveHerdr` fails: herdr still reports an interrupted agent as idle
+      - After r-loop interrupts an agent, the herdr adapter waits for, or correctly reads, the state herdr 0.9.0 actually reports, and `R_LOOP_LIVE_HERDR=1 go test ./internal/herdr/ -run TestLiveHerdr` passes against a running herdr server
+      - If herdr's reported state after an interrupt is `idle` by design, the adapter and the test say so, and the stall and restart paths that rely on the interrupt still work
+
+- [ ] [#6/2] Every `/test-app` sandbox leaves a trusted-project entry in `~/.codex/config.toml`
+      - A codex session r-loop starts in a throwaway directory (a `/test-app` sandbox or its worktrees) leaves no `[projects."…r-loop-sandbox-…"]` entry behind in the maintainer's codex config
+      - Entries for real repositories the maintainer trusted are never touched
 

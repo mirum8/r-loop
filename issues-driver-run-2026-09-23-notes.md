@@ -88,3 +88,42 @@ Nothing does. #1 changes how a reviewer session is started (`internal/core/revie
 `tech-design.md`, from "a command named in the prompt" to "the session's first input". #4 adds an env map to the reviewer split (`review.go:188`, the herdr adapter's `Split`). #3 adds one config key and changes how workspace labels and agent names are built. Resume looks agents up by name (`resume.go:158`, `:285`), so the new scheme has to be what resume rebuilds. #2 is a
 wording change in `phasecheck.go` and `watchdog.md`, plus the backlog flag the check already has
 through `Plan.Backlog`.
+
+## Second batch — notes on run `20260923-171431`
+
+Read against `r-loop` @ `main` `cb62983`, after the first six landed.
+
+**[#1/2] Four dismissals closed rounds this run.** Phase 1 implement: `claude-r1-1` (nested codex
+blocked by its sandbox) and `claude-r2-1` (only half of `claude-r1-2` fixed), both `out-of-scope`.
+Phase 3 implement: `claude-r1-1` (reviewer names lose `-rv-<name>`), `not-real`, citing the phase's
+own plan. Phase 4: `claude-r1-6`, `not-real`. The only guard is format: a `not-real` verdict must
+carry a `path:line` that exists (`internal/core/evidence.go:462-470`). Phase 6's first implement
+attempt failed on exactly that, because its evidence carried prose after the `path:line`. Nothing
+checks what the evidence says, and `out-of-scope` needs no evidence at all.
+
+**[#2/2] Phase 3's first plan attempt.** The round-2 tree check failed with "reviewer modified the
+tree: .task-plans/phase-3-…md" (`internal/core/review.go:360`). The watchdog found that the codex
+reviewer's pane showed no edit. The plan's own session had made a late wording edit at 18:25,
+after the driver took the round's snapshot. The step was restarted with a note not to edit after
+the sentinel.
+
+**[#3/2] The contract and the finding disagree.** `tech-design.md:264-267` now reads: a reviewer
+agent "adds `-rv-<name>-r<round>[-a<attempt>]`… the suffix stays, while an overlong prefix is cut".
+The reviewer found that `review.go` passes `-rv-<id>` into the part that gets cut
+(`freeAgent(…, "-rv-"+rv.ID(), agentSuffix(…))`, `internal/core/review.go:184`). With a 5-character run token,
+`rloop-<token>-p1-implement-rv-claude-r1` is already over 32 characters.
+
+**[#4/2] Deferred in phase 1 as `claude-r2-1`.** `{args}` pastes the interactive start flags into the
+shell command, now quoted (`claude-r1-2` fixed that half), but `codex exec review` rejects some of
+them. Phase 6 added `-c sandbox_workspace_write.network_access=true` to the same `flags`, so the
+set passed through `{args}` has grown. The first run after reinstalling will show whether codex
+reviews work.
+
+**[#5/2] Seen in phase 4's implement step.** Run by hand with `R_LOOP_LIVE_HERDR=1`, the new
+environment check in `TestLiveHerdr` passed, and then the test failed in an older check:
+`first agent still "idle" after interrupt`. The live test is not part of any gate, so nothing had
+run it.
+
+**[#6/2] Three so far.** `~/.codex/config.toml` holds `[projects."…/r-loop-sandbox-oirI70"]`,
+`…-ioB9EL` and `…-P4x1W9`, each `trust_level = "trusted"`, one per sandbox a codex session entered.
+
