@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -112,9 +113,8 @@ func (m Model) panel(w int) []string {
 	add := func(style lipgloss.Style, s string) { lines = append(lines, style.Render(ansi.Truncate(s, w, "…"))) }
 	if s := m.Live; s != nil {
 		add(th.Text, fmt.Sprintf("PHASE %s · %s", s.Phase, s.Label()))
-		if len(m.Steps) > 0 {
-			lines = append(lines, ansi.Truncate(th.Text.Render(fmt.Sprintf("%-10s ", "steps"))+m.pipeline(s), w, "…"))
-		}
+		label := th.Text.Render(fmt.Sprintf("%-10s ", "steps"))
+		lines = append(lines, ansi.Truncate(label+m.pipeline(s, w-lipgloss.Width(label)), w, "…"))
 		provider := s.Provider
 		for _, part := range []string{s.Model, s.Effort} {
 			if part != "" {
@@ -154,12 +154,17 @@ func (m Model) panel(w int) []string {
 	return lines
 }
 
-func (m Model) pipeline(s *Step) string {
+func (m Model) pipeline(s *Step, w int) string {
 	th := m.theme
-	parts := make([]string, 0, len(m.Steps))
-	for _, kind := range m.Steps {
+	kinds := m.Steps
+	if !slices.Contains(kinds, s.Kind) {
+		kinds = append(slices.Clone(m.Steps), s.Kind)
+	}
+	parts := make([]string, 0, len(kinds))
+	live := slices.Index(kinds, s.Kind)
+	for _, kind := range kinds {
 		switch state := m.done[stepID{s.Phase, kind}]; {
-		case kind == s.Kind:
+		case kind == s.Kind && s.State != string(core.StepOK) && s.State != string(core.StepFailed):
 			parts = append(parts, th.Current.Render(kind))
 		case state == string(core.StepOK):
 			parts = append(parts, th.Landed.Render(kind+" ✓"))
@@ -169,7 +174,12 @@ func (m Model) pipeline(s *Step) string {
 			parts = append(parts, th.Idle.Render(kind))
 		}
 	}
-	return strings.Join(parts, th.Idle.Render(" › "))
+	sep := th.Idle.Render(" › ")
+	line := strings.Join(parts, sep)
+	for drop := 1; lipgloss.Width(line) > w && drop <= live; drop++ {
+		line = th.Idle.Render("…") + sep + strings.Join(parts[drop:], sep)
+	}
+	return ansi.Truncate(line, w, "…")
 }
 
 func (m Model) waiting(s *Step) string {

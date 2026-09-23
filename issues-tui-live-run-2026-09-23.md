@@ -14,7 +14,7 @@ Verified against `r-loop` @ `main` `2db8b3b`.
       - After `finished`, `halt` or `aborted`, the panel shows neither the last step as live nor any `left` countdown; `TestAFinishedRunStopsTheClocks` is updated to match
       - A running or paused step renders as today, and the 120x40 and 70x30 golden frames stay byte-identical
 
-- [ ] [#2] Milestone missing from the steps row
+- [x] [#2] Milestone missing from the steps row  <!-- fixed: r-loop/phase-2 -->
       - Whatever kind is named in the `PHASE N · <kind>` title always appears on that phase's steps line, including `milestone`, `gatefix` and the backlog `gate`
       - When phase N closes a milestone, the line reads `plan ✓ › implement ✓ › milestone` while the session is live (primary, not bold), then `milestone ✓` or `milestone ×` when it ends; a phase that closes no milestone shows no `milestone` entry
       - The steps line stays one row, cut with `…` at 80 columns and below, with no amber and no bold

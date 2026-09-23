@@ -7,7 +7,7 @@
   ·  4 session manager    
 
   PHASE 2 · implement
-  steps      plan ✓ › implement › land
+  steps      plan ✓ › implement
   provider   codex · gpt-5 · medium
   session    ws-4
   state      waiting-input
