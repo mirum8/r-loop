@@ -465,6 +465,8 @@ func TestStartFailsWhenTrustDialogDoesNotClear(t *testing.T) {
 	}
 }
 
+const claudeReadyScreen = " ▐▛███▛█   Claude Code v2.1.280\n❯\n  -- INSERT --\n"
+
 const claudeTrustScreen = " Accessing workspace:\n /repo\n Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team).\n Claude Code'll be able to read, edit, and execute files here.\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel\n"
 
 func notReadyThenTrusted(t *testing.T, before, after string) (Client, func() [][]string) {
@@ -510,7 +512,7 @@ func notReadyThenTrustedBlocked(t *testing.T, before, after string, blockedGets 
 
 func TestStartAcceptsClaudesTrustDialogThatHerdrReportsNotReady(t *testing.T) {
 	shrinkPaneBusyWait(t, 5*time.Second)
-	c, calls := notReadyThenTrusted(t, claudeTrustScreen, "❯ \n")
+	c, calls := notReadyThenTrusted(t, claudeTrustScreen, claudeReadyScreen)
 
 	agent, err := c.Start("w8P:p1", "rloop-wd-run-1", "claude", []string{"--model", "opus"})
 
@@ -525,6 +527,7 @@ func TestStartAcceptsClaudesTrustDialogThatHerdrReportsNotReady(t *testing.T) {
 		{"agent", "read", "rloop-wd-run-1", "--source", "visible"},
 		{"agent", "send-keys", "rloop-wd-run-1", "down"},
 		{"agent", "send-keys", "rloop-wd-run-1", "enter"},
+		{"agent", "read", "rloop-wd-run-1", "--source", "visible"},
 		{"agent", "read", "rloop-wd-run-1", "--source", "visible"},
 		{"agent", "get", "rloop-wd-run-1"},
 	})
@@ -560,7 +563,7 @@ func TestStartFailsWhenClaudesTrustDialogDoesNotClear(t *testing.T) {
 
 func TestStartWaitsUntilHerdrNoLongerReportsTheTrustedClaudeBlocked(t *testing.T) {
 	shrinkPaneBusyWait(t, 5*time.Second)
-	c, calls := notReadyThenTrustedBlocked(t, claudeTrustScreen, "❯ \n", 2)
+	c, calls := notReadyThenTrustedBlocked(t, claudeTrustScreen, claudeReadyScreen, 2)
 
 	if _, err := c.Start("w8P:p1", "rloop-wd-run-1", "claude", nil); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -582,11 +585,63 @@ func TestStartWaitsUntilHerdrNoLongerReportsTheTrustedClaudeBlocked(t *testing.T
 
 func TestStartFailsWhenTheTrustedClaudeStaysBlocked(t *testing.T) {
 	shrinkPaneBusyWait(t, 20*time.Millisecond)
-	c, _ := notReadyThenTrustedBlocked(t, claudeTrustScreen, "❯ \n", 1<<30)
+	c, _ := notReadyThenTrustedBlocked(t, claudeTrustScreen, claudeReadyScreen, 1<<30)
 
 	_, err := c.Start("w8P:p1", "a1", "claude", nil)
 
 	if err == nil || err.Error() != "herdr: agent a1 stays blocked after the trust dialog" {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestStartWaitsForClaudesBannerAfterItsTrustDialog(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	state := filepath.Join(dir, "state")
+	screens := []string{claudeTrustScreen, "/repo claude --model sonnet\n", "/repo claude --model sonnet\n", " ▐▛███▛█   Claude Code v2.1.280\n❯\n  -- INSERT --\n"}
+	for i, s := range screens {
+		if err := os.WriteFile(filepath.Join(dir, "screen"+strconv.Itoa(i)), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\0' \"$@\" >> \"" + log + "\"\n" +
+		"printf '\\n' >> \"" + log + "\"\n" +
+		"n=$(cat \"" + state + "\" 2>/dev/null || echo 0)\n" +
+		"case \"$2\" in\n" +
+		"start) printf '%s' '{\"error\":{\"code\":\"agent_not_ready\",\"message\":\"blocked during startup\"}}' >&2; exit 1 ;;\n" +
+		"send-keys) if [ \"$4\" = enter ]; then echo 1 > \"" + state + "\"; fi; printf '%s' '{\"result\":{\"type\":\"ok\"}}' ;;\n" +
+		"get) printf '%s' '{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}' ;;\n" +
+		"read) cat \"" + dir + "/screen$n\"; if [ $n -gt 0 ] && [ $n -lt 3 ]; then echo $((n+1)) > \"" + state + "\"; fi ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := Client{Bin: bin}
+
+	if _, err := c.Start("w8P:p1", "rloop-wd-run-1", "claude", nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	screen, err := c.exec("agent", "read", "rloop-wd-run-1", "--source", "visible")
+	if err != nil || !strings.Contains(string(screen), "Claude Code v") {
+		t.Fatalf("Start returned before claude drew its prompt; screen now %q, %v", screen, err)
+	}
+	data, _ := os.ReadFile(state)
+	if strings.TrimSpace(string(data)) != "3" {
+		t.Fatalf("Start returned while claude was still restarting (state %q)", data)
+	}
+}
+
+func TestStartFailsWhenClaudeNeverShowsItsBannerAfterItsTrustDialog(t *testing.T) {
+	shrinkPaneBusyWait(t, 20*time.Millisecond)
+	c, _ := notReadyThenTrusted(t, claudeTrustScreen, "/repo claude --model sonnet\n")
+
+	_, err := c.Start("w8P:p1", "a1", "claude", nil)
+
+	if err == nil || err.Error() != "herdr: agent a1 never showed claude's prompt after the trust dialog" {
 		t.Fatalf("got %v", err)
 	}
 }

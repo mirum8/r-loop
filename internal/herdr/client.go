@@ -156,6 +156,9 @@ func (c Client) Start(pane, name, kind string, args []string) (core.Agent, error
 			if !accepted {
 				return core.Agent{}, err
 			}
+			if err := c.awaitClaudeBanner(name); err != nil {
+				return core.Agent{}, err
+			}
 			if err := c.awaitUnblocked(name); err != nil {
 				return core.Agent{}, err
 			}
@@ -175,6 +178,7 @@ func (c Client) Start(pane, name, kind string, args []string) (core.Agent, error
 const (
 	codexTrustQuestion = "Do you trust the contents of this directory?"
 	claudeTrustAnswer  = "Yes, I trust this folder"
+	claudeBanner       = "Claude Code v"
 )
 
 func (c Client) acceptTrust(agent, marker string, keys ...string) (bool, error) {
@@ -199,6 +203,20 @@ func (c Client) acceptTrust(agent, marker string, keys ...string) (bool, error) 
 		}
 		if time.Now().After(deadline) {
 			return true, fmt.Errorf("herdr: agent %s still asks to trust its directory", agent)
+		}
+		time.Sleep(paneBusyBackoff)
+	}
+}
+
+func (c Client) awaitClaudeBanner(agent string) error {
+	deadline := time.Now().Add(paneBusyBudget)
+	for {
+		screen, err := c.exec("agent", "read", agent, "--source", "visible")
+		if err != nil || strings.Contains(string(screen), claudeBanner) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("herdr: agent %s never showed claude's prompt after the trust dialog", agent)
 		}
 		time.Sleep(paneBusyBackoff)
 	}

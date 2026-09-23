@@ -597,8 +597,8 @@ Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
 **Depends on:** Phase 37
 **Files:** `internal/herdr/client.go` (modify) · `internal/herdr/client_test.go` (modify)
 **Risk:** none
-- [x] when `herdr agent start` for a `claude` agent fails `agent_not_ready` and the visible screen shows `Yes, I trust this folder`, `Start` sends `down` then `enter`, polls every 250 ms within the 20 s budget until the screen no longer shows it, then polls `State(name)` the same way until herdr no longer reports the agent `blocked`, and returns `Agent{Name: name, Pane: pane}` from its own arguments
-- [x] a claude trust dialog still showing after 20 s fails with `herdr: agent <name> still asks to trust its directory`; an agent herdr still reports `blocked` after the dialog cleared fails with `herdr: agent <name> stays blocked after the trust dialog`
+- [x] when `herdr agent start` for a `claude` agent fails `agent_not_ready` and the visible screen shows `Yes, I trust this folder`, `Start` sends `down` then `enter`, polls every 250 ms within the 20 s budget until the screen no longer shows it, then reads the visible screen the same way until it shows claude's banner `Claude Code v` (herdr already reports claude `idle` while it re-initialises after the dialog, and a prompt typed then is lost), then polls `State(name)` the same way until herdr no longer reports the agent `blocked`, and returns `Agent{Name: name, Pane: pane}` from its own arguments
+- [x] a claude trust dialog still showing after 20 s fails with `herdr: agent <name> still asks to trust its directory`; a screen that has not shown the banner 20 s after the dialog cleared fails with `herdr: agent <name> never showed claude's prompt after the trust dialog`; an agent herdr still reports `blocked` after the dialog cleared fails with `herdr: agent <name> stays blocked after the trust dialog`
 - [x] any other not-ready screen returns the original `agent_not_ready` error and presses no key; codex's trust acceptance after a successful start is unchanged
 **Done when:** `go test -race ./internal/herdr/...` is green.
 
