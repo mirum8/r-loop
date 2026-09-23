@@ -371,30 +371,20 @@ func TestAnotherStepSignalDuringTheCheckIsRejected(t *testing.T) {
 }
 
 func TestACheckTimeoutIsRecordedWithoutAHalt(t *testing.T) {
-	for name, err := range map[string]error{
-		"timeout":          errors.New("herdr agent prompt: herdr: timeout: no answer within 10m0s"),
-		"blocked and gone": errors.New("herdr agent prompt: herdr: agent_blocked: waiting on a permission"),
-	} {
-		t.Run(name, func(t *testing.T) {
-			r := newCheckRig(t)
-			r.dogHost.err = err
-			r.dogHost.States = map[string]AgentState{"rloop-wd-run-1": AgentGone}
-
-			code := r.run(RunOptions{Phases: []string{"1"}})
-
-			if code != 0 {
-				t.Fatalf("exit %d", code)
-			}
-			if got := r.events("phase-check-timeout"); len(got) != 1 || got[0].Phase != "1" {
-				t.Errorf("timeout events %+v", got)
-			}
-			if !slices.Contains(r.calls("Land "), "1") {
-				t.Errorf("phase 1 did not land")
-			}
-			if !strings.Contains(r.report(t), "phase 1 phase check: timed out — landed") {
-				t.Errorf("report\n%s", r.report(t))
-			}
-		})
+	r := newCheckRig(t)
+	r.dogHost.err = errors.New("herdr agent prompt: herdr: timeout: no answer within 10m0s")
+	code := r.run(RunOptions{Phases: []string{"1"}})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if got := r.events("phase-check-timeout"); len(got) != 1 || got[0].Phase != "1" {
+		t.Errorf("timeout events %+v", got)
+	}
+	if !slices.Contains(r.calls("Land "), "1") {
+		t.Error("phase 1 did not land")
+	}
+	if !strings.Contains(r.report(t), "phase 1 phase check: timed out — landed") {
+		t.Errorf("report\n%s", r.report(t))
 	}
 }
 

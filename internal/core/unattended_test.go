@@ -19,8 +19,7 @@ func TestAnAllowListedProviderRestartOnTheRowsFallbackIsAccepted(t *testing.T) {
 	store := &fakeStore{}
 	rem, w := fallbackRemedies(t, store, "provider")
 	rem.Propose("provider", "switch to the fallback", "codex usage limit reached", "")
-	got := make(chan Restart, 1)
-	go func() { got <- <-w.Restarts() }()
+	got := takeRestart(w)
 
 	ok, reason := rem.Restart("phase-2/implement", "", "claude", "")
 
@@ -36,7 +35,7 @@ func TestAProviderRestartOnAnotherProviderNeedsTheMaintainersWord(t *testing.T) 
 	store := &fakeStore{}
 	rem, w := fallbackRemedies(t, store, "provider")
 	rem.Propose("provider", "switch provider", "codex usage limit reached", "")
-	go func() { <-w.Restarts() }()
+	takeRestart(w)
 
 	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "")
 	if ok || !strings.Contains(reason, "gemini is not the row's fallback") || !strings.Contains(reason, "maintainer_said") {
@@ -60,7 +59,7 @@ func TestAProviderRestartOnAnotherProviderNeedsTheMaintainersWord(t *testing.T) 
 func TestAProviderRestartWithOnlyTheAllowListAndNoRemedyAcceptsOnlyTheFallback(t *testing.T) {
 	store := &fakeStore{}
 	rem, w := fallbackRemedies(t, store, "provider")
-	go func() { <-w.Restarts() }()
+	takeRestart(w)
 
 	if ok, reason := rem.Restart("phase-2/implement", "", "gemini", ""); ok || !strings.Contains(reason, "is not the row's fallback") {
 		t.Errorf("gemini restart %v %q", ok, reason)
@@ -115,7 +114,7 @@ func TestAFallbackRestartRunsOnTheFallbacksModelAndEffortAndTheReportNamesAllThr
 func TestAnAllowListedRestartClassDoesNotSwitchProviders(t *testing.T) {
 	store := &fakeStore{}
 	rem, w := fallbackRemedies(t, store, "restart", "retry")
-	go func() { <-w.Restarts() }()
+	takeRestart(w)
 
 	ok, reason := rem.Restart("phase-2/implement", "use claude", "claude", "")
 
@@ -128,7 +127,7 @@ func TestAMaintainerApprovedProviderRemedyDoesNotAuthoriseAnotherProviderWithout
 	store := &fakeStore{}
 	rem, w := fallbackRemedies(t, store)
 	rem.Propose("provider", "switch to claude", "codex usage limit reached", "yes, go ahead")
-	go func() { <-w.Restarts() }()
+	takeRestart(w)
 
 	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "")
 
@@ -141,8 +140,7 @@ func TestAMaintainerApprovedProviderRemedyNamingTheProviderIsNotAskedAgain(t *te
 	store := &fakeStore{}
 	rem, w := fallbackRemedies(t, store)
 	rem.Propose("provider", "restart phase-2/implement on gemini", "codex usage limit reached", "yes, go ahead")
-	got := make(chan Restart, 1)
-	go func() { got <- <-w.Restarts() }()
+	got := takeRestart(w)
 
 	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "")
 
@@ -175,7 +173,7 @@ func TestARestartTheMaintainerConsentedToIsOneHumanTouch(t *testing.T) {
 	rem, w := fallbackRemedies(t, store)
 	face := &fakeFace{}
 	rem.Face = face
-	go func() { <-w.Restarts() }()
+	takeRestart(w)
 
 	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "yes, use gemini")
 
@@ -201,7 +199,7 @@ func TestARestartOnAMaintainerApprovedRemedyCountsNoSecondConsent(t *testing.T) 
 	store := &fakeStore{}
 	rem, w := fallbackRemedies(t, store)
 	rem.Propose("provider", "restart phase-2/implement on gemini", "codex usage limit reached", "yes, go ahead")
-	go func() { <-w.Restarts() }()
+	takeRestart(w)
 
 	if ok, reason := rem.Restart("phase-2/implement", "", "gemini", "yes, go ahead"); !ok {
 		t.Fatalf("restart %v %q", ok, reason)

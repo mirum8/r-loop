@@ -38,7 +38,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - An unparseable line in the middle of a file still makes `Load` fail with an error naming the file and the line
       - `resume` and `status` on such a run exit with their normal codes, not 2
 
-- [ ] [#6] A dead watchdog pane (`agent_not_found`) is never marked gone, so later phases run and land with no watchdog
+- [x] [#6] A dead watchdog pane (`agent_not_found`) is never marked gone, so later phases run and land with no watchdog  <!-- fixed: r-loop/phase-6 -->
       - When the watchdog's herdr agent no longer exists, the next Post, Notify or phase-check prompt marks the watchdog gone, emits one watchdog-unreachable event and calls OnGone exactly once
       - After the watchdog pane is killed, the run halts with "the watchdog is gone" before the next phase starts; no later phase is spawned or landed
       - A phase check that failed because the watchdog vanished is not reported as `phase-check-timeout`
@@ -156,13 +156,13 @@ Verified against `r-loop` @ `main` `058c81b`.
       - `report.md` reflects every appended record once the run ends, and is at most a bounded delay behind while the run is live
       - Handling a watchdog signal does not do a full store load
 
-- [ ] [#26] `Watch.forward` with a nil stop channel blocks forever once its 64-slot buffer is full
+- [x] [#26] `Watch.forward` with a nil stop channel blocks forever once its 64-slot buffer is full  <!-- fixed: r-loop/phase-6 -->
       - `Accept`/`Handle` return within a bounded time even when the signal buffer is full and the loop isn't draining it; the signal is queued or reported as dropped
       - After the loop's `Run` returns, an MCP signal call returns instead of blocking
       - The watchdog's prompt path never blocks while holding the watchdog's send lock, so a phase-check Notify cannot deadlock behind it
       - A halt signal is never silently lost when the buffer is full
 
-- [ ] [#27] `restart_step` can say "accepted" and then not restart
+- [x] [#27] `restart_step` can say "accepted" and then not restart  <!-- fixed: r-loop/phase-6 -->
       - `restart_step` returns accepted=true only when the loop actually queued the new attempt
       - When the loop refuses a restart it received (a pending halt, or the restart limit), the caller gets accepted=false with the loop's reason
       - A successful restart still returns accepted=true and starts attempt N+1

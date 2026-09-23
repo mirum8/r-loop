@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +40,7 @@ type Watch struct {
 	once     sync.Once
 	mu       sync.Mutex
 	signals  chan Signal
+	parked   []Signal
 	restarts chan Restart
 	held     *StepKey
 	closed   chan struct{}
@@ -51,6 +54,8 @@ type Watch struct {
 	gone     bool
 	goneHalt bool
 }
+
+var errSignalDropped = errors.New("the signal queue is full; signal dropped")
 
 type endedStep struct {
 	state StepState
@@ -86,12 +91,25 @@ func (w *Watch) poll() time.Duration {
 
 func (w *Watch) Signals() <-chan Signal {
 	w.init()
+	w.mu.Lock()
+	w.unpark()
+	w.mu.Unlock()
 	return w.signals
 }
 
 func (w *Watch) Restarts() <-chan Restart {
 	w.init()
 	return w.restarts
+}
+
+func (w *Watch) SeedSignals(signals []Signal) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, sig := range signals {
+		if sig.Seq > w.seq {
+			w.seq = sig.Seq
+		}
+	}
 }
 
 func (w *Watch) Hold(key StepKey) {
@@ -223,11 +241,9 @@ func (w *Watch) StepStarted(ref StepRef, s *Session) {
 	w.tickers[key] = t
 	if w.halt != nil {
 		w.halt.Step = key
-		select {
-		case w.signals <- *w.halt:
-			w.halt = nil
-		default:
-		}
+		w.parked = append(w.parked, *w.halt)
+		w.halt = nil
+		w.unpark()
 	}
 	gone := w.gone
 	w.mu.Unlock()
@@ -283,7 +299,7 @@ func (w *Watch) tick(ref StepRef, s *Session, started time.Time, t *ticking) {
 		for _, c := range w.Checks {
 			ctx := CheckContext{Step: ref, Session: s, Started: started, Now: w.now(), Repo: w.Repo, Store: w.Store, Plan: w.Plan}
 			for _, sig := range c.Run(ctx) {
-				w.accept(sig, c.Name(), t.stop)
+				w.accept(sig, c.Name())
 			}
 		}
 	}
@@ -298,10 +314,10 @@ func (w *Watch) Handle(sig Signal) (bool, string) {
 }
 
 func (w *Watch) Accept(sig Signal) (Signal, error) {
-	return w.accept(sig, "", nil)
+	return w.accept(sig, "")
 }
 
-func (w *Watch) accept(sig Signal, check string, stop <-chan struct{}) (Signal, error) {
+func (w *Watch) accept(sig Signal, check string) (Signal, error) {
 	w.init()
 	w.mu.Lock()
 	w.seq++
@@ -322,7 +338,9 @@ func (w *Watch) accept(sig Signal, check string, stop <-chan struct{}) (Signal, 
 		if sig.Kind == SignalHalt {
 			w.Release(sig.Step)
 		}
-		w.forward(sig, stop)
+		if !w.forward(sig) {
+			return sig, w.dropped(sig, runID)
+		}
 		return sig, nil
 	}
 	if w.Face != nil {
@@ -348,7 +366,11 @@ func (w *Watch) accept(sig Signal, check string, stop <-chan struct{}) (Signal, 
 	default:
 		fwd.Reason = "driver signal rejected: " + sig.RejectReason
 	}
-	w.forward(fwd, stop)
+	if !w.forward(fwd) {
+		if err := w.dropped(fwd, runID); !errors.Is(err, errSignalDropped) {
+			return sig, err
+		}
+	}
 	return sig, nil
 }
 
@@ -362,16 +384,44 @@ func (w *Watch) holdHalt(halt Signal) bool {
 	return true
 }
 
-func (w *Watch) forward(sig Signal, stop <-chan struct{}) {
-	select {
-	case w.signals <- sig:
-		return
-	default:
+func (w *Watch) unpark() {
+	for len(w.parked) > 0 {
+		select {
+		case w.signals <- w.parked[0]:
+			w.parked = w.parked[1:]
+		default:
+			return
+		}
 	}
-	select {
-	case w.signals <- sig:
-	case <-stop:
+}
+
+func (w *Watch) forward(sig Signal) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.unpark()
+	if len(w.parked) == 0 {
+		select {
+		case w.signals <- sig:
+			return true
+		default:
+		}
 	}
+	if sig.Kind != SignalHalt {
+		return false
+	}
+	w.parked = append(w.parked, sig)
+	return true
+}
+
+func (w *Watch) dropped(sig Signal, runID string) error {
+	ev := Event{At: w.now(), Kind: "signal-dropped", Phase: sig.Step.Phase, Step: sig.Step.Kind, Fields: map[string]string{"seq": strconv.Itoa(sig.Seq), "kind": string(sig.Kind), "source": string(sig.Source), "reason": sig.Reason}}
+	if err := w.Store.Append(runID, Record{Kind: RecordEvent, At: ev.At, Event: &ev}); err != nil {
+		return fmt.Errorf("record dropped signal: %w", err)
+	}
+	if w.Face != nil {
+		w.Face.Emit(ev)
+	}
+	return fmt.Errorf("signal %d: %w", sig.Seq, errSignalDropped)
 }
 
 func (w *Watch) rejection(sig *Signal, runID string) string {

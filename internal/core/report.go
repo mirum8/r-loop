@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -235,10 +236,23 @@ func questionLines(st RunState) []string {
 
 func signalLines(st RunState) []string {
 	var out []string
+	dropped := map[string]bool{}
+	for _, ev := range st.Events {
+		if ev.Kind == "signal-dropped" {
+			dropped[ev.Fields["seq"]] = true
+		}
+	}
 	for _, s := range st.Signals {
 		line := fmt.Sprintf("%s from %s, %s: %s", s.Kind, s.Source, where(s.Step.Phase, s.Step.Kind), s.Reason)
 		if s.Rejected {
 			line += " (rejected: " + s.RejectReason + ")"
+		}
+		if dropped[strconv.Itoa(s.Seq)] {
+			if s.Rejected {
+				line += " (rejection notice dropped: signal queue full)"
+			} else {
+				line += " (dropped: signal queue full)"
+			}
 		}
 		out = append(out, line)
 	}

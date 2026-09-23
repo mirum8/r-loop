@@ -26,6 +26,19 @@ func failedImplement(t *testing.T, store Store) (*Watch, StepKey) {
 	return w, key
 }
 
+func takeRestart(w *Watch) <-chan Restart {
+	got := make(chan Restart, 1)
+	go func() {
+		rs := <-w.Restarts()
+		if rs.Reply != nil {
+			rs.Reply <- ""
+			rs.Reply = nil
+		}
+		got <- rs
+	}()
+	return got
+}
+
 func remedyRecords(store *fakeStore) []Remedy {
 	var out []Remedy
 	for _, rec := range store.Records["run-1"] {
@@ -114,8 +127,7 @@ func TestARestartAfterAnAuthorisedRestartRemedyIsQueuedForTheHeldStep(t *testing
 	rem := newRemedies(w, store)
 	rem.Propose("restart", "herdr pane close stuck", "the agent froze", "yes, go ahead")
 
-	got := make(chan Restart, 1)
-	go func() { got <- <-w.Restarts() }()
+	got := takeRestart(w)
 
 	ok, reason := rem.Restart("phase-2/implement", "use the fake", "", "")
 
@@ -124,6 +136,61 @@ func TestARestartAfterAnAuthorisedRestartRemedyIsQueuedForTheHeldStep(t *testing
 	}
 	if want := (Restart{Step: key, Addendum: "use the fake", Remedy: "remedy-1"}); <-got != want {
 		t.Errorf("restart, want %+v", want)
+	}
+}
+
+func TestARestartTheLoopRefusesIsNotAcceptedWithTheLoopsReason(t *testing.T) {
+	store := &fakeStore{}
+	w, _ := failedImplement(t, store)
+	rem := newRemedies(w, store, "restart")
+	go func() {
+		rs := <-w.Restarts()
+		rs.Reply <- "run halted: watchdog: wrong turn"
+	}()
+	ok, reason := rem.Restart("phase-2/implement", "", "", "")
+	if ok || reason != "run halted: watchdog: wrong turn" {
+		t.Errorf("restart %t %q", ok, reason)
+	}
+}
+
+func TestARestartTheLoopRefusesAtItsRestartLimitIsNotAccepted(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.RemedyWindow = time.Minute
+	r.loop.MaxRestarts = 0
+	r.host.behaviour["rloop-p2-implement"] = "fail"
+	w := &Watch{Store: r.store}
+	r.loop.Watcher = w
+	rem := newRemedies(w, r.store, "restart")
+	decided := make(chan struct {
+		ok     bool
+		reason string
+	}, 1)
+	go func() {
+		for {
+			if key, ok := w.holding(); ok && key.Kind == "implement" {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		ok, reason := rem.Restart("phase-2/implement", "again", "", "")
+		decided <- struct {
+			ok     bool
+			reason string
+		}{ok, reason}
+	}()
+	code := r.run(RunOptions{Phases: []string{"2"}})
+	got := <-decided
+	if got.ok || got.reason != "restart limit 0 reached" {
+		t.Errorf("restart %+v", got)
+	}
+	if code != 1 {
+		t.Errorf("exit %d", code)
+	}
+	if agents := r.agents(); !reflect.DeepEqual(agents, []string{"rloop-p2-plan", "rloop-p2-implement"}) {
+		t.Errorf("agents %v", agents)
+	}
+	if len(r.events("restart")) != 0 || len(r.events("restart-refused")) != 1 {
+		t.Errorf("restart events %v, refused %v", r.events("restart"), r.events("restart-refused"))
 	}
 }
 
@@ -197,7 +264,7 @@ func TestARetryNeedsAnAddendumAndAProviderRemedyNeedsAProvider(t *testing.T) {
 	if ok, reason := rem.Restart("phase-2/implement", "", "", ""); ok || reason != "no authorised remedy" {
 		t.Errorf("bare restart %v %q", ok, reason)
 	}
-	go func() { <-w.Restarts() }()
+	takeRestart(w)
 	if ok, reason := rem.Restart("phase-2/implement", "", "claude", ""); !ok {
 		t.Errorf("provider restart %v %q", ok, reason)
 	}

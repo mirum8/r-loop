@@ -568,6 +568,7 @@ func (w *Wiring) bind(runID string) {
 	w.Dog.RunID, w.Dog.RunDir = runID, dir
 	if run, err := w.Store.Load(runID); err == nil {
 		w.Ask.Seq = len(run.Questions)
+		w.Watch.SeedSignals(run.Signals)
 	}
 }
 

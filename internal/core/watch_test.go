@@ -66,6 +66,145 @@ func recordedSignals(store *fakeStore) []Signal {
 	return out
 }
 
+func TestASignalOnAFullQueueReturnsAtOnceAndTheWarnIsReportedDropped(t *testing.T) {
+	store := &fakeStore{}
+	w := newWatch(store)
+	key := implementRef(2, 1).Key
+	w.StepStarted(implementRef(2, 1), nil)
+	for i := 0; i < 64; i++ {
+		if ok, reason := w.Handle(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: key, Reason: "w"}); !ok {
+			t.Fatalf("warn %d: %s", i, reason)
+		}
+	}
+	type result struct {
+		ok     bool
+		reason string
+	}
+	done := make(chan result, 1)
+	go func() {
+		ok, reason := w.Handle(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: key, Reason: "w"})
+		done <- result{ok, reason}
+	}()
+	select {
+	case got := <-done:
+		if got.ok || !strings.Contains(got.reason, "the signal queue is full") {
+			t.Errorf("result %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Handle blocked on a full queue")
+	}
+	var dropped []Event
+	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == "signal-dropped" {
+			dropped = append(dropped, *rec.Event)
+		}
+	}
+	if len(dropped) != 1 || dropped[0].Fields["seq"] != "65" {
+		t.Errorf("dropped %+v", dropped)
+	}
+}
+
+func TestAHaltOnAFullQueueIsDeliveredAfterTheQueuedSignals(t *testing.T) {
+	store := &fakeStore{}
+	w := newWatch(store)
+	key := implementRef(2, 1).Key
+	w.StepStarted(implementRef(2, 1), nil)
+	for i := 0; i < 64; i++ {
+		if ok, reason := w.Handle(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: key, Reason: "w"}); !ok {
+			t.Fatalf("warn %d: %s", i, reason)
+		}
+	}
+	type result struct {
+		ok     bool
+		reason string
+	}
+	done := make(chan result, 1)
+	go func() {
+		ok, reason := w.Handle(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: key, Reason: "wrong turn"})
+		done <- result{ok, reason}
+	}()
+	select {
+	case got := <-done:
+		if !got.ok || got.reason != "" {
+			t.Errorf("halt %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("halt blocked on a full queue")
+	}
+	for i := 0; i < 64; i++ {
+		if sig := receive(t, w); sig.Kind != SignalWarn {
+			t.Errorf("signal %d: %+v", i, sig)
+		}
+	}
+	if sig := receive(t, w); sig.Kind != SignalHalt || sig.Reason != "wrong turn" {
+		t.Errorf("halt %+v", sig)
+	}
+	noSignal(t, w)
+	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == "signal-dropped" {
+			t.Errorf("dropped halt %+v", rec.Event)
+		}
+	}
+}
+
+func TestAHaltHeldBetweenStepsIsDeliveredToTheNextStepWhenTheQueueIsFull(t *testing.T) {
+	store := &fakeStore{}
+	w := newWatch(store)
+	first := implementRef(2, 1)
+	w.StepStarted(first, &Session{})
+	for i := 0; i < 64; i++ {
+		if _, err := w.Accept(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: first.Key, Reason: "w"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.StepEnded(first, Outcome{State: StepOK})
+	if _, err := w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Phase: "2", Kind: "implement"}, Reason: "too late"}); err != nil {
+		t.Fatal(err)
+	}
+	next := StepRef{Key: StepKey{Run: "run-1", Phase: "3", Kind: "plan", Attempt: 1}}
+	w.StepStarted(next, &Session{})
+	defer w.StepEnded(next, Outcome{State: StepOK})
+	for i := 0; i < 64; i++ {
+		if sig := receive(t, w); sig.Kind != SignalWarn {
+			t.Errorf("signal %d: %+v", i, sig)
+		}
+	}
+	if sig := receive(t, w); sig.Kind != SignalHalt || sig.Step != next.Key || sig.Reason != "watchdog signal rejected: phase-2/implement is ok" {
+		t.Errorf("halt %+v", sig)
+	}
+	noSignal(t, w)
+}
+
+func TestASignalAfterTheLoopReturnsDoesNotBlock(t *testing.T) {
+	r := newLoopRig(t)
+	r.host.behaviour["rloop-p1-implement"] = "fail"
+	w := &Watch{Store: r.store, Face: r.face, Poll: time.Hour}
+	r.loop.Watcher = w
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code == 0 {
+		t.Fatal("run unexpectedly succeeded")
+	}
+	type result struct {
+		ok     bool
+		reason string
+	}
+	done := make(chan result, 1)
+	go func() {
+		var last result
+		for range 65 {
+			last.ok, last.reason = w.Handle(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: "1", Kind: "implement"}, Reason: "late"})
+		}
+		done <- last
+	}()
+	select {
+	case got := <-done:
+		if got.ok || !strings.Contains(got.reason, "the signal queue is full") {
+			t.Errorf("last %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Handle blocked after Run")
+	}
+}
+
 func TestAcceptedWarnIsRecordedAndForwarded(t *testing.T) {
 	store := &fakeStore{}
 	w := newWatch(store)
