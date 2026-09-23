@@ -153,11 +153,18 @@ func TestLiveRunIsRefusedWithExit4(t *testing.T) {
 	if err := store.EnsureExcluded(f.root); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.New(f.root).SetCurrent("20260918-101500", os.Getpid()); err != nil {
+	st := store.New(f.root)
+	lock, err := st.Lock()
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer lock.Release("", 0)
+	if err := st.SetCurrent("20260918-101500", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	lock.Publish()
 
-	_, err := f.preflight(f.todo, "--plain")
+	_, err = f.preflight(f.todo, "--plain")
 
 	want := "run 20260918-101500 is live in pid " + strconv.Itoa(os.Getpid()) + "; use r-loop status, resume or abort"
 	if code := exitCode(t, err); code != 4 || !strings.Contains(err.Error(), want) {

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -28,6 +29,10 @@ const (
 var legacyPhaseRe = regexp.MustCompile(`"Phase":(\d+)`)
 
 var excludeTimeout = time.Minute
+
+var appendMu sync.Mutex
+
+var ErrMeta = errors.New("meta.json")
 
 var recordFiles = []string{eventsFile, questionsFile, signalsFile, remediesFile}
 
@@ -84,18 +89,20 @@ func (s *Store) Create(m core.RunMeta) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "meta.json"), mb, 0o644); err != nil {
-		return "", err
-	}
 	for _, f := range recordFiles {
 		if err := os.WriteFile(filepath.Join(dir, f), nil, 0o644); err != nil {
 			return "", err
 		}
 	}
+	if err := writeAtomic(dir, "meta.json", mb); err != nil {
+		return "", err
+	}
 	return id, nil
 }
 
 func (s *Store) Append(runID string, rec core.Record) error {
+	appendMu.Lock()
+	defer appendMu.Unlock()
 	name, ok := fileForKind[rec.Kind]
 	if !ok {
 		return fmt.Errorf("unknown record kind %q", rec.Kind)
@@ -104,9 +111,37 @@ func (s *Store) Append(runID string, rec core.Record) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(s.Dir(runID), name), os.O_APPEND|os.O_WRONLY, 0)
+	path := filepath.Join(s.Dir(runID), name)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_RDWR, 0)
 	if err != nil {
 		return err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if info.Size() > 0 {
+		var last [1]byte
+		if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+			f.Close()
+			return err
+		}
+		if last[0] != '\n' {
+			b, err := os.ReadFile(path)
+			if err != nil {
+				f.Close()
+				return err
+			}
+			i := bytes.LastIndexByte(b, '\n')
+			var tail core.Record
+			if json.Unmarshal(legacyPhase(b[i+1:]), &tail) == nil {
+				line = append([]byte{'\n'}, line...)
+			} else if err := f.Truncate(int64(i + 1)); err != nil {
+				f.Close()
+				return err
+			}
+		}
 	}
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		f.Close()
@@ -123,11 +158,11 @@ func (s *Store) Load(runID string) (core.RunState, error) {
 	st := core.RunState{ID: runID, Status: core.RunCreated, Steps: map[core.StepKey]core.StepState{}}
 	mb, err := os.ReadFile(filepath.Join(s.Dir(runID), "meta.json"))
 	if err != nil {
-		return st, err
+		return st, fmt.Errorf("%w: %w", ErrMeta, err)
 	}
 	var m meta
 	if err := json.Unmarshal(mb, &m); err != nil {
-		return st, fmt.Errorf("meta.json: %w", err)
+		return st, fmt.Errorf("%w: %w", ErrMeta, err)
 	}
 	st.Todo, st.Branch, st.Started = m.Todo, m.Branch, m.Started
 	var order []core.StepKey
@@ -267,11 +302,15 @@ func (s *Store) SetCurrent(runID string, pid int) error {
 	if err := os.MkdirAll(s.runs, 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(s.runs, ".current-*")
+	return writeAtomic(s.runs, "current", fmt.Appendf(nil, "%s %d\n", runID, pid))
+}
+
+func writeAtomic(dir, name string, data []byte) error {
+	tmp, err := os.CreateTemp(dir, "."+name+"-*")
 	if err != nil {
 		return err
 	}
-	_, werr := fmt.Fprintf(tmp, "%s %d\n", runID, pid)
+	_, werr := tmp.Write(data)
 	if werr == nil {
 		werr = tmp.Sync()
 	}
@@ -279,7 +318,7 @@ func (s *Store) SetCurrent(runID string, pid int) error {
 		werr = cerr
 	}
 	if werr == nil {
-		werr = os.Rename(tmp.Name(), s.currentPath())
+		werr = os.Rename(tmp.Name(), filepath.Join(dir, name))
 	}
 	if werr != nil {
 		os.Remove(tmp.Name())
@@ -287,12 +326,126 @@ func (s *Store) SetCurrent(runID string, pid int) error {
 	return werr
 }
 
-func (s *Store) ClearCurrent() error {
+func (s *Store) ClearCurrent(runID string, pid int) error {
+	id, currentPID, ok := s.Current()
+	if !ok || id != runID || currentPID != pid {
+		return nil
+	}
 	err := os.Remove(s.currentPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	return err
+}
+
+type LockedError struct {
+	RunID string
+	PID   int
+}
+
+func (e *LockedError) Error() string {
+	if e.RunID != "" {
+		return fmt.Sprintf("run %s is live in pid %d", e.RunID, e.PID)
+	}
+	return "another r-loop run is live in this repository"
+}
+
+type Lock struct {
+	s    *Store
+	gate *os.File
+	f    *os.File
+}
+
+func (s *Store) flockFile(name string, how int) (*os.File, error) {
+	if err := os.MkdirAll(s.runs, 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(s.runs, name), os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), how); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+func (s *Store) Lock() (*Lock, error) {
+	gate, err := s.flockFile("gate", syscall.LOCK_EX)
+	if err != nil {
+		return nil, fmt.Errorf("run lock: %w", err)
+	}
+	f, err := s.flockFile("lock", syscall.LOCK_EX|syscall.LOCK_NB)
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		id, pid, ok := s.Current()
+		gate.Close()
+		if ok {
+			return nil, &LockedError{RunID: id, PID: pid}
+		}
+		return nil, &LockedError{}
+	}
+	if err != nil {
+		gate.Close()
+		return nil, fmt.Errorf("run lock: %w", err)
+	}
+	return &Lock{s: s, gate: gate, f: f}, nil
+}
+
+func (l *Lock) Publish() {
+	if l == nil || l.gate == nil {
+		return
+	}
+	l.gate.Close()
+	l.gate = nil
+}
+
+func (l *Lock) Release(runID string, pid int) error {
+	if l == nil || l.f == nil {
+		return nil
+	}
+	if l.gate == nil {
+		gate, err := l.s.flockFile("gate", syscall.LOCK_EX)
+		if err != nil {
+			return fmt.Errorf("run lock: %w", err)
+		}
+		l.gate = gate
+	}
+	err := l.s.ClearCurrent(runID, pid)
+	if closeErr := l.f.Close(); err == nil {
+		err = closeErr
+	}
+	if closeErr := l.gate.Close(); err == nil {
+		err = closeErr
+	}
+	l.f = nil
+	l.gate = nil
+	return err
+}
+
+func (s *Store) Live() (runID string, pid int, ok bool) {
+	gate, err := os.Open(filepath.Join(s.runs, "gate"))
+	if err != nil {
+		return "", 0, false
+	}
+	defer gate.Close()
+	if err := syscall.Flock(int(gate.Fd()), syscall.LOCK_SH); err != nil {
+		return "", 0, false
+	}
+	f, err := os.Open(filepath.Join(s.runs, "lock"))
+	if err != nil {
+		return "", 0, false
+	}
+	defer f.Close()
+	err = syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB)
+	if err == nil {
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		return "", 0, false
+	}
+	if !errors.Is(err, syscall.EWOULDBLOCK) {
+		return "", 0, false
+	}
+	return s.Current()
 }
 
 func (s *Store) MarkAbort(runID string) error {

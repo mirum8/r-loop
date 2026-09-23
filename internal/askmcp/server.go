@@ -40,6 +40,9 @@ type Server struct {
 	steps     map[string]core.StepKey
 	questions chan core.Question
 	open      map[string]core.StepKey
+	wg        sync.WaitGroup
+	done      chan struct{}
+	stopping  bool
 }
 
 type askInput struct {
@@ -68,8 +71,11 @@ func (s *Server) Serve(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	done := make(chan struct{})
 	s.mu.Lock()
 	s.ctx = ctx
+	s.done = done
+	s.stopping = false
 	s.prefix = "/mcp/" + token
 	s.base = "http://" + ln.Addr().String() + s.prefix
 	s.wdPath = "/mcp/watchdog/" + wdToken
@@ -86,6 +92,8 @@ func (s *Server) Serve(ctx context.Context) (string, error) {
 		return s.mcpServer(key)
 	}, nil)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.wg.Add(1)
+		defer s.wg.Done()
 		if r.URL.Path == s.wdPath {
 			watchdogHandler.ServeHTTP(w, r)
 			return
@@ -108,11 +116,11 @@ func (s *Server) Serve(ctx context.Context) (string, error) {
 		}
 		stepHandler.ServeHTTP(w, r)
 	})}
-	serveHTTP(ctx, srv, ln)
+	serveHTTP(ctx, srv, ln, done)
 	return s.base, nil
 }
 
-func serveHTTP(ctx context.Context, srv *http.Server, ln net.Listener) {
+func serveHTTP(ctx context.Context, srv *http.Server, ln net.Listener, done chan struct{}) {
 	go srv.Serve(ln)
 	go func() {
 		<-ctx.Done()
@@ -121,7 +129,37 @@ func serveHTTP(ctx context.Context, srv *http.Server, ln net.Listener) {
 		if srv.Shutdown(shutdown) != nil {
 			srv.Close()
 		}
+		close(done)
 	}()
+}
+
+func (s *Server) Wait() {
+	s.mu.Lock()
+	done := s.done
+	s.mu.Unlock()
+	if done == nil {
+		return
+	}
+	<-done
+	s.mu.Lock()
+	s.stopping = true
+	s.mu.Unlock()
+	s.wg.Wait()
+}
+
+func trackTool[In, Out any](s *Server, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFor[In, Out] {
+	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+		s.mu.Lock()
+		if s.stopping {
+			s.mu.Unlock()
+			var zero Out
+			return nil, zero, errors.New("server stopped")
+		}
+		s.wg.Add(1)
+		s.mu.Unlock()
+		defer s.wg.Done()
+		return h(ctx, req, in)
+	}
 }
 
 func newToken() (string, error) {
@@ -189,13 +227,13 @@ func (s *Server) mcpServer(key core.StepKey) *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "ask_watchdog",
 		Description: "Ask the run's watchdog a real choice the repository cannot answer, with the options and your recommendation. Returns at once with the question's id: end your turn then, and the answer arrives as your next message. One open question at a time.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in askInput) (*mcp.CallToolResult, askOutput, error) {
+	}, trackTool(s, func(ctx context.Context, _ *mcp.CallToolRequest, in askInput) (*mcp.CallToolResult, askOutput, error) {
 		id, err := s.ask(ctx, key, in)
 		if err != nil {
 			return nil, askOutput{}, err
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(askedText, id)}}}, askOutput{ID: id, Status: "asked"}, nil
-	})
+	}))
 	return srv
 }
 

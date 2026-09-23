@@ -359,7 +359,7 @@ func (f *fakeStore) SetCurrent(runID string, pid int) error {
 	return f.Err
 }
 
-func (f *fakeStore) ClearCurrent() error {
+func (f *fakeStore) ClearCurrent(string, int) error {
 	f.record("Store.ClearCurrent")
 	f.CurrentRun, f.CurrentPID = "", 0
 	return f.Err

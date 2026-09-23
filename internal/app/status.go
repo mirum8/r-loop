@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"time"
@@ -21,8 +22,9 @@ func Status(args []string, env Env) int {
 	fs := flag.NewFlagSet("r-loop status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Bool("plain", false, "")
-	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
-		fmt.Fprintln(env.Stderr, "usage: r-loop status [--plain]")
+	positional, err := parsePositional(fs, args)
+	if err != nil || len(positional) > 1 {
+		fmt.Fprintln(env.Stderr, "usage: r-loop status [--plain] [<run-id>]")
 		return 2
 	}
 	repo, err := gitrepo.Open(env.Dir)
@@ -31,10 +33,13 @@ func Status(args []string, env Env) int {
 		return 2
 	}
 	st := store.New(repo.Root())
-	id, err := runToShow(st)
+	named := ""
+	if len(positional) == 1 {
+		named = positional[0]
+	}
+	id, err := selectRun(st, named, env.Stderr)
 	if err != nil {
-		fmt.Fprintf(env.Stderr, "r-loop: %v\n", err)
-		return 2
+		return fail(env, err)
 	}
 	if id == "" {
 		fmt.Fprintln(env.Stdout, "no run")
@@ -55,7 +60,8 @@ func Status(args []string, env Env) int {
 		now = env.Now
 	}
 	deadPID := 0
-	if cur, pid, ok := st.Current(); ok && cur == id && !alive(pid) {
+	liveID, _, live := st.Live()
+	if cur, pid, ok := st.Current(); ok && cur == id && !(live && liveID == id) {
 		deadPID = pid
 	}
 	for _, line := range StatusLines(run, pl, now(), deadPID) {
@@ -64,10 +70,26 @@ func Status(args []string, env Env) int {
 	return 0
 }
 
-func runToShow(st *store.Store) (string, error) {
-	if id, _, ok := st.Current(); ok {
+var runIDRe = regexp.MustCompile(`^\d{8}-\d{6}(-\d+)?$`)
+
+func selectRun(st *store.Store, id string, stderr io.Writer) (string, error) {
+	if id != "" {
+		if !runIDRe.MatchString(id) {
+			return "", exit(2, "no run %s in .r-loop/runs", id)
+		}
+		info, err := os.Stat(st.Dir(id))
+		if err != nil || !info.IsDir() {
+			return "", exit(2, "no run %s in .r-loop/runs", id)
+		}
 		return id, nil
 	}
+	if cur, _, ok := st.Live(); ok {
+		return cur, nil
+	}
+	return newestProgressed(st, stderr)
+}
+
+func newestProgressed(st *store.Store, stderr io.Writer) (string, error) {
 	entries, err := os.ReadDir(filepath.Dir(st.Dir("x")))
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
@@ -75,13 +97,45 @@ func runToShow(st *store.Store) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	newest := ""
+	var names []string
 	for _, e := range entries {
-		if e.IsDir() && newerRun(e.Name(), newest) {
-			newest = e.Name()
+		if e.IsDir() {
+			names = append(names, e.Name())
 		}
 	}
-	return newest, nil
+	slices.SortFunc(names, func(a, b string) int {
+		switch {
+		case newerRun(a, b):
+			return -1
+		case newerRun(b, a):
+			return 1
+		default:
+			return 0
+		}
+	})
+	for _, name := range names {
+		run, err := st.Load(name)
+		if errors.Is(err, store.ErrMeta) {
+			fmt.Fprintf(stderr, "r-loop: skipped run %s: %v\n", name, err)
+			continue
+		}
+		if err != nil || progressed(run) {
+			return name, nil
+		}
+	}
+	return "", nil
+}
+
+func progressed(run core.RunState) bool {
+	if run.Status != core.RunCreated || len(run.Steps) > 0 {
+		return true
+	}
+	for _, event := range run.Events {
+		if event.Kind != "watchdog-start" && event.Kind != "watchdog-stale-closed" {
+			return true
+		}
+	}
+	return false
 }
 
 func newerRun(a, b string) bool {

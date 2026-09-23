@@ -106,7 +106,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "signal",
 		Description: "Report a step going the wrong way: kind warn or halt, step phase-<N>/<kind>, with the reason and the evidence.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in signalInput) (*mcp.CallToolResult, acceptedOutput, error) {
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in signalInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("signal", in.Step, map[string]string{"kind": in.Kind, "step": in.Step, "reason": in.Reason, "evidence": in.Evidence}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -126,11 +126,11 @@ func (s *Server) watchdogServer() *mcp.Server {
 		}
 		ok, reason := h(core.Signal{Kind: core.SignalKind(in.Kind), Source: core.SourceWatchdog, Step: key, Reason: in.Reason, Evidence: in.Evidence})
 		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
-	})
+	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "propose_remedy",
 		Description: "Propose the exact command that would unblock the step, with its class and why. Run it only when the decision is authorised. A class off the allow-list needs maintainer_said: the maintainer's reply, quoted, after you asked them in your own session.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in proposeInput) (*mcp.CallToolResult, decisionOutput, error) {
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in proposeInput) (*mcp.CallToolResult, decisionOutput, error) {
 		if err := s.record("propose_remedy", "", map[string]string{"class": in.Class, "command": in.Command, "why": in.Why, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
 		}
@@ -143,11 +143,11 @@ func (s *Server) watchdogServer() *mcp.Server {
 		}
 		decision, reason := h(in.Class, in.Command, in.Why, in.MaintainerSaid)
 		return nil, decisionOutput{Decision: decision, Reason: reason}, nil
-	})
+	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "restart_step",
 		Description: "Restart a failed or stalled step phase-<N>/<kind> as a new attempt, optionally with an addendum or another provider. A provider that is not the row's fallback needs maintainer_said: the maintainer's reply, quoted, after you asked them in your own session.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in restartInput) (*mcp.CallToolResult, acceptedOutput, error) {
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in restartInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("restart_step", in.Step, map[string]string{"step": in.Step, "addendum": in.Addendum, "provider": in.Provider, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -160,11 +160,11 @@ func (s *Server) watchdogServer() *mcp.Server {
 		}
 		ok, reason := h(in.Step, in.Addendum, in.Provider, in.MaintainerSaid)
 		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
-	})
+	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "answer_question",
 		Description: "Answer an open step question. Cite a path:line that holds the answer, or maintainer when the maintainer answered it in your own session. An empty or invalid citation is refused and the question stays open.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in answerInput) (*mcp.CallToolResult, acceptedOutput, error) {
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in answerInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("answer_question", "", map[string]string{"id": in.ID, "answer": in.Answer, "citation": in.Citation}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -177,11 +177,11 @@ func (s *Server) watchdogServer() *mcp.Server {
 		}
 		ok, reason := h(in.ID, in.Answer, in.Citation)
 		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
-	})
+	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "ask_maintainer",
 		Description: "Call this first whenever you need the maintainer: it shows them that you are waiting for them, with the question, and returns at once. Then ask them in your own session and wait for the reply. Your next call of any other tool marks the wait over.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in askMaintainerInput) (*mcp.CallToolResult, acceptedOutput, error) {
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in askMaintainerInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("ask_maintainer", "", map[string]string{"question": in.Question, "options": strings.Join(in.Options, "; "), "recommended": in.Recommended}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -196,11 +196,11 @@ func (s *Server) watchdogServer() *mcp.Server {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
 		return nil, acceptedOutput{Accepted: true}, nil
-	})
+	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "submit_triage",
 		Description: "Submit your triage before the run starts: one verdict per phase for a plan, or one per item plus the groups for a backlog. A refusal carries the reason; fix it and submit again. An accepted call returns the table the driver built.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in triageInput) (*mcp.CallToolResult, tableOutput, error) {
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in triageInput) (*mcp.CallToolResult, tableOutput, error) {
 		if err := s.record("submit_triage", "", map[string]string{"triage": marshal(in)}); err != nil {
 			return nil, tableOutput{Reason: err.Error()}, nil
 		}
@@ -213,11 +213,11 @@ func (s *Server) watchdogServer() *mcp.Server {
 		}
 		ok, reason, table := h(core.Triage{Phases: in.Phases, Items: in.Items, Groups: in.Groups})
 		return nil, tableOutput{Accepted: ok, Reason: reason, Table: table}, nil
-	})
+	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "submit_gate",
 		Description: "Submit the maintainer's decision on the table: go, revise (drop, split, merge; returns the new table) or abort, with maintainer_said quoted.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in core.GateDecision) (*mcp.CallToolResult, tableOutput, error) {
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in core.GateDecision) (*mcp.CallToolResult, tableOutput, error) {
 		if err := s.record("submit_gate", "", map[string]string{"gate": marshal(in), "decision": in.Decision, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, tableOutput{Reason: err.Error()}, nil
 		}
@@ -230,7 +230,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 		}
 		ok, reason, table := h(in)
 		return nil, tableOutput{Accepted: ok, Reason: reason, Table: table}, nil
-	})
+	}))
 	return srv
 }
 

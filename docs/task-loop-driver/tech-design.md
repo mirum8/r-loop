@@ -131,7 +131,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   - `Store`: `Create(RunMeta) (runID string, err error)` · `Append(runID, Record) error` (a
     transition is appended **before** the action it describes) · `Load(runID) (RunState,
     error)` (reads every file of the run) · `Current() (runID string, pid int, ok bool)` ·
-    `SetCurrent(runID, pid) error` · `ClearCurrent() error` · `Aborted(runID) bool` ·
+    `SetCurrent(runID, pid) error` · `ClearCurrent(runID, pid) error` (removes `current` only when it names that run and pid) · `Aborted(runID) bool` ·
     `MarkAbort(runID) error` · `Dir(runID) string`. The `store` adapter also has
     `ClearAbort(runID) error`, outside the port, which `r-loop resume` calls to remove the abort
     marker before it re-runs.
@@ -146,7 +146,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   display events, including `baseline`, `snapshot` and `review-round` events), `questions.jsonl`,
   `signals.jsonl`, `remedies.jsonl`, `report.md`, and `phase-<N>/` holding sentinels, step logs,
   findings and verdicts. A question's answer is a second line for the same id; `Load` keeps the
-  last. `.r-loop/runs/current` holds `<runID> <pid>`; `.r-loop/runs/<runID>/abort` is the abort
+  last. `.r-loop/runs/current` holds `<runID> <pid>`. `.r-loop/runs/lock` is `flock`ed exclusively by the live driver from preflight or resume until its loop returns; a run is live only while that lock is held, and `current` names it. `.r-loop/runs/gate` is held exclusively by a driver from before it takes `lock` until its `current` is published, and while it clears `current` and drops `lock`; observers read `lock` and `current` under `gate` shared. `.r-loop/runs/<runID>/abort` is the abort
   marker. `.r-loop/runs/` and `.r-loop/wt/` are appended to `<git-common-dir>/info/exclude` when
   absent, never to `.gitignore`.
 - **Sentinel** — JSON in `.r-loop/runs/<runID>/phase-<N>/`:
@@ -400,7 +400,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   <half>`, `<half>` `find` or `fix`); `HH:MM:SS phase <N> <kind> nudge` when a stalled step is
   nudged; `r-loop status --plain` lines
   — `run <id> running (driver pid <pid> not alive — r-loop resume)` and no `live` line when
-  `current` names this run with a dead pid, `phase <N> not in this run` for an unticked phase
+  `current` names this run while no driver holds the run lock, `phase <N> not in this run` for an unticked phase
   outside the recorded run list; `report.md` rewritten on every
   transition; hook env `R_LOOP_RUN, R_LOOP_STATUS, R_LOOP_PHASE, R_LOOP_STEP, R_LOOP_REASON,
   R_LOOP_TODO, R_LOOP_REPORT`, with `R_LOOP_STATUS ∈ {halted, finished, warning, blocked}`,

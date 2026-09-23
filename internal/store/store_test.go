@@ -1,7 +1,9 @@
 package store
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -320,13 +322,13 @@ func TestCurrentRoundTrip(t *testing.T) {
 	if !ok || id != "20260918-140305" || pid != 4242 {
 		t.Fatalf("Current = %q %d %v", id, pid, ok)
 	}
-	if err := s.ClearCurrent(); err != nil {
+	if err := s.ClearCurrent("20260918-140305", 4242); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, ok := s.Current(); ok {
 		t.Fatal("Current after ClearCurrent: ok = true")
 	}
-	if err := s.ClearCurrent(); err != nil {
+	if err := s.ClearCurrent("20260918-140305", 4242); err != nil {
 		t.Fatalf("second ClearCurrent: %v", err)
 	}
 }
@@ -497,5 +499,453 @@ func TestLoadReadsIntegerPhasesOfAnOlderRun(t *testing.T) {
 	}
 	if ev := st.Events[0]; ev.Phase != "" || ev.Fields["reason"] != `"Phase":7` {
 		t.Fatalf("event = %+v", ev)
+	}
+}
+
+func TestAppendAfterATornLastLineKeepsEveryCompleteRecord(t *testing.T) {
+	s, _ := newStore(t)
+	id, err := s.Create(core.RunMeta{Todo: "todo.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.Dir(id), eventsFile)
+	first, err := json.Marshal(core.Record{Kind: core.RecordRun, Run: core.RunRunning})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(append(first, '\n'), []byte(`{"Kind":"run","Ru`)...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(id, core.Record{Kind: core.RecordRun, Run: core.RunFinished}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != core.RunFinished || len(state.Warnings) != 0 {
+		t.Fatalf("Load = %+v", state)
+	}
+	b := readFile(t, path)
+	lines := strings.Split(strings.TrimSuffix(b, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines = %q", lines)
+	}
+	for _, line := range lines {
+		if !json.Valid([]byte(line)) || strings.Contains(line, `{"Kind":"run","Ru{`) {
+			t.Fatalf("invalid line %q", line)
+		}
+	}
+}
+
+func TestAppendAfterATornFirstLineTruncatesIt(t *testing.T) {
+	s, _ := newStore(t)
+	id, err := s.Create(core.RunMeta{Todo: "todo.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.Dir(id), eventsFile)
+	if err := os.WriteFile(path, []byte(`{"Kind":"run","Ru`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record := core.Record{Kind: core.RecordRun, Run: core.RunFinished}
+	if err := s.Append(id, record); err != nil {
+		t.Fatal(err)
+	}
+	want, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, path); got != string(want)+"\n" {
+		t.Fatalf("events = %q, want %q", got, string(want)+"\n")
+	}
+	state, err := s.Load(id)
+	if err != nil || state.Status != core.RunFinished || len(state.Warnings) != 0 {
+		t.Fatalf("Load = %+v, %v", state, err)
+	}
+}
+
+func TestAppendAfterAnUnterminatedCompleteRecordKeepsIt(t *testing.T) {
+	s, _ := newStore(t)
+	id, err := s.Create(core.RunMeta{Todo: "todo.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.Dir(id), eventsFile)
+	first, err := json.Marshal(core.Record{Kind: core.RecordRun, Run: core.RunRunning})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, first, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(id, core.Record{Kind: core.RecordRun, Run: core.RunFinished}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.Load(id)
+	if err != nil || state.Status != core.RunFinished || len(state.Warnings) != 0 {
+		t.Fatalf("Load = %+v, %v", state, err)
+	}
+	lines := strings.Split(strings.TrimSuffix(readFile(t, path), "\n"), "\n")
+	if len(lines) != 2 || lines[0] != string(first) || !json.Valid([]byte(lines[1])) {
+		t.Fatalf("events = %q", lines)
+	}
+}
+
+func TestAppendLeavesACorruptMiddleLineForLoadToReport(t *testing.T) {
+	s, _ := newStore(t)
+	id, err := s.Create(core.RunMeta{Todo: "todo.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.Dir(id), eventsFile)
+	if err := os.WriteFile(path, []byte("garbage\n"+`{"Kind":"run","Run":"running"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(id, core.Record{Kind: core.RecordRun, Run: core.RunFinished}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Load(id)
+	if err == nil || !strings.Contains(err.Error(), "events.jsonl line 1") {
+		t.Fatalf("Load error = %v", err)
+	}
+}
+
+func TestCreateWritesMetaAtomicallyAndLeavesNoTempFile(t *testing.T) {
+	s, _ := newStore(t)
+	id, err := s.Create(core.RunMeta{Todo: "todo.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(s.Dir(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"config.resolved.yaml": true, "meta.json": true, eventsFile: true, questionsFile: true, signalsFile: true, remediesFile: true}
+	if len(entries) != len(want) {
+		t.Fatalf("entries = %v", entries)
+	}
+	for _, entry := range entries {
+		if !want[entry.Name()] {
+			t.Fatalf("unexpected entry %q", entry.Name())
+		}
+	}
+	var m meta
+	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(s.Dir(id), "meta.json"))), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Todo != "todo.md" {
+		t.Fatalf("meta = %+v", m)
+	}
+}
+
+func TestWriteAtomicReplacesTheFileByRename(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "meta.json")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAtomic(dir, "meta.json", []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, path); got != "new" {
+		t.Fatalf("meta = %q", got)
+	}
+	if os.SameFile(before, after) {
+		t.Fatal("meta.json was overwritten in place")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "meta.json" {
+		t.Fatalf("entries = %v", entries)
+	}
+	missing := filepath.Join(dir, "missing")
+	if err := writeAtomic(missing, "meta.json", []byte("new")); err == nil {
+		t.Fatal("want error for missing directory")
+	}
+	if _, err := os.Stat(missing); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing directory stat = %v", err)
+	}
+}
+
+func TestLoadWithoutReadableMetaIsErrMeta(t *testing.T) {
+	for _, content := range []string{"missing", "{"} {
+		t.Run(content, func(t *testing.T) {
+			s, _ := newStore(t)
+			id, err := s.Create(core.RunMeta{Todo: "todo.md"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(s.Dir(id), "meta.json")
+			if content == "missing" {
+				err = os.Remove(path)
+			} else {
+				err = os.WriteFile(path, []byte(content), 0o644)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = s.Load(id)
+			if !errors.Is(err, ErrMeta) {
+				t.Fatalf("Load error = %v, want ErrMeta", err)
+			}
+		})
+	}
+}
+
+func TestLockIsExclusiveAcrossStores(t *testing.T) {
+	a, root := newStore(t)
+	lock, err := a.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release("", 0)
+	if err := a.SetCurrent("20260918-140305", 4242); err != nil {
+		t.Fatal(err)
+	}
+	lock.Publish()
+	_, err = New(root).Lock()
+	var held *LockedError
+	if !errors.As(err, &held) || held.RunID != "20260918-140305" || held.PID != 4242 {
+		t.Fatalf("Lock error = %v", err)
+	}
+	if err := lock.Release("20260918-140305", 4242); err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(root).Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Release("", 0)
+	if _, _, ok := a.Current(); ok {
+		t.Fatal("current remains after release")
+	}
+}
+
+func TestLiveIsTrueOnlyWhileTheLockIsHeld(t *testing.T) {
+	s, root := newStore(t)
+	if _, _, ok := s.Live(); ok {
+		t.Fatal("Live before lock")
+	}
+	other := New(root)
+	lock, err := other.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := other.SetCurrent("20260918-140305", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	lock.Publish()
+	if id, pid, ok := s.Live(); !ok || id != "20260918-140305" || pid != os.Getpid() {
+		t.Fatalf("Live = %q %d %v", id, pid, ok)
+	}
+	if err := lock.Release("", 0); err != nil {
+		t.Fatal(err)
+	}
+	if id, pid, ok := s.Current(); !ok || id != "20260918-140305" || pid != os.Getpid() {
+		t.Fatalf("Current = %q %d %v", id, pid, ok)
+	}
+	if _, _, ok := s.Live(); ok {
+		t.Fatal("Live after release")
+	}
+}
+
+func TestLiveWaitsForTheHolderToPublishAndNeverReturnsAStalePointer(t *testing.T) {
+	s, root := newStore(t)
+	if err := s.SetCurrent("20260918-100000", 999999); err != nil {
+		t.Fatal(err)
+	}
+	holder, err := New(root).Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Release("", 0)
+	work := make(chan error, 1)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		if err := s.ClearCurrent("20260918-100000", 999999); err != nil {
+			work <- err
+			return
+		}
+		if err := s.SetCurrent("20260918-110000", 4242); err != nil {
+			work <- err
+			return
+		}
+		holder.Publish()
+		work <- nil
+	}()
+	start := time.Now()
+	id, pid, ok := New(root).Live()
+	if err := <-work; err != nil {
+		t.Fatal(err)
+	}
+	if !ok || id != "20260918-110000" || pid != 4242 || time.Since(start) < 250*time.Millisecond {
+		t.Fatalf("Live = %q %d %v after %s", id, pid, ok, time.Since(start))
+	}
+}
+
+func TestReleaseOfAnUnpublishedLockFreesItAndLeavesCurrent(t *testing.T) {
+	s, root := newStore(t)
+	if err := s.SetCurrent("20260918-100000", 999999); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := s.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lock.Release("", 0); err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(root).Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Release("", 0)
+	if id, pid, ok := s.Current(); !ok || id != "20260918-100000" || pid != 999999 {
+		t.Fatalf("Current = %q %d %v", id, pid, ok)
+	}
+}
+
+func TestLockHolderProcess(t *testing.T) {
+	root := os.Getenv("R_LOOP_LOCK_HOLDER")
+	if root == "" {
+		return
+	}
+	s := New(root)
+	lock, err := s.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetCurrent("20260918-140305", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("R_LOOP_LOCK_HOLDER_UNPUBLISHED") == "" {
+		lock.Publish()
+	}
+	if _, err := os.Stdout.WriteString("locked\n"); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		time.Sleep(time.Hour)
+	}
+}
+
+func startLockHolder(t *testing.T, root string, unpublished bool) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLockHolderProcess$")
+	cmd.Env = append(os.Environ(), "R_LOOP_LOCK_HOLDER="+root)
+	if unpublished {
+		cmd.Env = append(cmd.Env, "R_LOOP_LOCK_HOLDER_UNPUBLISHED=1")
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil {
+			cmd.Process.Kill()
+			cmd.Wait()
+		}
+	})
+	line, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil {
+		t.Fatalf("child stdout: %v", err)
+	}
+	if line != "locked\n" {
+		t.Fatalf("child stdout = %q", line)
+	}
+	return cmd
+}
+
+func TestALockHeldByAKilledProcessIsFreeAgain(t *testing.T) {
+	s, root := newStore(t)
+	cmd := startLockHolder(t, root, false)
+	if _, _, ok := s.Live(); !ok {
+		t.Fatal("child lock not live")
+	}
+	_, err := s.Lock()
+	var held *LockedError
+	if !errors.As(err, &held) {
+		t.Fatalf("Lock error = %v", err)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("killed child exited successfully")
+	}
+	if _, _, ok := s.Live(); ok {
+		t.Fatal("Live after child death")
+	}
+	lock, err := s.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release("", 0)
+	if id, _, ok := s.Current(); !ok || id != "20260918-140305" {
+		t.Fatalf("Current = %q %v", id, ok)
+	}
+}
+
+func TestAGateHeldByAKilledProcessIsFreeAgain(t *testing.T) {
+	s, root := newStore(t)
+	cmd := startLockHolder(t, root, true)
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("killed child exited successfully")
+	}
+	done := make(chan bool, 1)
+	go func() { _, _, ok := s.Live(); done <- ok }()
+	select {
+	case ok := <-done:
+		if ok {
+			t.Fatal("Live after child death")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Live blocked after child death")
+	}
+	lock, err := s.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release("", 0)
+}
+
+func TestClearCurrentLeavesAPointerToAnotherRun(t *testing.T) {
+	s, _ := newStore(t)
+	if err := s.SetCurrent("b", 2); err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range []struct {
+		id  string
+		pid int
+	}{{"a", 1}, {"b", 3}} {
+		if err := s.ClearCurrent(pair.id, pair.pid); err != nil {
+			t.Fatal(err)
+		}
+		if id, pid, ok := s.Current(); !ok || id != "b" || pid != 2 {
+			t.Fatalf("Current = %q %d %v", id, pid, ok)
+		}
+	}
+	if err := s.ClearCurrent("b", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := s.Current(); ok {
+		t.Fatal("Current after matching clear")
 	}
 }

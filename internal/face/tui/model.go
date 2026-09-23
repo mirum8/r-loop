@@ -527,6 +527,10 @@ func (m *Model) confirmStop(key tea.KeyMsg) {
 		m.Notice = ""
 		return
 	}
+	if m.Status != "" {
+		m.Notice = ""
+		return
+	}
 	if m.RunID == "" {
 		m.Notice = "stopping before the run starts"
 		return

@@ -556,12 +556,139 @@ func TestResumeRefusedWhileTheRunIsLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.SetCurrent(id, os.Getpid())
+	lock, err := st.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock.Publish()
+	defer lock.Release("", 0)
 
 	_, _, err = f.resume(newSim())
 
 	want := fmt.Sprintf("run %s is live in pid %d", id, os.Getpid())
 	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), want) {
 		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestResumeANamedRunOverANewerOne(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	first := newSim()
+	first.fail["rloop-p1-implement"] = true
+	a, code := f.firstRun(first, "--phases", "1")
+	if code != 1 {
+		t.Fatalf("first run exit %d", code)
+	}
+	st := store.New(f.root)
+	b, err := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Append(b, core.Record{Kind: core.RecordRun, Run: core.RunHalted}); err != nil {
+		t.Fatal(err)
+	}
+	code, _, err = f.resume(newSim(), a)
+	if code != 0 || err != nil || f.load(a).Status != core.RunFinished || f.load(b).Status != core.RunHalted {
+		t.Fatalf("code=%d err=%v A=%s B=%s", code, err, f.load(a).Status, f.load(b).Status)
+	}
+}
+
+func TestResumeUnknownRunIDExits2NamingIt(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	_, _, err := f.resume(newSim(), "20990101-000000")
+	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), "no run 20990101-000000") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestResumeSkipsANewerRunThatRecordedNoProgress(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	first := newSim()
+	first.fail["rloop-p1-implement"] = true
+	a, code := f.firstRun(first, "--phases", "1")
+	if code != 1 {
+		t.Fatalf("first run exit %d", code)
+	}
+	if _, err := store.New(f.root).Create(core.RunMeta{Todo: f.todo, Started: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	code, _, err := f.resume(newSim())
+	if code != 0 || err != nil || f.load(a).Status != core.RunFinished {
+		t.Fatalf("code=%d err=%v A=%s", code, err, f.load(a).Status)
+	}
+}
+
+func TestResumeSkipsANewerCreatedRunWithOnlyWatchdogStart(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	first := newSim()
+	first.fail["rloop-p1-implement"] = true
+	older, code := f.firstRun(first, "--phases", "1")
+	if code != 1 {
+		t.Fatalf("first run exit %d", code)
+	}
+	st := store.New(f.root)
+	newer, err := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Append(newer, core.Record{Kind: core.RecordEvent, Event: &core.Event{Kind: "watchdog-start"}}); err != nil {
+		t.Fatal(err)
+	}
+	code, _, err = f.resume(newSim())
+	if code != 0 || err != nil || f.load(older).Status != core.RunFinished || f.load(newer).Status != core.RunCreated {
+		t.Fatalf("code=%d err=%v older=%s newer=%s", code, err, f.load(older).Status, f.load(newer).Status)
+	}
+}
+
+func TestResumeSkipsARunWithUnreadableMetaWithAWarning(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	first := newSim()
+	first.fail["rloop-p1-implement"] = true
+	a, code := f.firstRun(first, "--phases", "1")
+	if code != 1 {
+		t.Fatalf("first run exit %d", code)
+	}
+	st := store.New(f.root)
+	b, err := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(st.Dir(b), "meta.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, err = f.resume(newSim())
+	if code != 0 || err != nil || f.load(a).Status != core.RunFinished || !strings.Contains(f.err.String(), "skipped run "+b) {
+		t.Fatalf("code=%d err=%v stderr=%q", code, err, f.err)
+	}
+}
+
+func TestResumeAndStatusOfARunWithATornLastLineExitNormally(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	first := newSim()
+	first.fail["rloop-p1-implement"] = true
+	a, code := f.firstRun(first, "--phases", "1")
+	if code != 1 {
+		t.Fatalf("first run exit %d", code)
+	}
+	path := filepath.Join(store.New(f.root).Dir(a), "events.jsonl")
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"Kind":"event","Ev`); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	if code := f.main("status", "--plain"); code != 0 {
+		t.Fatalf("status exit %d: %s", code, f.err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || len(b) == 0 || b[len(b)-1] == '\n' {
+		t.Fatalf("tail changed: %v %q", err, b)
+	}
+	code, _, err = f.resume(newSim())
+	if code != 0 || err != nil || f.load(a).Status != core.RunFinished {
+		t.Fatalf("code=%d err=%v status=%s", code, err, f.load(a).Status)
 	}
 }
 
@@ -665,7 +792,7 @@ func TestNewRunClearsACurrentWhosePidIsDeadWithANote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(f.out.String(), "cleared run 20260918-090000: pid 999999 is gone") {
+	if !strings.Contains(f.out.String(), "cleared stale run pointer 20260918-090000: pid 999999 holds no run lock") {
 		t.Fatalf("no note:\n%s", f.out)
 	}
 	if id, _, _ := st.Current(); id != w.Loop.RunID {

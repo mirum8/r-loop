@@ -25,31 +25,46 @@ func Resume(args []string, env Env) int {
 	return w.Execute(opts)
 }
 
-func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
+func PrepareResume(args []string, env Env) (w *Wiring, opts core.RunOptions, err error) {
 	fs := flag.NewFlagSet("r-loop resume", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	replan := fs.Bool("replan", false, "")
 	plain := fs.Bool("plain", false, "")
 	unattended := fs.Bool("unattended", false, "")
 	yes := fs.Bool("yes", false, "")
-	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
-		return nil, core.RunOptions{}, exit(2, "usage: r-loop resume [--replan] [--unattended] [--yes] [--plain]")
+	positional, err := parsePositional(fs, args)
+	if err != nil || len(positional) > 1 {
+		return nil, core.RunOptions{}, exit(2, "usage: r-loop resume [--replan] [--unattended] [--yes] [--plain] [<run-id>]")
 	}
 	repo, err := gitrepo.Open(env.Dir)
 	if err != nil {
 		return nil, core.RunOptions{}, exit(2, "%v", err)
 	}
 	st := store.New(repo.Root())
-	id, err := runToShow(st)
+	named := ""
+	if len(positional) == 1 {
+		named = positional[0]
+	}
+	id, err := selectRun(st, named, env.Stderr)
 	if err != nil {
-		return nil, core.RunOptions{}, exit(2, "%v", err)
+		return nil, core.RunOptions{}, err
 	}
 	if id == "" {
 		return nil, core.RunOptions{}, exit(2, "nothing to resume: no run")
 	}
-	if cur, pid, ok := st.Current(); ok && cur == id && alive(pid) {
-		return nil, core.RunOptions{}, exit(2, "run %s is live in pid %d", id, pid)
+	lock, lerr := st.Lock()
+	var live *store.LockedError
+	if errors.As(lerr, &live) {
+		return nil, core.RunOptions{}, exit(2, "%v", live)
 	}
+	if lerr != nil {
+		return nil, core.RunOptions{}, exit(2, "%v", lerr)
+	}
+	defer func() {
+		if err != nil {
+			lock.Release("", 0)
+		}
+	}()
 	run, err := st.Load(id)
 	if err != nil {
 		return nil, core.RunOptions{}, exit(2, "load run %s: %v", id, err)
@@ -57,11 +72,12 @@ func PrepareResume(args []string, env Env) (*Wiring, core.RunOptions, error) {
 	if run.Status == core.RunFinished {
 		return nil, core.RunOptions{}, exit(2, "nothing to resume: run %s finished", id)
 	}
-	w, err := Wire(Options{Todo: run.Todo, Plain: *plain, Unattended: *unattended, Yes: *yes}, env)
+	w, err = Wire(Options{Todo: run.Todo, Plain: *plain, Unattended: *unattended, Yes: *yes}, env)
 	if err != nil {
 		return nil, core.RunOptions{}, err
 	}
-	opts, err := w.resume(run, *replan)
+	w.lock = lock
+	opts, err = w.resume(run, *replan)
 	if err != nil {
 		return nil, core.RunOptions{}, err
 	}
@@ -123,6 +139,7 @@ func (w *Wiring) resume(run core.RunState, replan bool) (core.RunOptions, error)
 	if err := w.Store.SetCurrent(id, env.PID); err != nil {
 		return core.RunOptions{}, exit(2, "%v", err)
 	}
+	w.lock.Publish()
 	w.bind(id)
 	for _, n := range halted {
 		if agent, ws := previousSession(run, n, w.Config.Label); agent != "" {
@@ -365,8 +382,8 @@ func Abort(args []string, env Env) int {
 		return fail(env, exit(2, "%v", err))
 	}
 	st := store.New(repo.Root())
-	id, pid, ok := st.Current()
-	if !ok || !alive(pid) {
+	id, _, ok := st.Live()
+	if !ok {
 		return fail(env, exit(2, "no live run to abort"))
 	}
 	if err := st.MarkAbort(id); err != nil {

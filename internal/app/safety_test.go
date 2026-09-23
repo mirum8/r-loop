@@ -40,8 +40,13 @@ func TestALeftoverPhaseWorktreeIsRefusedWithExit4(t *testing.T) {
 		t.Fatalf("wip = %q, %v", b, err)
 	}
 	entries, err := os.ReadDir(filepath.Join(f.root, ".r-loop/runs"))
-	if err == nil && len(entries) != 0 {
-		t.Fatalf("runs = %v", entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			t.Fatalf("run created before leftover check: %s", entry.Name())
+		}
 	}
 }
 
@@ -106,6 +111,9 @@ func TestALeftoverSuggestsResumeWhenAnUnfinishedRunExists(t *testing.T) {
 	f.write(".r-loop/wt/phase-2/wip.txt", "wip")
 	id, err := store.New(f.root).Create(core.RunMeta{Todo: f.todo})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.New(f.root).Append(id, core.Record{Kind: "run", Run: core.RunRunning}); err != nil {
 		t.Fatal(err)
 	}
 	_, err = f.preflight(f.todo, "--plain")

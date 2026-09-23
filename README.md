@@ -98,8 +98,8 @@ project's full test suite must also pass.
 ```
 r-loop <todo.md> [flags]
 r-loop <free text> [flags]
-r-loop status [--plain]
-r-loop resume [--replan] [--unattended] [--yes] [--plain]
+r-loop status [--plain] [<run-id>]
+r-loop resume [--replan] [--unattended] [--yes] [--plain] [<run-id>]
 r-loop abort
 r-loop --create-config
 r-loop --version
