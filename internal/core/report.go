@@ -32,6 +32,7 @@ func Report(state RunState, plan Plan) string {
 	writeSection(&b, "Questions", questionLines(state))
 	writeSection(&b, "Signals", signalLines(state))
 	writeSection(&b, "Remedies", remedyLines(state))
+	writeSection(&b, "Reviews", reviewLines(state))
 	writeSection(&b, "Findings", findingLines(state))
 	writeSection(&b, "Skips", skipLines(state))
 	return b.String()
@@ -278,6 +279,22 @@ func findingLines(st RunState) []string {
 			line += " — " + f["evidence"]
 		}
 		out = append(out, line)
+	}
+	return out
+}
+
+func reviewLines(st RunState) []string {
+	var out []string
+	for _, ev := range st.Events {
+		if ev.Kind != "review-find" {
+			continue
+		}
+		f := ev.Fields
+		line := fmt.Sprintf("%s r%s %s: ", where(ev.Phase, f["step"]), f["round"], f["reviewer"])
+		if f["command"] != "" {
+			line += fmt.Sprintf("ran `%s` — ", f["command"])
+		}
+		out = append(out, line+fmt.Sprintf("%s, %s findings", f["state"], f["findings"]))
 	}
 	return out
 }

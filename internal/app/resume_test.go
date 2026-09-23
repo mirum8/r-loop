@@ -45,6 +45,7 @@ var (
 	sentinelRe = regexp.MustCompile("[^\\s`]+\\.sentinel")
 	planRe     = regexp.MustCompile(`\.task-plans/[a-z0-9-]+\.md`)
 	findingsRe = regexp.MustCompile("into `([^`]+-findings-([a-z0-9]+)-r[0-9]+\\.json)`")
+	nativeRe   = regexp.MustCompile("`([^`]+/native-review\\.txt)`")
 )
 
 type simHost struct {
@@ -101,6 +102,7 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 	case strings.Contains(agent, "-rv-"):
 		m := findingsRe.FindStringSubmatch(text)
 		writeTo(m[1], `{"reviewer":"`+m[2]+`","findings":[]}`)
+		writeTo(nativeRe.FindStringSubmatch(text)[1], "native review output")
 	case fail:
 		wip := "wip.txt"
 		if spec.Env["R_LOOP_STEP"] == "plan" {

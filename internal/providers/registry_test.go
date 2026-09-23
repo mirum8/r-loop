@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -52,7 +53,7 @@ func TestShippedCodexBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Provider{Name: "codex", Kind: "codex", Flags: "-c check_for_update_on_startup=false", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
-		AskFlag: "-c mcp_servers.r-loop.url={url}", DoneSignal: "sentinel", Ask: "mcp", Review: "/review", Source: "shipped"}
+		AskFlag: "-c mcp_servers.r-loop.url={url}", DoneSignal: "sentinel", Ask: "mcp", Review: "codex exec review --uncommitted {args} -o {output}", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
 	}
@@ -266,6 +267,48 @@ func TestToCore(t *testing.T) {
 	}
 	if plain.Ask || plain.Kind != "pdev" || len(plain.Args) != 0 || plain.Review != "" {
 		t.Errorf("pdev: %+v", plain)
+	}
+}
+
+func TestToCoreFillsTheReviewArgsWithFlagsModelAndEffort(t *testing.T) {
+	r := NewRegistry(nil, nil, t.TempDir())
+	codex, err := r.Resolve("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ model, effort, want string }{
+		{"gpt-x", "high", "codex exec review --uncommitted -c check_for_update_on_startup=false -c model=gpt-x -c model_reasoning_effort=high -o {output}"},
+		{"", "", "codex exec review --uncommitted -c check_for_update_on_startup=false -o {output}"},
+	} {
+		got := ToCore(codex, tc.model, tc.effort, "http://x", "").Review
+		if got != tc.want {
+			t.Errorf("review = %q, want %q", got, tc.want)
+		}
+		if strings.Contains(got, "mcp_servers") {
+			t.Errorf("ask flag in review: %q", got)
+		}
+	}
+	claude, err := r.Resolve("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ToCore(claude, "", "", "http://x", "").Review; got != "/code-review" {
+		t.Fatalf("claude review = %q", got)
+	}
+}
+
+func TestToCoreKeepsReviewConfigAsOneShellArgument(t *testing.T) {
+	p := Provider{Kind: "codex", Flags: `-c sandbox_permissions=["disk-full-read-access"]`, Review: "codex exec review --uncommitted {args} -o {output}"}
+	got := ToCore(p, "", "", "", "").Review
+	cmd := strings.ReplaceAll(got, "codex exec review --uncommitted ", "set -- ")
+	cmd = strings.ReplaceAll(cmd, " -o {output}", `; printf '%s\n' "$@"`)
+	out, err := exec.Command("sh", "-c", cmd).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "-c\nsandbox_permissions=[\"disk-full-read-access\"]\n"
+	if string(out) != want {
+		t.Fatalf("args = %q, want %q (command %q)", out, want, got)
 	}
 }
 

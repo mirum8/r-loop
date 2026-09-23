@@ -159,5 +159,18 @@ func WriteMCPConfig(path, url string) error {
 }
 
 func ToCore(p Provider, model, effort, askURL, mcpConfigPath string) core.ProviderArgs {
-	return core.ProviderArgs{Kind: p.Kind, Args: Args(p, model, effort, askURL, mcpConfigPath), Ask: p.Ask == "mcp", Review: p.Review}
+	reviewArgs := Args(p, model, effort, "", "")
+	for i, arg := range reviewArgs {
+		reviewArgs[i] = shellWord(arg)
+	}
+	return core.ProviderArgs{Kind: p.Kind, Args: Args(p, model, effort, askURL, mcpConfigPath), Ask: p.Ask == "mcp", Review: strings.ReplaceAll(p.Review, "{args}", strings.Join(reviewArgs, " "))}
+}
+
+func shellWord(arg string) string {
+	if arg != "" && strings.IndexFunc(arg, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("_-./=:+,@%", r))
+	}) == -1 {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
 }

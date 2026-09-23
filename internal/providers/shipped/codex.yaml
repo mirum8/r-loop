@@ -5,4 +5,4 @@ effortFlag: "-c model_reasoning_effort={effort}"
 askFlag: "-c mcp_servers.r-loop.url={url}"
 doneSignal: sentinel
 ask: mcp
-review: "/review"
+review: "codex exec review --uncommitted {args} -o {output}"

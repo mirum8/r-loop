@@ -19,6 +19,7 @@ type EvidenceContext struct {
 	Worktree, StartSHA, StartTree      string
 	PlanPath                           string
 	FindingsFiles                      []string
+	NativeOutput, ReviewCommand        string
 	VerdictPath, RoundTree, ReportPath string
 	NeedGate                           bool
 	FS                                 fs.FS
@@ -323,6 +324,12 @@ func findingsCheck(ctx EvidenceContext) (bool, string) {
 	for _, p := range ctx.FindingsFiles {
 		if missing := checkFindingsFile(ctx.FS, p); missing != "" {
 			return false, missing
+		}
+	}
+	if ctx.NativeOutput != "" {
+		data, err := fs.ReadFile(ctx.FS, ctx.NativeOutput)
+		if err != nil || strings.TrimSpace(string(data)) == "" {
+			return false, "native review `" + ctx.ReviewCommand + "` produced no output"
 		}
 	}
 	return true, ""

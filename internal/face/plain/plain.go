@@ -40,6 +40,13 @@ func (f *Face) Emit(ev core.Event) {
 		fmt.Fprintf(f.Out, "%s  phase %s  phase check  %s\n", ev.At.Format("15:04:05"), ev.Phase, checkDetail(ev))
 	case "warning", "error":
 		fmt.Fprintf(f.Out, "!  %s%s\n", where(ev.Phase, ev.Step), ev.Fields["reason"])
+	case "review-find":
+		fields := ev.Fields
+		fmt.Fprintf(f.Out, "%s  phase %s  %s  reviewer %s r%s  %s  %s findings", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fields["reviewer"], fields["round"], fields["state"], fields["findings"])
+		if fields["command"] != "" {
+			fmt.Fprintf(f.Out, "  ran `%s`", fields["command"])
+		}
+		fmt.Fprintln(f.Out)
 	default:
 		keys := make([]string, 0, len(ev.Fields))
 		for k := range ev.Fields {
