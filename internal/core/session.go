@@ -163,10 +163,11 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 		return s, err
 	}
 	ws, err := m.Host.Open(OpenSpec{CWD: s.Dir, Label: stepLabel(m.Label, key), Env: map[string]string{
-		"R_LOOP_SENTINEL": s.Sentinel,
-		"R_LOOP_RUN":      key.Run,
-		"R_LOOP_PHASE":    key.Phase,
-		"R_LOOP_STEP":     key.Kind,
+		"R_LOOP_SENTINEL":    s.Sentinel,
+		"R_LOOP_RUN":         key.Run,
+		"R_LOOP_PHASE":       key.Phase,
+		"R_LOOP_STEP":        key.Kind,
+		"GIT_COMMITTER_NAME": "r-loop " + s.Agent,
 	}})
 	s.Workspace, s.Pane = ws.ID, ws.RootPane
 	if err != nil {
@@ -452,7 +453,10 @@ func (m *SessionManager) judge(s *Session, sentinel Sentinel, sErr error) Outcom
 		return m.fail(s, "head: "+err.Error())
 	}
 	if head != s.StartSHA {
-		return m.fail(s, "step committed before review")
+		if !s.Ref.InPrimary {
+			return m.fail(s, "step committed before review")
+		}
+		return m.fail(s, m.headMoved(s, head))
 	}
 	if f := s.fix; f != nil {
 		ctx := m.evidence(s)
@@ -469,6 +473,38 @@ func (m *SessionManager) judge(s *Session, sentinel Sentinel, sErr error) Outcom
 	ok, missing := check(m.evidence(s))
 	state, reason := Judge(sentinel, nil, ok, missing)
 	return Outcome{State: state, Reason: reason, Session: s}
+}
+
+func (m *SessionManager) headMoved(s *Session, head string) string {
+	code, out, err := m.Repo.Run(s.Dir, "git log --no-color --format=%h%x09%cn%x09%s "+shellQuote(s.StartSHA+".."+head), time.Minute)
+	if err != nil {
+		return "head log: " + err.Error()
+	}
+	if code != 0 {
+		return fmt.Sprintf("head log: exit %d: %s", code, strings.TrimSpace(out))
+	}
+	var entries []string
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		if fields[1] == "r-loop "+s.Agent {
+			return "step committed before review"
+		}
+		entries = append(entries, fields[0]+" "+fields[2])
+	}
+	if len(entries) == 0 {
+		short := head
+		if len(short) > 7 {
+			short = short[:7]
+		}
+		return "HEAD moved from outside the step: HEAD is now " + short
+	}
+	return "HEAD moved from outside the step: " + strings.Join(entries, ", ")
 }
 
 func (m *SessionManager) evidence(s *Session) EvidenceContext {

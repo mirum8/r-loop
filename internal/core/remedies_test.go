@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -326,6 +328,87 @@ func TestAnAuthorisedRestartRerunsTheStepAsANewAttemptWithTheAddendum(t *testing
 }
 
 func decisionOf(decision, _ string) string { return decision }
+
+type gateLander struct {
+	store  *loopStore
+	calls  int
+	always bool
+}
+
+func (g *gateLander) Land(ctx context.Context, ph Phase) (Landing, error) {
+	g.calls++
+	if g.calls == 1 || g.always {
+		ref := StepRef{Key: StepKey{Run: "run-1", Phase: "2", Kind: "gate", Attempt: 1}, Kind: StepKind{Name: "gate"}}
+		return Landing{}, fmt.Errorf("%w: %w", ErrNoGate, &FailedStep{Ref: ref, Outcome: Outcome{State: StepFailed, Reason: "HEAD moved from outside the step: abc1234 maintainer work"}})
+	}
+	landing := Landing{Phase: ph.ID, MergeSHA: "merge-" + ph.Title}
+	g.store.Append("run-1", Record{Kind: RecordLanding, Landing: &landing})
+	return landing, nil
+}
+
+func TestAFailedGateStepIsRestartedInTheRemedyWindowWithoutBlockingThePhase(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.RemedyWindow = time.Minute
+	w := &Watch{Store: r.store}
+	r.loop.Watcher = w
+	rem := newRemedies(w, r.store, "restart")
+	g := &gateLander{store: r.store}
+	r.loop.Lander = g
+	decided := make(chan string, 1)
+	go func() {
+		for {
+			if key, ok := w.holding(); ok && key.Kind == "gate" {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		_, reason := rem.Restart("phase-2/gate", "retry", "", "")
+		decided <- reason
+	}()
+	code := r.run(RunOptions{Phases: []string{"2"}})
+	reason := <-decided
+	if code != 0 || reason != "" || g.calls != 2 || len(r.events("phase-blocked")) != 0 {
+		t.Fatalf("exit %d; restart reason %q; Land calls %d; blocked %+v", code, reason, g.calls, r.events("phase-blocked"))
+	}
+	restarts := r.events("restart")
+	if len(restarts) != 1 || restarts[0].Fields["step"] != "phase-2/gate" || restarts[0].Fields["attempt"] != "2" {
+		t.Errorf("restarts = %+v", restarts)
+	}
+}
+
+func TestAFailedGateStepWithNoRestartBlocksThePhaseAfterTheWindow(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.RemedyWindow = 20 * time.Millisecond
+	r.loop.Watcher = &Watch{Store: r.store}
+	r.loop.Lander = &gateLander{store: r.store, always: true}
+	code := r.run(RunOptions{Phases: []string{"2"}})
+	blocked := r.events("phase-blocked")
+	if code != 1 || len(blocked) != 1 || !strings.HasPrefix(blocked[0].Fields["reason"], "land: no gate: gate step failed: HEAD moved from outside the step") {
+		t.Fatalf("exit %d; blocked %+v", code, blocked)
+	}
+}
+
+func TestAHaltInTheGateRemedyWindowBlocksThePhaseWithExit5(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.RemedyWindow = time.Minute
+	w := &Watch{Store: r.store}
+	r.loop.Watcher = w
+	r.loop.Lander = &gateLander{store: r.store, always: true}
+	go func() {
+		for {
+			if key, ok := w.holding(); ok && key.Kind == "gate" {
+				w.Handle(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: key, Reason: "stop"})
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	code := r.run(RunOptions{Phases: []string{"2"}})
+	blocked := r.events("phase-blocked")
+	if code != 5 || len(blocked) != 1 || blocked[0].Fields["reason"] != "watchdog: stop" {
+		t.Fatalf("exit %d; blocked %+v", code, blocked)
+	}
+}
 
 func TestAnUnlistedClassWithoutConsentAsksTheWatchdogToAskAndRecordsNothing(t *testing.T) {
 	store := &fakeStore{}
