@@ -466,3 +466,32 @@ func TestARetryAfterTheConnectionItselfDroppedRejoinsTheQuestion(t *testing.T) {
 		t.Fatalf("answer = %q", got)
 	}
 }
+
+func TestAQuestionAbandonedBeforeItReachesTheWatchdogIsDropped(t *testing.T) {
+	s, _, _ := serve(t)
+	key := core.StepKey{Run: "run-7", Phase: "10c", Kind: "plan", Attempt: 1}
+	callCtx, hangUp := context.WithCancel(context.Background())
+	gone := make(chan error, 1)
+	go func() {
+		_, err := connect(t, s.StepURL(key)).CallTool(callCtx, &mcp.CallToolParams{Name: "ask_watchdog", Arguments: map[string]any{"question": "Which store?"}})
+		gone <- err
+	}()
+	time.Sleep(200 * time.Millisecond)
+	hangUp()
+	<-gone
+
+	again := ask(connect(t, s.StepURL(key)), map[string]any{"question": "Which store, again?"})
+
+	if q := next(t, s); q.ID != "q2" {
+		t.Fatalf("id = %q", q.ID)
+	}
+	s.Answer("q2", "jsonl", "watchdog", "")
+	if got := answerText(t, <-again); got != "jsonl" {
+		t.Fatalf("answer = %q", got)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, kept := s.pending["q1"]; kept {
+		t.Error("the abandoned question is still held")
+	}
+}

@@ -247,10 +247,10 @@ func (s *Server) ask(ctx context.Context, key core.StepKey, in askInput, notify 
 	select {
 	case out <- p.q:
 	case <-serverCtx.Done():
-		s.leave(p)
+		s.abandon(p)
 		return p.q.ID, "", errors.New("r-loop stopped before the question was delivered")
 	case <-ctx.Done():
-		s.leave(p)
+		s.abandon(p)
 		return p.q.ID, "", ctx.Err()
 	}
 	s.mu.Lock()
@@ -280,6 +280,15 @@ func (s *Server) leave(p *pending) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p.waiters--
+}
+
+func (s *Server) abandon(p *pending) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p.waiters--
+	if p.waiters == 0 && !p.delivered {
+		delete(s.pending, p.q.ID)
+	}
 }
 
 func (s *Server) await(ctx, serverCtx context.Context, p *pending, notify func(context.Context, float64) error) (string, error) {

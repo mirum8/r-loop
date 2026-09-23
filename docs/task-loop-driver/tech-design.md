@@ -443,6 +443,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   and carries a progress token, the server sends a progress notification on it every 30 s
   (`Server.KeepAlive`) so the client's idle timer never closes the stream; a notification that
   cannot be delivered ends that call, which orphans its question.
+  A call that drops before its question reaches the watchdog takes the question with it: it is
+  dropped from the server, never orphaned, and the step's next ask is a new question.
   Every agent's MCP client is configured with a 24 h tool timeout (Milestone 2, Provider block), so
   a blocking call is never cut off by the client.
 - **waiting-input** — a question moves the step `running → waiting-input`, freezes its backstop,
