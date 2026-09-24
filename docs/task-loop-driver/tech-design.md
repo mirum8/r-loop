@@ -159,8 +159,10 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `{"outcome":"ok"|"failed","reason":"<text>"}`; the driver timestamps every record itself, and an
   unknown field (an old sentinel's `at`) is ignored. The author half writes
   `<kind>-a<attempt>.sentinel`; a reviewer `<kind>-rv-<name>-r<round>-a<attempt>.sentinel`;
-  the author's verify-and-apply half `<kind>-fix-r<round>-a<attempt>.sentinel`. Unreadable or
-  malformed → the step is `failed` with reason `sentinel unreadable`.
+  the author's verify-and-apply half `<kind>-fix-r<round>-a<attempt>.sentinel`. Agents write the
+  sentinel atomically through a temporary file in the same directory, then rename. A malformed
+  sentinel is re-read for 30 s from its first sighting, or at once when the agent is gone. If it
+  remains malformed, the step fails with `sentinel unreadable: <parse error>`.
 - **Config resolution** — every key resolves CLI override → `.r-loop/config.yaml` →
   `~/.config/r-loop/config.yaml` → the embedded defaults, with provenance `<file>:<key>`,
   `flag:--provider`, `flag:--model`, `flag:--effort` or `default`. Step row keys: `prompt, check,
@@ -216,7 +218,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Step kind** — `StepKind{Name, Prompt, Check string; Row StepRow}`; `StepRow{Provider, Model, Effort string; Fallback Fallback; Timeout time.Duration; Reviewers []Reviewer; Rounds int; ReviewTimeout time.Duration}`; `Reviewer{Provider, Model, Effort string}`, `Fallback{Provider, Model, Effort string}` and `GateFix{Provider, Model, Effort string}` — one type per role, the same three fields; an empty `Model` or `Effort` is the provider's default. A row's `check ∈ {plan-file,
   diff, report}` or one added with `RegisterCheck`; `findings` and `verdict` are the review
   half's own checks and are never named on a row. Evidence predicates take
-  `EvidenceContext{Repo; Worktree, StartSHA, StartTree, PlanPath string; FindingsFiles []string;
+  `EvidenceContext{Repo; Worktree, StartSHA, StartTree, PlanPath, TodoPath string; FindingsFiles []string;
   VerdictPath, RoundTree, ReportPath string; FS fs.FS}`. **`StartTree` is the step's baseline:
   `Snapshot(worktree)` taken when its first attempt spawns (ADR-58, amended 2026-09-19), so every
   check measures the step's cumulative change across its attempts, never the phase base or an
@@ -227,7 +229,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `## Tests` holds at least one list item (`- `, `* `, `+ `, `N.` or `N)`) or markdown table data
   row (below the header and its `|---|` separator); and `TreeDiff(StartTree, Snapshot(worktree))`
   names the plan and no other path — `plan step changed <path>` for another path, `plan step did
-  not change <PlanPath>` for none. `diff`: `TreeDiff(StartTree, Snapshot(worktree))` is non-empty. `report`: the
+  not change <PlanPath>` for none. Both `plan-file` and `diff` fail with `step changed <todo>, the
+  run's plan file; only the driver edits it` when the tree diff touches the run's todo. `diff`:
+  `TreeDiff(StartTree, Snapshot(worktree))` is non-empty. `report`: the
   report exists and is non-empty. `findings` and `verdict`: Milestone 4.
 - **Phase plan** — `.task-plans/phase-<N>-<kebab title>.md` (≤ 60 characters), r-loop's own
   format; the `/r:task-run` format is not read or written:
@@ -384,8 +388,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `land.gateTimeout` (default 30m); its `ok` commits `r-loop: phase <N> gatefix`, and the
   landing starts again from the merge. A red gate with no fix round left blocks the phase.
 - **Land** — in the primary tree: append `merge-intent{phase, branch, base, message}` →
-  `MergeNoFF(r-loop/phase-<N>)` (`--no-commit`) → the merged tree
-  is on disk, uncommitted → `Run(root, gate command, gate timeout)`, the gate command being the
+  `MergeNoFF(r-loop/phase-<N>, <todo>)` (`--no-commit`) → the merged tree
+  keeps main's copy of the todo, including when the branch deleted it or a conflict is confined
+  to it; the merged tree is on disk, uncommitted → `Run(root, gate command, gate timeout)`, the gate command being the
   `Done when:` line's inline code spans: a span whose prose since the previous span ends in `prints` or `lists` (optionally followed by `the`) is an expected-output literal of the nearest command span before it and is never run; every other span is a command. A command followed by `prints nothing`/`lists nothing`, or carrying literals, runs as `{ out=$( ( <cmd> ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; <checks>; }`, its stdout+stderr judged: `test -z "$out"` for nothing (exit status ignored, so a silent `grep` with no match passes); for literals, `test "$st" = 0` then `printf '%s\n' "$out" | grep -qF -e '<literal>'` per literal. A command containing `#` or a newline is surrounded by newlines inside its subshell so comments and heredocs cannot absorb the wrapper. Clauses are joined with ` && ` (a line of only commands gives its spans joined with ` && `), or the gate is the line's trimmed text when it has no span
   (the gate fix's `GateCommand` is the same string); exit ≠ 0 → `AbortMerge()`, halt
   with the output, nothing ticked, a gate-fix round when one is left; no command → `gate-skipped` recorded, never a halt → `Tick`
@@ -395,8 +400,11 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `ResetHard("HEAD~1")` and halt. A conflict aborts before the gate. The gate therefore proves the
   phase's code, and no merge commit exists unless it passed.
 - **Milestone boundary** — `LandGate` calls its `Boundary` after a landing; when phase N closed
-  `## Milestone M`, one `InPrimary` session on the `milestone` row writes the report; `ok` →
-  commit `docs(report): milestone <M>`; anything else → `report-skipped`, never a halt.
+  `## Milestone M`, one `InPrimary` session on the `milestone` row writes the report. A diff beyond
+  the report is `report-skipped` and discarded. On `ok`, the commit is staged by the report path
+  and must touch exactly that path. Any failure resets the primary tree to the HEAD recorded before
+  the step, unless the step left its starting branch; then the other branch is left alone.
+  Anything else is `report-skipped`, never a halt.
 - **Report** — `report.md` opens with `human touches: <n>` (every answer a person gave, every
   consent, every resume, every Resolve-first answer) and an **Automatic decisions** section: restarts with their remedy,
   fallback restarts with the provider, model and effort used, gate-fix rounds,

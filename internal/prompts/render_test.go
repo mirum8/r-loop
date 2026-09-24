@@ -13,6 +13,27 @@ var _ core.Prompts = (*Renderer)(nil)
 
 var stepTemplates = []string{"plan", "implement", "review", "review-ui", "fix", "milestone", "gatefix", "gate"}
 
+func TestEveryStepPromptTellsTheAgentToWriteTheSentinelAtomically(t *testing.T) {
+	r := New(t.TempDir())
+	for _, name := range stepTemplates {
+		for _, kind := range []string{"implement", "milestone"} {
+			if kind == "milestone" && name != "review" && name != "review-ui" && name != "fix" {
+				continue
+			}
+			t.Run(name+"/"+kind, func(t *testing.T) {
+				vars := fullVars()
+				vars["ReviewedKind"] = kind
+				got := render(t, r, name, vars)
+				for _, want := range []string{"temporary file in the same directory", "then rename that file onto `/runs/r1/phase-7/plan-a1.sentinel`"} {
+					if !strings.Contains(got, want) {
+						t.Errorf("%s prompt missing %q", name, want)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestWatchdogPhaseCheckJudgesABacklogItemAgainstTheCode(t *testing.T) {
 	got := render(t, New(t.TempDir()), "watchdog", fullVars())
 	for _, want := range []string{"carries a `Backlog item` line in place of those lines", "warn only where the item disagrees with the code", "never because it has no `Files:` or `Risk:` line"} {

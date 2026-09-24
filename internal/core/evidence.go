@@ -17,7 +17,7 @@ import (
 type EvidenceContext struct {
 	Repo                               Repo
 	Worktree, StartSHA, StartTree      string
-	PlanPath                           string
+	PlanPath, TodoPath                 string
 	FindingsFiles                      []string
 	NativeOutput, ReviewCommand        string
 	VerdictPath, RoundTree, ReportPath string
@@ -158,6 +158,11 @@ func stepChanges(ctx EvidenceContext) ([]string, string) {
 	changed, err := ctx.Repo.TreeDiff(ctx.StartTree, now)
 	if err != nil {
 		return nil, "tree diff failed: " + err.Error()
+	}
+	for _, p := range changed {
+		if ctx.TodoPath != "" && p == ctx.TodoPath {
+			return nil, "step changed " + p + ", the run's plan file; only the driver edits it"
+		}
 	}
 	return changed, ""
 }
@@ -530,7 +535,9 @@ func ReadSentinel(path string) (Sentinel, error) {
 
 func Judge(s Sentinel, sErr error, evidenceOK bool, missing string) (StepState, string) {
 	switch {
-	case sErr != nil || (s.Outcome != "ok" && s.Outcome != "failed"):
+	case sErr != nil:
+		return StepFailed, "sentinel unreadable: " + sErr.Error()
+	case s.Outcome != "ok" && s.Outcome != "failed":
 		return StepFailed, "sentinel unreadable"
 	case s.Outcome == "failed":
 		return StepFailed, s.Reason

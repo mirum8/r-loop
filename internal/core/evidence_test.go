@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -187,6 +188,32 @@ func TestPlanFileCheckFailsWhenThePlanStepChangedASecondFile(t *testing.T) {
 
 	if ok || missing != "plan step changed internal/plan/reader.go" {
 		t.Fatalf("ok = %v, missing = %q", ok, missing)
+	}
+}
+
+func TestDiffCheckFailsNamingTheRunsPlanFileWhenTheStepChangedIt(t *testing.T) {
+	ctx := EvidenceContext{Repo: &fakeRepo{Tree: "tree-now", TreeChanges: []string{"a.go", "docs/todo.md"}}, Worktree: "/wt", StartTree: "tree-start", TodoPath: "docs/todo.md"}
+	ok, reason := runCheck(t, "diff", ctx)
+	if ok || reason != "step changed docs/todo.md, the run's plan file; only the driver edits it" {
+		t.Fatalf("ok = %v, reason = %q", ok, reason)
+	}
+}
+
+func TestPlanFileCheckFailsNamingTheRunsPlanFileWhenThePlanStepChangedIt(t *testing.T) {
+	ctx := planCtx(goodPlan, planPath, "docs/todo.md")
+	ctx.TodoPath = "docs/todo.md"
+	ok, reason := runCheck(t, "plan-file", ctx)
+	if ok || reason != "step changed docs/todo.md, the run's plan file; only the driver edits it" {
+		t.Fatalf("ok = %v, reason = %q", ok, reason)
+	}
+}
+
+func TestPlanFileCheckStillAcceptsAPlanStepThatChangedOnlyItsPlan(t *testing.T) {
+	ctx := planCtx(goodPlan, planPath)
+	ctx.TodoPath = "docs/todo.md"
+	ok, reason := runCheck(t, "plan-file", ctx)
+	if !ok || reason != "" {
+		t.Fatalf("ok = %v, reason = %q", ok, reason)
 	}
 }
 
@@ -491,7 +518,8 @@ func TestJudge(t *testing.T) {
 		"failed sentinel":         {failed, nil, true, "", StepFailed, "tests do not compile"},
 		"failed without evidence": {failed, nil, false, "no change since the step started", StepFailed, "tests do not compile"},
 		"ok without evidence":     {ok, nil, false, "missing ## Tests", StepFailed, "evidence missing: missing ## Tests"},
-		"malformed":               {Sentinel{}, ErrSentinelMalformed, true, "", StepFailed, "sentinel unreadable"},
+		"malformed":               {Sentinel{}, fmt.Errorf("%w: unexpected end of JSON input", ErrSentinelMalformed), true, "", StepFailed, "sentinel unreadable: sentinel malformed: unexpected end of JSON input"},
+		"unknown outcome":         {Sentinel{Outcome: "done"}, nil, true, "", StepFailed, "sentinel unreadable"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			state, reason := Judge(tc.s, tc.sErr, tc.evidenceOK, tc.missing)

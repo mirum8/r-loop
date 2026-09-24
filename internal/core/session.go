@@ -19,6 +19,7 @@ import (
 const (
 	defaultPoll       = 10 * time.Second
 	defaultStallGrace = 2 * time.Minute
+	sentinelGrace     = 30 * time.Second
 )
 
 func timedOut(err error) bool {
@@ -289,6 +290,7 @@ type watch struct {
 	obs            Observer
 	elapsed, quiet time.Duration
 	stalled        bool
+	malformedAt    time.Time
 }
 
 func (m *SessionManager) Wait(ctx context.Context, s *Session, obs Observer) Outcome {
@@ -360,14 +362,25 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 		grace = defaultStallGrace
 	}
 	sentinel, err := ReadSentinel(s.Sentinel)
-	if !errors.Is(err, ErrNoSentinel) {
-		return m.judge(s, sentinel, err), true
+	if err == nil {
+		return m.judge(s, sentinel, nil), true
+	}
+	if errors.Is(err, ErrSentinelMalformed) {
+		if w.malformedAt.IsZero() {
+			w.malformedAt = now
+		}
+		if now.Sub(w.malformedAt) >= sentinelGrace {
+			return m.judge(s, sentinel, err), true
+		}
 	}
 	state, stateErr := m.Host.State(s.Agent)
 	if timedOut(stateErr) {
 		return m.fail(s, stateErr.Error()), true
 	}
 	if state == AgentGone {
+		if sentinel, err := ReadSentinel(s.Sentinel); !errors.Is(err, ErrNoSentinel) {
+			return m.judge(s, sentinel, err), true
+		}
 		return m.fail(s, "agent gone"), true
 	}
 	if s.OpenQuestion.Load() || s.Reviewing.Load() || (s.owner != nil && s.owner.OpenQuestion.Load()) {
@@ -544,6 +557,7 @@ func (m *SessionManager) evidence(s *Session) EvidenceContext {
 		StartSHA:    s.StartSHA,
 		StartTree:   s.StartTree,
 		PlanPath:    str("PlanPath"),
+		TodoPath:    repoRel(m.Repo.Root(), str("TodoPath")),
 		VerdictPath: str("VerdictPath"),
 		RoundTree:   str("RoundTree"),
 		ReportPath:  str("ReportPath"),

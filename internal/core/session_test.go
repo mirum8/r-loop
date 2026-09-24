@@ -122,6 +122,101 @@ func (r *rig) writeSentinel(t *testing.T, s *Session, outcome, reason string) {
 	}
 }
 
+func (r *rig) writeRawSentinel(t *testing.T, s *Session, body string) {
+	t.Helper()
+	if err := os.WriteFile(s.Sentinel, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnImplementStepThatChangedTheTodoFailsNamingIt(t *testing.T) {
+	r := newRig(t)
+	ref := r.ref(1)
+	ref.Vars["TodoPath"] = "/repo/docs/todo.md"
+	s, err := r.sm.Spawn(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.repo.TreeChanges = []string{"a.go", "docs/todo.md"}
+	r.host.script = func(int) AgentState {
+		r.writeSentinel(t, s, "ok", "")
+		return AgentWorking
+	}
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+	if out.State != StepFailed || out.Reason != "evidence missing: step changed docs/todo.md, the run's plan file; only the driver edits it" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestAHalfWrittenSentinelThatTurnsValidEndsTheStepByItsContent(t *testing.T) {
+	for name, body := range map[string]string{"empty": "", "truncated": `{"outcome":"o`} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t)
+			s := r.spawn(t, 1)
+			r.repo.TreeChanges = []string{"a.go"}
+			r.host.script = func(n int) AgentState {
+				if n == 1 {
+					r.writeRawSentinel(t, s, body)
+				} else {
+					r.writeSentinel(t, s, "ok", "")
+				}
+				return AgentWorking
+			}
+			out := r.sm.Wait(context.Background(), s, &recObserver{})
+			if out.State != StepOK || out.Reason != "" {
+				t.Fatalf("outcome = %+v", out)
+			}
+		})
+	}
+}
+
+func TestASentinelStillMalformedAfterTheGraceFailsWithTheParseError(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.host.script = func(int) AgentState {
+		r.writeRawSentinel(t, s, `{"outcome":`)
+		return AgentWorking
+	}
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+	if out.State != StepFailed || !strings.HasPrefix(out.Reason, "sentinel unreadable: ") || !strings.Contains(out.Reason, "unexpected end of JSON input") {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestAGoneAgentThatFinishedItsSentinelEndsByItsContent(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.repo.TreeChanges = []string{"a.go"}
+	r.host.script = func(n int) AgentState {
+		if n == 1 {
+			r.writeRawSentinel(t, s, `{"outcome":"o`)
+			return AgentWorking
+		}
+		r.writeSentinel(t, s, "ok", "")
+		return AgentGone
+	}
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestAGoneAgentLeavingAHalfWrittenSentinelFailsWithTheParseError(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.host.script = func(n int) AgentState {
+		if n == 1 {
+			r.writeRawSentinel(t, s, `{"outcome":`)
+			return AgentWorking
+		}
+		return AgentGone
+	}
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+	if out.State != StepFailed || !strings.HasPrefix(out.Reason, "sentinel unreadable: ") {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
 func (r *rig) steps() []StepState {
 	var out []StepState
 	for _, rec := range r.store.Records["run-1"] {
