@@ -197,7 +197,13 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `watchdog.checkTimeout 10m`, `watchdog.stallGrace 2m`,
   `watchdog.overtimeFactor 2`, `watchdog.diffFactor 3`; `notify.onHalt/onWarn/onDone ""`. A
   flow-style YAML node is rejected naming the line; an unknown key is rejected naming the key and
-  file; a negative `rounds` is rejected; each is exit `2`.
+  file; a negative `rounds` is rejected. A written duration that is empty, zero or negative is
+  rejected naming the file, line and key. A row whose `timeout` no layer sets is rejected, and so
+  is a row with a review half (`rounds > 0` and at least one reviewer) whose `reviewTimeout` no
+  layer sets. Each is exit `2`. A numeric key (a duration, `rounds`, `fixRounds`, `maxRestarts` or a
+  factor) set to null (`key:` or `~`) resolves to the next layer that sets it, with that layer's
+  provenance. A null string, list or `fallback` keeps its meaning: provider default, empty list,
+  no fallback.
 
 ## Milestone 2 — Sessions and providers
 
@@ -417,7 +423,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   <reviewTimeout>` and one `reviewer <provider> <model|provider default> <effort|provider
   default>` line per reviewer and `fallback <provider> <model|provider default> <effort|provider
   default>` per row that has one; `gatefix <provider> <model|provider default> <effort|provider
-  default>`; watchdog on/off with `<provider> <model> <effort|provider default>`. Every step,
+  default>`; `land gateTimeout <duration> ← <provenance>`; watchdog on/off with `<provider> <model>
+  <effort|provider default>`. Every step,
   reviewer, fallback, gatefix and watchdog line ends `← <provenance>`: one source when its
   provider, model and effort share it, else `provider <src> model <src> effort <src>`. Overrides
   with the value replaced; prompt source per step; `mode: unattended` with the added allow-list,
