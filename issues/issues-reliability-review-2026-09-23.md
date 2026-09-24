@@ -62,13 +62,13 @@ Verified against `r-loop` @ `main` `058c81b`.
       - If the runner already finished ok when the halt is processed, the step's final stored state matches the outcome the loop acts on; a step never has both an ok and a failed terminal record
       - A halt in the middle of a run still produces exactly one failed record and interrupts the live agent
 
-- [ ] [#10a] A step's commit and land's merge/gate/tick/commit happen before the record that describes them
+- [x] [#10a] A step's commit and land's merge/gate/tick/commit happen before the record that describes them  <!-- fixed: r-loop/phase-10 -->
       - A crash injected between a step's worktree commit and its ok record does not lead resume to re-run already-committed work
       - A crash after the land merge but before the landing record leaves a record, written before the merge, that names the phase and the merge in progress; resume detects it and completes or aborts the merge and says which
       - A crash after the landing commit but before the landing record still shows the phase as landed on resume and in the report, with its merge SHA recovered
       - In the normal path the record order is intent, then action, then outcome, asserted with a recording fake store and repo
 
-- [ ] [#10b] A failed state append only shows a warning, and the driver keeps spawning, committing and landing without a record
+- [x] [#10b] A failed state append only shows a warning, and the driver keeps spawning, committing and landing without a record  <!-- fixed: r-loop/phase-10 -->
       - If appending a step-state record (running, stalled) fails, the step ends failed or the run halts with a "record:" reason
       - If appending a run-status record fails, the run halts non-zero and names the store error on stderr and in the face
       - A fake store that fails every append stops the run within one step; no further spawn, merge or commit happens

@@ -86,6 +86,9 @@ func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone
 	if out.State != StepOK {
 		return fmt.Sprintf("%s: %s", out.State, out.Reason)
 	}
+	if err := recordFailed(b.Sessions.Store); err != nil {
+		return "record: " + err.Error()
+	}
 	if _, err := b.Repo.Commit(ctx, fmt.Sprintf("docs(report): milestone %d", m.Number)); err != nil {
 		return "commit: " + err.Error()
 	}

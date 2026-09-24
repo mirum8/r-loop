@@ -153,6 +153,7 @@ type fakeRepo struct {
 	Added       int
 	Deleted     int
 	Tree        string
+	Index       string
 	TreeChanges []string
 	Touched     []string
 	MergeErr    error
@@ -230,9 +231,22 @@ func (f *fakeRepo) Snapshot(dir string) (string, error) {
 	return f.Tree, f.Err
 }
 
+func (f *fakeRepo) IndexTree(paths ...string) (string, error) {
+	f.record("Repo.IndexTree %s", strings.Join(paths, " "))
+	if f.Index != "" {
+		return f.Index, f.Err
+	}
+	return f.Tree, f.Err
+}
+
 func (f *fakeRepo) TreeDiff(from, to string) ([]string, error) {
 	f.record("Repo.TreeDiff %s %s", from, to)
 	return f.TreeChanges, f.Err
+}
+
+func (f *fakeRepo) GitlinkPaths(tree string) ([]string, error) {
+	f.record("Repo.GitlinkPaths %s", tree)
+	return nil, f.Err
 }
 
 func (f *fakeRepo) MergeNoFF(ctx context.Context, branch string) error {

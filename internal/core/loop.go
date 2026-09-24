@@ -156,6 +156,9 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 		}
 	}
 	l.setRun(RunRunning, "")
+	if err := recordFailed(l.Store); err != nil {
+		return l.recordHalt(err, "", "")
+	}
 	first, firstPhase, firstStep, firstReason := 0, "", "", ""
 	for _, ph := range list {
 		l.drainSignals()
@@ -170,6 +173,9 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 		}
 		delete(l.pending, ph.ID)
 		step, out, aborted := l.runPhase(ctx, ph, prior, base, opts.Replan)
+		if err := recordFailed(l.Store); err != nil {
+			return l.recordHalt(err, ph.ID, step)
+		}
 		if aborted {
 			return l.stopCode()
 		}
@@ -203,15 +209,29 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 	}
 	if len(l.blocked) == 0 && l.halted == nil {
 		l.setRun(RunFinished, "")
+		if err := recordFailed(l.Store); err != nil {
+			return l.recordHalt(err, firstPhase, firstStep)
+		}
 		l.emit(Event{Kind: "finished"})
 		l.fire(l.Hooks.OnDone, "finished", "", "", "")
 		return 0
 	}
 	l.setRun(RunHalted, firstReason)
+	if err := recordFailed(l.Store); err != nil {
+		return l.recordHalt(err, firstPhase, firstStep)
+	}
 	slices.SortFunc(l.blocked, ComparePhaseIDs)
 	l.emit(Event{Kind: "halt", Fields: map[string]string{"blocked": joinIDs(l.blocked), "resume": "r-loop resume"}})
 	l.fire(l.Hooks.OnHalt, "halted", firstPhase, firstStep, firstReason)
 	return first
+}
+
+func (l *RunLoop) recordHalt(err error, phase, step string) int {
+	reason := "record: " + err.Error()
+	l.Face.Emit(Event{At: time.Now(), Kind: "error", Phase: phase, Step: step, Fields: map[string]string{"reason": reason}})
+	l.setRun(RunHalted, reason)
+	l.fire(l.Hooks.OnHalt, "halted", phase, step, reason)
+	return 2
 }
 
 func (l *RunLoop) usage(err error) int {
@@ -334,6 +354,9 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	if l.Store.Aborted(l.RunID) || ctx.Err() != nil {
 		l.stop(ctx, n, "land")
 		return "land", Outcome{}, true
+	}
+	if err := recordFailed(l.Store); err != nil {
+		return "land", Outcome{State: StepFailed, Reason: "record: " + err.Error(), Session: last}, false
 	}
 	var landing Landing
 	var err error
@@ -505,7 +528,7 @@ func (l *RunLoop) runAttempts(ctx context.Context, ref StepRef) (StepRef, Outcom
 }
 
 func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, out *Outcome) (StepRef, bool, bool) {
-	if l.RemedyWindow <= 0 || out.Halted {
+	if l.RemedyWindow <= 0 || out.Halted || recordFailed(l.Store) != nil {
 		return StepRef{}, false, false
 	}
 	key := ref.Key
@@ -821,6 +844,34 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 			l.emitStep(ref, out.State, out.Reason, out.Session)
 			return l.ended(ref, out)
 		case <-ticker.C:
+			if err := recordFailed(l.Store); err != nil {
+				live := l.liveSession()
+				if live != nil {
+					l.Sessions.Stop(live)
+				}
+				cancel()
+				out := <-done
+				if live == nil && out.Session != nil && out.Session.Pane != "" {
+					l.Sessions.Stop(out.Session)
+				}
+				owner := live
+				if owner == nil {
+					owner = out.Session
+				}
+				if owner != nil {
+					owner.mu.Lock()
+					rvs := slices.Clone(owner.reviewers)
+					owner.mu.Unlock()
+					for _, rv := range rvs {
+						if rv.Agent != "" {
+							l.Sessions.Stop(rv)
+						}
+					}
+				}
+				out.State, out.Reason, out.Stalled, out.Halted = StepFailed, "record: "+err.Error(), false, true
+				l.emitStep(ref, out.State, out.Reason, out.Session)
+				return l.ended(ref, out)
+			}
 			if !l.Store.Aborted(l.RunID) {
 				continue
 			}

@@ -92,6 +92,13 @@ func (r *loopRepo) TreeDiff(from, to string) ([]string, error) {
 	return r.changes, nil
 }
 
+func (r *loopRepo) GitlinkPaths(tree string) ([]string, error) {
+	r.record("Repo.GitlinkPaths %s", tree)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.changes, nil
+}
+
 type loopStore struct {
 	fakeStore
 	dir string

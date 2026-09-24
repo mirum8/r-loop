@@ -66,7 +66,9 @@ type Repo interface {
 	ChangedFiles(dir, ref string) ([]string, error)
 	DiffStat(dir, ref string) (int, int, error)
 	Snapshot(dir string) (string, error)
+	IndexTree(paths ...string) (string, error)
 	TreeDiff(from, to string) ([]string, error)
+	GitlinkPaths(tree string) ([]string, error)
 	MergeNoFF(ctx context.Context, branch string) error
 	AbortMerge() error
 	MergeInProgress() (bool, error)

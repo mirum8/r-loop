@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,35 @@ import (
 	"r-loop/internal/face/tui"
 	"r-loop/internal/store"
 )
+
+type failingStore struct {
+	core.Store
+	fail func(core.Record) bool
+}
+
+func (s failingStore) Append(id string, rec core.Record) error {
+	if s.fail(rec) {
+		return errors.New("disk full")
+	}
+	return s.Store.Append(id, rec)
+}
+
+func TestRunNamesAFailedRunRecordOnStderrAndInTheFace(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	w, err := f.preflight(f.todo, "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, newSim())
+	w.records = &core.RecordGuard{Store: failingStore{Store: w.Store, fail: func(rec core.Record) bool { return rec.Kind == core.RecordRun }}}
+	w.Loop.Store = w.records
+	w.Loop.Sessions.Store = w.records
+	w.Gate.Store = w.records
+	code := w.Execute(core.RunOptions{Phases: []string{"1"}})
+	if code != 2 || !strings.Contains(f.err.String(), "r-loop: record: disk full") || !strings.Contains(f.out.String(), "!  record: disk full") {
+		t.Fatalf("code=%d stderr=%q out=%q", code, f.err, f.out)
+	}
+}
 
 type fixture struct {
 	t     *testing.T

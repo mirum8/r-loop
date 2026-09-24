@@ -133,6 +133,9 @@ type Outcome struct {
 
 func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, error) {
 	s := &Session{Ref: ref}
+	if err := recordFailed(m.Store); err != nil {
+		return s, fmt.Errorf("record: %w", err)
+	}
 	if ref.InPrimary {
 		s.Dir = m.Repo.Root()
 	} else {
@@ -383,7 +386,9 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 		w.quiet = 0
 		if w.stalled {
 			w.stalled = false
-			m.recordState(now, s, StepRunning)
+			if err := m.recordState(now, s, StepRunning); err != nil && !errors.Is(err, errStepEnded) {
+				return m.fail(s, "record: "+err.Error()), true
+			}
 			w.obs.Resumed(s)
 		}
 		return Outcome{}, false
@@ -401,7 +406,9 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 		return out, true
 	}
 	w.stalled, w.quiet = true, 0
-	m.recordState(now, s, StepStalled)
+	if err := m.recordState(now, s, StepStalled); err != nil && !errors.Is(err, errStepEnded) {
+		return m.fail(s, "record: "+err.Error()), true
+	}
 	w.obs.Stalled(s)
 	if err := m.Host.Prompt(s.Agent, nudge(grace, s.Ref.AskURL != ""), false, 0); err != nil {
 		out := m.fail(s, "stalled: nudge not delivered: "+err.Error())
@@ -439,10 +446,11 @@ func (m *SessionManager) askArgs(key StepKey, provider, model, effort, mcpPath s
 	return args, url, nil
 }
 
-func (m *SessionManager) recordState(at time.Time, s *Session, state StepState) {
-	if s.Reviewer == "" {
-		m.recordAt(at, s.Ref.Key, state, "")
+func (m *SessionManager) recordState(at time.Time, s *Session, state StepState) error {
+	if s.Reviewer != "" {
+		return nil
 	}
+	return m.recordAt(at, s.Ref.Key, state, "")
 }
 
 func writeMCPConfig(path, url string) error {
@@ -561,8 +569,22 @@ func (m *SessionManager) Finish(s *Session, out Outcome) Outcome {
 		out.State = recorded
 	}
 	if out.State == StepOK && !done && !s.Ref.InPrimary && !s.Ref.KeepUncommitted {
-		if _, err := m.Repo.CommitAll(s.Dir, fmt.Sprintf("r-loop: phase %s %s", key.Phase, key.Kind)); err != nil {
+		if err := recordFailed(m.Store); err != nil {
+			out.State, out.Reason = StepFailed, "record: "+err.Error()
+		} else if head, err := m.Repo.HeadSHA(s.Dir); err != nil {
 			out.State, out.Reason = StepFailed, "commit: "+err.Error()
+		} else if tree, err := m.Repo.Snapshot(s.Dir); err != nil {
+			out.State, out.Reason = StepFailed, "commit: "+err.Error()
+		} else {
+			msg := fmt.Sprintf("r-loop: phase %s %s", key.Phase, key.Kind)
+			err := m.event(m.now(), s, Event{Kind: EventCommitIntent, Fields: map[string]string{
+				"attempt": strconv.Itoa(key.Attempt), "head": head, "tree": tree, "dir": s.Dir, "message": msg,
+			}})
+			if err != nil {
+				out.State, out.Reason = StepFailed, "record: "+err.Error()
+			} else if _, err := m.Repo.CommitAll(s.Dir, msg); err != nil {
+				out.State, out.Reason = StepFailed, "commit: "+err.Error()
+			}
 		}
 	}
 	if out.State != StepOK {

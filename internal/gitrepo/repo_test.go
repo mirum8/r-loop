@@ -347,6 +347,131 @@ func TestMergeNoFFThenCommit(t *testing.T) {
 	}
 }
 
+func TestRevParseResolvesMergeHeadAndABranch(t *testing.T) {
+	r, dir := newRepo(t)
+	branchWith(t, dir, "r-loop/phase-1", "feature.txt", "feature\n")
+	tip := git(t, dir, "rev-parse", "r-loop/phase-1")
+	git(t, dir, "merge", "--no-ff", "--no-commit", "r-loop/phase-1")
+
+	for _, ref := range []string{"MERGE_HEAD", "r-loop/phase-1"} {
+		got, err := r.RevParse(ref)
+		if err != nil || got != tip {
+			t.Fatalf("RevParse(%q) = %q, %v; want %q", ref, got, err, tip)
+		}
+	}
+}
+
+func TestLandedCommitFindsTheMergeWithTheRecordedParentsAndTree(t *testing.T) {
+	r, dir := newRepo(t)
+	branchWith(t, dir, "r-loop/phase-1", "feature.txt", "feature\n")
+	base := git(t, dir, "rev-parse", "HEAD")
+	tip := git(t, dir, "rev-parse", "r-loop/phase-1")
+	git(t, dir, "merge", "--no-ff", "--no-commit", "r-loop/phase-1")
+	tree, err := r.Snapshot("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	landing, err := r.Commit(context.Background(), "phase 1: feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "later.txt"), "later\n")
+	git(t, dir, "add", "later.txt")
+	git(t, dir, "commit", "-q", "-m", "later")
+
+	got, err := r.LandedCommit(base, tip, tree)
+	if err != nil || got != landing {
+		t.Fatalf("LandedCommit = %q, %v; want %q", got, err, landing)
+	}
+}
+
+func TestLandedCommitIgnoresASameSubjectCommitWithOtherParentsOrTree(t *testing.T) {
+	t.Run("single parent", func(t *testing.T) {
+		r, dir := newRepo(t)
+		branchWith(t, dir, "r-loop/phase-1", "feature.txt", "feature\n")
+		base := git(t, dir, "rev-parse", "HEAD")
+		tip := git(t, dir, "rev-parse", "r-loop/phase-1")
+		write(t, filepath.Join(dir, "feature.txt"), "feature\n")
+		tree, err := r.Snapshot("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		git(t, dir, "add", "feature.txt")
+		git(t, dir, "commit", "-q", "-m", "phase 1: feature")
+
+		got, err := r.LandedCommit(base, tip, tree)
+		if err != nil || got != "" {
+			t.Fatalf("LandedCommit for single-parent commit = %q, %v; want empty", got, err)
+		}
+	})
+
+	t.Run("different tree", func(t *testing.T) {
+		r, dir := newRepo(t)
+		branchWith(t, dir, "r-loop/phase-1", "feature.txt", "feature\n")
+		base := git(t, dir, "rev-parse", "HEAD")
+		tip := git(t, dir, "rev-parse", "r-loop/phase-1")
+		git(t, dir, "merge", "--no-ff", "--no-commit", "r-loop/phase-1")
+		tree, err := r.Snapshot("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(t, filepath.Join(dir, "extra.txt"), "unrecorded\n")
+		if _, err := r.Commit(context.Background(), "phase 1: feature"); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := r.LandedCommit(base, tip, tree)
+		if err != nil || got != "" {
+			t.Fatalf("LandedCommit for changed tree = %q, %v; want empty", got, err)
+		}
+	})
+}
+
+func TestIndexTreeKeepsAStagedOnlyChange(t *testing.T) {
+	r, dir := newRepo(t)
+	headTree := git(t, dir, "rev-parse", "HEAD^{tree}")
+	write(t, filepath.Join(dir, "a.txt"), "staged\n")
+	git(t, dir, "add", "a.txt")
+	git(t, dir, "restore", "--worktree", "a.txt")
+	write(t, filepath.Join(dir, "a.txt"), "one\ntwo\n")
+
+	snapshot, err := r.Snapshot("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := r.IndexTree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot != headTree || index == snapshot {
+		t.Fatalf("Snapshot = %q, IndexTree = %q, HEAD tree = %q", snapshot, index, headTree)
+	}
+	paths, err := r.TreeDiff(index, snapshot)
+	if err != nil || !reflect.DeepEqual(paths, []string{"a.txt"}) {
+		t.Fatalf("TreeDiff = %v, %v; want a.txt", paths, err)
+	}
+	if got := git(t, dir, "diff", "--cached", "--name-only"); got != "a.txt" {
+		t.Fatalf("real index changed: %q", got)
+	}
+}
+
+func TestGitlinkPathsExcludesOrdinaryFiles(t *testing.T) {
+	r, dir := newRepo(t)
+	source := t.TempDir()
+	git(t, source, "init", "-q", "-b", "main")
+	write(t, filepath.Join(source, "version.txt"), "one\n")
+	git(t, source, "add", "-A")
+	git(t, source, "commit", "-q", "-m", "one")
+	git(t, dir, "-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "sub")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "add submodule")
+
+	paths, err := r.GitlinkPaths("HEAD^{tree}")
+	if err != nil || !reflect.DeepEqual(paths, []string{"sub"}) {
+		t.Fatalf("GitlinkPaths = %v, %v; want sub only", paths, err)
+	}
+}
+
 func TestMergeConflictRestoresTree(t *testing.T) {
 	r, dir := newRepo(t)
 	branchWith(t, dir, "side", "a.txt", "side\n")

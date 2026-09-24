@@ -71,6 +71,7 @@ type Wiring struct {
 	Config   config.LoopConfig
 	Registry *providers.Registry
 	Store    *store.Store
+	records  *core.RecordGuard
 	Prompts  *prompts.Renderer
 	Host     herdr.Client
 	Repo     *gitrepo.Repo
@@ -303,6 +304,9 @@ func (w *Wiring) Execute(opts core.RunOptions) int {
 	w.Ask.Wait()
 	w.release()
 	w.Face.Close()
+	if err := w.records.Failed(); err != nil {
+		fmt.Fprintf(w.Env.Stderr, "r-loop: record: %v\n", err)
+	}
 	return code
 }
 
@@ -381,6 +385,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Repo:     repo,
 		Plain:    &plain.Face{Out: env.Stdout},
 	}
+	w.records = &core.RecordGuard{Store: w.Store}
 	w.Face = w.Plain
 	if useTUI(opts.Plain, terminal(env.Stdin), terminal(env.Stdout)) {
 		_, noColor := os.LookupEnv("NO_COLOR")
@@ -404,7 +409,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Host:       w.Host,
 		Repo:       repo,
 		Prompts:    w.Prompts,
-		Store:      w.Store,
+		Store:      w.records,
 		Ask:        w.Ask,
 		Resolve:    w.resolve,
 		Now:        time.Now,
@@ -432,7 +437,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	w.Gate = &core.LandGate{
 		Repo:        repo,
 		Plan:        plan.Reader{},
-		Store:       w.Store,
+		Store:       w.records,
 		Face:        w.Face,
 		TodoPath:    todo,
 		GateTimeout: cfg.Land.GateTimeout,
@@ -456,7 +461,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		TodoPath:    todo,
 		Kinds:       kinds,
 		Sessions:    sm,
-		Store:       w.Store,
+		Store:       w.records,
 		Face:        w.Face,
 		Notifier:    w.Notify,
 		Hooks:       core.Hooks(cfg.Notify),

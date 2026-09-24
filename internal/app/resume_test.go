@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -951,6 +952,522 @@ func (f *fixture) seedKilledImplement() (string, string) {
 	st.SetCurrent(id, 999999)
 	f.write(".r-loop/wt/phase-1/wip.txt", "half done by the killed attempt")
 	return id, wt
+}
+
+func (f *fixture) seedStepCommitIntent(id, wt string) (string, string) {
+	f.t.Helper()
+	repo, err := gitrepo.Open(f.root)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	head, err := repo.HeadSHA(wt)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	tree, err := repo.Snapshot(wt)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.appendRunEvent(id, ev(t0, "commit-intent", 1, "implement", map[string]string{
+		"attempt": "1", "head": head, "tree": tree, "dir": wt, "message": "r-loop: phase 1 implement",
+	}))
+	return head, tree
+}
+
+func TestResumeAfterACrashBetweenTheStepCommitAndItsOkRecordDoesNotRerunIt(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, wt := f.seedKilledImplement()
+	f.seedStepCommitIntent(id, wt)
+	git(t, wt, "add", "-A")
+	git(t, wt, "commit", "-q", "-m", "r-loop: phase 1 implement")
+	sim := newSim()
+	code, lander, err := f.resume(sim)
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v out=%s", code, err, f.out)
+	}
+	key := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
+	if f.load(id).Steps[key] != core.StepOK || len(sim.promptedAgents()) != 0 || !slices.Equal(lander.landed, []string{"1"}) || !strings.Contains(f.out.String(), "its work was committed before the crash") {
+		t.Fatalf("step=%s prompts=%v landed=%v out=%s", f.load(id).Steps[key], sim.promptedAgents(), lander.landed, f.out)
+	}
+}
+
+func TestResumeCommitsAStepsWorkWhenTheCrashCameBeforeItsCommit(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, wt := f.seedKilledImplement()
+	head, _ := f.seedStepCommitIntent(id, wt)
+	sim := newSim()
+	code, _, err := f.resume(sim)
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v out=%s", code, err, f.out)
+	}
+	key := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
+	branch := "r-loop/phase-1"
+	if f.load(id).Steps[key] != core.StepOK || len(sim.promptedAgents()) != 0 || git(t, f.root, "rev-parse", branch) == head || git(t, f.root, "log", "-1", "--format=%s", branch) != "r-loop: phase 1 implement" || !strings.Contains(f.out.String(), "committed the work the crash left uncommitted") {
+		t.Fatalf("step=%s prompts=%v head=%s out=%s", f.load(id).Steps[key], sim.promptedAgents(), git(t, f.root, "rev-parse", branch), f.out)
+	}
+}
+
+func TestResumeRefusesAStepWhoseWorktreeChangedAfterTheCrash(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, wt := f.seedKilledImplement()
+	head, _ := f.seedStepCommitIntent(id, wt)
+	f.write(".r-loop/wt/phase-1/extra.txt", "later edit")
+	_, _, err := f.resume(newSim())
+	key := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
+	if exitCode(t, err) != 2 || !strings.Contains(err.Error(), "extra.txt") || f.load(id).Steps[key] == core.StepOK || git(t, wt, "rev-parse", "HEAD") != head {
+		t.Fatalf("err=%v step=%s head=%s", err, f.load(id).Steps[key], git(t, wt, "rev-parse", "HEAD"))
+	}
+}
+
+func TestResumeRefusesAStepWhoseHeadMovedToAnUnrelatedCommit(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, wt := f.seedKilledImplement()
+	f.seedStepCommitIntent(id, wt)
+	f.write(".r-loop/wt/phase-1/extra.txt", "other work")
+	git(t, wt, "add", "extra.txt")
+	git(t, wt, "commit", "-q", "-m", "other")
+	_, _, err := f.resume(newSim())
+	key := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
+	if exitCode(t, err) != 2 || !strings.Contains(err.Error(), "extra.txt") || f.load(id).Steps[key] == core.StepOK {
+		t.Fatalf("err=%v step=%s", err, f.load(id).Steps[key])
+	}
+}
+
+func TestResumeRefusesAStepWhoseWorkIsStillUncommittedUnderAnEmptyCommit(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, wt := f.seedKilledImplement()
+	f.seedStepCommitIntent(id, wt)
+	git(t, wt, "commit", "--allow-empty", "-q", "-m", "other")
+	head := git(t, wt, "rev-parse", "HEAD")
+	_, _, err := f.resume(newSim())
+	key := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
+	if exitCode(t, err) != 2 || !strings.Contains(err.Error(), "does not hold the work the crash left") || !strings.Contains(err.Error(), "wip.txt") || f.load(id).Steps[key] == core.StepOK || git(t, wt, "rev-parse", "HEAD") != head {
+		t.Fatalf("err=%v step=%s head=%s", err, f.load(id).Steps[key], git(t, wt, "rev-parse", "HEAD"))
+	}
+}
+
+func (f *fixture) seedKilledLand(phases string) (string, string, string) {
+	f.t.Helper()
+	if err := store.EnsureExcluded(f.root); err != nil {
+		f.t.Fatal(err)
+	}
+	repo, err := gitrepo.Open(f.root)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if err := repo.AddWorktree(".r-loop/wt/phase-1", "r-loop/phase-1", "main"); err != nil {
+		f.t.Fatal(err)
+	}
+	wt := filepath.Join(f.root, ".r-loop/wt/phase-1")
+	f.write(".r-loop/wt/phase-1/one.txt", "one\n")
+	git(f.t, wt, "add", "one.txt")
+	git(f.t, wt, "commit", "-q", "-m", "r-loop: phase 1 implement")
+	base := git(f.t, f.root, "rev-parse", "HEAD")
+	st := store.New(f.root)
+	id, err := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now(), Branch: "main"})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	for _, rec := range []core.Record{
+		ev(t0, "run-list", 0, "", map[string]string{"phases": phases}),
+		{Kind: core.RecordStep, Step: &core.StepKey{Run: id, Phase: "1", Kind: "plan", Attempt: 1}, State: core.StepOK},
+		{Kind: core.RecordStep, Step: &core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}, State: core.StepOK},
+		{Kind: core.RecordRun, Run: core.RunRunning},
+	} {
+		if err := st.Append(id, rec); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	if err := st.SetCurrent(id, 999999); err != nil {
+		f.t.Fatal(err)
+	}
+	return id, wt, base
+}
+
+func (f *fixture) seedMergeIntent(id, base string) {
+	f.t.Helper()
+	f.appendRunEvent(id, ev(t0, "merge-intent", 1, "land", map[string]string{
+		"phase": "1", "branch": "r-loop/phase-1", "base": base, "message": "phase 1: one",
+	}))
+}
+
+func (f *fixture) beginLandMerge() {
+	f.t.Helper()
+	git(f.t, f.root, "merge", "--no-ff", "--no-commit", "r-loop/phase-1")
+}
+
+func (f *fixture) tickPhaseOne() {
+	f.t.Helper()
+	data, err := os.ReadFile(f.todo)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	ticked := strings.Replace(string(data), "- [ ] a", "- [x] a", 1)
+	if ticked == string(data) {
+		f.t.Fatal("phase 1 checkbox not found")
+	}
+	if err := os.WriteFile(f.todo, []byte(ticked), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *fixture) seedLandCommitIntent(id string) string {
+	f.t.Helper()
+	git(f.t, f.root, "add", "--", "docs/topic/todo.md")
+	tree := git(f.t, f.root, "write-tree")
+	f.appendRunEvent(id, ev(t0, "commit-intent", 1, "land", map[string]string{
+		"phase": "1", "tree": tree, "gateSkipped": "false", "added": "1", "deleted": "0",
+	}))
+	return tree
+}
+
+func TestResumeAbortsAMergeTheCrashLeftDuringTheGate(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	code, lander, err := f.resume(newSim())
+	if err != nil || code != 0 || lander == nil || !slices.Equal(lander.landed, []string{"1"}) || !strings.Contains(f.out.String(), "aborted phase 1's merge") {
+		t.Fatalf("code=%d err=%v landed=%v out=%s", code, err, lander, f.out)
+	}
+	if git(t, f.root, "rev-parse", "HEAD") != base {
+		t.Fatal("HEAD moved")
+	}
+	if _, err := os.Stat(filepath.Join(f.root, ".git", "MERGE_HEAD")); !os.IsNotExist(err) {
+		t.Fatalf("MERGE_HEAD still exists: %v", err)
+	}
+}
+
+func TestResumeCompletesAMergeWhoseCommitWasIntended(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.tickPhaseOne()
+	f.seedLandCommitIntent(id)
+	code, lander, err := f.resume(newSim())
+	if exitCode(t, err) != 2 || code != 0 || lander != nil && len(lander.landed) != 0 {
+		t.Fatalf("code=%d err=%v landed=%v out=%s", code, err, lander, f.out)
+	}
+	sha := git(t, f.root, "rev-parse", "HEAD")
+	if sha == base || git(t, f.root, "log", "-1", "--format=%s") != "phase 1: one" || len(strings.Fields(git(t, f.root, "rev-list", "--parents", "-n", "1", "HEAD"))) != 3 || !strings.Contains(f.out.String(), "completed phase 1's merge") || len(f.load(id).Landed) != 1 || f.load(id).Landed[0].MergeSHA != sha {
+		t.Fatalf("head=%s landed=%+v out=%s", sha, f.load(id).Landed, f.out)
+	}
+}
+
+func TestResumeRefusesAMergeWithAnUnrelatedStagedChange(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.tickPhaseOne()
+	f.seedLandCommitIntent(id)
+	f.write("other.txt", "keep this\n")
+	git(t, f.root, "add", "other.txt")
+	_, _, err := f.resume(newSim())
+	if exitCode(t, err) != 4 || !strings.Contains(err.Error(), "other.txt") || !strings.Contains(err.Error(), "MERGE_HEAD") || !strings.Contains(err.Error(), "git merge --abort") || git(t, f.root, "rev-parse", "HEAD") != base {
+		t.Fatalf("err=%v head=%s out=%s", err, git(t, f.root, "rev-parse", "HEAD"), f.out)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, ".git", "MERGE_HEAD")); err != nil {
+		t.Fatalf("MERGE_HEAD missing: %v", err)
+	}
+	data, readErr := os.ReadFile(filepath.Join(f.root, "other.txt"))
+	if readErr != nil || string(data) != "keep this\n" {
+		t.Fatalf("other.txt=%q err=%v", data, readErr)
+	}
+}
+
+func TestResumeRefusesAStagedMaintainerFileBeforeLandCommitIntent(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.write("other.txt", "mine\n")
+	git(t, f.root, "add", "other.txt")
+	_, _, err := f.resume(newSim())
+	if exitCode(t, err) != 4 || !strings.Contains(err.Error(), "other.txt") || !strings.Contains(err.Error(), "MERGE_HEAD") || !strings.Contains(err.Error(), "git merge --abort") || git(t, f.root, "rev-parse", "HEAD") != base {
+		t.Fatalf("err=%v out=%s", err, f.out)
+	}
+	if got, readErr := os.ReadFile(filepath.Join(f.root, "other.txt")); readErr != nil || string(got) != "mine\n" {
+		t.Fatalf("other.txt=%q err=%v", got, readErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(f.root, ".git", "MERGE_HEAD")); statErr != nil {
+		t.Fatalf("MERGE_HEAD missing: %v", statErr)
+	}
+}
+
+func TestResumeRefusesAnUnstagedEditBeforeLandCommitIntentEvenAfterItIsStaged(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	f.write("calc.go", "original\n")
+	f.commit()
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.write("calc.go", "mine\n")
+	for _, stage := range []bool{false, true} {
+		if stage {
+			git(t, f.root, "add", "calc.go")
+		}
+		_, _, err := f.resume(newSim())
+		if exitCode(t, err) != 4 || !strings.Contains(err.Error(), "calc.go") || !strings.Contains(err.Error(), "MERGE_HEAD") || !strings.Contains(err.Error(), "git merge --abort") || git(t, f.root, "rev-parse", "HEAD") != base {
+			t.Fatalf("stage=%t err=%v out=%s", stage, err, f.out)
+		}
+		if got, readErr := os.ReadFile(filepath.Join(f.root, "calc.go")); readErr != nil || string(got) != "mine\n" {
+			t.Fatalf("stage=%t calc.go=%q err=%v", stage, got, readErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(f.root, ".git", "MERGE_HEAD")); statErr != nil {
+			t.Fatalf("stage=%t MERGE_HEAD missing: %v", stage, statErr)
+		}
+	}
+}
+
+func TestResumeNamesAConflictedDriverMerge(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, _ := f.seedKilledLand("1")
+	f.write("one.txt", "main\n")
+	f.commit()
+	base := git(t, f.root, "rev-parse", "HEAD")
+	f.seedMergeIntent(id, base)
+	cmd := exec.Command("git", "-C", f.root, "merge", "--no-ff", "--no-commit", "r-loop/phase-1")
+	if output, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("merge unexpectedly succeeded: %s", output)
+	}
+	_, _, err := f.resume(newSim())
+	if exitCode(t, err) != 4 || !strings.Contains(err.Error(), "one.txt") || !strings.Contains(err.Error(), "unfinished merge") || !strings.Contains(err.Error(), "git merge --abort") || git(t, f.root, "rev-parse", "HEAD") != base {
+		t.Fatalf("err=%v out=%s", err, f.out)
+	}
+	if _, statErr := os.Stat(filepath.Join(f.root, ".git", "MERGE_HEAD")); statErr != nil {
+		t.Fatalf("MERGE_HEAD missing: %v", statErr)
+	}
+}
+
+func TestResumeRefusesAMergeWithAStagedOnlyChange(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	f.write("notes.txt", "original\n")
+	f.commit()
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.tickPhaseOne()
+	f.seedLandCommitIntent(id)
+	f.write("notes.txt", "staged\n")
+	git(t, f.root, "add", "notes.txt")
+	f.write("notes.txt", "original\n")
+	_, _, err := f.resume(newSim())
+	if exitCode(t, err) != 4 || !strings.Contains(err.Error(), "notes.txt") || !strings.Contains(err.Error(), "git merge --abort by hand") || git(t, f.root, "rev-parse", "HEAD") != base || git(t, f.root, "diff", "--cached", "--name-only", "--", "notes.txt") != "notes.txt" || len(f.load(id).Landed) != 0 {
+		t.Fatalf("err=%v head=%s landed=%+v", err, git(t, f.root, "rev-parse", "HEAD"), f.load(id).Landed)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, ".git", "MERGE_HEAD")); err != nil {
+		t.Fatalf("MERGE_HEAD missing: %v", err)
+	}
+}
+
+func TestResumeRefusesAForeignMergeInProgress(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	git(t, f.root, "branch", "foreign", "main")
+	git(t, f.root, "checkout", "-q", "foreign")
+	f.write("foreign.txt", "foreign branch\n")
+	git(t, f.root, "add", "foreign.txt")
+	git(t, f.root, "commit", "-q", "-m", "foreign tip")
+	git(t, f.root, "checkout", "-q", "main")
+	git(t, f.root, "merge", "--no-ff", "--no-commit", "foreign")
+	_, _, err := f.resume(newSim())
+	if exitCode(t, err) != 4 || !strings.Contains(err.Error(), "unfinished merge") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, ".git", "MERGE_HEAD")); err != nil {
+		t.Fatalf("MERGE_HEAD missing: %v", err)
+	}
+}
+
+func TestResumeRefusesAnAbortedMergesUnprovenTodoChange(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.tickPhaseOne()
+	ticked, _ := os.ReadFile(f.todo)
+	f.write("docs/topic/todo.md", string(ticked)+"maintainer note\n")
+	want, _ := os.ReadFile(f.todo)
+	_, _, err := f.resume(newSim())
+	got, _ := os.ReadFile(f.todo)
+	if exitCode(t, err) != 4 || !strings.Contains(err.Error(), "docs/topic/todo.md") || !strings.Contains(err.Error(), "MERGE_HEAD") || string(got) != string(want) || git(t, f.root, "rev-parse", "HEAD") != base {
+		t.Fatalf("err=%v todo=%q out=%s", err, got, f.out)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, ".git", "MERGE_HEAD")); err != nil {
+		t.Fatalf("MERGE_HEAD missing: %v", err)
+	}
+}
+
+func TestResumeRestoresTheProvenTickBeforeAbortingTheMerge(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	before, err := os.ReadFile(f.todo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.tickPhaseOne()
+	code, lander, err := f.resume(newSim())
+	if err != nil || code != 0 || lander == nil || !slices.Equal(lander.landed, []string{"1"}) || !strings.Contains(f.out.String(), "aborted phase 1's merge") || git(t, f.root, "rev-parse", "HEAD") != base {
+		t.Fatalf("code=%d err=%v landed=%v out=%s", code, err, lander, f.out)
+	}
+	got, err := os.ReadFile(f.todo)
+	if err != nil || string(got) != string(before) {
+		t.Fatalf("todo=%q err=%v", got, err)
+	}
+}
+
+func TestResumeNamesThePhaseAndPathWhenAbortFails(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	before, err := os.ReadFile(f.todo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.tickPhaseOne()
+	git(t, f.root, "add", "docs/topic/todo.md")
+	if err := os.WriteFile(f.todo, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = f.resume(newSim())
+	if exitCode(t, err) != 4 || !strings.Contains(err.Error(), "phase 1") || !strings.Contains(err.Error(), "docs/topic/todo.md") || !strings.Contains(err.Error(), "MERGE_HEAD") || !strings.Contains(err.Error(), "stage or restore") || git(t, f.root, "rev-parse", "HEAD") != base {
+		t.Fatalf("err=%v out=%s", err, f.out)
+	}
+	if _, statErr := os.Stat(filepath.Join(f.root, ".git", "MERGE_HEAD")); statErr != nil {
+		t.Fatalf("MERGE_HEAD missing: %v", statErr)
+	}
+}
+
+func TestResumeNamesAMissingPhaseBranchDuringMerge(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, wt, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	git(t, wt, "checkout", "--detach", "-q")
+	git(t, f.root, "branch", "-D", "r-loop/phase-1")
+	_, _, err := f.resume(newSim())
+	if exitCode(t, err) != 4 || !strings.Contains(err.Error(), "phase 1") || !strings.Contains(err.Error(), "r-loop/phase-1") || !strings.Contains(err.Error(), "restore") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(f.root, ".git", "MERGE_HEAD")); statErr != nil {
+		t.Fatalf("MERGE_HEAD missing: %v", statErr)
+	}
+}
+
+func TestResumeNamesAMissingPhaseBranchAfterLandingCommit(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, wt, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.tickPhaseOne()
+	f.seedLandCommitIntent(id)
+	git(t, f.root, "commit", "-q", "-m", "phase 1: one")
+	git(t, wt, "checkout", "--detach", "-q")
+	git(t, f.root, "branch", "-D", "r-loop/phase-1")
+	_, _, err := f.resume(newSim())
+	if exitCode(t, err) != 4 || !strings.Contains(err.Error(), "phase 1") || !strings.Contains(err.Error(), "r-loop/phase-1") || !strings.Contains(err.Error(), "restore") || len(f.load(id).Landed) != 0 {
+		t.Fatalf("err=%v landed=%+v", err, f.load(id).Landed)
+	}
+}
+
+func TestResumeRefusesAStagedMaintainerEditToTheTodoBeforeLandCommitIntent(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.tickPhaseOne()
+	ticked, readErr := os.ReadFile(f.todo)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	f.write("docs/topic/todo.md", string(ticked)+"maintainer note\n")
+	git(t, f.root, "add", "docs/topic/todo.md")
+	want, readErr := os.ReadFile(f.todo)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	_, _, err := f.resume(newSim())
+	if exitCode(t, err) != 4 || !strings.Contains(err.Error(), "docs/topic/todo.md") || !strings.Contains(err.Error(), "MERGE_HEAD") || !strings.Contains(err.Error(), "git merge --abort") || git(t, f.root, "rev-parse", "HEAD") != base {
+		t.Fatalf("err=%v out=%s", err, f.out)
+	}
+	got, readErr := os.ReadFile(f.todo)
+	if readErr != nil || string(got) != string(want) {
+		t.Fatalf("todo=%q err=%v", got, readErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(f.root, ".git", "MERGE_HEAD")); statErr != nil {
+		t.Fatalf("MERGE_HEAD missing: %v", statErr)
+	}
+}
+
+func TestResumeAbortsAMergeWithOnlyTheStagedPhaseTick(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.tickPhaseOne()
+	git(t, f.root, "add", "docs/topic/todo.md")
+	code, lander, err := f.resume(newSim())
+	if err != nil || code != 0 || lander == nil || !slices.Equal(lander.landed, []string{"1"}) || !strings.Contains(f.out.String(), "aborted phase 1's merge") || git(t, f.root, "rev-parse", "HEAD") != base {
+		t.Fatalf("code=%d err=%v landed=%v out=%s", code, err, lander, f.out)
+	}
+}
+
+func TestResumeRecordsTheLandingOfACommitMadeBeforeTheCrash(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1,2")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.tickPhaseOne()
+	f.seedLandCommitIntent(id)
+	git(t, f.root, "commit", "-q", "-m", "phase 1: one")
+	sha := git(t, f.root, "rev-parse", "HEAD")
+	code, lander, err := f.resume(newSim())
+	if err != nil || code != 0 || lander == nil || !slices.Equal(lander.landed, []string{"2"}) || !strings.Contains(f.out.String(), "phase 1 landed as "+sha[:7]+" before the crash") {
+		t.Fatalf("code=%d err=%v lander=%v out=%s", code, err, lander, f.out)
+	}
+	landed := f.load(id).Landed
+	if len(landed) == 0 || landed[0].MergeSHA != sha {
+		t.Fatalf("landed=%+v", landed)
+	}
+	report, err := os.ReadFile(filepath.Join(store.New(f.root).Dir(id), "report.md"))
+	if err != nil || !strings.Contains(string(report), "phase 1 "+sha) {
+		t.Fatalf("report=%q err=%v", report, err)
+	}
+}
+
+func TestResumeOfARunWhoseLastPhaseLandedBeforeTheCrashReportsItLanded(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.tickPhaseOne()
+	f.seedLandCommitIntent(id)
+	git(t, f.root, "commit", "-q", "-m", "phase 1: one")
+	sha := git(t, f.root, "rev-parse", "HEAD")
+	_, _, err := f.resume(newSim())
+	if exitCode(t, err) != 2 || !strings.Contains(err.Error(), "landed every phase") {
+		t.Fatalf("err=%v out=%s", err, f.out)
+	}
+	report, readErr := os.ReadFile(filepath.Join(store.New(f.root).Dir(id), "report.md"))
+	if readErr != nil || !strings.Contains(string(report), "phase 1 "+sha) {
+		t.Fatalf("report=%q err=%v", report, readErr)
+	}
+}
+
+func TestResumeWithAMergeIntentButNoMergeLandsThePhaseAgain(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	code, lander, err := f.resume(newSim())
+	if err != nil || code != 0 || lander == nil || !slices.Equal(lander.landed, []string{"1"}) || strings.Contains(f.out.String(), "phase 1's merge") {
+		t.Fatalf("code=%d err=%v lander=%v out=%s", code, err, lander, f.out)
+	}
 }
 
 func (f *fixture) appendRunEvent(id string, event core.Record) {
