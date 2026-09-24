@@ -151,7 +151,7 @@ func (g *LandGate) Land(ctx context.Context, phase Phase) (Landing, error) {
 	return landing, nil
 }
 
-func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, string, error) {
+func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ string, err error) {
 	if err := recordFailed(g.Store); err != nil {
 		return Landing{}, "", "", fmt.Errorf("record: %w", err)
 	}
@@ -185,6 +185,51 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 	if err != nil {
 		return Landing{}, "", "", err
 	}
+	var rejected bool
+	var mergedTodo []byte
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		ev, perr := panicked(n, "land", "land", r)
+		quietly(func() { g.emit(ev) })
+		err = perr
+		var head string
+		var herr error
+		if qerr := quietly(func() { head, herr = g.Repo.HeadSHA("") }); qerr != nil {
+			herr = qerr
+		}
+		if herr != nil {
+			err = errors.Join(perr, herr)
+			return
+		}
+		if head != base {
+			if rejected {
+				var rerr error
+				if qerr := quietly(func() { rerr = g.Repo.ResetKeep("HEAD~1") }); qerr != nil {
+					rerr = qerr
+				}
+				err = errors.Join(perr, rerr)
+			}
+			return
+		}
+		var restore error
+		if qerr := quietly(func() {
+			merging, merr := g.Repo.MergeInProgress()
+			restore = merr
+			if merging {
+				if mergedTodo != nil {
+					restore = errors.Join(restore, os.WriteFile(todoAbs, mergedTodo, 0o644))
+				}
+				restore = errors.Join(restore, g.Repo.AbortMerge())
+			}
+			restore = errors.Join(restore, os.WriteFile(todoAbs, originalTodo, 0o644))
+		}); qerr != nil {
+			restore = errors.Join(restore, qerr)
+		}
+		err = errors.Join(perr, restore)
+	}()
 	message := fmt.Sprintf("phase %s: %s", n, phase.Title)
 	mergeAt := time.Now()
 	mergeIntent := Event{At: mergeAt, Kind: EventMergeIntent, Phase: n, Step: "land", Fields: map[string]string{
@@ -266,6 +311,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 	if err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), g.Repo.AbortMerge())
 	}
+	mergedTodo = before
 	if err := g.Plan.Tick(g.TodoPath, phase); err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
 	}
@@ -323,6 +369,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 	touched, err := g.Repo.CommitTouches(sha)
 	todo := g.todoRel()
 	if err != nil || !slices.Contains(touched, todo) || len(touched) < 2 {
+		rejected = true
 		reason := fmt.Errorf("%w: code and ticks land as one commit; %s touched %v", ErrLanding, sha, touched)
 		return Landing{}, "", "", errors.Join(reason, err, g.Repo.ResetKeep("HEAD~1"))
 	}
@@ -399,7 +446,7 @@ func (g *LandGate) todoRel() string {
 	return filepath.ToSlash(rel)
 }
 
-func (g *LandGate) fix(ctx context.Context, phase Phase, command, output string) Outcome {
+func (g *LandGate) fix(ctx context.Context, phase Phase, command, output string) (out Outcome) {
 	n := phase.ID
 	base, err := g.Repo.HeadBranch()
 	if err != nil {
@@ -427,7 +474,38 @@ func (g *LandGate) fix(ctx context.Context, phase Phase, command, output string)
 		return Outcome{State: StepFailed, Reason: "record: " + err.Error()}
 	}
 	rec := stepRecorder{g.Store, g.Face}
-	out := g.Runner.Run(ctx, ref, rec)
+	defer func() {
+		if r := recover(); r != nil {
+			ev, err := panicked(n, g.FixKind.Name, "gate-fix", r)
+			quietly(func() { g.emit(ev) })
+			var st RunState
+			var loadErr error
+			if qerr := quietly(func() { st, loadErr = g.Store.Load(g.RunID) }); qerr != nil {
+				loadErr = qerr
+			}
+			if loadErr != nil {
+				out = Outcome{State: StepFailed, Reason: err.Error() + "; load run: " + loadErr.Error()}
+				return
+			}
+			if state := st.Steps[key]; state == StepOK || state == StepFailed {
+				out = Outcome{State: state, Reason: err.Error()}
+				quietly(func() { rec.finished(ref, out) })
+				return
+			}
+			out = Outcome{State: StepFailed, Reason: err.Error()}
+			var rerr error
+			if qerr := quietly(func() {
+				rerr = g.Store.Append(g.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepFailed, Reason: out.Reason})
+			}); qerr != nil {
+				rerr = qerr
+			}
+			if rerr != nil {
+				out.Reason += "; record: " + rerr.Error()
+			}
+			quietly(func() { rec.finished(ref, out) })
+		}
+	}()
+	out = g.Runner.Run(ctx, ref, rec)
 	rec.finished(ref, out)
 	return out
 }

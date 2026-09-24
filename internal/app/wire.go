@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -259,7 +260,13 @@ func fail(env Env, err error) int {
 	return code
 }
 
-func (w *Wiring) Execute(opts core.RunOptions) int {
+func (w *Wiring) Execute(opts core.RunOptions) (code int) {
+	onPanic := func() {
+		if r := recover(); r != nil {
+			code = w.panicked(r)
+		}
+	}
+	defer onPanic()
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 	sigs := make(chan os.Signal, 1)
@@ -270,6 +277,11 @@ func (w *Wiring) Execute(opts core.RunOptions) int {
 		close(quit)
 	}()
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				cancel(fmt.Errorf("panic in signal handler: %v", r))
+			}
+		}()
 		for {
 			select {
 			case sig := <-sigs:
@@ -285,7 +297,23 @@ func (w *Wiring) Execute(opts core.RunOptions) int {
 	if w.TUI != nil {
 		w.TUI.OnExit = func(err error) { cancel(displayExit(err)) }
 	}
-	code := 2
+	defer func() {
+		if w.TUI != nil && context.Cause(ctx) != nil {
+			w.TUI.Stop()
+		}
+		if err := w.Dog.Stop(); err != nil {
+			fmt.Fprintf(w.Env.Stderr, "r-loop: close watchdog: %v\n", err)
+		}
+		cancel(nil)
+		w.Ask.Wait()
+		w.release()
+		w.Face.Close()
+		if err := w.records.Failed(); err != nil {
+			fmt.Fprintf(w.Env.Stderr, "r-loop: record: %v\n", err)
+		}
+	}()
+	defer onPanic()
+	code = 2
 	if _, err := w.Ask.Serve(ctx); err != nil {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: ask server: %v\n", err)
 	} else if err := w.startWatchdog(ctx); err != nil {
@@ -294,20 +322,28 @@ func (w *Wiring) Execute(opts core.RunOptions) int {
 		w.startTUI()
 		code = w.run(ctx, opts)
 	}
-	if w.TUI != nil && context.Cause(ctx) != nil {
-		w.TUI.Stop()
-	}
-	if err := w.Dog.Stop(); err != nil {
-		fmt.Fprintf(w.Env.Stderr, "r-loop: close watchdog: %v\n", err)
-	}
-	cancel(nil)
-	w.Ask.Wait()
-	w.release()
-	w.Face.Close()
-	if err := w.records.Failed(); err != nil {
-		fmt.Fprintf(w.Env.Stderr, "r-loop: record: %v\n", err)
-	}
 	return code
+}
+
+func quietly(fn func()) {
+	defer func() { _ = recover() }()
+	fn()
+}
+
+func (w *Wiring) panicked(v any) int {
+	reason := fmt.Sprintf("panic: %v", v)
+	stack := debug.Stack()
+	if w.TUI != nil {
+		quietly(w.TUI.Stop)
+	}
+	quietly(func() {
+		w.recordFatal(core.Record{Kind: core.RecordRun, At: time.Now(), Run: core.RunHalted, Reason: reason})
+	})
+	quietly(func() {
+		w.Face.Emit(core.Event{At: time.Now(), Kind: "halt", Fields: map[string]string{"reason": reason, "resume": "r-loop resume"}})
+	})
+	fmt.Fprintf(w.Env.Stderr, "r-loop: %s\n%s", reason, stack)
+	return 2
 }
 
 func (w *Wiring) release() {

@@ -821,6 +821,32 @@ func TestFaceReportsARunErrorToOnExit(t *testing.T) {
 	}
 }
 
+func TestAPanicInsideTheDisplayRestoresTheTerminalAndReportsIt(t *testing.T) {
+	in, writer := io.Pipe()
+	defer in.Close()
+	defer writer.Close()
+	var out syncBuffer
+	exits := make(chan error, 1)
+	f := &Face{In: in, Out: &out, OnExit: func(err error) { exits <- err }}
+	f.Start(Header{RunID: "r1", Started: t0}, plan(), nil)
+	f.mu.Lock()
+	prog := f.prog
+	f.mu.Unlock()
+	prog.Send(tea.BatchMsg{func() tea.Msg { panic("boom") }})
+	select {
+	case err := <-exits:
+		if !errors.Is(err, tea.ErrProgramPanic) {
+			t.Fatalf("exit error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		f.Stop()
+		t.Fatal("panic exit was not reported")
+	}
+	if !strings.Contains(out.String(), "\x1b[?1049l") {
+		t.Fatalf("terminal was not restored: %q", out.String())
+	}
+}
+
 func TestFaceReportsItsProgramExitToOnExit(t *testing.T) {
 	in, writer := io.Pipe()
 	defer in.Close()

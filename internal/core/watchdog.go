@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"strings"
@@ -38,6 +39,7 @@ type Watchdog struct {
 	stopping     bool
 	dropQueue    bool
 	gone         bool
+	onGoneCalled bool
 	asking       bool
 	blocked      bool
 	pane         string
@@ -147,6 +149,38 @@ func (d *Watchdog) Post(text string) {
 
 func (d *Watchdog) deliver() {
 	defer close(d.drained)
+	defer func() {
+		if r := recover(); r != nil {
+			ev, err := panicked("", "", "watchdog delivery", r)
+			var rerr error
+			if qerr := quietly(func() { rerr = d.emit(ev.Kind, ev.Fields, func() {}) }); qerr != nil {
+				rerr = qerr
+			}
+			d.mu.Lock()
+			active, gone := !d.stopping, d.gone
+			d.mu.Unlock()
+			if active && !gone {
+				var eerr error
+				qerr := quietly(func() {
+					eerr = d.emit("watchdog-unreachable", map[string]string{"reason": err.Error()}, func() { d.gone = true })
+				})
+				rerr = errors.Join(rerr, eerr, qerr)
+				if eerr != nil || qerr != nil {
+					d.mu.Lock()
+					d.gone = true
+					d.mu.Unlock()
+				}
+			}
+			if rerr != nil && d.Face != nil {
+				quietly(func() {
+					d.Face.Emit(Event{At: time.Now(), Kind: "warning", Fields: map[string]string{"reason": "watchdog: " + rerr.Error()}})
+				})
+			}
+			if active {
+				quietly(d.callOnGone)
+			}
+		}
+	}()
 	for {
 		d.mu.Lock()
 		for len(d.queue) == 0 && !d.stopping {
@@ -157,9 +191,11 @@ func (d *Watchdog) deliver() {
 		if empty {
 			return
 		}
-		d.send.Lock()
-		d.flush()
-		d.send.Unlock()
+		func() {
+			d.send.Lock()
+			defer d.send.Unlock()
+			d.flush()
+		}()
 	}
 }
 
@@ -286,23 +322,36 @@ func (d *Watchdog) promptWith(ctx context.Context, text string, wait bool, timeo
 }
 
 func (d *Watchdog) lost(reason string) error {
-	d.wait.Lock()
-	d.mu.Lock()
-	skip := d.gone || d.stopping
-	d.mu.Unlock()
-	if skip {
-		d.wait.Unlock()
-		return nil
-	}
-	err := d.emit("watchdog-unreachable", map[string]string{"reason": reason}, func() { d.gone = true })
-	d.wait.Unlock()
-	if err != nil {
+	marked, err := func() (bool, error) {
+		d.wait.Lock()
+		defer d.wait.Unlock()
+		d.mu.Lock()
+		skip := d.gone || d.stopping
+		d.mu.Unlock()
+		if skip {
+			return false, nil
+		}
+		return true, d.emit("watchdog-unreachable", map[string]string{"reason": reason}, func() { d.gone = true })
+	}()
+	if !marked || err != nil {
 		return err
 	}
-	if d.OnGone != nil {
-		d.OnGone()
-	}
+	d.callOnGone()
 	return nil
+}
+
+func (d *Watchdog) callOnGone() {
+	d.mu.Lock()
+	if d.onGoneCalled {
+		d.mu.Unlock()
+		return
+	}
+	d.onGoneCalled = true
+	fn := d.OnGone
+	d.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 func (d *Watchdog) AskMaintainer(question string, options []string, recommended string) error {

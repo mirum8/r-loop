@@ -954,6 +954,7 @@ type reportHost struct {
 	mu      sync.Mutex
 	outcome string
 	opened  []core.OpenSpec
+	stopped []string
 }
 
 func (h *reportHost) Reachable() error { return nil }
@@ -974,6 +975,12 @@ func (h *reportHost) Prompt(agent, text string, wait bool, timeout time.Duration
 	cwd := h.opened[len(h.opened)-1].CWD
 	outcome := h.outcome
 	h.mu.Unlock()
+	if outcome == "panic" {
+		if err := os.WriteFile(filepath.Join(cwd, "a.txt"), []byte("scribbled\n"), 0o644); err != nil {
+			return err
+		}
+		panic("boom")
+	}
 	report, sentinel, _ := strings.Cut(text, "\n")
 	if outcome == "ok" || outcome == "partial" {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(cwd, report)), 0o755); err != nil {
@@ -996,7 +1003,12 @@ func (h *reportHost) Prompt(agent, text string, wait bool, timeout time.Duration
 func (h *reportHost) State(agent string) (core.AgentState, error)            { return core.AgentWorking, nil }
 func (h *reportHost) AgentPane(agent string) (string, error)                 { return "", nil }
 func (h *reportHost) Read(agent string, lines int) (string, error)           { return "", nil }
-func (h *reportHost) Interrupt(agent string) error                           { return nil }
+func (h *reportHost) Interrupt(agent string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.stopped = append(h.stopped, agent)
+	return nil
+}
 func (h *reportHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
 func (h *reportHost) Close(workspaceID string) error                         { return nil }
 func (h *reportHost) ClosePane(pane string) error                            { return nil }
@@ -1221,5 +1233,404 @@ func TestGateFixAndMilestoneSessionsStoreTheirLiveStepMetadata(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("step events %q, want %q", got, want)
+	}
+}
+
+type panicTickPlan struct{ *tickPlan }
+
+func (p panicTickPlan) Tick(path string, ph core.Phase) error {
+	if err := p.tickPlan.Tick(path, ph); err != nil {
+		return err
+	}
+	panic("boom")
+}
+
+func TestAPanicAfterTheMergeRestoresTheTodoAndAbortsTheMerge(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	head := e.head()
+	g := e.gate()
+	g.Plan = panicTickPlan{e.plan}
+	_, err := g.Land(context.Background(), phaseOne(""))
+	if err == nil || !strings.Contains(err.Error(), "panic in land: boom") {
+		t.Fatalf("Land err = %v", err)
+	}
+	e.assertUntouched(head)
+	assertNoMergeHead(t, e.root)
+	if ev := e.face.events; !slices.ContainsFunc(ev, func(v core.Event) bool {
+		return v.Kind == "error" && v.Fields["reason"] == "panic in land: boom"
+	}) {
+		t.Fatalf("panic error event missing: %+v", ev)
+	}
+}
+
+func TestAPanicAfterAMergeThatChangedTodoAbortsBeforeRestoringIt(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	writeFile(t, filepath.Join(e.worktree(1), "docs/demo/todo.md"), todoText+"branch edit\n")
+	if _, err := e.repo.CommitAll(".r-loop/wt/phase-1", "edit todo"); err != nil {
+		t.Fatal(err)
+	}
+	head := e.head()
+	g := e.gate()
+	g.Plan = panicTickPlan{e.plan}
+	_, err := g.Land(context.Background(), phaseOne(""))
+	if err == nil || !strings.Contains(err.Error(), "panic in land: boom") {
+		t.Fatalf("Land err = %v", err)
+	}
+	e.assertUntouched(head)
+	assertNoMergeHead(t, e.root)
+}
+
+type panicFinishedFace struct {
+	*memFace
+	panicked bool
+}
+
+func (f *panicFinishedFace) Emit(ev core.Event) {
+	if ev.Kind == "step" && ev.Fields["state"] == string(core.StepOK) && !f.panicked {
+		f.panicked = true
+		panic("finished event")
+	}
+	f.memFace.Emit(ev)
+}
+
+func TestAPanicReportingAnAlreadyOKGateFixDoesNotFailIt(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	g := e.gate()
+	g.FixRounds = 1
+	g.Face = &panicFinishedFace{memFace: e.face}
+	g.Runner = runnerFunc(func(ctx context.Context, ref core.StepRef, obs core.Observer) core.Outcome {
+		out := fixingRunner(e, new([]core.StepRef))(ctx, ref, obs)
+		if out.State == core.StepOK {
+			key := ref.Key
+			if err := e.store.Append(ref.Key.Run, core.Record{Kind: core.RecordStep, Step: &key, State: core.StepOK}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return out
+	})
+	landing, err := g.Land(context.Background(), phaseOne("test -f fix1.txt"))
+	if err != nil || landing.MergeSHA != e.head() {
+		t.Fatalf("Land = %+v, %v", landing, err)
+	}
+	st, err := e.store.Load("run1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := core.StepKey{Run: "run1", Phase: "1", Kind: "gatefix", Attempt: 1}
+	if got := st.Steps[key]; got != core.StepOK {
+		t.Fatalf("gate-fix state = %s, want ok", got)
+	}
+	for _, rec := range e.store.records {
+		if rec.Kind == core.RecordStep && rec.Step != nil && *rec.Step == key && rec.State == core.StepFailed {
+			t.Fatalf("failed after ok: %+v", rec)
+		}
+	}
+}
+
+func TestAPanickingGateFixRunnerFailsItsStepAndTheLand(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	head := e.head()
+	g := e.gate()
+	g.FixRounds = 1
+	g.Runner = runnerFunc(func(context.Context, core.StepRef, core.Observer) core.Outcome { panic("boom") })
+	_, err := g.Land(context.Background(), phaseOne("false"))
+	if !errors.Is(err, core.ErrGate) || !strings.Contains(err.Error(), "gate-fix round 1 ended failed: panic in gate-fix: boom") {
+		t.Fatalf("Land err = %v", err)
+	}
+	var last *core.Record
+	for i := range e.store.records {
+		rec := &e.store.records[i]
+		if rec.Kind == core.RecordStep && rec.Step != nil && rec.Step.Kind == "gatefix" && rec.Step.Attempt == 1 {
+			last = rec
+		}
+	}
+	if last == nil || last.State != core.StepFailed || !strings.Contains(last.Reason, "panic in gate-fix: boom") {
+		t.Fatalf("last gatefix record = %+v", last)
+	}
+	e.assertUntouched(head)
+}
+
+func TestAPanickingGateFixAfterFailureReportsReasonAndFinishedEvent(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	g := e.gate()
+	g.FixRounds = 1
+	g.Runner = runnerFunc(func(_ context.Context, ref core.StepRef, _ core.Observer) core.Outcome {
+		key := ref.Key
+		if err := e.store.Append(ref.Key.Run, core.Record{Kind: core.RecordStep, Step: &key, State: core.StepFailed}); err != nil {
+			t.Fatal(err)
+		}
+		panic("after failure")
+	})
+	_, err := g.Land(context.Background(), phaseOne("false"))
+	if !errors.Is(err, core.ErrGate) || !strings.Contains(err.Error(), "panic in gate-fix: after failure") {
+		t.Fatalf("Land err = %v", err)
+	}
+	var finished bool
+	for _, ev := range e.store.events("step") {
+		if ev.Step == "gatefix" && ev.Fields["state"] == string(core.StepFailed) && strings.Contains(ev.Fields["reason"], "panic in gate-fix: after failure") {
+			finished = true
+		}
+	}
+	if !finished {
+		t.Fatal("gate-fix failed event with panic reason missing")
+	}
+}
+
+func TestAPanickingMilestoneReportIsSkippedAndThePrimaryTreeIsClean(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, _, _ := e.boundaryGate("panic")
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatalf("Land 1: %v", err)
+	}
+	landing, err := g.Land(context.Background(), phaseTwo(""))
+	if err != nil || landing.MergeSHA != e.head() {
+		t.Fatalf("Land 2 = %+v, %v", landing, err)
+	}
+	if status := gitCmd(t, e.root, "status", "--porcelain"); status != "" {
+		t.Fatalf("primary tree dirty: %q", status)
+	}
+	skips := e.store.events("report-skipped")
+	if len(skips) != 1 || skips[0].Fields["reason"] != "panic in milestone report: boom" {
+		t.Fatalf("report skips = %+v", skips)
+	}
+	var last *core.Record
+	for i := range e.store.records {
+		rec := &e.store.records[i]
+		if rec.Kind == core.RecordStep && rec.Step != nil && rec.Step.Kind == "milestone" && rec.Step.Attempt == 1 {
+			last = rec
+		}
+	}
+	if last == nil || last.State != core.StepFailed || !strings.Contains(last.Reason, "panic in milestone report: boom") {
+		t.Fatalf("last milestone record = %+v", last)
+	}
+}
+
+type panicCommitRepo struct{ *gitrepo.Repo }
+
+func (r panicCommitRepo) Commit(ctx context.Context, message string, paths ...string) (string, error) {
+	sha, err := r.Repo.Commit(ctx, message, paths...)
+	if err == nil {
+		panic("boom")
+	}
+	return sha, err
+}
+
+type panicTouchesRepo struct{ *gitrepo.Repo }
+
+func (r panicTouchesRepo) CommitTouches(commit string) ([]string, error) { panic("boom") }
+
+func TestAPanicAfterTheLandingCommitKeepsItUnrecorded(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		repo func(*gitrepo.Repo) core.Repo
+	}{
+		{"commit", func(r *gitrepo.Repo) core.Repo { return panicCommitRepo{r} }},
+		{"touches", func(r *gitrepo.Repo) core.Repo { return panicTouchesRepo{r} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newLandEnv(t)
+			e.phaseWork(1, "one.txt", "1\n")
+			before := e.head()
+			g := e.gate()
+			g.Repo = tc.repo(e.repo)
+			_, err := g.Land(context.Background(), phaseOne(""))
+			if err == nil || !strings.Contains(err.Error(), "panic in land: boom") {
+				t.Fatalf("Land err = %v", err)
+			}
+			if got := e.store.landings(); len(got) != 0 {
+				t.Fatalf("landing recorded: %+v", got)
+			}
+			if head := e.head(); head == before || gitCmd(t, e.root, "rev-parse", "HEAD^1") != before {
+				t.Fatalf("HEAD = %s, before = %s", head, before)
+			}
+			if status := gitCmd(t, e.root, "status", "--porcelain"); status != "" {
+				t.Fatalf("primary tree dirty: %q", status)
+			}
+			assertNoMergeHead(t, e.root)
+			intents := e.store.events(core.EventCommitIntent)
+			if len(intents) == 0 || intents[len(intents)-1].Phase != "1" || intents[len(intents)-1].Fields["tree"] != gitCmd(t, e.root, "rev-parse", "HEAD^{tree}") {
+				t.Fatalf("commit intents = %+v", intents)
+			}
+			if ev := e.face.events; !slices.ContainsFunc(ev, func(v core.Event) bool {
+				return v.Kind == "error" && v.Fields["reason"] == "panic in land: boom"
+			}) {
+				t.Fatalf("panic error event missing: %+v", ev)
+			}
+		})
+	}
+}
+
+type panicLandingStore struct{ core.Store }
+
+func (s panicLandingStore) Append(runID string, rec core.Record) error {
+	if rec.Kind == core.RecordLanding {
+		panic("boom")
+	}
+	return s.Store.Append(runID, rec)
+}
+
+func TestAPanicRecordingTheLandingLeavesTheStateResumeReconciles(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	before := e.head()
+	g := e.gate()
+	g.Store = panicLandingStore{e.store}
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		g.Land(context.Background(), phaseOne(""))
+	}()
+	if recovered != "boom" {
+		t.Fatalf("recovered = %v", recovered)
+	}
+	if head := e.head(); head == before || gitCmd(t, e.root, "rev-parse", "HEAD^1") != before {
+		t.Fatalf("HEAD = %s, before = %s", head, before)
+	}
+	if got := e.store.landings(); len(got) != 0 {
+		t.Fatalf("landing recorded: %+v", got)
+	}
+	merges := e.store.events(core.EventMergeIntent)
+	commits := e.store.events(core.EventCommitIntent)
+	if len(merges) == 0 || merges[len(merges)-1].Fields["base"] != before || len(commits) == 0 || commits[len(commits)-1].Fields["tree"] != gitCmd(t, e.root, "rev-parse", "HEAD^{tree}") {
+		t.Fatalf("merge intents = %+v; commit intents = %+v", merges, commits)
+	}
+}
+
+type panicResetRepo struct {
+	*gitrepo.Repo
+	resetCalls int
+}
+
+func (r *panicResetRepo) CommitTouches(commit string) ([]string, error) {
+	return []string{"one.txt"}, nil
+}
+
+func (r *panicResetRepo) ResetKeep(ref string) error {
+	r.resetCalls++
+	if r.resetCalls == 1 {
+		panic("boom")
+	}
+	return r.Repo.ResetKeep(ref)
+}
+
+func TestAPanicWhileRejectingTheLandingCommitResetsIt(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	head := e.head()
+	g := e.gate()
+	g.Repo = &panicResetRepo{Repo: e.repo}
+	_, err := g.Land(context.Background(), phaseOne(""))
+	if err == nil || !strings.Contains(err.Error(), "panic in land: boom") {
+		t.Fatalf("Land err = %v", err)
+	}
+	e.assertUntouched(head)
+}
+
+type panicReportCommitRepo struct{ *gitrepo.Repo }
+
+func (r panicReportCommitRepo) Commit(ctx context.Context, message string, paths ...string) (string, error) {
+	if strings.HasPrefix(message, "docs(report):") {
+		panic("report commit")
+	}
+	return r.Repo.Commit(ctx, message, paths...)
+}
+
+func TestMilestoneReportPanicAfterOKDoesNotEmitFailedStep(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, _, _ := e.boundaryGate("ok")
+	g.Boundary.Repo = panicReportCommitRepo{e.repo}
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatalf("Land 1: %v", err)
+	}
+	if _, err := g.Land(context.Background(), phaseTwo("")); err != nil {
+		t.Fatalf("Land 2: %v", err)
+	}
+	var terminal []string
+	for _, ev := range e.store.events("step") {
+		if ev.Step == "milestone" && (ev.Fields["state"] == string(core.StepOK) || ev.Fields["state"] == string(core.StepFailed)) {
+			terminal = append(terminal, ev.Fields["state"])
+		}
+	}
+	if !slices.Equal(terminal, []string{string(core.StepOK)}) {
+		t.Fatalf("milestone terminal events = %v", terminal)
+	}
+	if skips := e.store.events("report-skipped"); len(skips) != 1 || !strings.Contains(skips[0].Fields["reason"], "panic in milestone report: report commit") {
+		t.Fatalf("report skips = %+v", skips)
+	}
+}
+
+func TestMilestoneReportPanicAfterTerminalStepStopsSession(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, host, _ := e.boundaryGate("ok")
+	g.Boundary.Face = &panicFinishedFace{memFace: e.face}
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatalf("Land 1: %v", err)
+	}
+	if _, err := g.Land(context.Background(), phaseTwo("")); err != nil {
+		t.Fatalf("Land 2: %v", err)
+	}
+	host.mu.Lock()
+	stopped := slices.Clone(host.stopped)
+	host.mu.Unlock()
+	if len(stopped) != 1 {
+		t.Fatalf("stopped sessions = %v, want milestone session", stopped)
+	}
+}
+
+type panicMilestoneLoadStore struct {
+	core.Store
+	panicLoad bool
+}
+
+func (s *panicMilestoneLoadStore) Load(runID string) (core.RunState, error) {
+	if s.panicLoad {
+		panic("load in recovery")
+	}
+	return s.Store.Load(runID)
+}
+
+type panicMilestoneLoadFace struct {
+	*memFace
+	store *panicMilestoneLoadStore
+}
+
+func (f *panicMilestoneLoadFace) Emit(ev core.Event) {
+	if ev.Kind == "step" && ev.Step == "milestone" && ev.Fields["state"] == string(core.StepOK) {
+		f.store.panicLoad = true
+		panic("finished event")
+	}
+	f.memFace.Emit(ev)
+}
+
+func TestMilestoneReportRecoverySurvivesStoreLoadPanic(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, host, _ := e.boundaryGate("ok")
+	store := &panicMilestoneLoadStore{Store: e.store}
+	g.Boundary.Sessions.Store = store
+	g.Boundary.Face = &panicMilestoneLoadFace{memFace: e.face, store: store}
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatalf("Land 1: %v", err)
+	}
+	if _, err := g.Land(context.Background(), phaseTwo("")); err != nil {
+		t.Fatalf("Land 2: %v", err)
+	}
+	host.mu.Lock()
+	stopped := slices.Clone(host.stopped)
+	host.mu.Unlock()
+	if len(stopped) != 1 {
+		t.Fatalf("stopped sessions = %v, want milestone session", stopped)
 	}
 }

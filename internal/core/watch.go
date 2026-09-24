@@ -299,6 +299,7 @@ func (w *Watch) tick(ref StepRef, s *Session, started time.Time, t *ticking) {
 	if len(w.Checks) == 0 {
 		return
 	}
+	broken := make([]bool, len(w.Checks))
 	ticker := time.NewTicker(w.poll())
 	defer ticker.Stop()
 	for {
@@ -307,13 +308,31 @@ func (w *Watch) tick(ref StepRef, s *Session, started time.Time, t *ticking) {
 			return
 		case <-ticker.C:
 		}
-		for _, c := range w.Checks {
-			ctx := CheckContext{Step: ref, Session: s, Started: started, Now: w.now(), Repo: w.Repo, Store: w.Store, Plan: w.Plan}
-			for _, sig := range c.Run(ctx) {
-				w.accept(sig, c.Name())
+		for i, c := range w.Checks {
+			if broken[i] {
+				continue
 			}
+			ctx := CheckContext{Step: ref, Session: s, Started: started, Now: w.now(), Repo: w.Repo, Store: w.Store, Plan: w.Plan}
+			broken[i] = !w.runCheck(c, ctx)
 		}
 	}
+}
+
+func (w *Watch) runCheck(c Check, ctx CheckContext) (ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			key := ctx.Step.Key
+			name := "unnamed"
+			quietly(func() { name = c.Name() })
+			ev, _ := panicked(key.Phase, key.Kind, "watch check "+name, r)
+			quietly(func() { recordEvent(w.Store, w.Face, key.Run, ev) })
+			ok = false
+		}
+	}()
+	for _, sig := range c.Run(ctx) {
+		w.accept(sig, c.Name())
+	}
+	return true
 }
 
 func (w *Watch) Handle(sig Signal) (bool, string) {

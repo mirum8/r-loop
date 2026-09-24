@@ -17,6 +17,24 @@ import (
 	"r-loop/internal/core"
 )
 
+func TestAPanickingToolHandlerBecomesAToolError(t *testing.T) {
+	s := &Server{}
+	h := trackTool(s, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, struct{}, error) {
+		panic("boom")
+	})
+	_, _, err := h(context.Background(), nil, struct{}{})
+	if err == nil || !strings.Contains(err.Error(), "panic in tool: boom") {
+		t.Fatalf("tool error = %v", err)
+	}
+	done := make(chan struct{})
+	go func() { s.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("tool handler was not marked done")
+	}
+}
+
 var _ core.AskChannel = (*Server)(nil)
 
 func serve(t *testing.T) (*Server, string, context.CancelFunc) {

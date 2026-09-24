@@ -115,6 +115,25 @@ func newCheckRig(t *testing.T) *checkRig {
 	return &checkRig{loopRig: r, dogHost: host, watch: w, prompts: prompts}
 }
 
+func TestAPanicInThePhaseCheckNotifySkipsTheCheck(t *testing.T) {
+	r := newCheckRig(t)
+	r.dogHost.onPrompt = func(text string) {
+		if strings.HasPrefix(text, "check phase") {
+			panic("boom")
+		}
+	}
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	skips := r.events(phaseCheckSkipped)
+	if len(skips) != 1 || skips[0].Phase != "1" || skips[0].Fields["reason"] != "panic in phase check: boom" {
+		t.Fatalf("phase-check-skipped = %+v", skips)
+	}
+	if errors := r.events("error"); len(errors) == 0 {
+		t.Fatal("panic error event missing")
+	}
+}
+
 func (r *checkRig) signal(kind SignalKind, step string, reason string) (bool, string) {
 	return r.watch.Handle(Signal{Kind: kind, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: "1", Kind: step}, Reason: reason})
 }

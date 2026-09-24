@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,7 +61,7 @@ func (b *MilestoneBoundary) closed(phase Phase) (Milestone, bool) {
 	return Milestone{}, false
 }
 
-func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone) string {
+func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone) (reason string) {
 	ref := StepRef{
 		Key:       StepKey{Run: b.RunID, Phase: phase.ID, Kind: b.Kind.Name, Attempt: 1},
 		Kind:      b.Kind,
@@ -75,6 +76,32 @@ func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone
 		return "record: " + err.Error()
 	}
 	rec := stepRecorder{b.Sessions.Store, b.Face}
+	var s *Session
+	defer func() {
+		if r := recover(); r != nil {
+			ev, err := panicked(phase.ID, b.Kind.Name, "milestone report", r)
+			quietly(func() { recordEvent(b.Sessions.Store, b.Face, b.RunID, ev) })
+			reason = err.Error()
+			if s != nil {
+				quietly(func() { b.Sessions.Stop(s) })
+			}
+			var done bool
+			if terr := quietly(func() { _, done = b.Sessions.terminal(key) }); terr != nil {
+				reason += "; terminal: " + terr.Error()
+			}
+			if done {
+				return
+			}
+			var rerr error
+			if qerr := quietly(func() { rerr = b.Sessions.record(ref.Key, StepFailed, reason) }); qerr != nil {
+				rerr = qerr
+			}
+			if rerr != nil && !errors.Is(rerr, errStepEnded) {
+				reason += "; record: " + rerr.Error()
+			}
+			quietly(func() { rec.finished(ref, Outcome{State: StepFailed, Reason: reason}) })
+		}
+	}()
 	s, err := b.Sessions.Spawn(ctx, ref)
 	var out Outcome
 	if err != nil {

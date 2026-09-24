@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -74,6 +76,211 @@ type eventsHost struct {
 	typed   map[string]bool
 	refuse  map[string]int
 	stopped map[string]AgentState
+}
+
+type panicAnswerHost struct{ *eventsHost }
+
+func (h panicAnswerHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	if strings.HasPrefix(text, "r-loop: answer to ") {
+		panic("boom")
+	}
+	return h.eventsHost.Prompt(agent, text, wait, timeout)
+}
+
+type panicOnceAnswerHost struct {
+	*eventsHost
+	panicked atomic.Bool
+}
+
+func (h *panicOnceAnswerHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	if strings.HasPrefix(text, "r-loop: answer to ") && h.panicked.CompareAndSwap(false, true) {
+		panic("boom")
+	}
+	return h.eventsHost.Prompt(agent, text, wait, timeout)
+}
+
+type panicAnswerAsk struct{ *eventsAsk }
+
+func (panicAnswerAsk) Answer(string, string, string, string) error { panic("boom") }
+
+type panicFirstQuestionStore struct {
+	Store
+	panicked bool
+}
+
+type panicAnswerReleaseStore struct {
+	Store
+	panicked bool
+}
+
+func (s *panicAnswerReleaseStore) Append(runID string, rec Record) error {
+	if rec.Kind == RecordStep && rec.State == StepRunning && !s.panicked {
+		s.panicked = true
+		panic("release boom")
+	}
+	return s.Store.Append(runID, rec)
+}
+
+func (s *panicFirstQuestionStore) Append(runID string, rec Record) error {
+	if rec.Kind == RecordQuestion && !s.panicked {
+		s.panicked = true
+		panic("boom")
+	}
+	return s.Store.Append(runID, rec)
+}
+
+func TestAPanicBeforeQuestionRegistrationAnswersTheAskingPane(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.runDir = r.store.dir
+	r.loop.Store = &panicFirstQuestionStore{Store: r.store}
+	key := StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}
+	s := &Session{Ref: StepRef{Key: key}, Agent: "rloop-p2-implement"}
+	r.loop.setLive(s)
+	r.ehost.stopped[s.Agent] = AgentIdle
+
+	r.loop.question(context.Background(), Question{ID: "q1", Step: key, Text: "which db?"})
+
+	waitFor(t, func() bool { return len(r.calls("SessionHost.Typed ")) == 1 })
+	if got := r.calls("SessionHost.Typed "); !reflect.DeepEqual(got, []string{`rloop-p2-implement "r-loop: answer to q1 (by r-loop): withdrawn (panic in question q1: boom); continue without an answer"`}) {
+		t.Errorf("typed %v", got)
+	}
+}
+
+func TestAPanicRoutingAQuestionWithdrawsItAndTheStepGoesOn(t *testing.T) {
+	r := newEventsRig(t)
+	r.host.behaviour["rloop-p2-implement"] = "ask"
+	r.watcher.route = func(context.Context, Question) bool { panic("boom") }
+
+	if code := r.run(RunOptions{Phases: []string{"2"}}); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	want := []string{"queued", "spawned", "running", "waiting-input", "running", "ok"}
+	if got := r.stepStates("implement"); !reflect.DeepEqual(got, want) {
+		t.Errorf("implement states %v, want %v", got, want)
+	}
+	st, err := r.store.Load("run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Questions) != 1 || st.Questions[0].ID != "q1" || st.Questions[0].AnsweredBy != "withdrawn" || st.Questions[0].Answer != "panic in question q1: boom" {
+		t.Errorf("questions %+v", st.Questions)
+	}
+	if got := r.calls("SessionHost.Typed "); !reflect.DeepEqual(got, []string{`rloop-p2-implement "r-loop: answer to q1 (by r-loop): withdrawn (panic in question q1: boom); continue without an answer"`}) {
+		t.Errorf("typed %v", got)
+	}
+	if got := r.calls("AskChannel.Answer "); len(got) != 1 || !strings.Contains(got[0], "q1") || !strings.Contains(got[0], "withdrawn") {
+		t.Errorf("answers %v", got)
+	}
+	if got := r.events("error"); len(got) == 0 || got[0].Fields["reason"] != "panic in question q1: boom" {
+		t.Errorf("error events %+v", got)
+	}
+}
+
+func TestAPanicTypingAnAnswerWithdrawsTheQuestion(t *testing.T) {
+	r := newEventsRig(t)
+	r.host.behaviour["rloop-p2-implement"] = "ask"
+	r.watcher.route = func(ctx context.Context, q Question) bool {
+		r.loop.Deliver(q.ID, "sqlite", "watchdog", "")
+		return true
+	}
+	r.loop.Sessions.Host = panicAnswerHost{r.ehost}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 1)
+	go func() { done <- r.loop.Run(ctx, RunOptions{Phases: []string{"2"}}) }()
+	waitFor(t, func() bool {
+		r.store.mu.Lock()
+		defer r.store.mu.Unlock()
+		var withdrawn, panicked bool
+		for _, rec := range r.store.Records["run-1"] {
+			if rec.Kind == RecordQuestion && rec.Question != nil && rec.Question.ID == "q1" && rec.Question.AnsweredBy == "withdrawn" && rec.Question.Answer == "panic in answer hand-off q1: boom" {
+				withdrawn = true
+			}
+			if rec.Kind == RecordEvent && rec.Event != nil && rec.Event.Kind == "error" && rec.Event.Fields["reason"] == "panic in answer hand-off q1: boom" {
+				panicked = true
+			}
+		}
+		return withdrawn && panicked
+	})
+	cancel()
+	select {
+	case code := <-done:
+		if code != 4 {
+			t.Errorf("exit %d, want 4", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not stop")
+	}
+}
+
+func TestAPanicTypingAnAnswerSendsWithdrawalToTheAskingPane(t *testing.T) {
+	r := newEventsRig(t)
+	r.host.behaviour["rloop-p2-implement"] = "ask"
+	r.watcher.route = func(ctx context.Context, q Question) bool {
+		r.loop.Deliver(q.ID, "sqlite", "watchdog", "")
+		return true
+	}
+	r.loop.Sessions.Host = &panicOnceAnswerHost{eventsHost: r.ehost}
+
+	if code := r.run(RunOptions{Phases: []string{"2"}}); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	got := r.calls("SessionHost.Typed ")
+	if len(got) != 1 || !strings.Contains(got[0], "withdrawn (panic in answer hand-off q1: boom); continue without an answer") {
+		t.Errorf("typed %v", got)
+	}
+}
+
+func TestAPanicAfterAnswerDeliveryDoesNotSendWithdrawal(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.Store = &panicAnswerReleaseStore{Store: r.store}
+	r.ehost.stopped["rloop-p2-implement"] = AgentIdle
+	key := StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}
+	s := &Session{Ref: StepRef{Key: key}, Agent: "rloop-p2-implement"}
+	q := Question{ID: "q1", Step: key, Text: "which db?"}
+	r.loop.track(q, s, s.Agent)
+	r.loop.openQuestion(s, 1)
+	open, ok := r.loop.answer(q.ID, "sqlite", "watchdog", "")
+	if !ok {
+		t.Fatal("question was not claimed")
+	}
+
+	r.loop.hand(open, answerMessage(q.ID, "sqlite", "watchdog", ""))
+
+	got := r.calls("SessionHost.Typed ")
+	if len(got) != 1 || !strings.Contains(got[0], "sqlite") {
+		t.Errorf("typed %v, want only the delivered answer", got)
+	}
+}
+
+func TestAPanicAnsweringALandStageQuestionIsRecordedWithoutACrash(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.Ask = panicAnswerAsk{r.ask}
+	q := Question{ID: "q-gatefix", Step: StepKey{Run: "run-1", Phase: "1", Kind: "gatefix", Attempt: 1}, Text: "which?"}
+	done := make(chan struct{})
+	go func() { r.loop.question(context.Background(), q); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("question did not return")
+	}
+	if _, err := os.Stat(filepath.Join(r.store.dir, "report.md")); err != nil {
+		t.Fatalf("report was not written in the test run directory: %v", err)
+	}
+	if got := r.events("error"); len(got) == 0 || got[0].Fields["reason"] != "panic in question q-gatefix: boom" {
+		t.Errorf("error events %+v", got)
+	}
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	var last *Question
+	for _, rec := range r.store.Records["run-1"] {
+		if rec.Kind == RecordQuestion && rec.Question != nil && rec.Question.ID == q.ID {
+			last = rec.Question
+		}
+	}
+	if last == nil || last.AnsweredBy != "withdrawn" || last.Answer != "panic in question q-gatefix: boom" {
+		t.Errorf("question %+v", last)
+	}
 }
 
 func (h *eventsHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
@@ -201,6 +408,7 @@ type eventsRig struct {
 
 func newEventsRig(t *testing.T) *eventsRig {
 	r := &eventsRig{loopRig: newLoopRig(t)}
+	r.loop.runDir = r.store.dir
 	r.watcher = &fakeWatcher{log: r.shared, signals: make(chan Signal), restarts: make(chan Restart, 8)}
 	r.ask = &eventsAsk{fakeAskChannel: fakeAskChannel{callLog: callLog{Shared: r.shared}, Asked: make(chan Question, 1)}}
 	r.ehost = &eventsHost{agentSim: r.host, ask: r.ask, asked: map[string]int{}, typed: map[string]bool{}, refuse: map[string]int{}, stopped: map[string]AgentState{}}
