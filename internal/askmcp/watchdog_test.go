@@ -236,7 +236,7 @@ func TestEachToolDelegatesToItsHandler(t *testing.T) {
 			calls = append(calls, "propose "+class+"|"+command+"|"+why)
 			return "authorised", ""
 		},
-		Restart: func(step, addendum, provider, maintainerSaid string) (bool, string) {
+		Restart: func(step, addendum, provider, model, effort, maintainerSaid string) (bool, string) {
 			calls = append(calls, "restart "+step+"|"+addendum+"|"+provider)
 			return false, "no authorised remedy"
 		},
@@ -340,7 +340,7 @@ func TestMaintainerSaidReachesTheHandlersAndIsRecorded(t *testing.T) {
 			said = append(said, maintainerSaid)
 			return "authorised", ""
 		},
-		Restart: func(step, addendum, provider, maintainerSaid string) (bool, string) {
+		Restart: func(step, addendum, provider, model, effort, maintainerSaid string) (bool, string) {
 			said = append(said, maintainerSaid)
 			return true, ""
 		},
@@ -538,7 +538,7 @@ func TestEveryOtherWatchdogCallResumesBeforeItsHandlerRuns(t *testing.T) {
 			calls = append(calls, "propose")
 			return "ask", ""
 		},
-		Restart: func(string, string, string, string) (bool, string) {
+		Restart: func(string, string, string, string, string, string) (bool, string) {
 			calls = append(calls, "restart")
 			return true, ""
 		},

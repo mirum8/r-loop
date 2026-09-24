@@ -648,13 +648,13 @@ func TestRestartInsideTheWindowRerunsAsAttempt2WithTheAddendum(t *testing.T) {
 	}
 }
 
-func TestRestartOnAProviderUsesTheFallbackModelAndEffortOrNone(t *testing.T) {
+func TestRestartOnAProviderUsesTheFallbackModelAndEffortOrTheGivenOnes(t *testing.T) {
 	cases := []struct {
-		provider string
-		want     string
+		provider, model, effort string
+		want                    string
 	}{
-		{"claude", "claude/sonnet/low"},
-		{"gemini", "gemini//"},
+		{"claude", "", "", "claude/sonnet/low"},
+		{"gemini", "pro", "high", "gemini/pro/high"},
 	}
 	for _, c := range cases {
 		t.Run(c.provider, func(t *testing.T) {
@@ -667,7 +667,7 @@ func TestRestartOnAProviderUsesTheFallbackModelAndEffortOrNone(t *testing.T) {
 			r.host.behaviour["rloop-p2-implement"] = "fail"
 			r.watcher.ended = func(ref StepRef, out Outcome) {
 				if out.State == StepFailed {
-					r.watcher.restarts <- Restart{Step: ref.Key, Provider: c.provider}
+					r.watcher.restarts <- Restart{Step: ref.Key, Provider: c.provider, Model: c.model, Effort: c.effort}
 				}
 			}
 

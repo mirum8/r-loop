@@ -21,7 +21,7 @@ func TestAnAllowListedProviderRestartOnTheRowsFallbackIsAccepted(t *testing.T) {
 	rem.Propose("provider", "switch to the fallback", "codex usage limit reached", "")
 	got := takeRestart(w)
 
-	ok, reason := rem.Restart("phase-2/implement", "", "claude", "")
+	ok, reason := rem.Restart("phase-2/implement", "", "claude", "", "", "")
 
 	if !ok || reason != "" {
 		t.Fatalf("restart %v %q", ok, reason)
@@ -37,15 +37,15 @@ func TestAProviderRestartOnAnotherProviderNeedsTheMaintainersWord(t *testing.T) 
 	rem.Propose("provider", "switch provider", "codex usage limit reached", "")
 	takeRestart(w)
 
-	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "")
+	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "pro", "high", "")
 	if ok || !strings.Contains(reason, "gemini is not the row's fallback") || !strings.Contains(reason, "maintainer_said") {
 		t.Fatalf("restart without consent %v %q", ok, reason)
 	}
-	if ok, reason := rem.Restart("phase-2/implement", "", "gemini", " "); ok || !strings.Contains(reason, "maintainer_said") {
+	if ok, reason := rem.Restart("phase-2/implement", "", "gemini", "pro", "high", " "); ok || !strings.Contains(reason, "maintainer_said") {
 		t.Fatalf("restart on a blank quote %v %q", ok, reason)
 	}
 
-	ok, reason = rem.Restart("phase-2/implement", "", "gemini", "yes, use gemini")
+	ok, reason = rem.Restart("phase-2/implement", "", "gemini", "pro", "high", "yes, use gemini")
 
 	if !ok {
 		t.Fatalf("restart %v %q", ok, reason)
@@ -61,10 +61,10 @@ func TestAProviderRestartWithOnlyTheAllowListAndNoRemedyAcceptsOnlyTheFallback(t
 	rem, w := fallbackRemedies(t, store, "provider")
 	takeRestart(w)
 
-	if ok, reason := rem.Restart("phase-2/implement", "", "gemini", ""); ok || !strings.Contains(reason, "is not the row's fallback") {
+	if ok, reason := rem.Restart("phase-2/implement", "", "gemini", "pro", "high", ""); ok || !strings.Contains(reason, "is not the row's fallback") {
 		t.Errorf("gemini restart %v %q", ok, reason)
 	}
-	if ok, reason := rem.Restart("phase-2/implement", "", "claude", ""); !ok {
+	if ok, reason := rem.Restart("phase-2/implement", "", "claude", "", "", ""); !ok {
 		t.Errorf("fallback restart %v %q", ok, reason)
 	}
 }
@@ -90,7 +90,7 @@ func TestAFallbackRestartRunsOnTheFallbacksModelAndEffortAndTheReportNamesAllThr
 			time.Sleep(time.Millisecond)
 		}
 		rem.Propose("provider", "switch to the fallback", "codex usage limit reached", "")
-		_, reason := rem.Restart("phase-2/implement", "", "claude", "")
+		_, reason := rem.Restart("phase-2/implement", "", "claude", "", "", "")
 		decided <- reason
 	}()
 
@@ -116,7 +116,7 @@ func TestAnAllowListedRestartClassDoesNotSwitchProviders(t *testing.T) {
 	rem, w := fallbackRemedies(t, store, "restart", "retry")
 	takeRestart(w)
 
-	ok, reason := rem.Restart("phase-2/implement", "use claude", "claude", "")
+	ok, reason := rem.Restart("phase-2/implement", "use claude", "claude", "", "", "")
 
 	if ok || reason != "no authorised remedy" {
 		t.Errorf("restart %v %q", ok, reason)
@@ -129,7 +129,7 @@ func TestAMaintainerApprovedProviderRemedyDoesNotAuthoriseAnotherProviderWithout
 	rem.Propose("provider", "switch to claude", "codex usage limit reached", "yes, go ahead")
 	takeRestart(w)
 
-	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "")
+	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "pro", "high", "")
 
 	if ok || !strings.Contains(reason, "gemini is not the row's fallback") {
 		t.Errorf("restart %v %q", ok, reason)
@@ -142,7 +142,7 @@ func TestAMaintainerApprovedProviderRemedyNamingTheProviderIsNotAskedAgain(t *te
 	rem.Propose("provider", "restart phase-2/implement on gemini", "codex usage limit reached", "yes, go ahead")
 	got := takeRestart(w)
 
-	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "")
+	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "pro", "high", "")
 
 	if !ok || reason != "" {
 		t.Fatalf("restart %v %q", ok, reason)
@@ -161,7 +161,7 @@ func TestARestartThatNeedsTheMaintainerShowsTheWatchdogWaitingForThem(t *testing
 	face := &fakeFace{}
 	rem.Dog = &Watchdog{RunID: "run-1", Store: store, Face: face}
 
-	ok, _ := rem.Restart("phase-2/implement", "", "gemini", "")
+	ok, _ := rem.Restart("phase-2/implement", "", "gemini", "pro", "high", "")
 
 	if ok || len(face.Events) != 1 || face.Events[0].Kind != "watchdog-waiting" || !strings.Contains(face.Events[0].Fields["question"], "gemini") {
 		t.Errorf("restart %v, emitted %+v", ok, face.Events)
@@ -175,7 +175,7 @@ func TestARestartTheMaintainerConsentedToIsOneHumanTouch(t *testing.T) {
 	rem.Face = face
 	takeRestart(w)
 
-	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "yes, use gemini")
+	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "pro", "high", "yes, use gemini")
 
 	if !ok {
 		t.Fatalf("restart %v %q", ok, reason)
@@ -201,7 +201,7 @@ func TestARestartOnAMaintainerApprovedRemedyCountsNoSecondConsent(t *testing.T) 
 	rem.Propose("provider", "restart phase-2/implement on gemini", "codex usage limit reached", "yes, go ahead")
 	takeRestart(w)
 
-	if ok, reason := rem.Restart("phase-2/implement", "", "gemini", "yes, go ahead"); !ok {
+	if ok, reason := rem.Restart("phase-2/implement", "", "gemini", "pro", "high", "yes, go ahead"); !ok {
 		t.Fatalf("restart %v %q", ok, reason)
 	}
 	var human []Event
@@ -212,5 +212,18 @@ func TestARestartOnAMaintainerApprovedRemedyCountsNoSecondConsent(t *testing.T) 
 	}
 	if len(human) != 1 || human[0].Fields["id"] != "remedy-1" {
 		t.Errorf("human events %+v, want only the consent to remedy-1", human)
+	}
+}
+
+func TestARestartOnAnotherProviderWithoutModelAndEffortIsRefused(t *testing.T) {
+	store := &fakeStore{}
+	rem, w := fallbackRemedies(t, store, "provider")
+	rem.Propose("provider", "switch provider", "codex usage limit reached", "")
+	takeRestart(w)
+
+	ok, reason := rem.Restart("phase-2/implement", "", "gemini", "pro", "", "yes, use gemini")
+
+	if ok || reason != "restart on gemini needs a model and an effort: it is not the row's fallback" {
+		t.Fatalf("restart %v %q", ok, reason)
 	}
 }

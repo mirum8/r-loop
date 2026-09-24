@@ -129,7 +129,7 @@ func TestARestartAfterAnAuthorisedRestartRemedyIsQueuedForTheHeldStep(t *testing
 
 	got := takeRestart(w)
 
-	ok, reason := rem.Restart("phase-2/implement", "use the fake", "", "")
+	ok, reason := rem.Restart("phase-2/implement", "use the fake", "", "", "", "")
 
 	if !ok || reason != "" {
 		t.Fatalf("restart %v %q", ok, reason)
@@ -147,7 +147,7 @@ func TestARestartTheLoopRefusesIsNotAcceptedWithTheLoopsReason(t *testing.T) {
 		rs := <-w.Restarts()
 		rs.Reply <- "run halted: watchdog: wrong turn"
 	}()
-	ok, reason := rem.Restart("phase-2/implement", "", "", "")
+	ok, reason := rem.Restart("phase-2/implement", "", "", "", "", "")
 	if ok || reason != "run halted: watchdog: wrong turn" {
 		t.Errorf("restart %t %q", ok, reason)
 	}
@@ -172,7 +172,7 @@ func TestARestartTheLoopRefusesAtItsRestartLimitIsNotAccepted(t *testing.T) {
 			}
 			time.Sleep(time.Millisecond)
 		}
-		ok, reason := rem.Restart("phase-2/implement", "again", "", "")
+		ok, reason := rem.Restart("phase-2/implement", "again", "", "", "", "")
 		decided <- struct {
 			ok     bool
 			reason string
@@ -203,7 +203,7 @@ func TestARestartTheLoopNeverTakesBeforeTheWindowClosesIsNotAccepted(t *testing.
 		w.Release(key)
 	}()
 
-	ok, reason := rem.Restart("phase-2/implement", "", "", "")
+	ok, reason := rem.Restart("phase-2/implement", "", "", "", "", "")
 
 	if ok || reason != "run halted" {
 		t.Errorf("restart %v %q", ok, reason)
@@ -261,11 +261,11 @@ func TestARetryNeedsAnAddendumAndAProviderRemedyNeedsAProvider(t *testing.T) {
 	rem.Propose("retry", "none", "flaky", "")
 	rem.Propose("provider", "none", "codex is down", "")
 
-	if ok, reason := rem.Restart("phase-2/implement", "", "", ""); ok || reason != "no authorised remedy" {
+	if ok, reason := rem.Restart("phase-2/implement", "", "", "", "", ""); ok || reason != "no authorised remedy" {
 		t.Errorf("bare restart %v %q", ok, reason)
 	}
 	takeRestart(w)
-	if ok, reason := rem.Restart("phase-2/implement", "", "claude", ""); !ok {
+	if ok, reason := rem.Restart("phase-2/implement", "", "claude", "", "", ""); !ok {
 		t.Errorf("provider restart %v %q", ok, reason)
 	}
 }
@@ -278,7 +278,7 @@ func TestARestartOfAnOkStepIsRefused(t *testing.T) {
 	w.StepEnded(StepRef{Key: key}, Outcome{State: StepOK})
 	rem := newRemedies(w, store, "restart")
 
-	ok, reason := rem.Restart("phase-1/plan", "", "", "")
+	ok, reason := rem.Restart("phase-1/plan", "", "", "", "", "")
 
 	if ok || reason != "step is ok" {
 		t.Errorf("restart %v %q", ok, reason)
@@ -291,7 +291,7 @@ func TestARestartWithNoOpenRemedyWindowIsRefusedAsRunHalted(t *testing.T) {
 	w.Release(key)
 	rem := newRemedies(w, store, "restart")
 
-	ok, reason := rem.Restart("phase-2/implement", "", "", "")
+	ok, reason := rem.Restart("phase-2/implement", "", "", "", "", "")
 
 	if ok || reason != "run halted" {
 		t.Errorf("restart %v %q", ok, reason)
@@ -304,7 +304,7 @@ func TestARefusedRemedyLeadsToNoRestart(t *testing.T) {
 	rem := newRemedies(w, store)
 	rem.Propose("restart", "herdr pane close stuck", "the agent froze", "")
 
-	ok, reason := rem.Restart("phase-2/implement", "", "", "")
+	ok, reason := rem.Restart("phase-2/implement", "", "", "", "", "")
 
 	if ok || reason != "no authorised remedy" {
 		t.Errorf("restart %v %q", ok, reason)
@@ -324,7 +324,7 @@ func TestARestartPastMaxRestartsIsRefused(t *testing.T) {
 	}
 	rem := newRemedies(w, store, "restart")
 
-	ok, reason := rem.Restart("phase-2/implement", "", "", "")
+	ok, reason := rem.Restart("phase-2/implement", "", "", "", "", "")
 
 	if ok || reason != "restart limit 2 reached" {
 		t.Errorf("restart %v %q", ok, reason)
@@ -338,7 +338,7 @@ func TestAnAuthorisedRemedyIsSpentByOneRestart(t *testing.T) {
 	rem.Propose("restart", "herdr pane close stuck", "froze", "yes, go ahead")
 	store.Append("run-1", Record{Kind: RecordEvent, Event: &Event{Kind: "restart", Fields: map[string]string{"step": "phase-2/implement", "remedy": "remedy-1"}}})
 
-	if ok, reason := rem.Restart("phase-2/implement", "", "", ""); ok || reason != "no authorised remedy" {
+	if ok, reason := rem.Restart("phase-2/implement", "", "", "", "", ""); ok || reason != "no authorised remedy" {
 		t.Errorf("restart %v %q", ok, reason)
 	}
 }
@@ -359,7 +359,7 @@ func TestAnAuthorisedRestartRerunsTheStepAsANewAttemptWithTheAddendum(t *testing
 			time.Sleep(time.Millisecond)
 		}
 		decided <- decisionOf(rem.Propose("restart", "herdr pane close stuck", "froze", "yes, go ahead"))
-		_, reason := rem.Restart("phase-2/implement", "use the fake", "", "")
+		_, reason := rem.Restart("phase-2/implement", "use the fake", "", "", "", "")
 		decided <- reason
 	}()
 
@@ -429,7 +429,7 @@ func TestAFailedGateStepIsRestartedInTheRemedyWindowWithoutBlockingThePhase(t *t
 			}
 			time.Sleep(time.Millisecond)
 		}
-		_, reason := rem.Restart("phase-2/gate", "retry", "", "")
+		_, reason := rem.Restart("phase-2/gate", "retry", "", "", "", "")
 		decided <- reason
 	}()
 	code := r.run(RunOptions{Phases: []string{"2"}})
@@ -529,7 +529,7 @@ func TestARestartOnAProviderWithoutAnAskChannelIsRefused(t *testing.T) {
 	rem.Fallbacks = map[string]Fallback{"implement": {Provider: "plainbot"}}
 
 	for _, said := range []string{"", "yes, use plainbot"} {
-		if ok, reason := rem.Restart("phase-2/implement", "", "plainbot", said); ok || reason != "provider plainbot has no MCP ask channel" {
+		if ok, reason := rem.Restart("phase-2/implement", "", "plainbot", "", "", said); ok || reason != "provider plainbot has no MCP ask channel" {
 			t.Errorf("maintainer_said %q: %v %q", said, ok, reason)
 		}
 	}

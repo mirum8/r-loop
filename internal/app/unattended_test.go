@@ -197,7 +197,7 @@ func (d *restartingDog) Prompt(agent, text string, wait bool, timeout time.Durat
 		return nil
 	}
 	go func() {
-		accepted, reason := d.remedies.Restart(step, "", "", "")
+		accepted, reason := d.remedies.Restart(step, "", "", "", "", "")
 		d.mu.Lock()
 		d.replies = append(d.replies, step+" "+map[bool]string{true: "accepted", false: reason}[accepted])
 		d.mu.Unlock()

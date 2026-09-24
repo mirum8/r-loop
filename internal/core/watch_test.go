@@ -636,7 +636,7 @@ func TestAnAcceptedHaltForTheHeldStepClosesItsRemedyWindow(t *testing.T) {
 		t.Errorf("forwarded %+v", fwd)
 	}
 
-	if ok, reason := rem.Restart("phase-2/implement", "", "", ""); ok || reason != "run halted" {
+	if ok, reason := rem.Restart("phase-2/implement", "", "", "", "", ""); ok || reason != "run halted" {
 		t.Errorf("restart %v %q", ok, reason)
 	}
 }
@@ -653,7 +653,7 @@ func TestARejectedWatchdogSignalDuringTheRemedyWindowHaltsTheHeldStep(t *testing
 	if fwd.Kind != SignalHalt || fwd.Step != key || !strings.HasPrefix(fwd.Reason, "watchdog signal rejected: ") {
 		t.Errorf("forwarded %+v", fwd)
 	}
-	if ok, reason := rem.Restart("phase-2/implement", "", "", ""); ok || reason != "run halted" {
+	if ok, reason := rem.Restart("phase-2/implement", "", "", "", "", ""); ok || reason != "run halted" {
 		t.Errorf("restart %v %q", ok, reason)
 	}
 }

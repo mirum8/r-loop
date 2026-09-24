@@ -38,6 +38,7 @@ type Watcher interface {
 type Restart struct {
 	Step                       StepKey
 	Addendum, Provider, Remedy string
+	Model, Effort              string
 	Reply                      chan string
 }
 
@@ -633,8 +634,8 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 		}
 		l.restarts[step]++
 		if rs.Provider != "" {
-			kind.Row.Provider, kind.Row.Model, kind.Row.Effort = rs.Provider, "", ""
-			if fb := kind.Row.Fallback; fb.Provider == rs.Provider {
+			kind.Row.Provider, kind.Row.Model, kind.Row.Effort = rs.Provider, rs.Model, rs.Effort
+			if fb := kind.Row.Fallback; fb.Provider == rs.Provider && rs.Model == "" {
 				kind.Row.Model, kind.Row.Effort = fb.Model, fb.Effort
 			}
 		}

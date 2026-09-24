@@ -110,7 +110,7 @@ func (r *Remedies) decide(step StepKey, class, command, why string, consent func
 	return rem, nil
 }
 
-func (r *Remedies) Restart(step, addendum, provider, maintainerSaid string) (bool, string) {
+func (r *Remedies) Restart(step, addendum, provider, model, effort, maintainerSaid string) (bool, string) {
 	phase, kind, ok := ParseStepName(step)
 	if !ok {
 		return false, fmt.Sprintf("step %q is not phase-<N>/<kind>", step)
@@ -143,6 +143,9 @@ func (r *Remedies) Restart(step, addendum, provider, maintainerSaid string) (boo
 		return false, "provider " + provider + " has no MCP ask channel"
 	}
 	fallback := provider == "" || provider == r.Fallbacks[kind].Provider
+	if !fallback && (model == "" || effort == "") {
+		return false, "restart on " + provider + " needs a model and an effort: it is not the row's fallback"
+	}
 	fits := func(rem Remedy) bool {
 		switch {
 		case provider != "":
@@ -186,7 +189,7 @@ func (r *Remedies) Restart(step, addendum, provider, maintainerSaid string) (boo
 	r.Watch.init()
 	reply := make(chan string, 1)
 	select {
-	case r.Watch.restarts <- Restart{Step: key, Addendum: addendum, Provider: provider, Remedy: remedy, Reply: reply}:
+	case r.Watch.restarts <- Restart{Step: key, Addendum: addendum, Provider: provider, Model: model, Effort: effort, Remedy: remedy, Reply: reply}:
 	case <-closed:
 		return false, "run halted"
 	}

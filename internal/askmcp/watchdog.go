@@ -20,7 +20,7 @@ var errMalformedStep = errors.New("not phase-<N>/<kind>")
 type WatchdogHandlers struct {
 	Signal  func(core.Signal) (bool, string)
 	Propose func(class, command, why, maintainerSaid string) (string, string)
-	Restart func(step, addendum, provider, maintainerSaid string) (bool, string)
+	Restart func(step, addendum, provider, model, effort, maintainerSaid string) (bool, string)
 	Answer  func(id, answer, citation string) (bool, string)
 
 	AskMaintainer func(question string, options []string, recommended string) error
@@ -54,6 +54,8 @@ type restartInput struct {
 	Step           string `json:"step"`
 	Addendum       string `json:"addendum,omitempty"`
 	Provider       string `json:"provider,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
 	MaintainerSaid string `json:"maintainer_said,omitempty"`
 }
 
@@ -146,9 +148,9 @@ func (s *Server) watchdogServer() *mcp.Server {
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "restart_step",
-		Description: "Restart a failed or stalled step phase-<N>/<kind> as a new attempt, optionally with an addendum or another provider. A provider that is not the row's fallback needs maintainer_said: the maintainer's reply, quoted, after you asked them in your own session.",
+		Description: "Restart a failed or stalled step phase-<N>/<kind> as a new attempt, optionally with an addendum or another provider. A provider that is not the row's fallback needs model, effort and maintainer_said: the maintainer's reply, quoted, after you asked them in your own session.",
 	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in restartInput) (*mcp.CallToolResult, acceptedOutput, error) {
-		if err := s.record("restart_step", in.Step, map[string]string{"step": in.Step, "addendum": in.Addendum, "provider": in.Provider, "maintainer_said": in.MaintainerSaid}); err != nil {
+		if err := s.record("restart_step", in.Step, map[string]string{"step": in.Step, "addendum": in.Addendum, "provider": in.Provider, "model": in.Model, "effort": in.Effort, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
 		if err := s.resume(); err != nil {
@@ -158,7 +160,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 		if h == nil {
 			return nil, acceptedOutput{Reason: notAvailable}, nil
 		}
-		ok, reason := h(in.Step, in.Addendum, in.Provider, in.MaintainerSaid)
+		ok, reason := h(in.Step, in.Addendum, in.Provider, in.Model, in.Effort, in.MaintainerSaid)
 		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
