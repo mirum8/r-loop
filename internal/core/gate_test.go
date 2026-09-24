@@ -48,6 +48,27 @@ func (e *landEnv) itemGate(suite string) (*core.LandGate, *[]string) {
 	return g, &calls
 }
 
+func TestItemGateCopiesNonGoTestsIntoTheRedWorktree(t *testing.T) {
+	for _, testPath := range []string{"src/test/java/a/FooTest.java", "app/FooTest.kt", "tests/test_foo.py", "web/foo.spec.ts", "pkg/__tests__/x.js"} {
+		t.Run(testPath, func(t *testing.T) {
+			e := newLandEnv(t)
+			marker := filepath.Join(t.TempDir(), "runs")
+			e.itemWork(1, map[string]string{
+				".task-plans/phase-1-first.md": strings.Replace(itemPlan, "sh feature_test.sh", "sh "+testPath, 1),
+				testPath:                       "echo run >> '" + marker + "'\ntest -f feature.txt\n",
+				"feature.txt":                  "new\n",
+			})
+			g, _ := e.itemGate("true")
+			if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+				t.Fatalf("Land: %v", err)
+			}
+			if got := readFile(t, marker); got != "run\nrun\n" {
+				t.Errorf("runs = %q", got)
+			}
+		})
+	}
+}
+
 func TestItemGateLandsWhenTheTestsAreRedAtBaseAndGreenAfterTheMerge(t *testing.T) {
 	e := newLandEnv(t)
 	e.itemWork(1, map[string]string{

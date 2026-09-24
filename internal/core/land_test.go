@@ -442,6 +442,85 @@ func phaseTwo(doneWhen string) core.Phase {
 	return core.Phase{ID: "2", Title: "Second", Milestone: 1, DoneWhen: doneWhen, Items: []core.Item{{Text: "p2 item"}}}
 }
 
+func TestLandGatePrintsNothingPassesWhenTheCommandPrintsNothing(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	landing, err := e.gate().Land(context.Background(), phaseOne("`test -f feature.txt` is green and `grep -n TODO feature.txt` prints nothing."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if landing.MergeSHA != e.head() {
+		t.Errorf("landing = %+v", landing)
+	}
+}
+
+func TestLandGatePrintsNothingFailsWhenTheCommandPrints(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "TODO\n")
+	head := e.head()
+	_, err := e.gate().Land(context.Background(), phaseOne("`test -f feature.txt` is green and `grep -n TODO feature.txt` prints nothing."))
+	if !errors.Is(err, core.ErrGate) || !strings.Contains(err.Error(), "1:TODO") {
+		t.Errorf("err = %v", err)
+	}
+	e.assertUntouched(head)
+}
+
+func TestLandGatePrintsNothingFailsOnAnErrorMessage(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	head := e.head()
+	_, err := e.gate().Land(context.Background(), phaseOne("`grep -n TODO missing.txt` prints nothing."))
+	if !errors.Is(err, core.ErrGate) {
+		t.Errorf("err = %v", err)
+	}
+	e.assertUntouched(head)
+}
+
+func TestLandGatePrintsNothingFailsOnNewlineOnlyOutput(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	head := e.head()
+	_, err := e.gate().Land(context.Background(), phaseOne("`printf '\n\n'` prints nothing."))
+	if !errors.Is(err, core.ErrGate) {
+		t.Errorf("err = %v", err)
+	}
+	e.assertUntouched(head)
+}
+
+func TestLandGatePrintsALiteralPassesWhenTheOutputContainsItAndNeverRunsIt(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "touch ran.txt\n")
+	_, err := e.gate().Land(context.Background(), phaseOne("`cat feature.txt` prints `touch ran.txt`."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(e.root, "ran.txt")); !os.IsNotExist(err) {
+		t.Errorf("ran.txt exists or stat failed: %v", err)
+	}
+}
+
+func TestLandGatePrintsALiteralFailsWhenTheCommandFails(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	head := e.head()
+	_, err := e.gate().Land(context.Background(), phaseOne("`sh -c 'printf hello; exit 7'` prints `hello`."))
+	if !errors.Is(err, core.ErrGate) || !strings.Contains(err.Error(), "hello") {
+		t.Errorf("err = %v", err)
+	}
+	e.assertUntouched(head)
+}
+
+func TestLandGatePrintsALiteralFailsWhenTheOutputLacksIt(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "goodbye\n")
+	head := e.head()
+	_, err := e.gate().Land(context.Background(), phaseOne("`cat feature.txt` prints `hello`."))
+	if !errors.Is(err, core.ErrGate) || !strings.Contains(err.Error(), "goodbye") || strings.Contains(err.Error(), "not found") {
+		t.Errorf("err = %v", err)
+	}
+	e.assertUntouched(head)
+}
+
 func TestLandGatePassesOnlyBecauseItRunsAfterTheMerge(t *testing.T) {
 	e := newLandEnv(t)
 	e.phaseWork(1, "feature.txt", "new\n")

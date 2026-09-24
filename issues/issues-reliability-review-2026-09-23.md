@@ -44,13 +44,13 @@ Verified against `r-loop` @ `main` `058c81b`.
       - A phase check that failed because the watchdog vanished is not reported as `phase-check-timeout`
       - A transient prompt error (not not-found and not blocked) still leaves the watchdog live
 
-- [ ] [#7] The gate command joins every backtick span in `Done when:` with `&&`, so expected-output literals run as commands and the gate is always red
+- [x] [#7] The gate command joins every backtick span in `Done when:` with `&&`, so expected-output literals run as commands and the gate is always red  <!-- fixed: r-loop/phase-7 -->
       - A `Done when:` line whose prose says a command "prints nothing" gives a gate that passes when the command prints nothing and fails when it prints something
       - A `Done when:` line saying a command prints `<literal>` gives a gate that passes only when the command's output contains that literal; the literal is never run as a command
       - A `Done when:` line whose spans are all commands keeps today's command string
       - The land contract in tech-design.md describes the new rule, and todo.md lines 518, 532, 548 and 590 each give a gate that passes on a correct tree (tested against those real lines)
 
-- [ ] [#8] The item gate only recognises Go-style test paths, so Java, Kotlin, Python and JS backlog items fail with "adds no test file"
+- [x] [#8] The item gate only recognises Go-style test paths, so Java, Kotlin, Python and JS backlog items fail with "adds no test file"  <!-- fixed: r-loop/phase-7 -->
       - An item gate whose changed tests are `src/test/java/a/FooTest.java`, `app/FooTest.kt`, `tests/test_foo.py`, `web/foo.spec.ts` or `pkg/__tests__/x.js` gets past the "no test file" refusal, and those files are copied into the red worktree
       - Nested test directories (`module/src/test/…`, `sub/tests/…`, `sub/test/…`) count as test paths
       - Production files such as `src/main/java/Contest.java` and `latest.go` are still not test paths
