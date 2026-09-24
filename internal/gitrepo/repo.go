@@ -158,6 +158,11 @@ func (r *Repo) HeadSHA(dir string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+func (r *Repo) RevParse(ref string) (string, error) {
+	out, err := r.git("", "rev-parse", "--verify", "-q", ref+"^{commit}")
+	return strings.TrimSpace(out), err
+}
+
 func (r *Repo) AddWorktree(dir, branch, base string) error {
 	abs := r.path(dir)
 	current, found, err := r.worktreeBranch(abs)
@@ -301,15 +306,18 @@ func (r *Repo) Dirty(dir string) ([]string, error) {
 }
 
 func (r *Repo) CommitAll(dir, message string) (string, error) {
+	if _, err := r.git(dir, "add", "-A"); err != nil {
+		return "", err
+	}
+	if _, err := r.git(dir, "add", "--renormalize", "-u"); err != nil {
+		return "", err
+	}
 	dirty, err := r.Dirty(dir)
 	if err != nil {
 		return "", err
 	}
 	if len(dirty) == 0 {
 		return r.HeadSHA(dir)
-	}
-	if _, err := r.git(dir, "add", "-A"); err != nil {
-		return "", err
 	}
 	if _, err := run(r.path(dir), identity, "commit", "-q", "-m", message); err != nil {
 		return "", err
@@ -382,6 +390,17 @@ func blob(path string) ([]byte, error) {
 }
 
 func (r *Repo) Snapshot(dir string) (string, error) {
+	return r.tempTree(dir, "add", "-A")
+}
+
+func (r *Repo) IndexTree(paths ...string) (string, error) {
+	if len(paths) == 0 {
+		return r.tempTree("")
+	}
+	return r.tempTree("", append([]string{"add", "--"}, paths...)...)
+}
+
+func (r *Repo) tempTree(dir string, add ...string) (string, error) {
 	gitDir, err := r.git(dir, "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return "", err
@@ -398,8 +417,19 @@ func (r *Repo) Snapshot(dir string) (string, error) {
 		return "", err
 	}
 	env := []string{"GIT_INDEX_FILE=" + index}
-	if _, err := run(r.path(dir), env, "add", "-A"); err != nil {
-		return "", err
+	if len(add) > 0 {
+		if _, err := run(r.path(dir), env, add...); err != nil {
+			return "", err
+		}
+		if len(add) == 2 && add[0] == "add" && add[1] == "-A" {
+			if _, err := run(r.path(dir), env, "add", "--renormalize", "-u"); err != nil {
+				return "", err
+			}
+		} else if len(add) > 2 && add[0] == "add" {
+			if _, err := run(r.path(dir), env, append([]string{"add", "--renormalize", "--"}, add[2:]...)...); err != nil {
+				return "", err
+			}
+		}
 	}
 	tree, err := run(r.path(dir), env, "write-tree")
 	return strings.TrimSpace(tree), err
@@ -429,6 +459,34 @@ func (r *Repo) seedIndex(dir string, f *os.File) error {
 func (r *Repo) TreeDiff(from, to string) ([]string, error) {
 	out, err := r.git("", "diff-tree", "-r", "-z", "--name-only", from, to)
 	return split0(out), err
+}
+
+func (r *Repo) GitlinkPaths(tree string) ([]string, error) {
+	out, err := r.git("", "ls-tree", "-r", "-z", tree)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, entry := range split0(out) {
+		if strings.HasPrefix(entry, "160000 commit ") {
+			_, path, ok := strings.Cut(entry, "\t")
+			if !ok {
+				return nil, fmt.Errorf("git ls-tree: malformed gitlink entry")
+			}
+			paths = append(paths, path)
+		}
+	}
+	return paths, nil
+}
+
+func (r *Repo) MergeTree(base, tip string) (string, error) {
+	out, err := r.git("", "merge-tree", "--write-tree", base, tip)
+	return strings.TrimSpace(out), err
+}
+
+func (r *Repo) ReadTreeFile(tree, path string) ([]byte, error) {
+	out, err := r.git("", "show", tree+":"+path)
+	return []byte(out), err
 }
 
 func (r *Repo) MergeNoFF(ctx context.Context, branch string) error {
@@ -516,6 +574,13 @@ func (r *Repo) Commit(ctx context.Context, message string, paths ...string) (str
 	if _, err := r.git("", add...); err != nil {
 		return "", err
 	}
+	if len(paths) > 0 {
+		if _, err := r.git("", append([]string{"add", "--renormalize", "--"}, paths...)...); err != nil {
+			return "", err
+		}
+	} else if _, err := r.git("", "add", "--renormalize", "-u"); err != nil {
+		return "", err
+	}
 	before, err := r.HeadSHA("")
 	if err != nil {
 		return "", err
@@ -537,6 +602,24 @@ func (r *Repo) Commit(ctx context.Context, message string, paths ...string) (str
 func (r *Repo) CommitTouches(sha string) ([]string, error) {
 	out, err := r.git("", "show", "--name-only", "-z", "--no-renames", "--format=", "--diff-merges=first-parent", sha)
 	return split0(out), err
+}
+
+func (r *Repo) LandedCommit(base, tip, tree string) (string, error) {
+	out, err := r.git("", "log", "--first-parent", "--reverse", "--format=%H%x00%P%x00%T", base+"..HEAD")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.Split(line, "\x00")
+		if len(parts) != 3 {
+			continue
+		}
+		parents := strings.Fields(parts[1])
+		if len(parents) == 2 && parents[0] == base && parents[1] == tip && strings.TrimSpace(parts[2]) == tree {
+			return parts[0], nil
+		}
+	}
+	return "", nil
 }
 
 func (r *Repo) ResetHard(ref string) error {

@@ -193,6 +193,17 @@ func TestAStopDuringTheWalkHaltsTheRun(t *testing.T) {
 	}
 }
 
+func TestAHaltWhoseRunRecordFailsExitsTwoAndKeepsTheHaltReason(t *testing.T) {
+	k := startWalk(t, func(w *Wiring) { w.Store.MarkAbort(w.Loop.RunID) })
+	k.w.records.Store = failingStore{Store: k.w.Store, fail: func(rec core.Record) bool {
+		return rec.Kind == core.RecordRun && rec.Run == core.RunHalted
+	}}
+	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2"}})
+	if code != 2 || !strings.Contains(k.f.err.String(), "record: disk full") || !strings.Contains(k.f.err.String(), "stopped during the ## Resolve first walk") {
+		t.Fatalf("code=%d stderr=%q", code, k.f.err)
+	}
+}
+
 func TestUnattendedSkipsTheBlockedPhasesWithoutAWalk(t *testing.T) {
 	k := startWalk(t, nil, "--unattended")
 
@@ -216,6 +227,17 @@ func TestARunWhoseEveryPhaseIsBlockedFinishesWithNothingToRun(t *testing.T) {
 	}
 	if run := k.f.load(k.w.Loop.RunID); run.Status != core.RunFinished {
 		t.Errorf("run %s", run.Status)
+	}
+}
+
+func TestAFinishedRunRecordThatFailsBeforeTheLoopIsNamedOnStderrAndInTheFace(t *testing.T) {
+	k := startWalk(t, nil)
+	k.w.records.Store = failingStore{Store: k.w.Store, fail: func(rec core.Record) bool {
+		return rec.Kind == core.RecordRun && rec.Run == core.RunFinished
+	}}
+	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "3"}})
+	if code != 2 || strings.Count(k.f.err.String(), "r-loop: record: disk full") != 1 || !strings.Contains(k.f.out.String(), "!  record: disk full") || len(k.land.landed) != 0 {
+		t.Fatalf("code=%d stderr=%q out=%q landed=%v", code, k.f.err, k.f.out, k.land.landed)
 	}
 }
 

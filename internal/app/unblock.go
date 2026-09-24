@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,8 +33,8 @@ func (w *Wiring) unblock(ctx context.Context, opts core.RunOptions) ([]core.Phas
 	}
 	if len(list) > 0 && len(kept) == 0 {
 		w.record(core.Event{Kind: "finished", Fields: map[string]string{"reason": "nothing left to run: every phase is blocked by an open ## Resolve first entry"}})
-		if err := w.Store.Append(w.Loop.RunID, core.Record{Kind: core.RecordRun, At: time.Now(), Run: core.RunFinished}); err != nil {
-			return nil, nil, false, exit(2, "%v", err)
+		if err := w.recordFatal(core.Record{Kind: core.RecordRun, At: time.Now(), Run: core.RunFinished}); err != nil {
+			return nil, nil, false, err
 		}
 		return nil, nil, true, nil
 	}
@@ -149,10 +150,18 @@ func (w *Wiring) record(ev core.Event) {
 	w.Face.Emit(ev)
 }
 
+func (w *Wiring) recordFatal(rec core.Record) error {
+	if err := w.records.Store.Append(w.Loop.RunID, rec); err != nil {
+		w.Face.Emit(core.Event{At: time.Now(), Kind: "error", Fields: map[string]string{"reason": "record: " + err.Error()}})
+		return exit(2, "record: %v", err)
+	}
+	return nil
+}
+
 func (w *Wiring) halt(err error) error {
 	reason := err.Error()
-	if rec := w.Store.Append(w.Loop.RunID, core.Record{Kind: core.RecordRun, At: time.Now(), Run: core.RunHalted, Reason: reason}); rec != nil {
-		fmt.Fprintf(w.Env.Stderr, "r-loop: store: %v\n", rec)
+	if rerr := w.recordFatal(core.Record{Kind: core.RecordRun, At: time.Now(), Run: core.RunHalted, Reason: reason}); rerr != nil {
+		return errors.Join(rerr, err)
 	}
 	return err
 }

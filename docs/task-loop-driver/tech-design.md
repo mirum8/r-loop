@@ -135,6 +135,12 @@ provider, model and effort, and `--model` and `--effort` override one row for on
     `MarkAbort(runID) error` · `Dir(runID) string`. The `store` adapter also has
     `ClearAbort(runID) error`, outside the port, which `r-loop resume` calls to remove the abort
     marker before it re-runs.
+    `RecordGuard` wraps the store and remembers the first failed fatal append. Step, run and
+    landing records are fatal. The resume-read events `merge-intent`, `commit-intent`, `run-list`,
+    `step`, `baseline`, `snapshot`, `review-round`, `agent-named`, `restart`, `item-skipped` and
+    `gate-discovered` are fatal too. Other events, questions, signals and remedies warn. After a
+    fatal failure, no further step is spawned and no merge or commit runs; the run halts with
+    `record: <error>` in the face and on stderr, and exits 2.
   - `Prompts`: `Render(name string, vars map[string]any) (text, source string, err error)`.
   - `AskChannel`: `Serve(ctx) (baseURL string, err error)` · `StepURL(StepKey) string` ·
     `Questions() <-chan Question` · `Answer(id, answer, by, citation string) error`.
@@ -303,8 +309,10 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   (`git branch -d`, which refuses an unmerged branch); either failing is a warning. A skipped item
   never merged, so it keeps its worktree and branch.
 - **One commit per step** — after the author half (and, when configured, every review round) ends
-  `ok`, the driver runs `CommitAll(worktree, "r-loop: phase <N> <kind>")` once, and only then
-  records the step `ok`. A step that ends any other way commits nothing: its work stays
+  `ok`, the driver appends a `commit-intent` event with the step's attempt, current HEAD, exact
+  worktree tree, directory and commit message. It then runs
+  `CommitAll(worktree, "r-loop: phase <N> <kind>")` once and records the step `ok`. A step that
+  ends any other way commits nothing: its work stays
   uncommitted in the worktree, and the driver appends `Event{Kind: "snapshot", Fields{step,
   tree}}` with `Snapshot(worktree)` before it records the terminal state, so a resume can tell the
   step's own leftovers from someone else's.
@@ -340,7 +348,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `notify.onDone`, exit `0`; any phase blocked → `halted`, `notify.onHalt`, `r-loop resume`
   printed, and the exit code of the **first** block — `1` failed, `3` a failure that began as a
   stall, `5` a watchdog halt. Abort marker → exit `1` at once; SIGINT, SIGTERM or SIGHUP during a step, the remedy window, the phase check or land, or the TUI program exiting (its own exit or an error from Run) → the run is recorded `halted` with `interrupted: <signal | display closed | display exited: <err>>`, a `halt` event with that reason and `r-loop resume`, no hook, exit `4`; an abort or interrupt during land kills the gate's process group and aborts the merge, so the primary tree is clean; preflight refusal `4`; usage, git
-  state, config `2`; missing binary `127`.
+  state, config or a fatal record failure `2`; missing binary `127`.
 - **Resume** — skips landed phases and `ok` steps, and re-runs the stopped step of **every**
   phase that halted, in phase order, as a new attempt on its own worktree; a phase blocked only
   because of a dependency simply runs. Before claiming, resume asks herdr for the state of the
@@ -350,7 +358,15 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   "stale-interrupted", Phase, Step, Fields{agent, state}}`, then `Interrupt`s it and prints
   `interrupted previous session <agent>: still <state>`. After the claim and before the re-run, every
   step of a halted phase still in a non-terminal state is recorded `failed(interrupted: driver died)`
-  (a resume-only close from any non-terminal state; attempt+1 is the re-run). The worktree is **claimed** when it is
+  (a resume-only close from any non-terminal state; attempt+1 is the re-run). If the step has a
+  `commit-intent`, resume instead verifies that its worktree still has the recorded tree. It
+  commits that tree if HEAD is unchanged, or verifies that a moved HEAD contains that exact tree,
+  then records the step `ok`. A different tree is refused with the changed paths named. Before
+  reading the todo or checking for a clean primary tree, resume reconciles the last unrecorded
+  `merge-intent`: it completes an unfinished merge only when the working tree and intended index
+  tree match the land `commit-intent`, otherwise aborts a provably owned merge or refuses a
+  foreign or unsafe one. If the merge commit already exists, resume recovers its SHA by matching
+  its parents and tree and records the landing. It prints the action taken. The worktree is **claimed** when it is
   clean, when `Snapshot(worktree)` equals the last `snapshot` (or `review-round`) event recorded
   for that step, or when that step never reached `ok` or `failed` and a `baseline` event exists
   for it — the changes are its own leftovers, and the new attempt reuses that baseline, so
@@ -367,12 +383,15 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   implement row's timeout and its reviewers for one round; the gate command itself runs under
   `land.gateTimeout` (default 30m); its `ok` commits `r-loop: phase <N> gatefix`, and the
   landing starts again from the merge. A red gate with no fix round left blocks the phase.
-- **Land** — in the primary tree: `MergeNoFF(r-loop/phase-<N>)` (`--no-commit`) → the merged tree
+- **Land** — in the primary tree: append `merge-intent{phase, branch, base, message}` →
+  `MergeNoFF(r-loop/phase-<N>)` (`--no-commit`) → the merged tree
   is on disk, uncommitted → `Run(root, gate command, gate timeout)`, the gate command being the
   `Done when:` line's inline code spans: a span whose prose since the previous span ends in `prints` or `lists` (optionally followed by `the`) is an expected-output literal of the nearest command span before it and is never run; every other span is a command. A command followed by `prints nothing`/`lists nothing`, or carrying literals, runs as `{ out=$( ( <cmd> ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; <checks>; }`, its stdout+stderr judged: `test -z "$out"` for nothing (exit status ignored, so a silent `grep` with no match passes); for literals, `test "$st" = 0` then `printf '%s\n' "$out" | grep -qF -e '<literal>'` per literal. A command containing `#` or a newline is surrounded by newlines inside its subshell so comments and heredocs cannot absorb the wrapper. Clauses are joined with ` && ` (a line of only commands gives its spans joined with ` && `), or the gate is the line's trimmed text when it has no span
   (the gate fix's `GateCommand` is the same string); exit ≠ 0 → `AbortMerge()`, halt
   with the output, nothing ticked, a gate-fix round when one is left; no command → `gate-skipped` recorded, never a halt → `Tick`
-  → `Commit("phase <N>: <title>")` → `CommitTouches` must include the todo and one other path, else
+  → append `commit-intent{phase, tree, gateSkipped, added, deleted}` after checking that the
+  intended index tree equals the merged and ticked working tree → `Commit("phase <N>: <title>")`
+  → `CommitTouches` must include the todo and one other path, else
   `ResetHard("HEAD~1")` and halt. A conflict aborts before the gate. The gate therefore proves the
   phase's code, and no merge commit exists unless it passed.
 - **Milestone boundary** — `LandGate` calls its `Boundary` after a landing; when phase N closed

@@ -37,7 +37,9 @@ type gateRecord struct {
 
 func (w *Wiring) triage(ctx context.Context, opts core.RunOptions, kept []core.Phase, deferrals []core.Deferral) (core.RunOptions, bool, error) {
 	if w.Triaged || len(kept) == 0 {
-		w.recordRunList(kept, w.groups)
+		if err := w.recordRunList(kept, w.groups); err != nil {
+			return opts, false, err
+		}
 		opts.From, opts.Phases = "", phaseIDs(kept)
 		return opts, false, nil
 	}
@@ -112,8 +114,8 @@ func (w *Wiring) abortTriage(msg string) error {
 	if err := w.Store.MarkAbort(w.Loop.RunID); err != nil {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: store: %v\n", err)
 	}
-	if err := w.Store.Append(w.Loop.RunID, core.Record{Kind: core.RecordRun, At: time.Now(), Run: core.RunHalted, Reason: core.ReasonAborted}); err != nil {
-		fmt.Fprintf(w.Env.Stderr, "r-loop: store: %v\n", err)
+	if err := w.recordFatal(core.Record{Kind: core.RecordRun, At: time.Now(), Run: core.RunHalted, Reason: core.ReasonAborted}); err != nil {
+		return err
 	}
 	w.record(core.Event{Kind: "aborted", Fields: map[string]string{"reason": msg}})
 	return exit(1, "%s; r-loop resume triages again", msg)
@@ -135,11 +137,13 @@ func (w *Wiring) startAfterTriage(opts core.RunOptions, run *triageRun, end tria
 		w.setPlan(core.GroupBacklog(w.Plan, groups))
 	}
 	w.groups = groups
-	w.recordRunList(kept, groups)
+	if err := w.recordRunList(kept, groups); err != nil {
+		return opts, false, err
+	}
 	if len(kept) == 0 {
 		w.record(core.Event{Kind: "finished", Fields: map[string]string{"reason": "nothing left to run after triage"}})
-		if err := w.Store.Append(w.Loop.RunID, core.Record{Kind: core.RecordRun, At: time.Now(), Run: core.RunFinished}); err != nil {
-			return opts, false, exit(2, "%v", err)
+		if err := w.recordFatal(core.Record{Kind: core.RecordRun, At: time.Now(), Run: core.RunFinished}); err != nil {
+			return opts, false, err
 		}
 		return opts, true, nil
 	}
@@ -224,14 +228,19 @@ func (w *Wiring) showTriage(run *triageRun, t core.Triage) (string, error) {
 	return table, nil
 }
 
-func (w *Wiring) recordRunList(list []core.Phase, groups []core.Group) {
+func (w *Wiring) recordRunList(list []core.Phase, groups []core.Group) error {
 	fields := map[string]string{"phases": strings.Join(phaseIDs(list), ",")}
 	if len(groups) > 0 {
 		if data, err := json.Marshal(groups); err == nil {
 			fields["groups"] = string(data)
 		}
 	}
-	w.record(core.Event{Kind: "run-list", Fields: fields})
+	ev := core.Event{At: time.Now(), Kind: "run-list", Fields: fields}
+	if err := w.recordFatal(core.Record{Kind: core.RecordEvent, At: ev.At, Event: &ev}); err != nil {
+		return err
+	}
+	w.Face.Emit(ev)
+	return nil
 }
 
 func recordedGroups(run core.RunState) []core.Group {

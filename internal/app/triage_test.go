@@ -139,6 +139,23 @@ func TestTriageStartsTheRunOnGoAndRecordsTheRunList(t *testing.T) {
 	}
 }
 
+func TestARunListThatCannotBeRecordedHaltsBeforeAnyStep(t *testing.T) {
+	k := startTriage(t, func(w *Wiring, text string) {
+		submit(t, w, allBuild(text))
+		gate(t, w, core.GateDecision{Decision: core.GateGo, MaintainerSaid: "go"})
+	})
+	k.w.records.Store = failingStore{Store: k.w.Store, fail: func(rec core.Record) bool {
+		return rec.Kind == core.RecordEvent && rec.Event != nil && rec.Event.Kind == "run-list"
+	}}
+	code := k.run()
+	if code != 2 || !strings.Contains(k.f.err.String(), "record: disk full") || !strings.Contains(k.f.out.String(), "!  record: disk full") || len(k.land.landed) != 0 {
+		t.Fatalf("code=%d stderr=%q out=%q landed=%v", code, k.f.err, k.f.out, k.land.landed)
+	}
+	if sim, ok := k.w.Loop.Sessions.Host.(*simHost); ok && len(sim.startedAgents()) != 0 {
+		t.Fatalf("started %v", sim.startedAgents())
+	}
+}
+
 func TestAnAlreadyDonePhaseIsDroppedNotTicked(t *testing.T) {
 	k := startTriage(t, func(w *Wiring, text string) {
 		submit(t, w, verdicts(map[string]core.PhaseVerdict{"2": {Phase: "2", Status: core.VerdictAlreadyDone, Note: "built at docs/topic/todo.md:9"}}))

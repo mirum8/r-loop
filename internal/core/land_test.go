@@ -558,6 +558,72 @@ func TestLandGatePassesOnlyBecauseItRunsAfterTheMerge(t *testing.T) {
 	}
 }
 
+func TestLandGateLandsSubmodulePointerBump(t *testing.T) {
+	e := newLandEnv(t)
+	source := t.TempDir()
+	gitCmd(t, source, "init", "-q", "-b", "main")
+	writeFile(t, filepath.Join(source, "version.txt"), "one\n")
+	gitCmd(t, source, "add", "-A")
+	gitCmd(t, source, "commit", "-q", "-m", "one")
+	first := gitCmd(t, source, "rev-parse", "HEAD")
+	writeFile(t, filepath.Join(source, "version.txt"), "two\n")
+	gitCmd(t, source, "commit", "-q", "-am", "two")
+	second := gitCmd(t, source, "rev-parse", "HEAD")
+	gitCmd(t, e.root, "-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "sub")
+	gitCmd(t, filepath.Join(e.root, "sub"), "checkout", "-q", first)
+	gitCmd(t, e.root, "add", "-A")
+	gitCmd(t, e.root, "commit", "-q", "-m", "add submodule")
+	if err := e.repo.AddWorktree(".r-loop/wt/phase-1", "r-loop/phase-1", "main"); err != nil {
+		t.Fatal(err)
+	}
+	wt := e.worktree(1)
+	gitCmd(t, wt, "-c", "protocol.file.allow=always", "submodule", "update", "-q", "--init")
+	gitCmd(t, filepath.Join(wt, "sub"), "checkout", "-q", second)
+	gitCmd(t, wt, "add", "sub")
+	gitCmd(t, wt, "commit", "-q", "-m", "bump submodule")
+
+	landing, err := e.gate().Land(context.Background(), phaseOne(""))
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if landing.MergeSHA != e.head() {
+		t.Errorf("landing = %+v, HEAD = %s", landing, e.head())
+	}
+	if got := gitCmd(t, e.root, "rev-parse", "HEAD:sub"); got != second {
+		t.Errorf("landed gitlink = %s, want %s", got, second)
+	}
+}
+
+type firstSnapshotRepo struct {
+	*gitrepo.Repo
+	tree  string
+	calls int
+}
+
+func (r *firstSnapshotRepo) Snapshot(dir string) (string, error) {
+	r.calls++
+	if r.calls == 1 {
+		return r.tree, nil
+	}
+	return r.Repo.Snapshot(dir)
+}
+
+func TestLandRefusesAnOrdinaryIndexWorktreeMismatchAfterMerge(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	base := e.head()
+	g := e.gate()
+	g.Repo = &firstSnapshotRepo{Repo: e.repo, tree: gitCmd(t, e.root, "rev-parse", "HEAD^{tree}")}
+
+	_, err := g.Land(context.Background(), phaseOne(""))
+	if !errors.Is(err, core.ErrDirtyTree) || !strings.Contains(err.Error(), "feature.txt") {
+		t.Fatalf("Land err = %v", err)
+	}
+	if e.head() != base || len(e.store.landings()) != 0 || len(e.store.events(core.EventCommitIntent)) != 0 {
+		t.Fatalf("head = %s, landings = %+v, intents = %+v", e.head(), e.store.landings(), e.store.events(core.EventCommitIntent))
+	}
+}
+
 func TestLandGateTicksEveryGroupMemberInTheOneLandingCommit(t *testing.T) {
 	e := newLandEnv(t)
 	e.phaseWork(1, "feature.txt", "new\n")
@@ -1015,6 +1081,59 @@ func TestMilestoneReportSpawnedOnlyAfterTheLastPhaseInThePrimaryTree(t *testing.
 	}
 	if st := gitCmd(t, e.root, "status", "--porcelain"); st != "" {
 		t.Errorf("primary tree not clean:\n%s", st)
+	}
+}
+
+func TestLandRefusesAChangeStagedApartFromTheWorkingTreeDuringTheGate(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	base := e.head()
+	command := "git show :one.txt > .o && printf 'x\\n' >> one.txt && git add one.txt && mv .o one.txt"
+	_, err := e.gate().Land(context.Background(), phaseOne("`"+command+"`"))
+	if !errors.Is(err, core.ErrDirtyTree) || !errors.Is(err, core.ErrUnfinishedMerge) || !strings.Contains(err.Error(), "one.txt") || !strings.Contains(err.Error(), "unfinished merge") {
+		t.Fatalf("Land err = %v", err)
+	}
+	if e.head() != base || len(e.store.landings()) != 0 || len(e.store.events(core.EventCommitIntent)) != 0 {
+		t.Fatalf("head = %s, landings = %+v, intents = %+v", e.head(), e.store.landings(), e.store.events(core.EventCommitIntent))
+	}
+	if _, statErr := os.Stat(filepath.Join(e.root, ".git", "MERGE_HEAD")); statErr != nil {
+		t.Fatalf("MERGE_HEAD missing: %v", statErr)
+	}
+	if got := readFile(t, e.todo); got != todoText {
+		t.Fatalf("todo changed: %q", got)
+	}
+}
+
+type failStepEvents struct{ core.Store }
+
+func (s failStepEvents) Append(runID string, rec core.Record) error {
+	if rec.Kind == core.RecordEvent && rec.Event != nil && rec.Event.Kind == "step" && rec.Event.Step == "milestone" {
+		return errors.New("disk full")
+	}
+	return s.Store.Append(runID, rec)
+}
+
+func TestMilestoneReportCommitsNothingOnceAStepRecordHasFailed(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, _, _ := e.boundaryGate("ok")
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatalf("Land 1: %v", err)
+	}
+	g.Boundary.Sessions.Store = &core.RecordGuard{Store: failStepEvents{e.store}}
+	if _, err := g.Land(context.Background(), phaseTwo("")); err != nil {
+		t.Fatalf("Land 2: %v", err)
+	}
+	if got := gitCmd(t, e.root, "log", "-1", "--format=%s"); got == "docs(report): milestone 1" {
+		t.Fatalf("report was committed")
+	}
+	if got := gitCmd(t, e.root, "status", "--porcelain"); got != "" {
+		t.Fatalf("primary tree dirty: %q", got)
+	}
+	skips := e.store.events("report-skipped")
+	if len(skips) != 1 || !strings.Contains(skips[0].Fields["reason"], "record: disk full") {
+		t.Fatalf("skips = %+v", skips)
 	}
 }
 

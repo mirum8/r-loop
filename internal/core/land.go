@@ -152,6 +152,9 @@ func (g *LandGate) Land(ctx context.Context, phase Phase) (Landing, error) {
 }
 
 func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, string, error) {
+	if err := recordFailed(g.Store); err != nil {
+		return Landing{}, "", "", fmt.Errorf("record: %w", err)
+	}
 	if err := g.guard(); err != nil {
 		return Landing{}, "", "", err
 	}
@@ -175,12 +178,50 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 	if err != nil {
 		return Landing{}, "", "", fmt.Errorf("read todo: %w", err)
 	}
+	if err := recordFailed(g.Store); err != nil {
+		return Landing{}, "", "", fmt.Errorf("record: %w", err)
+	}
+	base, err := g.Repo.HeadSHA("")
+	if err != nil {
+		return Landing{}, "", "", err
+	}
+	message := fmt.Sprintf("phase %s: %s", n, phase.Title)
+	mergeAt := time.Now()
+	mergeIntent := Event{At: mergeAt, Kind: EventMergeIntent, Phase: n, Step: "land", Fields: map[string]string{
+		"phase": n, "branch": "r-loop/phase-" + n, "base": base, "message": message,
+	}}
+	if err := g.Store.Append(g.RunID, Record{Kind: RecordEvent, At: mergeAt, Event: &mergeIntent}); err != nil {
+		return Landing{}, "", "", fmt.Errorf("record: %w", err)
+	}
 	if err := g.Repo.MergeNoFF(ctx, fmt.Sprintf("r-loop/phase-%s", n)); err != nil {
 		return Landing{}, "", "", err
+	}
+	mergedIndex, err := g.Repo.IndexTree()
+	if err != nil {
+		return Landing{}, "", "", errors.Join(fmt.Errorf("index tree: %w", err), g.Repo.AbortMerge())
 	}
 	merged, err := g.Repo.Snapshot("")
 	if err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("snapshot: %w", err), g.Repo.AbortMerge())
+	}
+	baseline, err := g.Repo.TreeDiff(mergedIndex, merged)
+	if err != nil {
+		return Landing{}, "", "", errors.Join(fmt.Errorf("compare trees: %w", err), g.Repo.AbortMerge())
+	}
+	indexGitlinks, err := g.Repo.GitlinkPaths(mergedIndex)
+	if err != nil {
+		return Landing{}, "", "", errors.Join(fmt.Errorf("index gitlinks: %w", err), g.Repo.AbortMerge())
+	}
+	worktreeGitlinks, err := g.Repo.GitlinkPaths(merged)
+	if err != nil {
+		return Landing{}, "", "", errors.Join(fmt.Errorf("worktree gitlinks: %w", err), g.Repo.AbortMerge())
+	}
+	allowed := make(map[string]bool, len(baseline))
+	for _, path := range baseline {
+		if !slices.Contains(indexGitlinks, path) || !slices.Contains(worktreeGitlinks, path) {
+			return Landing{}, "", "", errors.Join(fmt.Errorf("%w: staged apart from the working tree: %s", ErrDirtyTree, path), g.Repo.AbortMerge())
+		}
+		allowed[path] = true
 	}
 	landing := Landing{Phase: n}
 	if landing.Added, landing.Deleted, err = g.Repo.DiffStat("", "HEAD"); err != nil {
@@ -228,7 +269,44 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (Landing, string, s
 	if err := g.Plan.Tick(g.TodoPath, phase); err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
 	}
-	sha, err := g.Repo.Commit(ctx, fmt.Sprintf("phase %s: %s", n, phase.Title), g.todoRel())
+	tree, err := g.Repo.IndexTree(g.todoRel())
+	if err != nil {
+		return Landing{}, "", "", errors.Join(fmt.Errorf("record: %w", err), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
+	}
+	current, err := g.Repo.Snapshot("")
+	if err != nil {
+		return Landing{}, "", "", errors.Join(fmt.Errorf("record: %w", err), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
+	}
+	if tree != current {
+		paths, diffErr := g.Repo.TreeDiff(tree, current)
+		indexChanges, indexErr := g.Repo.TreeDiff(mergedIndex, tree)
+		worktreeChanges, worktreeErr := g.Repo.TreeDiff(merged, current)
+		if diffErr != nil || indexErr != nil || worktreeErr != nil {
+			return Landing{}, "", "", errors.Join(fmt.Errorf("compare trees: %w", errors.Join(diffErr, indexErr, worktreeErr)), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
+		}
+		unexpected := make([]string, 0, len(paths))
+		for _, path := range paths {
+			if !allowed[path] {
+				unexpected = append(unexpected, path)
+			}
+		}
+		for _, path := range append(indexChanges, worktreeChanges...) {
+			if path != g.todoRel() && !slices.Contains(unexpected, path) {
+				unexpected = append(unexpected, path)
+			}
+		}
+		if len(unexpected) > 0 {
+			return Landing{}, "", "", errors.Join(fmt.Errorf("%w: staged apart from the working tree: %s", ErrDirtyTree, strings.Join(unexpected, ", ")), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
+		}
+	}
+	commitAt := time.Now()
+	commitIntent := Event{At: commitAt, Kind: EventCommitIntent, Phase: n, Step: "land", Fields: map[string]string{
+		"phase": n, "tree": tree, "gateSkipped": strconv.FormatBool(landing.GateSkipped), "added": strconv.Itoa(landing.Added), "deleted": strconv.Itoa(landing.Deleted),
+	}}
+	if err := g.Store.Append(g.RunID, Record{Kind: RecordEvent, At: commitAt, Event: &commitIntent}); err != nil {
+		return Landing{}, "", "", errors.Join(fmt.Errorf("record: %w", err), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
+	}
+	sha, err := g.Repo.Commit(ctx, message, g.todoRel())
 	if err != nil {
 		commitErr := fmt.Errorf("commit: %w", err)
 		if abortErr := g.Repo.AbortMerge(); abortErr == nil {
