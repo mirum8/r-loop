@@ -638,7 +638,38 @@ func (w *Wiring) startTUI() {
 		Report:  w.Plain.Report,
 		Started: started,
 		Steps:   steps,
-	}, w.Plan.Phases, run.Events)
+		Backlog: w.Plan.Backlog,
+	}, selectedPhases(w.Plan, w.Todo, w.Opts, run), run.Events)
+}
+
+func selectedPhases(pl core.Plan, todo string, opts Options, run core.RunState) []core.Phase {
+	ids := recordedRunList(run)
+	for _, e := range run.Events {
+		if e.Kind == core.TriageSkipped && !slices.Contains(ids, e.Phase) {
+			ids = append(ids, e.Phase)
+		}
+	}
+	if len(ids) == 0 {
+		for _, e := range run.Events {
+			if e.Kind == "triage-start" {
+				ids = strings.Split(e.Fields["phases"], ", ")
+			}
+		}
+	}
+	if len(ids) == 0 {
+		list, err := core.RunList(pl, todo, core.RunOptions{From: opts.From, Phases: opts.Phases})
+		if err != nil {
+			return pl.Phases
+		}
+		return list
+	}
+	var out []core.Phase
+	for _, ph := range pl.Phases {
+		if slices.Contains(ids, ph.ID) {
+			out = append(out, ph)
+		}
+	}
+	return out
 }
 
 func (w *Wiring) faceName() string {

@@ -89,7 +89,16 @@ func (m Model) header(w int) string {
 
 func (m Model) rail() []string {
 	th := m.theme
-	lines := []string{fill(th.Label, "PHASES", railWidth)}
+	noun, landed := "PHASES", 0
+	if m.Backlog {
+		noun = "ITEMS"
+	}
+	for _, r := range m.Phases {
+		if r.State == core.PhaseLanded {
+			landed++
+		}
+	}
+	lines := []string{fill(th.Label, fmt.Sprintf("%s %d/%d", noun, landed, len(m.Phases)), railWidth)}
 	for _, r := range m.Phases {
 		style := th.Text
 		switch {
@@ -129,11 +138,18 @@ func (m Model) panel(w int) []string {
 		if q := m.waiting(s); q != "" {
 			add(th.Text, field("waiting", q))
 		}
+		if s.Round > 0 || len(s.Reviews) > 0 {
+			add(th.Text, field("review", m.reviewLine(s)))
+			for _, r := range s.Reviews {
+				lines = append(lines, ansi.Truncate(th.Text.Render(field(fmt.Sprintf("  r%d", r.N), ""))+m.round(r), w, "…"))
+			}
+		}
 		add(th.Text, field("started", s.Started.Format("15:04:05")+"   elapsed "+s.Elapsed(m.clock()).String()))
 		if s.Ended.IsZero() {
-			backstop := "paused"
-			if left, paused := s.Remaining(m.clock()); !paused {
-				backstop = left.Truncate(time.Second).String() + " left"
+			left, paused := s.Remaining(m.clock())
+			backstop := left.Truncate(time.Second).String() + " left"
+			if paused {
+				backstop = "paused (" + backstop + ")"
 			}
 			add(th.Text, field("backstop", backstop))
 		}
@@ -184,6 +200,57 @@ func (m Model) pipeline(s *Step, w int) string {
 		line = th.Idle.Render("…") + sep + strings.Join(parts[drop:], sep)
 	}
 	return ansi.Truncate(line, w, "…")
+}
+
+func (m Model) reviewLine(s *Step) string {
+	text := fmt.Sprintf("r%d/%d", s.Round, s.Rounds)
+	last := len(s.Reviews) - 1
+	switch {
+	case last >= 0 && s.Reviews[last].Clean:
+		return text + " · clean"
+	case !s.Ended.IsZero():
+		return text
+	case s.timedHalf == "find":
+		text += " · finding"
+	case s.timedHalf == "fix":
+		text += " · fixing"
+	default:
+		return text
+	}
+	return text + " " + s.HalfElapsed(m.clock()).String()
+}
+
+func (m Model) round(r Round) string {
+	th := m.theme
+	parts := make([]string, 0, len(r.Reviewers))
+	for _, rv := range r.Reviewers {
+		switch rv.State {
+		case "":
+			parts = append(parts, th.Text.Render(strings.TrimSpace(rv.ID+" "+rv.Agent)+" …"))
+		case string(core.StepOK):
+			parts = append(parts, th.Text.Render(fmt.Sprintf("%s %d", rv.ID, rv.Findings)))
+		default:
+			parts = append(parts, th.Failed.Render(rv.ID+" ×"))
+		}
+	}
+	line := strings.Join(parts, th.Text.Render(" · "))
+	var outcome []string
+	if r.Fixed > 0 {
+		outcome = append(outcome, fmt.Sprintf("fixed %d (%s)", r.Fixed, strings.Join(r.Severities, " ")))
+	}
+	if r.Unfixed > 0 {
+		outcome = append(outcome, fmt.Sprintf("%d real unfixed", r.Unfixed))
+	}
+	if r.Dismissed > 0 {
+		outcome = append(outcome, fmt.Sprintf("%d dismissed", r.Dismissed))
+	}
+	if r.Clean && len(outcome) == 0 {
+		outcome = append(outcome, "clean")
+	}
+	if len(outcome) > 0 {
+		line += th.Text.Render(" → " + strings.Join(outcome, " · "))
+	}
+	return line
 }
 
 func (m Model) waiting(s *Step) string {

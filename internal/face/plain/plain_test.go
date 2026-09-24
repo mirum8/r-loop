@@ -210,3 +210,26 @@ func TestTriageStartCountsOneItemInTheSingular(t *testing.T) {
 		t.Fatalf("got %q, want %q", out.String(), want)
 	}
 }
+
+func TestReviewRoundLines(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	for _, ev := range []core.Event{
+		{Kind: "review-round", Fields: map[string]string{"round": "1", "tree": "abc", "attempt": "1"}},
+		{Kind: "agent-named", Fields: map[string]string{"round": "1", "reviewer": "codex", "agent": "p4-impl-rv-codex-r1", "attempt": "1"}},
+		{Kind: "finding", Fields: map[string]string{"round": "1", "reviewer": "codex", "id": "codex-r1-1", "title": "nil map", "verdict": "real", "severity": "P1", "fixed": "true", "evidence": "a.go:3"}},
+		{Kind: "review-clean", Fields: map[string]string{"round": "2"}},
+	} {
+		ev.At, ev.Phase, ev.Step = at, "4", "implement"
+		f.Emit(ev)
+	}
+
+	want := "14:03:09  phase 4  implement  review r1\n" +
+		"14:03:09  phase 4  implement  reviewer codex r1  agent p4-impl-rv-codex-r1\n" +
+		"14:03:09  phase 4  implement  r1 codex codex-r1-1  real P1 fixed=true: nil map\n" +
+		"14:03:09  phase 4  implement  review r2 clean\n"
+	if out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}

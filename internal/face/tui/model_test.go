@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1013,5 +1014,85 @@ func TestTriageStartCountsOnePhaseInTheSingular(t *testing.T) {
 
 	if got := m.Feed[0].Text + "\n" + m.Feed[1].Text; got != "14:00  triage: watchdog verifying 1 phase\n14:01  triage: watchdog verifying 1 item" {
 		t.Fatalf("feed %q", got)
+	}
+}
+
+func reviewEvent(min int, kind string, fields map[string]string) core.Event {
+	return core.Event{At: at(min), Kind: kind, Phase: "2", Step: "implement", Fields: fields}
+}
+
+func roundStep(min, round int, half string) core.Event {
+	ev := step(min, 2, "implement", "running", "codex", "gpt-5", "medium", "ws-4")
+	ev.Fields["round"], ev.Fields["half"] = strconv.Itoa(round), half
+	return ev
+}
+
+func reviewed() []core.Event {
+	events := recorded()[:len(recorded())-2]
+	return append(events,
+		reviewEvent(41, "review-round", map[string]string{"round": "1", "attempt": "1"}),
+		roundStep(41, 1, "find"),
+		reviewEvent(41, "agent-named", map[string]string{"round": "1", "reviewer": "claude", "agent": "p2-impl-rv-claude-r1", "attempt": "1"}),
+		reviewEvent(41, "agent-named", map[string]string{"round": "1", "reviewer": "codex", "agent": "p2-impl-rv-codex-r1", "attempt": "1"}),
+		reviewEvent(45, "review-find", map[string]string{"round": "1", "reviewer": "claude", "state": "ok", "findings": "2"}),
+		reviewEvent(45, "review-find", map[string]string{"round": "1", "reviewer": "codex", "state": "ok", "findings": "1"}),
+		roundStep(45, 1, "fix"),
+		reviewEvent(48, "finding", map[string]string{"round": "1", "reviewer": "claude", "verdict": "real", "severity": "P2", "fixed": "true"}),
+		reviewEvent(48, "finding", map[string]string{"round": "1", "reviewer": "claude", "verdict": "not-real", "severity": "P3", "fixed": "false"}),
+		reviewEvent(48, "finding", map[string]string{"round": "1", "reviewer": "codex", "verdict": "real", "severity": "P1", "fixed": "true"}),
+		reviewEvent(48, "review-round", map[string]string{"round": "2", "attempt": "1"}),
+		roundStep(48, 2, "find"),
+		reviewEvent(48, "agent-named", map[string]string{"round": "2", "reviewer": "claude", "agent": "p2-impl-rv-claude-r2", "attempt": "1"}),
+		reviewEvent(48, "agent-named", map[string]string{"round": "2", "reviewer": "codex", "agent": "p2-impl-rv-codex-r2", "attempt": "1"}),
+	)
+}
+
+func TestReviewEventsBuildTheLiveStepsRounds(t *testing.T) {
+	m := newModel(reviewed())
+
+	want := []Round{
+		{N: 1, Reviewers: []Reviewer{{ID: "claude", Agent: "p2-impl-rv-claude-r1", State: "ok", Findings: 2}, {ID: "codex", Agent: "p2-impl-rv-codex-r1", State: "ok", Findings: 1}}, Fixed: 2, Dismissed: 1, Severities: []string{"P1", "P2"}},
+		{N: 2, Reviewers: []Reviewer{{ID: "claude", Agent: "p2-impl-rv-claude-r2"}, {ID: "codex", Agent: "p2-impl-rv-codex-r2"}}},
+	}
+	if m.Live == nil || !reflect.DeepEqual(m.Live.Reviews, want) {
+		t.Fatalf("reviews %+v", m.Live)
+	}
+}
+
+func TestReviewEventsOfAnotherStepOrAttemptAreIgnored(t *testing.T) {
+	m := newModel(reviewed())
+	before := m.Live.Reviews
+
+	m = m.Apply(core.Event{At: at(49), Kind: "review-clean", Phase: "3", Step: "implement", Fields: map[string]string{"round": "2"}})
+	m = m.Apply(reviewEvent(49, "review-round", map[string]string{"round": "3", "attempt": "2"}))
+	m = m.Apply(core.Event{At: at(49), Kind: "review-clean", Phase: "2", Step: "plan", Fields: map[string]string{"round": "2"}})
+
+	if !reflect.DeepEqual(m.Live.Reviews, before) {
+		t.Fatalf("reviews changed: %+v", m.Live.Reviews)
+	}
+}
+
+func TestTheHalfTimerRestartsWhenTheHalfChanges(t *testing.T) {
+	m := newModel(reviewed())
+	if got := m.Live.HalfElapsed(at(50)); got != 2*time.Minute {
+		t.Fatalf("half elapsed %v", got)
+	}
+	m = m.Apply(step(50, 2, "implement", "waiting-input", "codex", "gpt-5", "medium", "ws-4"))
+	if got := m.Live.HalfElapsed(at(51)); got != 3*time.Minute {
+		t.Fatalf("half elapsed after a round-less event %v", got)
+	}
+	m = m.Apply(roundStep(52, 2, "fix"))
+	if got := m.Live.HalfElapsed(at(53)); got != time.Minute {
+		t.Fatalf("half elapsed after fix %v", got)
+	}
+}
+
+func TestANewStepStartsWithNoReviews(t *testing.T) {
+	m := newModel(reviewed())
+
+	m = m.Apply(step(55, 2, "land", "running", "claude", "opus", "high", "ws-5"))
+
+	if len(m.Live.Reviews) != 0 {
+		t.Fatalf("reviews carried over: %+v", m.Live.Reviews)
 	}
 }

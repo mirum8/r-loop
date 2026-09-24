@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ type Header struct {
 	RunID, Todo, Report string
 	Started             time.Time
 	Steps               []string
+	Backlog             bool
 }
 
 type Row struct {
@@ -37,8 +39,25 @@ type Step struct {
 	Started, Ended                                  time.Time
 	Backstop                                        time.Duration
 	Attempt, Round, Rounds                          int
+	Reviews                                         []Round
 	pausedSince                                     time.Time
 	pausedFor                                       time.Duration
+	halfSince                                       time.Time
+	timedRound                                      int
+	timedHalf                                       string
+}
+
+type Round struct {
+	N                         int
+	Reviewers                 []Reviewer
+	Fixed, Unfixed, Dismissed int
+	Severities                []string
+	Clean                     bool
+}
+
+type Reviewer struct {
+	ID, Agent, State string
+	Findings         int
 }
 
 func (s Step) Label() string {
@@ -60,6 +79,13 @@ func (s Step) Elapsed(now time.Time) time.Duration {
 		now = s.Ended
 	}
 	return now.Sub(s.Started).Truncate(time.Second)
+}
+
+func (s Step) HalfElapsed(now time.Time) time.Duration {
+	if !s.Ended.IsZero() {
+		now = s.Ended
+	}
+	return now.Sub(s.halfSince).Truncate(time.Second)
 }
 
 func (s Step) Remaining(now time.Time) (time.Duration, bool) {
@@ -155,6 +181,8 @@ func (m Model) Apply(ev core.Event) Model {
 	case "step":
 		m.checking = ""
 		m.step(ev)
+	case "review-round", "agent-named", "review-find", "finding", "review-clean":
+		m.review(ev)
 	case "phase-check-start":
 		m.checking, m.checkFrom, m.Live = ev.Phase, ev.At, nil
 	case "phase-check", "phase-check-timeout", "phase-check-skipped":
@@ -289,6 +317,9 @@ func (m *Model) step(ev core.Event) {
 	if r, err := strconv.Atoi(f["round"]); err == nil {
 		s.Round = r
 	}
+	if s.Half != "" && (s.Round != s.timedRound || s.Half != s.timedHalf) {
+		s.timedRound, s.timedHalf, s.halfSince = s.Round, s.Half, ev.At
+	}
 	paused := s.State == string(core.StepWaitingInput) || s.Round > 0
 	switch {
 	case paused && s.pausedSince.IsZero():
@@ -306,6 +337,61 @@ func (m *Model) step(ev core.Event) {
 		m.done[stepID{s.Phase, s.Kind}] = s.State
 	}
 	m.Live = &s
+}
+
+func (m *Model) review(ev core.Event) {
+	f := ev.Fields
+	if m.Live == nil || m.Live.Phase != ev.Phase || m.Live.Kind != ev.Step {
+		return
+	}
+	if a := f["attempt"]; a != "" && a != strconv.Itoa(m.Live.Attempt) {
+		return
+	}
+	n, _ := strconv.Atoi(f["round"])
+	s := *m.Live
+	s.Reviews = slices.Clone(s.Reviews)
+	i := slices.IndexFunc(s.Reviews, func(r Round) bool { return r.N == n })
+	if i < 0 {
+		s.Reviews = append(s.Reviews, Round{N: n})
+		i = len(s.Reviews) - 1
+	}
+	r := s.Reviews[i]
+	r.Reviewers = slices.Clone(r.Reviewers)
+	switch ev.Kind {
+	case "review-round":
+		r = Round{N: n}
+	case "agent-named":
+		rv := r.reviewer(f["reviewer"])
+		rv.Agent = f["agent"]
+	case "review-find":
+		rv := r.reviewer(f["reviewer"])
+		rv.State = f["state"]
+		rv.Findings, _ = strconv.Atoi(f["findings"])
+	case "finding":
+		switch {
+		case f["verdict"] != "real":
+			r.Dismissed++
+		case f["fixed"] == "true":
+			r.Fixed++
+			r.Severities = append(slices.Clone(r.Severities), f["severity"])
+			slices.Sort(r.Severities)
+		default:
+			r.Unfixed++
+		}
+	case "review-clean":
+		r.Clean = true
+	}
+	s.Reviews[i] = r
+	m.Live = &s
+}
+
+func (r *Round) reviewer(id string) *Reviewer {
+	i := slices.IndexFunc(r.Reviewers, func(rv Reviewer) bool { return rv.ID == id })
+	if i < 0 {
+		r.Reviewers = append(r.Reviewers, Reviewer{ID: id})
+		i = len(r.Reviewers) - 1
+	}
+	return &r.Reviewers[i]
 }
 
 func (m *Model) log(ev core.Event, t tone, text string) {

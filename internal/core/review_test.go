@@ -980,6 +980,49 @@ func TestARoundWithFindingsReportsTheFixHalfToTheObserverBeforeTheFixPrompt(t *t
 	}
 }
 
+type showObserver struct {
+	recObserver
+	shown []Event
+}
+
+func (o *showObserver) Show(ev Event) {
+	o.shown = append(o.shown, ev)
+}
+
+func TestReviewEventsReachTheObserverInOrder(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
+		findings := 0
+		if vars["Round"] == 1 {
+			findings = 1
+		}
+		writeReview(t, vars, "ok", findings)
+	}
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("claude-r1-1", "real", "P1", true, ""))
+	}
+	obs := &showObserver{}
+
+	out := ReviewHalf{Sessions: r.sm, Store: r.store}.Run(context.Background(), r.worker.Ref, r.worker, obs)
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	var got []string
+	for _, ev := range obs.shown {
+		got = append(got, ev.Kind+" r"+ev.Fields["round"])
+		if ev.Phase != r.worker.Ref.Key.Phase || ev.Step != r.worker.Ref.Key.Kind {
+			t.Errorf("event %+v", ev)
+		}
+	}
+	want := []string{"review-round r1", "agent-named r1", "review-find r1", "finding r1", "review-round r2", "agent-named r2", "review-find r2", "review-clean r2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("shown %v, want %v", got, want)
+	}
+}
+
 type occupiedPaneHost struct {
 	*scriptedHost
 	busy map[string]bool

@@ -1533,6 +1533,10 @@ func (o *loopObserver) Fixing(s *Session, round int) {
 	o.l.emitHalf(o.ref, s, round, "fix")
 }
 
+func (o *loopObserver) Show(ev Event) {
+	o.l.Face.Emit(ev)
+}
+
 func (l *RunLoop) emitStep(ref StepRef, state StepState, reason string, s *Session) {
 	l.emitRound(ref, state, reason, s, 0)
 }

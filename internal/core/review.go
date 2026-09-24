@@ -17,6 +17,7 @@ const maxAgentName = 32
 type ReviewHalf struct {
 	Sessions *SessionManager
 	Store    Store
+	obs      Observer
 }
 
 type reviewRound struct {
@@ -26,6 +27,7 @@ type reviewRound struct {
 }
 
 func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs Observer) Outcome {
+	h.obs = obs
 	sm := h.Sessions
 	row := ref.Kind.Row
 	rows, required, out := h.present(worker, row.Reviewers)
@@ -374,7 +376,13 @@ func (h ReviewHalf) event(worker *Session, kind string, fields map[string]string
 	fields["step"] = worker.Ref.Key.Kind
 	sm := h.Sessions
 	ev := Event{At: sm.now(), Kind: kind, Phase: worker.Ref.Key.Phase, Step: worker.Ref.Key.Kind, Fields: fields}
-	return h.Store.Append(worker.Ref.Key.Run, Record{Kind: RecordEvent, At: ev.At, Event: &ev})
+	if err := h.Store.Append(worker.Ref.Key.Run, Record{Kind: RecordEvent, At: ev.At, Event: &ev}); err != nil {
+		return err
+	}
+	if s, ok := h.obs.(interface{ Show(Event) }); ok {
+		s.Show(ev)
+	}
+	return nil
 }
 
 func stepDir(s *Session) string {

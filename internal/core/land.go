@@ -540,6 +540,19 @@ func (r stepRecorder) Resumed(s *Session) { r.record(s, StepRunning, 0) }
 
 func (r stepRecorder) Reviewing(s *Session, round int) { r.record(s, StepRunning, round) }
 
+func (r stepRecorder) Fixing(s *Session, round int) {
+	key := s.Ref.Key
+	f := stepFields(s.Ref, StepRunning, "", s.Workspace, round)
+	f["half"] = "fix"
+	recordEvent(r.store, r.face, key.Run, Event{Kind: "step", Phase: key.Phase, Step: key.Kind, Fields: f})
+}
+
+func (r stepRecorder) Show(ev Event) {
+	if r.face != nil {
+		r.face.Emit(ev)
+	}
+}
+
 func (r stepRecorder) finished(ref StepRef, out Outcome) {
 	ws, _ := sessionPlace(out.Session)
 	key := ref.Key

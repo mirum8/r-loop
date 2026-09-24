@@ -53,6 +53,15 @@ func (f *Face) Emit(ev core.Event) {
 		fmt.Fprintf(f.Out, "run list: %s\n", runList(ev.Fields))
 	case "warning", "error":
 		fmt.Fprintf(f.Out, "!  %s%s\n", where(ev.Phase, ev.Step), ev.Fields["reason"])
+	case "review-round":
+		fmt.Fprintf(f.Out, "%s  phase %s  %s  review r%s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["round"])
+	case "agent-named":
+		fmt.Fprintf(f.Out, "%s  phase %s  %s  reviewer %s r%s  agent %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["reviewer"], ev.Fields["round"], ev.Fields["agent"])
+	case "finding":
+		fields := ev.Fields
+		fmt.Fprintf(f.Out, "%s  phase %s  %s  r%s %s %s  %s %s fixed=%s: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fields["round"], fields["reviewer"], fields["id"], fields["verdict"], fields["severity"], fields["fixed"], fields["title"])
+	case "review-clean":
+		fmt.Fprintf(f.Out, "%s  phase %s  %s  review r%s clean\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["round"])
 	case "review-find":
 		fields := ev.Fields
 		fmt.Fprintf(f.Out, "%s  phase %s  %s  reviewer %s r%s  %s  %s findings", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fields["reviewer"], fields["round"], fields["state"], fields["findings"])

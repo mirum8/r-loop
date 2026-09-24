@@ -14,6 +14,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
 	"r-loop/internal/core"
@@ -324,4 +325,100 @@ func TestTheCheckingLineIsDimAndItsWarningsAmber(t *testing.T) {
 	if regexp.MustCompile(amber + `phase check warned`).MatchString(view) {
 		t.Fatalf("result is amber:\n%s", view)
 	}
+}
+
+func TestTheReviewBlockShowsEachRoundOnOneLine(t *testing.T) {
+	m := newModel(reviewed())
+	m.Now = at(50)
+
+	for _, w := range []int{120, 70} {
+		m.Width = w
+		view := ansi.Strip(m.View())
+		fits(t, m.View(), w, 40)
+		for _, want := range []string{
+			"review     r2/2 · finding 2m0s",
+			"  r1       claude 2 · codex 1 → fixed 2 (P1 P2) · 1 dismissed",
+			"  r2       claude p2-impl-rv-claude-r2 …",
+			"backstop   paused (",
+		} {
+			if w == 70 && strings.HasPrefix(want, "  r1") {
+				want = "  r1       claude 2 · codex 1 → fixed 2"
+			}
+			if !strings.Contains(view, want) {
+				t.Errorf("width %d: missing %q in\n%s", w, want, view)
+			}
+		}
+	}
+}
+
+func TestAFailedReviewerIsInTheErrorColour(t *testing.T) {
+	events := append(reviewed(), reviewEvent(50, "review-find", map[string]string{"round": "2", "reviewer": "codex", "state": "failed", "findings": "0"}))
+	m := newModel(events)
+	m.Now, m.Width = at(50), 120
+
+	if !strings.Contains(m.View(), m.theme.Failed.Render("codex ×")) {
+		t.Fatalf("no failed reviewer in\n%s", m.View())
+	}
+}
+
+func TestACleanRoundSaysClean(t *testing.T) {
+	events := append(reviewed(),
+		reviewEvent(50, "review-find", map[string]string{"round": "2", "reviewer": "claude", "state": "ok", "findings": "0"}),
+		reviewEvent(50, "review-find", map[string]string{"round": "2", "reviewer": "codex", "state": "ok", "findings": "0"}),
+		reviewEvent(50, "review-clean", map[string]string{"round": "2"}),
+	)
+	m := newModel(events)
+	m.Now, m.Width = at(51), 120
+	view := ansi.Strip(m.View())
+
+	for _, want := range []string{"review     r2/2 · clean", "  r2       claude 0 · codex 0 → clean"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("missing %q in\n%s", want, view)
+		}
+	}
+}
+
+func TestTheRailCountsLandedRowsAndNamesItemsForABacklog(t *testing.T) {
+	m := newModel(recorded())
+	if got := ansi.Strip(m.View()); !strings.Contains(got, "PHASES 1/4") {
+		t.Errorf("no phase count in\n%s", got)
+	}
+	m.Backlog = true
+	if got := ansi.Strip(m.View()); !strings.Contains(got, "ITEMS 1/4") {
+		t.Errorf("no item count in\n%s", got)
+	}
+}
+
+func TestTheRailListsOnlyThePhasesItWasGiven(t *testing.T) {
+	m := NewModel(Header{RunID: "r"}, plan()[1:3], NewTheme(lipgloss.NewRenderer(io.Discard), false))
+
+	got := m.rail()
+
+	if len(got) != 3 || !strings.Contains(got[1], "config reader") || !strings.Contains(got[2], "state store") {
+		t.Fatalf("rail %q", got)
+	}
+}
+
+func TestAnEndedStepNoLongerShowsAnActiveReviewHalf(t *testing.T) {
+	for _, state := range []string{"ok", "failed"} {
+		t.Run(state, func(t *testing.T) {
+			events := append(reviewed(), roundStep(50, 2, "fix"), step(52, 2, "implement", state, "codex", "gpt-5", "medium", "ws-4"))
+			m := newModel(events)
+			m.Now, m.Width = at(55), 120
+			view := ansi.Strip(m.View())
+
+			if !strings.HasSuffix(lineWith(view, "review     "), "review     r2/2") {
+				t.Fatalf("review line %q", lineWith(view, "review     "))
+			}
+		})
+	}
+}
+
+func lineWith(view, prefix string) string {
+	for _, l := range strings.Split(view, "\n") {
+		if strings.Contains(l, prefix) {
+			return l
+		}
+	}
+	return ""
 }

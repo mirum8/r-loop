@@ -100,8 +100,14 @@ carrying the watchdog's health (`watchdog live` dim, `watchdog waiting for you` 
 while it asks you in its own pane — from its `ask_maintainer` call, a remedy that needs your word,
 or herdr reporting it blocked — until its next call, `watchdog gone` in `error`), the phase rail
 beside the live-step panel (stacked below 80 columns), and a status line for a notice or a finished
-run. The panel names the step, a `steps` line with the phase's step kinds (done `✓` in `tertiary`,
-failed `×` in `error`, the live kind in `primary` without bold, pending dim), and below it an
+run. The rail lists only the phases (or, for an issues file, the items) chosen for this run — the
+launch selection, or the recorded run list on resume — under a `PHASES <landed>/<total>` (`ITEMS …`)
+header. The panel names the step, a `steps` line with the phase's step kinds (done `✓` in `tertiary`,
+failed `×` in `error`, the live kind in `primary` without bold, pending dim); once the review half
+starts, a `review  r<n>/<rounds> · finding|fixing <half timer>` line (`· clean` when done) and one
+line per round naming each reviewer — its herdr agent and `…` while it runs, its finding count once
+it reports, `×` in `error` if it failed — followed by `→ fixed <n> (<severities>) · <n> dismissed`
+after the fix half; a paused backstop reads `paused (<left> left)`. Below it an
 `EVENTS` feed of the last six things the run did — warnings and the watchdog's question to you
 (`watchdog asks you: <question>`, on one line) amber, errors, stalls and a gone
 watchdog red, everything else (landings, restarts, nudges, questions asked and answered) dim. Not

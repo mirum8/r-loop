@@ -1655,6 +1655,30 @@ func TestAGateFixReviewRoundIsARunningStepEventNamingTheRound(t *testing.T) {
 	}
 }
 
+func TestAGateFixReviewShowsItsReviewEventsAndFixHalfOnTheFace(t *testing.T) {
+	store := &fakeStore{}
+	face := &fakeFace{}
+	s := &Session{Workspace: "ws-5", Ref: StepRef{
+		Key:  StepKey{Run: "run-1", Phase: "3", Kind: "gatefix", Attempt: 1},
+		Kind: StepKind{Name: "gatefix", Row: StepRow{Provider: "codex", Rounds: 2}},
+	}}
+	rec := stepRecorder{store, face}
+
+	rec.Show(Event{Kind: "review-find", Phase: "3", Step: "gatefix", Fields: map[string]string{"round": "1"}})
+	rec.Fixing(s, 1)
+
+	events := face.events()
+	if len(events) != 2 || events[0].Kind != "review-find" {
+		t.Fatalf("events %+v", events)
+	}
+	if f := events[1].Fields; events[1].Kind != "step" || f["state"] != "running" || f["round"] != "1" || f["half"] != "fix" {
+		t.Fatalf("fix event %+v", events[1])
+	}
+	if len(store.Records) != 1 {
+		t.Fatalf("records %+v", store.Records)
+	}
+}
+
 func TestTheFaceSeesTheNudgeAfterTheStall(t *testing.T) {
 	r := newLoopRig(t)
 	r.host.behaviour["rloop-p2-plan"] = "stall"
