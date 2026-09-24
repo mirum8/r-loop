@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -37,10 +38,20 @@ func (c *PhaseCheck) Run(ctx context.Context, ph Phase, base string) CheckOutcom
 	}
 	errc := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				ev, err := panicked(ph.ID, "check", "phase check", r)
+				quietly(func() { recordEvent(c.Dog.Store, c.Dog.Face, c.Dog.RunID, ev) })
+				errc <- err
+			}
+		}()
 		errc <- c.Dog.NotifyContext(ctx, checkText(ph, filepath.Join(c.Repo.Root(), wt), base, c.Backlog), true, c.Timeout)
 	}()
 	select {
 	case err := <-errc:
+		if errors.Is(err, errPanic) {
+			return CheckOutcome{Kind: phaseCheckSkipped, Reason: err.Error()}
+		}
 		if !c.Dog.live() {
 			return CheckOutcome{Kind: phaseCheckSkipped, Reason: "watchdog unreachable"}
 		}

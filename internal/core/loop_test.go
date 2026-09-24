@@ -240,6 +240,141 @@ type landerFunc func(context.Context, Phase) (Landing, error)
 
 func (f landerFunc) Land(ctx context.Context, ph Phase) (Landing, error) { return f(ctx, ph) }
 
+type panicBeforePhaseWatcher struct{ *fakeWatcher }
+
+func (panicBeforePhaseWatcher) BeforePhase(context.Context, Phase, string) CheckOutcome {
+	panic("boom")
+}
+
+type panicQuestionsAsk struct{ *fakeAskChannel }
+
+func (panicQuestionsAsk) Questions() <-chan Question { panic("boom") }
+
+func TestAPanickingStepRunnerFailsTheStepWithThePanicValue(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Runners["plan-file"] = stepRunnerFunc(func(ctx context.Context, ref StepRef, obs Observer) Outcome {
+		if ref.Key.Phase != "1" {
+			return (singleRunner{sm: r.loop.Sessions}).Run(ctx, ref, obs)
+		}
+		s := &Session{Ref: ref, Agent: "step-agent", Pane: "step-pane"}
+		s.setReviewers([]*Session{{Agent: "reviewer-one"}})
+		obs.Started(s)
+		panic("boom")
+	})
+
+	if code := r.run(RunOptions{}); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if got := r.events("phase-blocked"); len(got) == 0 || got[0].Phase != "1" || got[0].Fields["reason"] != "panic in step runner: boom" {
+		t.Errorf("phase blocked %+v", got)
+	}
+	recs := recordsForStep(r.store, StepKey{Run: "run-1", Phase: "1", Kind: "plan", Attempt: 1})
+	if len(recs) == 0 || recs[len(recs)-1].State != StepFailed {
+		t.Errorf("step records %+v", recs)
+	}
+	if got := r.events("error"); len(got) == 0 || got[0].Fields["reason"] != "panic in step runner: boom" || got[0].Fields["stack"] == "" {
+		t.Errorf("error events %+v", got)
+	}
+	for _, agent := range []string{"step-agent", "reviewer-one"} {
+		if !slices.Contains(r.calls("SessionHost.Interrupt "), agent) {
+			t.Errorf("interrupts %v missing %s", r.calls("SessionHost.Interrupt "), agent)
+		}
+	}
+	if !slices.Contains(r.calls("Land "), "2") {
+		t.Errorf("land calls %v missing phase 2", r.calls("Land "))
+	}
+}
+
+func TestAPanicAfterARecordedOkStepKeepsTheStepOk(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Runners["plan-file"] = stepRunnerFunc(func(ctx context.Context, ref StepRef, obs Observer) Outcome {
+		if ref.Key.Phase != "1" {
+			return (singleRunner{sm: r.loop.Sessions}).Run(ctx, ref, obs)
+		}
+		if err := r.loop.Sessions.record(ref.Key, StepOK, ""); err != nil {
+			t.Fatal(err)
+		}
+		panic("after ok")
+	})
+
+	if code := r.run(RunOptions{}); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	if !slices.Contains(r.calls("Land "), "3") {
+		t.Errorf("dependent phase did not land: %v", r.calls("Land "))
+	}
+	if got := r.events("error"); len(got) == 0 || got[0].Fields["reason"] != "panic in step runner: after ok" {
+		t.Errorf("error events %+v", got)
+	}
+}
+
+func TestAPanicInLandHaltsTheRunBeforeAnotherPhaseLands(t *testing.T) {
+	r := newLoopRig(t)
+	var landed []string
+	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+		landed = append(landed, ph.ID)
+		if ph.ID == "1" {
+			panic("boom")
+		}
+		return Landing{Phase: ph.ID}, nil
+	})
+
+	if code := r.run(RunOptions{}); code != 4 {
+		t.Fatalf("exit %d, want 4", code)
+	}
+	if !reflect.DeepEqual(landed, []string{"1"}) {
+		t.Errorf("landed %v", landed)
+	}
+	runs := r.runRecords()
+	if len(runs) == 0 || runs[len(runs)-1].Run != RunHalted || runs[len(runs)-1].Reason != "interrupted: panic in land: boom" {
+		t.Errorf("run records %+v", runs)
+	}
+	if got := r.events("halt"); len(got) != 1 || got[0].Fields["reason"] != "interrupted: panic in land: boom" {
+		t.Errorf("halt events %+v", got)
+	}
+	if got := r.events("error"); len(got) == 0 || got[0].Fields["reason"] != "panic in land: boom" || got[0].Fields["stack"] == "" {
+		t.Errorf("error events %+v", got)
+	}
+}
+
+func TestAPanicInThePhaseCheckSkipsItAndThePhaseRuns(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.Watcher = panicBeforePhaseWatcher{r.watcher}
+
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	if got := r.events("phase-check-skipped"); len(got) != 1 || got[0].Phase != "1" || got[0].Fields["reason"] != "panic in check: boom" {
+		t.Errorf("skipped events %+v", got)
+	}
+	if got := r.events("error"); len(got) == 0 || got[0].Fields["reason"] != "panic in check: boom" {
+		t.Errorf("error events %+v", got)
+	}
+}
+
+func TestAPanicInTheQuestionServerHaltsTheRunAsInterrupted(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Ask = panicQuestionsAsk{&fakeAskChannel{}}
+	r.loop.Runners["plan-file"] = stepRunnerFunc(func(ctx context.Context, ref StepRef, obs Observer) Outcome {
+		<-ctx.Done()
+		return Outcome{State: StepFailed, Reason: "interrupted"}
+	})
+
+	if code := r.run(RunOptions{}); code != 4 {
+		t.Fatalf("exit %d, want 4", code)
+	}
+	runs := r.runRecords()
+	if len(runs) == 0 || runs[len(runs)-1].Run != RunHalted || runs[len(runs)-1].Reason != "interrupted: panic in question server: boom" {
+		t.Errorf("run records %+v", runs)
+	}
+	if got := r.events("halt"); len(got) != 1 || got[0].Fields["reason"] != "interrupted: panic in question server: boom" {
+		t.Errorf("halt events %+v", got)
+	}
+	if got := r.events("error"); len(got) == 0 || got[0].Fields["stack"] == "" {
+		t.Errorf("error events %+v", got)
+	}
+}
+
 type signalHookStore struct {
 	*loopStore
 	recording chan struct{}

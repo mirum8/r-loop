@@ -85,7 +85,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - A watchdog halt or warn naming a running land-stage step applies to that step or is rejected back to the caller
       - A held watchdog halt is never delivered to a step from a different phase than the one it named
 
-- [ ] [#13] Nothing recovers from panics: one panic in any goroutine kills a multi-hour run and leaves the terminal raw
+- [x] [#13] Nothing recovers from panics: one panic in any goroutine kills a multi-hour run and leaves the terminal raw  <!-- fixed: r-loop/phase-14 -->
       - A panic inside a step runner becomes a failed step whose reason contains the panic value, and the process does not crash
       - A panic in a question, watch-tick or watchdog-deliver goroutine is recovered and recorded; if the run cannot continue, a halted record is written
       - After a fatal panic that was recovered, the TUI is stopped and the terminal restored before the process exits

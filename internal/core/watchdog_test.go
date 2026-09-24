@@ -903,6 +903,214 @@ type goneLander struct {
 	dog  *Watchdog
 }
 
+type panicWatchdogRecordStore struct {
+	*fakeStore
+	panicked atomic.Bool
+}
+
+func (s *panicWatchdogRecordStore) Append(runID string, rec Record) error {
+	if rec.Kind == RecordEvent && rec.Event.Kind == "watchdog-unreachable" && s.panicked.CompareAndSwap(false, true) {
+		panic("boom")
+	}
+	return s.fakeStore.Append(runID, rec)
+}
+
+type panicWatchdogFace struct {
+	*fakeFace
+	panicked atomic.Bool
+}
+
+type observingWatchdogStore struct {
+	*fakeStore
+	dog    *Watchdog
+	marked chan bool
+}
+
+func (s *observingWatchdogStore) Append(runID string, rec Record) error {
+	if rec.Kind == RecordEvent && rec.Event.Kind == "watchdog-unreachable" {
+		s.marked <- s.dog.Gone()
+	}
+	return s.fakeStore.Append(runID, rec)
+}
+
+func TestAPanicDeliveringToTheWatchdogRecordsLossBeforeMarkingItGone(t *testing.T) {
+	store := &observingWatchdogStore{fakeStore: &fakeStore{}, marked: make(chan bool, 1)}
+	dog := newWatchdog(&checkHost{onPrompt: func(string) { panic("boom") }}, store, ProviderArgs{Kind: "claude"})
+	store.dog = dog
+	gotGone := make(chan struct{}, 1)
+	dog.OnGone = func() { gotGone <- struct{}{} }
+	dog.Post("hello")
+	waitForWatchdogGone(t, dog, gotGone)
+	if marked := <-store.marked; marked {
+		t.Fatal("watchdog was marked gone before its loss was recorded")
+	}
+	dog.Stop()
+}
+
+func (f *panicWatchdogFace) Emit(ev Event) {
+	if ev.Kind == "watchdog-unreachable" && f.panicked.CompareAndSwap(false, true) {
+		panic("boom")
+	}
+	f.fakeFace.Emit(ev)
+}
+
+func waitForWatchdogGone(t *testing.T, d *Watchdog, gone <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-gone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchdog was not marked gone")
+	}
+	if !d.Gone() {
+		t.Fatal("OnGone ran while watchdog remained live")
+	}
+}
+
+func watchdogEvent(store *fakeStore, kind string) []Event {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var events []Event
+	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == kind {
+			events = append(events, *rec.Event)
+		}
+	}
+	return events
+}
+
+func TestAPanicDeliveringToTheWatchdogMarksItGoneAndFreesItsLocks(t *testing.T) {
+	host := &checkHost{onPrompt: func(string) { panic("boom") }}
+	store := &fakeStore{}
+	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+	var calls atomic.Int32
+	gotGone := make(chan struct{}, 1)
+	dog.OnGone = func() { calls.Add(1); gotGone <- struct{}{} }
+	dog.Post("hello")
+	waitForWatchdogGone(t, dog, gotGone)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("OnGone calls %d, want 1", got)
+	}
+	if events := watchdogEvent(store, "error"); len(events) != 1 || events[0].Fields["reason"] != "panic in watchdog delivery: boom" || events[0].Fields["stack"] == "" {
+		t.Errorf("error events %+v", events)
+	}
+	if events := watchdogEvent(store, "watchdog-unreachable"); len(events) != 1 || events[0].Fields["reason"] != "panic in watchdog delivery: boom" {
+		t.Errorf("unreachable events %+v", events)
+	}
+	notified := make(chan struct{})
+	go func() { dog.Notify("after", false, 0); close(notified) }()
+	select {
+	case <-notified:
+	case <-time.After(time.Second):
+		t.Fatal("Notify held the delivery lock")
+	}
+	stopped := make(chan struct{})
+	go func() { dog.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("Stop waited for delivery")
+	}
+}
+
+func TestAPanicDeliveringToTheWatchdogHaltsTheRunWithAHaltedRecord(t *testing.T) {
+	r := newLoopRig(t)
+	host := &checkHost{onPrompt: func(text string) {
+		if text == "phase landed" {
+			panic("boom")
+		}
+	}}
+	dog := newWatchdog(host, &r.store.fakeStore, ProviderArgs{Kind: "claude"})
+	dog.Face = r.face
+	w := &Watch{Store: r.store, Face: r.face, Dog: dog}
+	gotGone := make(chan struct{})
+	dog.OnGone = func() { w.WatchdogGone(); close(gotGone) }
+	r.loop.Watcher = w
+	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+		landing, err := r.lander.Land(ctx, ph)
+		dog.Post("phase landed")
+		select {
+		case <-gotGone:
+		case <-time.After(2 * time.Second):
+			return Landing{}, errors.New("watchdog did not become gone")
+		}
+		return landing, err
+	})
+	if code := r.run(RunOptions{}); code != 5 {
+		t.Errorf("exit %d, want 5", code)
+	}
+	if got := r.calls("Land "); !reflect.DeepEqual(got, []string{"1"}) {
+		t.Errorf("lands %v", got)
+	}
+	for _, rec := range r.store.Records["run-1"] {
+		if rec.Kind == RecordStep && rec.Step.Phase == "2" {
+			t.Errorf("phase 2 step %+v", rec)
+		}
+	}
+	runs := r.runRecords()
+	if len(runs) == 0 || runs[len(runs)-1].Run != RunHalted || runs[len(runs)-1].Reason != "watchdog: the watchdog is gone" {
+		t.Errorf("run records %+v", runs)
+	}
+	if halts := r.events("halt"); len(halts) != 1 {
+		t.Errorf("halts %+v", halts)
+	}
+	if events := r.events("error"); len(events) != 1 || events[0].Fields["reason"] != "panic in watchdog delivery: boom" {
+		t.Errorf("error events %+v", events)
+	}
+	if events := r.events("watchdog-unreachable"); len(events) != 1 || events[0].Fields["reason"] != "panic in watchdog delivery: boom" {
+		t.Errorf("unreachable events %+v", events)
+	}
+	kinds := r.kinds()
+	if e, u, h := slices.Index(kinds, "error"), slices.Index(kinds, "watchdog-unreachable"), slices.Index(kinds, "halt"); e < 0 || u <= e || h <= u {
+		t.Errorf("event order %v", kinds)
+	}
+}
+
+func TestAPanicRecordingTheWatchdogsLossStillMarksItGone(t *testing.T) {
+	for _, source := range []string{"store", "face"} {
+		t.Run(source, func(t *testing.T) {
+			host := &goneHost{}
+			host.gone.Store(true)
+			store := &fakeStore{}
+			dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+			if source == "store" {
+				dog.Store = &panicWatchdogRecordStore{fakeStore: store}
+			} else {
+				dog.Face = &panicWatchdogFace{fakeFace: &fakeFace{}}
+			}
+			var calls atomic.Int32
+			gotGone := make(chan struct{}, 1)
+			dog.OnGone = func() { calls.Add(1); gotGone <- struct{}{} }
+			dog.Post("step ended")
+			waitForWatchdogGone(t, dog, gotGone)
+			if got := calls.Load(); got != 1 {
+				t.Errorf("OnGone calls %d, want 1", got)
+			}
+			if events := watchdogEvent(store, "error"); len(events) != 1 || events[0].Fields["reason"] != "panic in watchdog delivery: boom" {
+				t.Errorf("error events %+v", events)
+			}
+			if source == "face" {
+				if events := watchdogEvent(store, "watchdog-unreachable"); len(events) != 1 {
+					t.Errorf("unreachable events %+v, want one", events)
+				}
+			}
+			asked := make(chan struct{})
+			go func() { dog.AskMaintainer("q", nil, ""); close(asked) }()
+			select {
+			case <-asked:
+			case <-time.After(time.Second):
+				t.Fatal("AskMaintainer held the wait lock")
+			}
+			stopped := make(chan struct{})
+			go func() { dog.Stop(); close(stopped) }()
+			select {
+			case <-stopped:
+			case <-time.After(time.Second):
+				t.Fatal("Stop waited for delivery")
+			}
+		})
+	}
+}
+
 func (g *goneLander) Land(ctx context.Context, ph Phase) (Landing, error) {
 	l, err := g.fakeLander.Land(ctx, ph)
 	g.host.gone.Store(true)

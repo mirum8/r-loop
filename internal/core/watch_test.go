@@ -3,9 +3,107 @@ package core
 import (
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type panicWatchCheck struct {
+	name     string
+	nameBoom bool
+	calls    atomic.Int32
+}
+
+func (c *panicWatchCheck) Name() string {
+	if c.nameBoom {
+		panic("boom")
+	}
+	return c.name
+}
+
+func (c *panicWatchCheck) Run(CheckContext) []Signal {
+	c.calls.Add(1)
+	if !c.nameBoom {
+		panic("boom")
+	}
+	return []Signal{{Kind: SignalWarn, Source: SourceDriver, Reason: "warning"}}
+}
+
+func receiveCheck(t *testing.T, seen <-chan CheckContext) {
+	t.Helper()
+	select {
+	case <-seen:
+	case <-time.After(2 * time.Second):
+		t.Fatal("good check did not tick")
+	}
+}
+
+func endWatchStep(t *testing.T, w *Watch, ref StepRef) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		w.StepEnded(ref, Outcome{State: StepOK})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("StepEnded waited for a panicking check")
+	}
+}
+
+func watchErrorEvents(store *fakeStore) []Event {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var out []Event
+	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == "error" {
+			out = append(out, *rec.Event)
+		}
+	}
+	return out
+}
+
+func TestAPanickingWatchCheckIsRecordedAndOtherChecksKeepTicking(t *testing.T) {
+	store := &fakeStore{}
+	w := newWatch(store)
+	w.Poll = time.Millisecond
+	bad := &panicWatchCheck{name: "bad"}
+	good := &fakeCheck{name: "good", seen: make(chan CheckContext, 1)}
+	w.Checks = []Check{bad, good}
+	ref := implementRef(1, 1)
+	w.StepStarted(ref, nil)
+	for range 3 {
+		receiveCheck(t, good.seen)
+	}
+	endWatchStep(t, w, ref)
+	if got := bad.calls.Load(); got != 1 {
+		t.Errorf("bad check calls %d, want 1", got)
+	}
+	events := watchErrorEvents(store)
+	if len(events) != 1 || events[0].Fields["reason"] != "panic in watch check bad: boom" || events[0].Fields["stack"] == "" {
+		t.Errorf("error events %+v", events)
+	}
+}
+
+func TestAPanickingWatchCheckNameIsRecordedWithoutACrash(t *testing.T) {
+	store := &fakeStore{}
+	w := newWatch(store)
+	w.Poll = time.Millisecond
+	bad := &panicWatchCheck{nameBoom: true}
+	good := &fakeCheck{name: "good", seen: make(chan CheckContext, 1)}
+	w.Checks = []Check{bad, good}
+	ref := implementRef(1, 1)
+	w.StepStarted(ref, nil)
+	for range 3 {
+		receiveCheck(t, good.seen)
+	}
+	endWatchStep(t, w, ref)
+	events := watchErrorEvents(store)
+	if len(events) != 1 || events[0].Fields["reason"] != "panic in watch check unnamed: boom" {
+		t.Errorf("error events %+v", events)
+	}
+}
 
 type fakeCheck struct {
 	name string

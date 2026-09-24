@@ -85,6 +85,7 @@ type RunLoop struct {
 	MaxRestarts  int
 
 	mu         sync.Mutex
+	cancel     context.CancelCauseFunc
 	runDir     string
 	live       *Session
 	pending    map[string]bool
@@ -122,6 +123,11 @@ func (nopLander) Land(ctx context.Context, phase Phase) (Landing, error) {
 }
 
 func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	l.mu.Lock()
+	l.cancel = cancel
+	l.mu.Unlock()
 	l.runDir = l.Store.Dir(l.RunID)
 	list, err := RunList(l.Plan, l.TodoPath, opts)
 	if err != nil {
@@ -360,7 +366,16 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	}
 	var landing Landing
 	var err error
-	if l.guarded(ctx, func(child context.Context) { landing, err = lander.Land(child, ph) }) && err != nil {
+	guardedStopped, perr := l.guarded(ctx, n, "land", func(child context.Context) { landing, err = lander.Land(child, ph) })
+	if perr == nil && errors.Is(err, errPanic) {
+		perr = err
+	}
+	if perr != nil {
+		l.halt(perr)
+		l.stop(ctx, n, "land")
+		return "land", Outcome{}, true
+	}
+	if guardedStopped && err != nil {
 		l.stop(ctx, n, "land")
 		return "land", Outcome{}, true
 	}
@@ -381,7 +396,16 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 			}
 			break
 		}
-		if l.guarded(ctx, func(child context.Context) { landing, err = lander.Land(child, ph) }) && err != nil {
+		guardedStopped, perr = l.guarded(ctx, n, "land", func(child context.Context) { landing, err = lander.Land(child, ph) })
+		if perr == nil && errors.Is(err, errPanic) {
+			perr = err
+		}
+		if perr != nil {
+			l.halt(perr)
+			l.stop(ctx, n, "land")
+			return "land", Outcome{}, true
+		}
+		if guardedStopped && err != nil {
 			l.stop(ctx, n, "land")
 			return "land", Outcome{}, true
 		}
@@ -425,8 +449,12 @@ func (l *RunLoop) checkPhase(ctx context.Context, ph Phase, base string) bool {
 		l.emit(Event{Kind: phaseCheckStart, Phase: n, Fields: map[string]string{"phase": n}})
 	}
 	var out CheckOutcome
-	if l.guarded(ctx, func(child context.Context) { out = l.watcher().BeforePhase(child, ph, base) }) {
+	stopped, perr := l.guarded(ctx, n, "check", func(child context.Context) { out = l.watcher().BeforePhase(child, ph, base) })
+	if stopped {
 		return true
+	}
+	if perr != nil {
+		out = CheckOutcome{Kind: phaseCheckSkipped, Reason: perr.Error()}
 	}
 	if l.Watcher != nil && out.Kind == "" {
 		out = CheckOutcome{Kind: phaseCheckSkipped, Reason: "no phase check"}
@@ -601,29 +629,37 @@ func (l *RunLoop) poll() time.Duration {
 	return l.Sessions.Poll
 }
 
-func (l *RunLoop) guarded(ctx context.Context, fn func(context.Context)) bool {
+func (l *RunLoop) guarded(ctx context.Context, phase, step string, fn func(context.Context)) (bool, error) {
 	child, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan struct{})
+	var perr error
 	go func() {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				ev, err := panicked(phase, step, step, r)
+				quietly(func() { l.emit(ev) })
+				perr = err
+			}
+		}()
 		fn(child)
-		close(done)
 	}()
 	ticker := time.NewTicker(l.poll())
 	defer ticker.Stop()
 	for {
 		select {
 		case <-done:
-			return ctx.Err() != nil
+			return ctx.Err() != nil, perr
 		case <-ctx.Done():
 			<-done
-			return true
+			return true, perr
 		case <-ticker.C:
 			if l.Store.Aborted(l.RunID) {
 				l.recordStop(ReasonAborted)
 				cancel()
 				<-done
-				return true
+				return true, perr
 			}
 		}
 	}
@@ -770,7 +806,14 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 	stepCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan Outcome, 1)
-	go func() { done <- runner.Run(stepCtx, ref, &loopObserver{l: l, ref: ref}) }()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- l.runnerPanicked(ref, r)
+			}
+		}()
+		done <- runner.Run(stepCtx, ref, &loopObserver{l: l, ref: ref})
+	}()
 	ticker := time.NewTicker(l.poll())
 	defer ticker.Stop()
 	for {
@@ -827,16 +870,7 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 			if owner == nil {
 				owner = out.Session
 			}
-			if owner != nil {
-				owner.mu.Lock()
-				rvs := slices.Clone(owner.reviewers)
-				owner.mu.Unlock()
-				for _, rv := range rvs {
-					if rv.Agent != "" {
-						l.Sessions.Stop(rv)
-					}
-				}
-			}
+			l.stopReviewers(owner)
 			out.State, out.Reason, out.Stalled, out.Halted = StepFailed, reason, false, true
 			if err != nil {
 				out.Reason += "; record: " + err.Error()
@@ -858,16 +892,7 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 				if owner == nil {
 					owner = out.Session
 				}
-				if owner != nil {
-					owner.mu.Lock()
-					rvs := slices.Clone(owner.reviewers)
-					owner.mu.Unlock()
-					for _, rv := range rvs {
-						if rv.Agent != "" {
-							l.Sessions.Stop(rv)
-						}
-					}
-				}
+				l.stopReviewers(owner)
 				out.State, out.Reason, out.Stalled, out.Halted = StepFailed, "record: "+err.Error(), false, true
 				l.emitStep(ref, out.State, out.Reason, out.Session)
 				return l.ended(ref, out)
@@ -880,6 +905,46 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 			return l.stopStep(ctx, ref, <-done)
 		}
 	}
+}
+
+func (l *RunLoop) stopReviewers(owner *Session) {
+	if owner == nil {
+		return
+	}
+	owner.mu.Lock()
+	rvs := slices.Clone(owner.reviewers)
+	owner.mu.Unlock()
+	for _, rv := range rvs {
+		if rv.Agent != "" {
+			l.Sessions.Stop(rv)
+		}
+	}
+}
+
+func (l *RunLoop) runnerPanicked(ref StepRef, v any) Outcome {
+	ev, err := panicked(ref.Key.Phase, ref.Key.Kind, "step runner", v)
+	quietly(func() { l.emit(ev) })
+	out := Outcome{State: StepFailed, Reason: err.Error()}
+	if live := l.liveSession(); live != nil {
+		quietly(func() { live.end(); l.Sessions.Stop(live); l.stopReviewers(live) })
+		out.Session = live
+	}
+	var rerr error
+	if qerr := quietly(func() { rerr = l.Sessions.record(ref.Key, StepFailed, out.Reason) }); qerr != nil {
+		rerr = qerr
+	}
+	if rerr != nil && !errors.Is(rerr, errStepEnded) {
+		out.Reason += "; record: " + rerr.Error()
+	}
+	if errors.Is(rerr, errStepEnded) {
+		if state, done := l.Sessions.terminal(ref.Key); done {
+			out.State = state
+			if state == StepOK {
+				out.Reason = ""
+			}
+		}
+	}
+	return out
 }
 
 func (l *RunLoop) stopStep(ctx context.Context, ref StepRef, out Outcome) (Outcome, bool) {
@@ -939,6 +1004,13 @@ func (l *RunLoop) ServeQuestions(ctx context.Context) {
 }
 
 func (l *RunLoop) serveQuestions(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			ev, err := panicked("", "", "question server", r)
+			quietly(func() { l.emit(ev) })
+			l.halt(err)
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -953,6 +1025,11 @@ func (l *RunLoop) serveQuestions(ctx context.Context) {
 }
 
 func (l *RunLoop) question(ctx context.Context, q Question) {
+	defer func() {
+		if r := recover(); r != nil {
+			l.questionPanicked(q, r)
+		}
+	}()
 	base, _, _ := strings.Cut(q.Step.Kind, "-rv-")
 	if !slices.ContainsFunc(l.Kinds, func(k StepKind) bool { return k.Name == base }) {
 		l.recordWithdrawn(q, "land-stage step")
@@ -977,6 +1054,51 @@ func (l *RunLoop) question(ctx context.Context, q Question) {
 	}
 	l.emit(Event{Kind: "question", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"id": q.ID, "text": q.Text}})
 	l.watcher().Route(ctx, q)
+}
+
+func (l *RunLoop) questionPanicked(q Question, v any) {
+	ev, err := panicked(q.Step.Phase, q.Step.Kind, "question "+q.ID, v)
+	quietly(func() { l.emit(ev) })
+	l.mu.Lock()
+	open, tracked := l.asked[q.ID]
+	if tracked && open.answered {
+		l.mu.Unlock()
+		return
+	}
+	if tracked {
+		open.answered = true
+		l.asked[q.ID] = open
+	}
+	l.mu.Unlock()
+	if !tracked {
+		if s := l.liveSession(); s != nil {
+			key := s.Ref.Key
+			if key.Run == q.Step.Run && key.Phase == q.Step.Phase && key.Attempt == q.Step.Attempt && (q.Step.Kind == key.Kind || strings.HasPrefix(q.Step.Kind, key.Kind+"-rv-")) {
+				var agent string
+				if quietly(func() { agent = s.asker(q.Step.Kind) }) == nil && agent != "" {
+					if s.live(func() {
+						l.track(q, s, agent)
+						l.openQuestion(s, 1)
+					}) {
+						open = openAsk{q: q, s: s, agent: agent, answered: true}
+						tracked = true
+						l.mu.Lock()
+						l.asked[q.ID] = open
+						l.mu.Unlock()
+						quietly(func() { l.stepState(s, StepWaitingInput) })
+					}
+				}
+			}
+		}
+	}
+	if w, ok := l.watcher().(interface{ Withdraw(id string) }); ok {
+		quietly(func() { w.Withdraw(q.ID) })
+	}
+	quietly(func() { l.recordWithdrawn(q, err.Error()) })
+	quietly(func() { l.Ask.Answer(q.ID, "r-loop: question withdrawn: "+err.Error(), "withdrawn", "") })
+	if tracked {
+		l.hand(open, answerMessage(q.ID, "withdrawn ("+err.Error()+"); continue without an answer", "r-loop", ""))
+	}
 }
 
 func (l *RunLoop) Deliver(id, text, by, citation string) error {
@@ -1033,6 +1155,21 @@ func (l *RunLoop) answer(id, text, by, citation string) (openAsk, bool) {
 }
 
 func (l *RunLoop) hand(open openAsk, text string) {
+	defer func() {
+		if r := recover(); r != nil {
+			ev, err := panicked(open.q.Step.Phase, open.q.Step.Kind, "answer hand-off "+open.q.ID, r)
+			quietly(func() { l.emit(ev) })
+			withdrawn := false
+			quietly(func() { withdrawn = l.undeliverable(open, err.Error()) })
+			if withdrawn {
+				quietly(func() {
+					open.s.live(func() {
+						l.Sessions.Host.Prompt(open.agent, answerMessage(open.q.ID, "withdrawn ("+err.Error()+"); continue without an answer", "r-loop", ""), false, 0)
+					})
+				})
+			}
+		}
+	}()
 	id := open.q.ID
 	poll := l.Sessions.Poll
 	if poll <= 0 {
@@ -1076,14 +1213,17 @@ func (l *RunLoop) asking(id string) bool {
 	return ok
 }
 
-func (l *RunLoop) undeliverable(open openAsk, reason string) {
+func (l *RunLoop) undeliverable(open openAsk, reason string) bool {
+	withdrawn := false
 	open.s.live(func() {
 		if _, ok := l.claim(open.q.ID); !ok {
 			return
 		}
+		withdrawn = true
 		l.recordWithdrawn(open.q, reason)
 		l.release(open.s)
 	})
+	return withdrawn
 }
 
 func (l *RunLoop) withdrawStep(key StepKey, state StepState) {
@@ -1209,6 +1349,15 @@ func interruptReason(ctx context.Context) string {
 		reason += ": " + cause.Error()
 	}
 	return reason
+}
+
+func (l *RunLoop) halt(err error) {
+	l.mu.Lock()
+	cancel := l.cancel
+	l.mu.Unlock()
+	if cancel != nil {
+		cancel(err)
+	}
 }
 
 func (l *RunLoop) stop(ctx context.Context, phase, step string) {

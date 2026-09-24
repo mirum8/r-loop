@@ -148,7 +148,7 @@ func (s *Server) Wait() {
 }
 
 func trackTool[In, Out any](s *Server, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFor[In, Out] {
-	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (res *mcp.CallToolResult, out Out, err error) {
 		s.mu.Lock()
 		if s.stopping {
 			s.mu.Unlock()
@@ -158,6 +158,11 @@ func trackTool[In, Out any](s *Server, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHa
 		s.wg.Add(1)
 		s.mu.Unlock()
 		defer s.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("r-loop: panic in tool: %v", r)
+			}
+		}()
 		return h(ctx, req, in)
 	}
 }

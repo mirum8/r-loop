@@ -67,6 +67,112 @@ func installSignalTestDisplay(w *Wiring) (*io.PipeWriter, *bytes.Buffer) {
 	return writer, out
 }
 
+type panicNotifier struct{}
+
+func (panicNotifier) Fire(string, map[string]string) { panic("boom") }
+
+type panicCleanupHost struct{ core.SessionHost }
+
+func (panicCleanupHost) Close(string) error     { panic("boom") }
+func (panicCleanupHost) ClosePane(string) error { panic("boom") }
+
+type panicEventFace struct{ core.Face }
+
+func (f panicEventFace) Emit(ev core.Event) {
+	if ev.Kind == "phase-blocked" || ev.Kind == "halt" {
+		panic("boom")
+	}
+	f.Face.Emit(ev)
+}
+
+func TestAPanicInTheDriverStopsTheDisplayAndHaltsTheRun(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	sim := newSim()
+	sim.fail["rloop-p1-plan"] = true
+	w, err := f.preflight(f.todo, "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, sim)
+	writer, out := installSignalTestDisplay(w)
+	defer writer.Close()
+	w.Loop.Notifier = panicNotifier{}
+	var stderr bytes.Buffer
+	w.Env.Stderr = &stderr
+	done := make(chan int, 1)
+	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
+	if code := resultOfSignalTest(t, done, 10*time.Second); code != 2 {
+		t.Fatalf("exit = %d", code)
+	}
+	if state := f.load(w.Loop.RunID); state.Status != core.RunHalted {
+		t.Fatalf("run status = %s", state.Status)
+	}
+	if !strings.Contains(stderr.String(), "r-loop: panic: boom") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if !strings.Contains(out.String(), "\x1b[?1049l") {
+		t.Fatalf("terminal was not restored: %q", out.String())
+	}
+}
+
+func TestAPanicInExecuteCleanupStillRestoresTheTerminal(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	w, err := f.preflight(f.todo, "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sim := newSim()
+	f.sim(w, sim)
+	writer, out := installSignalTestDisplay(w)
+	defer writer.Close()
+	w.Dog.Host = panicCleanupHost{SessionHost: w.Dog.Host}
+	var stderr bytes.Buffer
+	w.Env.Stderr = &stderr
+	done := make(chan int, 1)
+	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
+	if code := resultOfSignalTest(t, done, 10*time.Second); code != 2 {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(stderr.String(), "r-loop: panic: boom") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if !strings.Contains(out.String(), "\x1b[?1049l") {
+		t.Fatalf("terminal was not restored: %q", out.String())
+	}
+}
+
+func TestAPanicInTheFaceStillRestoresTheTerminal(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	sim := newSim()
+	sim.fail["rloop-p1-plan"] = true
+	w, err := f.preflight(f.todo, "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, sim)
+	writer, out := installSignalTestDisplay(w)
+	defer writer.Close()
+	pf := panicEventFace{Face: w.TUI}
+	w.Face = pf
+	w.Loop.Face = pf
+	var stderr bytes.Buffer
+	w.Env.Stderr = &stderr
+	done := make(chan int, 1)
+	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
+	if code := resultOfSignalTest(t, done, 10*time.Second); code != 2 {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(stderr.String(), "r-loop: panic: boom") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if !strings.Contains(out.String(), "\x1b[?1049l") {
+		t.Fatalf("terminal was not restored: %q", out.String())
+	}
+	if state := f.load(w.Loop.RunID); state.Status != core.RunHalted {
+		t.Fatalf("run status = %s", state.Status)
+	}
+}
+
 func TestEachSignalHaltsALiveStepAsInterrupted(t *testing.T) {
 	for _, tc := range []struct {
 		name string
