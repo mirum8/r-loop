@@ -1,6 +1,7 @@
 package gitrepo
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -365,28 +366,62 @@ func (r *Repo) DiffStat(dir, ref string) (int, int, error) {
 		return 0, 0, err
 	}
 	for _, p := range split0(untracked) {
-		b, err := blob(filepath.Join(r.path(dir), p))
+		n, err := untrackedLines(filepath.Join(r.path(dir), p))
 		if err != nil {
 			return 0, 0, err
 		}
-		added += bytes.Count(b, []byte("\n"))
-		if len(b) > 0 && b[len(b)-1] != '\n' {
-			added++
-		}
+		added += n
 	}
 	return added, deleted, nil
 }
 
-func blob(path string) ([]byte, error) {
+func untrackedLines(path string) (int, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
+	var src io.Reader
 	if info.Mode()&os.ModeSymlink != 0 {
 		target, err := os.Readlink(path)
-		return []byte(target), err
+		if err != nil {
+			return 0, err
+		}
+		src = strings.NewReader(target)
+	} else {
+		f, err := os.Open(path)
+		if err != nil {
+			return 0, err
+		}
+		defer f.Close()
+		src = f
 	}
-	return os.ReadFile(path)
+	br := bufio.NewReaderSize(src, 32<<10)
+	head, err := br.Peek(8000)
+	if err != nil && err != io.EOF && err != bufio.ErrBufferFull {
+		return 0, err
+	}
+	if bytes.IndexByte(head, 0) >= 0 {
+		return 0, nil
+	}
+	buf := make([]byte, 32<<10)
+	n, last := 0, byte('\n')
+	for {
+		k, err := br.Read(buf)
+		n += bytes.Count(buf[:k], []byte{'\n'})
+		if k > 0 {
+			last = buf[k-1]
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
+	if last != '\n' {
+		n++
+	}
+	return n, nil
 }
 
 func (r *Repo) Snapshot(dir string) (string, error) {
