@@ -324,7 +324,7 @@ func TestFailClosed(t *testing.T) {
 			name:    "heading without dash",
 			content: "### Phase 1 — A\n\n### Phase 2 B\n",
 			want:    []string{"line 3", "### Phase 2 B"},
-		},		{
+		}, {
 			name:    "duplicate lettered phase",
 			content: "### Phase 1 — A\n### Phase 1a — B\n### Phase 1A — C\n",
 			want:    []string{"line 3", "duplicate phase 1a"},
@@ -354,6 +354,9 @@ func TestFailClosed(t *testing.T) {
 			content: "### Phase 1 — A\n### Phase 2 — B\n**Depends on:** Phase 1a\n",
 			want:    []string{"line 3", "phase 1a"},
 		},
+		{name: "depends on itself", content: "### Phase 1 — A\n### Phase 2 — B\n**Depends on:** Phase 2\n", want: []string{"line 3", "phase 2 depends on itself"}},
+		{name: "depends on a later phase", content: "### Phase 1 — A\n**Depends on:** Phase 2\n### Phase 2 — B\n", want: []string{"line 2", "phase 1 depends on phase 2, which comes after it"}},
+		{name: "unclosed code fence", content: "### Phase 1 — A\n```\n### Phase 2 — B\n", want: []string{"line 2", "code fence is never closed"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -457,5 +460,111 @@ func TestUppercasePhaseLabelIsLowercased(t *testing.T) {
 	}
 	if p.Phases[1].ID != "1a" || !reflect.DeepEqual(p.Phases[2].DependsOn, []string{"1a"}) {
 		t.Errorf("ID = %q, DependsOn = %q", p.Phases[1].ID, p.Phases[2].DependsOn)
+	}
+}
+
+func TestDependsOnReadsOnlyNamedPhases(t *testing.T) {
+	path := writePlan(t, strings.Join([]string{
+		"### Phase 1 — A", "**Depends on:** —",
+		"### Phase 2 — B", "**Depends on:** Phase 1 (see ADR-12)",
+		"### Phase 3 — C", "**Depends on:** phase 1 and Phase 2",
+		"### Phase 4 — D", "**Depends on:** Phase 3 (see ADR-12)",
+		"### Phase 4a — E", "**Depends on:** Phases 1, 2",
+		"### Phase 4b — F", "**Depends on:** Phase 3",
+		"### Phase 5 — G", "**Depends on:** Phase 3, Phase 4b", "",
+	}, "\n"))
+	p, err := Reader{}.Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{nil, {"1"}, {"1", "2"}, {"3"}, {"1", "2"}, {"3"}, {"3", "4b"}}
+	for i, ph := range p.Phases {
+		if !reflect.DeepEqual(ph.DependsOn, want[i]) {
+			t.Errorf("phase %s depends on %v, want %v", ph.ID, ph.DependsOn, want[i])
+		}
+	}
+}
+
+const fencedCommentPlan = "### Phase 1 — A\n- [ ] before\n  ```sh\n# comment\n## also a comment\n  ```\n- [ ] after\n**Done when:** `go test ./a/...` is green.\n### Phase 2 — B\n- [ ] b\n"
+
+func TestFencedCommentKeepsThePhaseBlock(t *testing.T) {
+	p, err := Reader{}.Read(writePlan(t, fencedCommentPlan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Phases) != 2 {
+		t.Fatalf("phases = %d", len(p.Phases))
+	}
+	if len(p.Phases[0].Items) != 2 || p.Phases[0].Items[0].Text != "before" || p.Phases[0].Items[1].Text != "after" {
+		t.Errorf("items = %+v", p.Phases[0].Items)
+	}
+	if p.Phases[0].DoneWhen != "`go test ./a/...` is green." {
+		t.Errorf("DoneWhen = %q", p.Phases[0].DoneWhen)
+	}
+	if !strings.Contains(p.Phases[0].Block, "- [ ] after") || !strings.Contains(p.Phases[0].Block, "**Done when:**") {
+		t.Errorf("Block = %q", p.Phases[0].Block)
+	}
+}
+
+func TestDoneWhenRunsThroughAFencedBoldLine(t *testing.T) {
+	path := writePlan(t, "### Phase 1 — A\n**Done when:** `go test ./a/...` is green,\n```\n**example**\n```\nand the log is clean.\n### Phase 2 — B\n")
+	p, err := Reader{}.Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "`go test ./a/...` is green,\n```\n**example**\n```\nand the log is clean."
+	if p.Phases[0].DoneWhen != want {
+		t.Errorf("DoneWhen = %q, want %q", p.Phases[0].DoneWhen, want)
+	}
+}
+
+const fencedHeadingPlan = "### Phase 1 — A\n- [ ] real one\n~~~\n### Phase 2 — Fake\n## Milestone 9 — Fake\n- [ ] sample\n~~~\n### Phase 2 — Real\n- [ ] real two\n"
+
+func TestFencedPhaseHeadingIsNotAPhase(t *testing.T) {
+	p, err := Reader{}.Read(writePlan(t, fencedHeadingPlan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Phases) != 2 || p.Phases[1].Title != "Real" {
+		t.Fatalf("phases = %+v", p.Phases)
+	}
+	if len(p.Milestones) != 0 {
+		t.Errorf("milestones = %+v", p.Milestones)
+	}
+	if len(p.Phases[0].Items) != 1 || p.Phases[0].Items[0].Text != "real one" {
+		t.Errorf("items = %+v", p.Phases[0].Items)
+	}
+}
+
+func TestUnfencedHeadingStillEndsTheBlock(t *testing.T) {
+	path := writePlan(t, "### Phase 1 — A\n- [ ] one\n```\n# comment\n```\n## Notes\n- [ ] not an item\n### Phase 2 — B\n- [ ] two\n")
+	p, err := Reader{}.Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Phases[0].Items) != 1 || strings.Contains(p.Phases[0].Block, "## Notes") {
+		t.Errorf("phase 1 = %+v", p.Phases[0])
+	}
+}
+
+func TestFencedPhaseHeadingDoesNotMakeABacklogATodo(t *testing.T) {
+	path := writePlan(t, "- [ ] [#1] Rename the app\n      ```md\n### Phase 1 — example\n      ```\n- [ ] [#2] Export books\n")
+	p, err := Reader{}.Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Backlog || len(p.Phases) != 2 {
+		t.Errorf("Backlog = %v, phases = %+v", p.Backlog, p.Phases)
+	}
+}
+
+func TestDependsOnReadsOxfordCommaList(t *testing.T) {
+	path := writePlan(t, "### Phase 1 — A\n### Phase 2 — B\n### Phase 3 — C\n### Phase 4 — D\n**Depends on:** Phases 1, 2, and 3\n")
+	p, err := Reader{}.Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Phases[3].DependsOn; !reflect.DeepEqual(got, []string{"1", "2", "3"}) {
+		t.Errorf("DependsOn = %v, want [1 2 3]", got)
 	}
 }

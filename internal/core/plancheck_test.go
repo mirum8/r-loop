@@ -138,7 +138,7 @@ func TestCheckPlan(t *testing.T) {
 				ph.DependsOn = []string{"1"}
 				return planOf(ph)
 			},
-			notes: []string{"Phase 1 — Title 1: depends on itself", "dependency cycle through phase(s): 1"},
+			notes: []string{"dependency cycle through phase(s): 1"},
 		},
 		{
 			name: "forward dependency and cycle",
@@ -148,10 +148,7 @@ func TestCheckPlan(t *testing.T) {
 				two.DependsOn = []string{"1"}
 				return planOf(one, two)
 			},
-			notes: []string{
-				"Phase 1 — Title 1: depends on Phase 2, which comes after it; a phase may depend only on earlier phases",
-				"dependency cycle through phase(s): 1",
-			},
+			notes: []string{"dependency cycle through phase(s): 1"},
 		},
 		{
 			name: "same wave shares a file",

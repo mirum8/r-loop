@@ -386,3 +386,59 @@ func TestBlocksNamingLetteredPhase(t *testing.T) {
 		t.Errorf("Blocking([1]) = %+v, want none", got)
 	}
 }
+
+func TestFencedResolveFirstHeadingOpensNoSection(t *testing.T) {
+	before := "### Phase 1 — One\n```\n## Resolve first\n- [ ] **Example** — which? Owner: x. Blocks: Phase 1.\n```\n- [ ] a\n"
+	p := readEntries(t, before)
+	if p.ResolveFirst != nil {
+		t.Errorf("ResolveFirst = %+v", p.ResolveFirst)
+	}
+	after := strings.Replace(before, "which?", "what?", 1)
+	if OnlyResolveFirstChanged([]byte(before), []byte(after)) {
+		t.Error("fenced edit counted as Resolve first change")
+	}
+}
+
+func TestFencedBulletInAResolveFirstEntryIsNotAnEntry(t *testing.T) {
+	p := readEntries(t, "## Resolve first\n- [ ] **Real** — which?\n      Owner: platform. Blocks: Phase 1. Timebox: an hour.\n```\n- [ ] **Example** — x?\n```\n"+phasesTail)
+	e := onlyEntry(t, p)
+	if e.Name != "Real" || !reflect.DeepEqual(e.BlocksPhases, []string{"1"}) || !strings.Contains(e.Body, "- [ ] **Example** — x?") {
+		t.Errorf("entry = %+v", e)
+	}
+}
+
+func TestBlocksLowercasePhaseNamesThatPhase(t *testing.T) {
+	p := readEntries(t, "## Resolve first\n- [ ] **Lower** — which?\n      Owner: platform. Blocks: phase 2. Timebox: an hour.\n"+phasesTail)
+	e := onlyEntry(t, p)
+	if !reflect.DeepEqual(e.BlocksPhases, []string{"2"}) || e.BlocksAll || len(p.Blocking([]string{"1"})) != 0 {
+		t.Errorf("entry = %+v", e)
+	}
+}
+
+func TestBlocksStopsAtProseAfterThePhase(t *testing.T) {
+	p := readEntries(t, "## Resolve first\n- [ ] **Prose** — which?\n      Owner: platform. Blocks: Phase 1 (see ADR-3). Timebox: an hour.\n"+phasesTail)
+	e := onlyEntry(t, p)
+	if !reflect.DeepEqual(e.BlocksPhases, []string{"1"}) || e.BlocksAll {
+		t.Errorf("entry = %+v", e)
+	}
+}
+
+func TestBlocksSayingAllBlocksAll(t *testing.T) {
+	p := readEntries(t, "## Resolve first\n- [ ] **First** — which?\n      Owner: platform. Blocks: all, from Phase 2. Timebox: an hour.\n- [ ] **Second** — which?\n      Owner: platform. Blocks: Phase 2 and all later phases. Timebox: an hour.\n"+phasesTail)
+	if len(p.ResolveFirst) != 2 {
+		t.Fatalf("entries = %+v", p.ResolveFirst)
+	}
+	for _, e := range p.ResolveFirst {
+		if !e.BlocksAll {
+			t.Errorf("%q does not block all", e.Blocks)
+		}
+	}
+}
+
+func TestBlocksReadsOxfordCommaList(t *testing.T) {
+	p := readEntries(t, "## Resolve first\n- [ ] **Decision** — which?\n      Owner: platform. Blocks: Phases 1, 2, and 3. Timebox: an hour.\n"+phasesTail)
+	e := onlyEntry(t, p)
+	if !reflect.DeepEqual(e.BlocksPhases, []string{"1", "2", "3"}) || e.BlocksAll {
+		t.Errorf("BlocksPhases = %v, BlocksAll = %v", e.BlocksPhases, e.BlocksAll)
+	}
+}

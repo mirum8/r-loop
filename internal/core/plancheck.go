@@ -25,10 +25,6 @@ func CheckPlan(p Plan) PlanFindings {
 	if p.Backlog {
 		return f
 	}
-	known := map[string]bool{}
-	for _, ph := range p.Phases {
-		known[ph.ID] = true
-	}
 	for _, ph := range p.Phases {
 		title := fmt.Sprintf("Phase %s — %s", ph.ID, ph.Title)
 		if len(ph.Items) == 0 {
@@ -49,15 +45,6 @@ func CheckPlan(p Plan) PlanFindings {
 		}
 		if !dependsOnRe.MatchString(ph.Block) {
 			f.Notes = append(f.Notes, title+": no 'Depends on' line — every phase declares its edges, '—' when it has none")
-		}
-		for _, d := range ph.DependsOn {
-			switch {
-			case !known[d]:
-			case d == ph.ID:
-				f.Notes = append(f.Notes, title+": depends on itself")
-			case ComparePhaseIDs(d, ph.ID) > 0:
-				f.Notes = append(f.Notes, fmt.Sprintf("%s: depends on Phase %s, which comes after it; a phase may depend only on earlier phases", title, d))
-			}
 		}
 	}
 	wave, cyclic := Waves(p)

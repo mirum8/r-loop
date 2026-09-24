@@ -1721,3 +1721,60 @@ func TestAnAlreadyDonePlanOnResumeSkipsTheItemAgain(t *testing.T) {
 		t.Fatalf("exit %d, lands %v, skips %+v", code, r.calls("Land "), r.events("item-skipped"))
 	}
 }
+
+func TestResumeRunsADependentWhoseDependencyIsOutsideTheRunList(t *testing.T) {
+	r := newLoopRig(t)
+	code := r.run(RunOptions{Phases: []string{"3"}, Resume: true})
+	if code != 0 {
+		t.Errorf("exit = %d", code)
+	}
+	if got := r.calls("Land "); !reflect.DeepEqual(got, []string{"3"}) {
+		t.Errorf("landed = %v", got)
+	}
+	if got := r.events("phase-skipped"); len(got) != 0 {
+		t.Errorf("skipped = %+v", got)
+	}
+}
+
+func TestResumeSkipsADependentWhoseListedDependencyHasNotLanded(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Plan.Phases[0].DependsOn = []string{"2"}
+	code := r.run(RunOptions{Resume: true})
+	if code != 1 {
+		t.Errorf("exit = %d", code)
+	}
+	skip := r.events("phase-skipped")
+	if len(skip) != 2 || skip[0].Phase != "1" || skip[0].Fields["because"] != "2" || skip[1].Phase != "3" || skip[1].Fields["because"] != "1" {
+		t.Errorf("skipped = %+v", skip)
+	}
+	if got := r.calls("Land "); !reflect.DeepEqual(got, []string{"2"}) {
+		t.Errorf("landed = %v", got)
+	}
+	for _, call := range r.calls("SessionHost.Open ") {
+		if strings.Contains(call, "rloop-p1") || strings.Contains(call, "rloop-p3") {
+			t.Errorf("opened %q", call)
+		}
+	}
+}
+
+func TestResumeSkipsADependentOfAPhaseBlockedAgain(t *testing.T) {
+	r := newLoopRig(t)
+	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: "1", Kind: "plan", Attempt: 1}, State: StepOK})
+	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: "1", Kind: "implement", Attempt: 1}, State: StepFailed})
+	r.host.behaviour["rloop-p1-implement-a2"] = "fail"
+	code := r.run(RunOptions{Resume: true})
+	if code != 1 {
+		t.Errorf("exit = %d", code)
+	}
+	blocked := r.events("phase-blocked")
+	if len(blocked) != 1 || blocked[0].Phase != "1" {
+		t.Errorf("blocked = %+v", blocked)
+	}
+	skip := r.events("phase-skipped")
+	if len(skip) != 1 || skip[0].Phase != "3" || skip[0].Fields["because"] != "1" {
+		t.Errorf("skipped = %+v", skip)
+	}
+	if got := r.calls("Land "); !reflect.DeepEqual(got, []string{"2"}) {
+		t.Errorf("landed = %v", got)
+	}
+}

@@ -172,13 +172,13 @@ Verified against `r-loop` @ `main` `058c81b`.
       - The check is skipped in `--dry-run`, as the herdr check is
       - A run whose provider binaries are all on PATH starts exactly as today
 
-- [ ] [#29] `Depends on:`/`Blocks:` parsing is loose, and dependency order is never enforced
+- [x] [#29] `Depends on:`/`Blocks:` parsing is loose, and dependency order is never enforced  <!-- fixed: r-loop/phase-30 -->
       - `Phase 3 (see ADR-12)` gives `DependsOn [3]`, and `Phase 3, Phase 4b` gives `[3, 4b]`
       - A phase that depends on itself or on a later phase fails Read with an error naming the line
       - `Blocks: phase 4` in any case gives specific blocked phases; blocking everything happens only when `Blocks:` names no phase or says all
       - On resume, a phase whose dependency is blocked or not landed is skipped with the dependency named, not run
 
-- [ ] [#30] A `#` heading inside a fenced code block ends the phase block
+- [x] [#30] A `#` heading inside a fenced code block ends the phase block  <!-- fixed: r-loop/phase-30 -->
       - A phase whose block holds a fenced code block with a `# comment` line keeps its items, `Done when:` and body after the fence
       - Tick on such a phase ticks the `- [ ]` items that follow the fence
       - A `### Phase N` line inside a fence is not read as a phase heading

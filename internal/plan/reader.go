@@ -21,7 +21,9 @@ var (
 	builtRe      = regexp.MustCompile(`<!--\s*built:.*?-->`)
 	itemRe       = regexp.MustCompile(`^- \[([ xX])\][ \t]?(.*)$`)
 	backtickRe   = regexp.MustCompile("`([^`]+)`")
-	phaseRefRe   = regexp.MustCompile(`\b\d+[a-zA-Z]?\b`)
+	phaseListRe  = regexp.MustCompile(`(?i)\bphases?[ \t]+\d+[a-z]?\b(?:[ \t]*(?:,(?:[ \t]*\band\b)?|&|·|/|\band\b)[ \t]*(?:phases?[ \t]+)?\d+[a-z]?\b)*`)
+	phaseIDRe    = regexp.MustCompile(`\d+[a-zA-Z]?\b`)
+	fenceRe      = regexp.MustCompile("^[ \\t]*(`{3,}|~{3,})(.*)$")
 )
 
 type Reader struct{}
@@ -29,6 +31,7 @@ type Reader struct{}
 type dependsRef struct {
 	line  int
 	phase string
+	from  string
 }
 
 func (Reader) Read(path string) (core.Plan, error) {
@@ -41,11 +44,15 @@ func (Reader) Read(path string) (core.Plan, error) {
 		return core.Plan{}, err
 	}
 	lines := strings.SplitAfter(string(raw), "\n")
-	if isBacklog(lines) {
+	mask, open := fenced(lines)
+	if open >= 0 {
+		return core.Plan{}, fmt.Errorf("%s line %d: code fence is never closed", path, open+1)
+	}
+	if isBacklog(lines, mask) {
 		return readBacklog(path, lines)
 	}
 	p := core.Plan{Path: path, Topic: filepath.Base(filepath.Dir(abs))}
-	if found, spans := resolveFirst(lines); found {
+	if found, spans := resolveFirst(lines, mask); found {
 		p.ResolveFirst = []core.Entry{}
 		for _, s := range spans {
 			p.ResolveFirst = append(p.ResolveFirst, s.entry)
@@ -55,6 +62,9 @@ func (Reader) Read(path string) (core.Plan, error) {
 	var deps []dependsRef
 	seen := map[string]bool{}
 	for i := 0; i < len(lines); i++ {
+		if mask[i] {
+			continue
+		}
 		line := strings.TrimRight(lines[i], "\r\n")
 		if m := milestoneRe.FindStringSubmatch(line); m != nil {
 			milestone, _ = strconv.Atoi(m[1])
@@ -78,10 +88,10 @@ func (Reader) Read(path string) (core.Plan, error) {
 		seen[n] = true
 
 		end := i + 1
-		for end < len(lines) && !headingRe.MatchString(lines[end]) {
+		for end < len(lines) && (mask[end] || !headingRe.MatchString(lines[end])) {
 			end++
 		}
-		ph, refs, err := parsePhase(path, n, m[2], lines[i:end], i+1)
+		ph, refs, err := parsePhase(path, n, m[2], lines[i:end], mask[i:end], i+1)
 		if err != nil {
 			return core.Plan{}, err
 		}
@@ -96,8 +106,13 @@ func (Reader) Read(path string) (core.Plan, error) {
 	}
 
 	for _, d := range deps {
-		if !seen[d.phase] {
+		switch {
+		case !seen[d.phase]:
 			return core.Plan{}, fmt.Errorf("%s line %d: depends on phase %s, which does not exist", path, d.line, d.phase)
+		case d.phase == d.from:
+			return core.Plan{}, fmt.Errorf("%s line %d: phase %s depends on itself", path, d.line, d.from)
+		case core.ComparePhaseIDs(d.phase, d.from) > 0:
+			return core.Plan{}, fmt.Errorf("%s line %d: phase %s depends on phase %s, which comes after it; a phase may depend only on earlier phases", path, d.line, d.from, d.phase)
 		}
 	}
 	for i, ph := range p.Phases {
@@ -139,13 +154,16 @@ func resolvedFor(entries []core.Entry, phase string) string {
 	return b.String()
 }
 
-func parsePhase(path, id, title string, block []string, headingLine int) (core.Phase, []dependsRef, error) {
+func parsePhase(path, id, title string, block []string, fence []bool, headingLine int) (core.Phase, []dependsRef, error) {
 	title = builtRe.ReplaceAllString(title, "")
 	title = strings.ReplaceAll(title, "✅", "")
 	ph := core.Phase{ID: id, Title: strings.TrimSpace(title), Block: strings.Join(block, "")}
 
 	var refs []dependsRef
 	for j := 1; j < len(block); j++ {
+		if fence[j] {
+			continue
+		}
 		line := strings.TrimRight(block[j], "\r\n")
 		lineNo := headingLine + j
 		switch {
@@ -163,7 +181,7 @@ func parsePhase(path, id, title string, block []string, headingLine int) (core.P
 			}
 			ph.DependsOn = deps
 			for _, d := range deps {
-				refs = append(refs, dependsRef{line: lineNo, phase: d})
+				refs = append(refs, dependsRef{line: lineNo, phase: d, from: id})
 			}
 		case strings.HasPrefix(line, "**Files:**"):
 			for _, m := range backtickRe.FindAllStringSubmatch(line, -1) {
@@ -173,7 +191,7 @@ func parsePhase(path, id, title string, block []string, headingLine int) (core.P
 			ph.Risk = field(line, "**Risk:**")
 		case strings.HasPrefix(line, "**Done when:**"):
 			parts := []string{field(line, "**Done when:**")}
-			for j+1 < len(block) && !strings.HasPrefix(block[j+1], "**") && !anyHeadingRe.MatchString(block[j+1]) {
+			for j+1 < len(block) && (fence[j+1] || (!strings.HasPrefix(block[j+1], "**") && !anyHeadingRe.MatchString(block[j+1]))) {
 				j++
 				parts = append(parts, strings.TrimRight(block[j], "\r\n"))
 			}
@@ -195,11 +213,7 @@ func parseDepends(rest string) ([]string, error) {
 	if rest == "" || rest == "—" || rest == "-" || strings.EqualFold(rest, "none") {
 		return nil, nil
 	}
-	idx := strings.Index(rest, "Phase")
-	if idx < 0 {
-		return nil, fmt.Errorf("depends on names no phase: %q", rest)
-	}
-	out := phaseRefs(rest[idx:])
+	out := phaseRefs(rest)
 	if len(out) == 0 {
 		return nil, fmt.Errorf("depends on names no phase: %q", rest)
 	}
@@ -216,8 +230,33 @@ func label(s string) string {
 
 func phaseRefs(s string) []string {
 	var out []string
-	for _, ref := range phaseRefRe.FindAllString(s, -1) {
-		out = append(out, label(ref))
+	for _, list := range phaseListRe.FindAllString(s, -1) {
+		for _, id := range phaseIDRe.FindAllString(list, -1) {
+			out = append(out, label(id))
+		}
 	}
 	return out
+}
+
+func fenced(lines []string) ([]bool, int) {
+	mask := make([]bool, len(lines))
+	open := -1
+	marker := ""
+	for i, raw := range lines {
+		line := strings.TrimRight(raw, "\r\n")
+		m := fenceRe.FindStringSubmatch(line)
+		if open < 0 {
+			if m != nil {
+				open, marker = i, m[1]
+				mask[i] = true
+			}
+			continue
+		}
+		mask[i] = true
+		if m != nil && m[1][0] == marker[0] && len(m[1]) >= len(marker) && strings.TrimSpace(m[2]) == "" {
+			open = -1
+			marker = ""
+		}
+	}
+	return mask, open
 }
