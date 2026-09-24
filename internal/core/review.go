@@ -39,7 +39,15 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 	urls := make([]string, len(rows))
 	for i, rv := range rows {
 		key := reviewerKey(ref.Key, rv.ID())
-		a, url, err := sm.askArgs(key, rv.Provider, rv.Model, rv.Effort, filepath.Join(stepDir(worker), fmt.Sprintf("%s-a%d.mcp.json", key.Kind, key.Attempt)))
+		var a ProviderArgs
+		var url string
+		var err error
+		switch ref.Key.Kind {
+		case "gatefix", "gate", "milestone":
+			a, err = sm.Resolve(rv.Provider, rv.Model, rv.Effort, "", "")
+		default:
+			a, url, err = sm.askArgs(key, rv.Provider, rv.Model, rv.Effort, filepath.Join(stepDir(worker), fmt.Sprintf("%s-a%d.mcp.json", key.Kind, key.Attempt)))
+		}
 		if err != nil {
 			return sm.fail(worker, "reviewer "+rv.ID()+": "+err.Error())
 		}

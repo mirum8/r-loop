@@ -196,6 +196,39 @@ func TestAddendumSectionOnlyWhenSet(t *testing.T) {
 	}
 }
 
+func TestLandStagePromptsDoNotOfferAskWatchdog(t *testing.T) {
+	r := New(t.TempDir())
+	for _, name := range []string{"gatefix", "gate", "milestone"} {
+		got := render(t, r, name, fullVars())
+		if strings.Contains(got, "ask_watchdog") || !strings.Contains(got, `{"outcome":"ok","reason":""}`) || !strings.Contains(got, fullVars()["Sentinel"].(string)) {
+			t.Errorf("%s prompt has wrong outcome instructions:\n%s", name, got)
+		}
+	}
+	for _, name := range []string{"plan", "implement"} {
+		got := render(t, r, name, fullVars())
+		if !strings.Contains(got, "call the `ask_watchdog` tool") {
+			t.Errorf("%s prompt has no ask instructions", name)
+		}
+	}
+}
+
+func TestGatefixReviewAndFixPromptsDoNotOfferAskWatchdog(t *testing.T) {
+	r := New(t.TempDir())
+	for _, name := range []string{"review", "review-ui", "fix"} {
+		vars := fullVars()
+		vars["ReviewedKind"] = "gatefix"
+		got := render(t, r, name, vars)
+		if strings.Contains(got, "ask_watchdog") {
+			t.Errorf("%s gatefix prompt offers ask_watchdog", name)
+		}
+		vars["ReviewedKind"] = "implement"
+		got = render(t, r, name, vars)
+		if !strings.Contains(got, "ask_watchdog") {
+			t.Errorf("%s implement prompt lacks ask_watchdog", name)
+		}
+	}
+}
+
 func TestAllSevenTemplatesRenderWithFullVariableSet(t *testing.T) {
 	r := New(t.TempDir())
 	for _, name := range append(stepTemplates, "watchdog") {
@@ -325,7 +358,7 @@ func TestWatchdogCarriesThePhaseCheck(t *testing.T) {
 
 func TestStepTemplatesSendRealChoicesToTheWatchdog(t *testing.T) {
 	r := New(t.TempDir())
-	for _, name := range stepTemplates {
+	for _, name := range []string{"plan", "implement", "review", "review-ui", "fix"} {
 		text := render(t, r, name, fullVars())
 		if !strings.Contains(text, "call the `ask_watchdog` tool") || !strings.Contains(text, "Never ask the user in this pane") {
 			t.Errorf("%s does not send real choices to the watchdog:\n%s", name, text)

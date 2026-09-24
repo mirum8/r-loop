@@ -43,4 +43,4 @@ Convert what you report into `{{.FindingsPath}}` as:
 where `<name>` is your reviewer name — the `<name>` in the findings file name `<kind>-findings-<name>-r<round>.json` — `<round>` is {{.Round}} and `<n>` is numbered from 1. Every id is unique within the file and starts with `<name>-r{{.Round}}-`: the step agent answers each id exactly once in its verdict file, and the driver checks the two against each other. `title`, `detail` and `files` are required on every finding. With nothing to report, write an empty `findings` list.
 
 Change no file in `{{.Worktree}}`: every file you create goes under `{{.ArtifactsDir}}`, and build output only where the project's ignore rules already keep it out of git.
-{{template "sentinel" .}}
+{{if or (eq .ReviewedKind "gatefix") (eq .ReviewedKind "gate") (eq .ReviewedKind "milestone")}}{{template "outcome" .}}{{else}}{{template "sentinel" .}}{{end}}

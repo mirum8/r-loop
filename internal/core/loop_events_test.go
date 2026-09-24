@@ -919,6 +919,282 @@ func waitFor(t *testing.T, cond func() bool) {
 	t.Fatal("condition never held")
 }
 
+type spawnHaltHost struct {
+	*eventsHost
+	hook   string
+	trig   bool
+	trigMu sync.Mutex
+	r      *eventsRig
+	t      *testing.T
+	key    StepKey
+}
+
+func (h *spawnHaltHost) trigger(method, name string) {
+	if h.hook != method || !strings.Contains(name, "p1-implement") && !strings.Contains(name, "p1 implement") {
+		return
+	}
+	h.trigMu.Lock()
+	if h.trig {
+		h.trigMu.Unlock()
+		return
+	}
+	h.trig = true
+	h.trigMu.Unlock()
+	h.r.watcher.signals <- Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: h.key, Reason: "wrong turn"}
+	waitFor(h.t, func() bool {
+		for _, rec := range recordsForStep(h.r.store, h.key) {
+			if rec.Kind == RecordStep && rec.Step != nil && *rec.Step == h.key && rec.State == StepFailed {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func (h *spawnHaltHost) AgentPane(agent string) (string, error) {
+	h.trigger("AgentPane", agent)
+	return h.eventsHost.AgentPane(agent)
+}
+
+func (h *spawnHaltHost) Start(pane, name, kind string, args []string) (Agent, error) {
+	h.trigger("Start", name)
+	return h.eventsHost.Start(pane, name, kind, args)
+}
+
+func (h *spawnHaltHost) Open(spec OpenSpec) (Workspace, error) {
+	h.trigger("Open", spec.Label)
+	return h.eventsHost.Open(spec)
+}
+
+func recordsForStep(store *loopStore, key StepKey) []Record {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var out []Record
+	for _, rec := range store.Records[key.Run] {
+		if rec.Kind == RecordStep && rec.Step != nil && *rec.Step == key {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+func assertStepRecords(t *testing.T, store *loopStore, key StepKey, states []StepState, reasons []string) {
+	t.Helper()
+	recs := recordsForStep(store, key)
+	if len(recs) != len(states) {
+		t.Fatalf("records %+v, want states %v", recs, states)
+	}
+	for i, rec := range recs {
+		if rec.State != states[i] || rec.Reason != reasons[i] {
+			t.Errorf("record %d = %s %q, want %s %q", i, rec.State, rec.Reason, states[i], reasons[i])
+		}
+	}
+}
+
+func TestAHaltBeforeTheWorkspaceOpensLeavesOneFailedRecordAndOpensNothing(t *testing.T) {
+	r := newEventsRig(t)
+	key := StepKey{Run: "run-1", Phase: "1", Kind: "implement", Attempt: 1}
+	r.loop.Sessions.Host = &spawnHaltHost{eventsHost: r.ehost, hook: "AgentPane", r: r, t: t, key: key}
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 5 {
+		t.Fatalf("exit %d", code)
+	}
+	assertStepRecords(t, r.store, key, []StepState{StepQueued, StepFailed}, []string{"", "watchdog: wrong turn"})
+	for _, spec := range r.host.Opened {
+		if strings.Contains(spec.Label, "p1 implement") {
+			t.Errorf("opened %s", spec.Label)
+		}
+	}
+	for _, agent := range r.host.Agents {
+		if strings.Contains(agent, "p1-implement") {
+			t.Errorf("started %s", agent)
+		}
+	}
+}
+
+func TestAHaltWhileTheAgentStartsIsTheLastRecordAndInterruptsTheAgent(t *testing.T) {
+	r := newEventsRig(t)
+	key := StepKey{Run: "run-1", Phase: "1", Kind: "implement", Attempt: 1}
+	r.loop.Sessions.Host = &spawnHaltHost{eventsHost: r.ehost, hook: "Start", r: r, t: t, key: key}
+	if code := r.run(RunOptions{Phases: []string{"1"}}); code != 5 {
+		t.Fatalf("exit %d", code)
+	}
+	assertStepRecords(t, r.store, key, []StepState{StepQueued, StepSpawned, StepFailed}, []string{"", "", "watchdog: wrong turn"})
+	if !slices.Contains(r.calls("SessionHost.Interrupt "), "rloop-p1-implement") {
+		t.Errorf("interrupts %v", r.calls("SessionHost.Interrupt "))
+	}
+}
+
+func TestAHaltAfterTheRunnerRecordedOkLeavesOnlyTheOkRecord(t *testing.T) {
+	r := newEventsRig(t)
+	key := StepKey{Run: "run-1", Phase: "1", Kind: "implement", Attempt: 1}
+	r.watcher.signals = make(chan Signal, 1)
+	runner := stepRunnerFunc(func(ctx context.Context, ref StepRef, obs Observer) Outcome {
+		if ref.Key != key {
+			return (singleRunner{sm: r.loop.Sessions}).Run(ctx, ref, obs)
+		}
+		out := r.loop.Sessions.Finish(&Session{Ref: ref}, Outcome{State: StepOK})
+		r.watcher.signals <- Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: key, Reason: "wrong turn"}
+		return out
+	})
+	r.loop.Runners = map[string]StepRunner{"plan-file": runner, "diff": runner}
+	if code := r.run(RunOptions{}); code != 5 {
+		t.Fatalf("exit %d", code)
+	}
+	assertStepRecords(t, r.store, key, []StepState{StepQueued, StepOK}, []string{"", ""})
+	if slices.Contains(r.calls("Land "), "1") {
+		t.Errorf("landed phase 1")
+	}
+	found := false
+	for _, ev := range r.events("warning") {
+		if strings.HasPrefix(ev.Fields["reason"], "halt for phase-1/implement after it ended") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings %+v", r.events("warning"))
+	}
+}
+
+func TestAHaltAfterTheRunnerRecordedFailedKeepsItsRecordAndHalts(t *testing.T) {
+	r := newEventsRig(t)
+	r.loop.RemedyWindow = time.Hour
+	key := StepKey{Run: "run-1", Phase: "1", Kind: "implement", Attempt: 1}
+	r.watcher.signals = make(chan Signal, 1)
+	runner := stepRunnerFunc(func(ctx context.Context, ref StepRef, obs Observer) Outcome {
+		if ref.Key != key {
+			return (singleRunner{sm: r.loop.Sessions}).Run(ctx, ref, obs)
+		}
+		out := r.loop.Sessions.Finish(&Session{Ref: ref}, Outcome{State: StepFailed, Reason: "sentinel failed: x"})
+		r.watcher.signals <- Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: key, Reason: "wrong turn"}
+		return out
+	})
+	r.loop.Runners = map[string]StepRunner{"plan-file": runner, "diff": runner}
+	start := time.Now()
+	if code := r.run(RunOptions{}); code != 5 {
+		t.Fatalf("exit %d", code)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Error("waited for remedy window")
+	}
+	assertStepRecords(t, r.store, key, []StepState{StepQueued, StepFailed}, []string{"", "sentinel failed: x"})
+}
+
+func TestAHaltMidRunLeavesExactlyOneFailedRecordAndInterruptsTheAgent(t *testing.T) {
+	r := newEventsRig(t)
+	r.host.behaviour["rloop-p1-implement"] = "hold"
+	key := StepKey{Run: "run-1", Phase: "1", Kind: "implement", Attempt: 1}
+	r.watcher.started = func(ref StepRef, s *Session) {
+		if ref.Key == key {
+			r.watcher.signals <- Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: key, Reason: "wrong turn"}
+		}
+	}
+	if code := r.run(RunOptions{}); code != 5 {
+		t.Fatalf("exit %d", code)
+	}
+	recs := recordsForStep(r.store, key)
+	if len(recs) == 0 || recs[len(recs)-1].State != StepFailed || recs[len(recs)-1].Reason != "watchdog: wrong turn" {
+		t.Fatalf("records %+v", recs)
+	}
+	n := 0
+	for _, rec := range recs {
+		if rec.State == StepFailed {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("failed records %d: %+v", n, recs)
+	}
+	if !slices.Contains(r.calls("SessionHost.Interrupt "), "rloop-p1-implement") {
+		t.Errorf("interrupts %v", r.calls("SessionHost.Interrupt "))
+	}
+}
+
+func TestAHaltDuringTheReviewHalfInterruptsEveryReviewer(t *testing.T) {
+	for _, tc := range []string{"opening", "waiting"} {
+		t.Run(tc, func(t *testing.T) {
+			r := newEventsRig(t)
+			key := StepKey{Run: "run-1", Phase: "1", Kind: "implement", Attempt: 1}
+			kind := r.loop.Kinds[1]
+			kind.Row.Reviewers, kind.Row.Rounds = []Reviewer{{Provider: "claude"}}, 1
+			r.loop.Kinds[1] = kind
+			r.loop.Runners = map[string]StepRunner{"diff": singleRunner{sm: r.loop.Sessions, review: func(ctx context.Context, ref StepRef, s *Session, obs Observer) Outcome {
+				if ref.Key != key {
+					return Outcome{State: StepOK, Session: s}
+				}
+				rv := &Session{Agent: "rloop-p1-implement-rv-claude", Pane: "pane-rv", Reviewer: "claude"}
+				if tc == "waiting" {
+					s.setReviewers([]*Session{rv})
+				}
+				r.watcher.signals <- Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: ref.Key, Reason: "wrong turn"}
+				if tc == "opening" {
+					waitFor(t, func() bool {
+						for _, rec := range recordsForStep(r.store, key) {
+							if rec.State == StepFailed {
+								return true
+							}
+						}
+						return false
+					})
+					s.setReviewers([]*Session{rv})
+				} else {
+					<-ctx.Done()
+				}
+				return Outcome{State: StepFailed, Reason: "interrupted", Session: s}
+			}}}
+			if code := r.run(RunOptions{Phases: []string{"1"}}); code != 5 {
+				t.Fatalf("exit %d", code)
+			}
+			calls := r.calls("SessionHost.Interrupt ")
+			for _, agent := range []string{"rloop-p1-implement", "rloop-p1-implement-rv-claude"} {
+				if !slices.Contains(calls, agent) {
+					t.Errorf("interrupts %v missing %s", calls, agent)
+				}
+			}
+			recs := recordsForStep(r.store, key)
+			n := 0
+			for _, rec := range recs {
+				if rec.State == StepFailed {
+					n++
+				}
+			}
+			if n != 1 || recs[len(recs)-1].State != StepFailed {
+				t.Errorf("records %+v", recs)
+			}
+		})
+	}
+}
+
+func TestALandStageQuestionIsWithdrawnAtOnce(t *testing.T) {
+	for _, kind := range []string{"gatefix", "gate", "milestone", "gatefix-rv-codex"} {
+		t.Run(kind, func(t *testing.T) {
+			r := newEventsRig(t)
+			q := Question{ID: "q-" + kind, Step: StepKey{Run: "run-1", Phase: "1", Kind: kind, Attempt: 1}, Text: "which?"}
+			done := make(chan struct{})
+			go func() { r.loop.question(context.Background(), q); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("question did not return")
+			}
+			found := false
+			for _, rec := range r.store.Records["run-1"] {
+				if rec.Kind == RecordQuestion && rec.Question != nil && rec.Question.ID == q.ID && rec.Question.AnsweredBy == "withdrawn" && rec.Question.Answer == "land-stage step" {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("question records %+v", r.store.Records["run-1"])
+			}
+			if got := r.calls("AskChannel.Answer "); len(got) == 0 || !strings.Contains(strings.Join(got, " "), q.ID) || !strings.Contains(strings.Join(got, " "), "withdrawn") {
+				t.Errorf("answers %v", got)
+			}
+			if got := r.calls("Watcher.Route "); len(got) != 0 {
+				t.Errorf("routes %v", got)
+			}
+		})
+	}
+}
+
 func TestAStepThatEndsWithAnOpenQuestionWithdrawsItAndALateAnswerIsDropped(t *testing.T) {
 	r := newEventsRig(t)
 	r.watcher.route = holdQuestions

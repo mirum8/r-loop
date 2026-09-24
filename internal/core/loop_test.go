@@ -233,6 +233,256 @@ type landerFunc func(context.Context, Phase) (Landing, error)
 
 func (f landerFunc) Land(ctx context.Context, ph Phase) (Landing, error) { return f(ctx, ph) }
 
+type signalHookStore struct {
+	*loopStore
+	recording chan struct{}
+	release   chan struct{}
+	once      sync.Once
+}
+
+func TestAHaltQueuedAsTheStepEndsOkBlocksThePhaseBeforeItLands(t *testing.T) {
+	for _, phase := range []string{"1", "3"} {
+		t.Run(phase, func(t *testing.T) {
+			for i := range 20 {
+				r := newLoopRig(t)
+				w := &Watch{Store: r.store}
+				r.loop.Watcher = w
+				key := StepKey{Run: "run-1", Phase: phase, Kind: "implement", Attempt: 1}
+				runner := stepRunnerFunc(func(ctx context.Context, ref StepRef, obs Observer) Outcome {
+					if ref.Key != key {
+						return (singleRunner{sm: r.loop.Sessions}).Run(ctx, ref, obs)
+					}
+					obs.Started(&Session{Ref: ref})
+					out := r.loop.Sessions.Finish(&Session{Ref: ref}, Outcome{State: StepOK})
+					w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: ref.Key, Reason: "stop"})
+					return out
+				})
+				r.loop.Runners = map[string]StepRunner{"plan-file": runner, "diff": runner}
+				if code := r.run(RunOptions{}); code != 5 {
+					t.Fatalf("iteration %d exit %d", i, code)
+				}
+				assertStepRecords(t, r.store, key, []StepState{StepQueued, StepOK}, []string{"", ""})
+				if slices.Contains(r.calls("Land "), phase) {
+					t.Errorf("iteration %d landed %s", i, phase)
+				}
+				found := false
+				for _, ev := range r.events("phase-blocked") {
+					if ev.Fields["phase"] == phase {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("iteration %d blocked %+v", i, r.events("phase-blocked"))
+				}
+			}
+		})
+	}
+}
+
+func TestAHaltStillBeingRecordedWhenTheLastPhaseEndsHaltsTheRun(t *testing.T) {
+	for _, tc := range []string{"step", "land"} {
+		t.Run(tc, func(t *testing.T) {
+			r := newLoopRig(t)
+			hook := &signalHookStore{loopStore: r.store, recording: make(chan struct{}), release: make(chan struct{})}
+			w := &Watch{Store: hook}
+			r.loop.Watcher = w
+			go func() { <-hook.recording; time.Sleep(50 * time.Millisecond); close(hook.release) }()
+			key := StepKey{Run: "run-1", Phase: "3", Kind: "implement", Attempt: 1}
+			if tc == "step" {
+				runner := stepRunnerFunc(func(ctx context.Context, ref StepRef, obs Observer) Outcome {
+					if ref.Key != key {
+						return (singleRunner{sm: r.loop.Sessions}).Run(ctx, ref, obs)
+					}
+					obs.Started(&Session{Ref: ref})
+					go w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: ref.Key, Reason: "stop"})
+					<-hook.recording
+					return r.loop.Sessions.Finish(&Session{Ref: ref}, Outcome{State: StepOK})
+				})
+				r.loop.Runners = map[string]StepRunner{"plan-file": runner, "diff": runner}
+			} else {
+				r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+					if ph.ID == "3" {
+						go w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: "3", Kind: "gatefix"}, Reason: "stop"})
+						<-hook.recording
+					}
+					return r.lander.Land(ctx, ph)
+				})
+			}
+			if code := r.run(RunOptions{}); code != 5 {
+				t.Fatalf("exit %d", code)
+			}
+			for _, rec := range r.runRecords() {
+				if rec.Run == RunFinished {
+					t.Errorf("finished record %+v", rec)
+				}
+			}
+			if tc == "step" {
+				if slices.Contains(r.calls("Land "), "3") {
+					t.Error("landed phase 3")
+				}
+				assertStepRecords(t, r.store, key, []StepState{StepQueued, StepOK}, []string{"", ""})
+			} else {
+				found := false
+				for _, ev := range r.events("warning") {
+					if strings.HasPrefix(ev.Fields["reason"], "halt for phase-3/gatefix after it ended") {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("warnings %+v", r.events("warning"))
+				}
+			}
+		})
+	}
+}
+
+func TestAHaltHeldDuringTheLastPhasesLandHaltsTheRun(t *testing.T) {
+	r := newLoopRig(t)
+	w := &Watch{Store: r.store}
+	r.loop.Watcher = w
+	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+		if ph.ID == "3" {
+			w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: "3", Kind: "gatefix"}, Reason: "stop"})
+		}
+		return r.lander.Land(ctx, ph)
+	})
+	if code := r.run(RunOptions{}); code != 5 {
+		t.Fatalf("exit %d", code)
+	}
+	foundWarn, foundBlocked := false, false
+	for _, ev := range r.events("warning") {
+		if strings.HasPrefix(ev.Fields["reason"], "halt for phase-3/gatefix after it ended") {
+			foundWarn = true
+		}
+	}
+	for _, ev := range r.events("phase-blocked") {
+		if ev.Fields["phase"] == "3" {
+			foundBlocked = true
+		}
+	}
+	if !foundWarn || foundBlocked {
+		t.Errorf("warnings %+v blocked %+v", r.events("warning"), r.events("phase-blocked"))
+	}
+}
+
+func TestARejectedHaltForALandedPhaseDoesNotBlockItOrItsDependents(t *testing.T) {
+	r := newLoopRig(t)
+	w := &Watch{Store: r.store}
+	r.loop.Watcher = w
+	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+		landing, err := r.lander.Land(ctx, ph)
+		if ph.ID == "1" {
+			w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: "1", Kind: "gatefix"}, Reason: "stop"})
+		}
+		return landing, err
+	})
+
+	if code := r.run(RunOptions{}); code != 5 {
+		t.Fatalf("exit %d", code)
+	}
+	for _, ev := range r.events("phase-blocked") {
+		if ev.Phase == "1" {
+			t.Fatalf("landed phase blocked: %+v", ev)
+		}
+	}
+	for _, ev := range r.events("phase-skipped") {
+		if ev.Phase == "3" {
+			t.Fatalf("dependent skipped after phase landed: %+v", ev)
+		}
+	}
+	if slices.Contains(r.calls("Land "), "2") || slices.Contains(r.calls("Land "), "3") {
+		t.Fatalf("run continued after rejected halt: %v", r.calls("Land "))
+	}
+}
+
+func TestAHaltHeldDuringALandIsAppliedBeforeTheNextPhaseStarts(t *testing.T) {
+	r := newLoopRig(t)
+	w := &Watch{Store: r.store}
+	r.loop.Watcher = w
+	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+		if ph.ID == "1" {
+			w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: "1", Kind: "gatefix"}, Reason: "stop"})
+		}
+		return r.lander.Land(ctx, ph)
+	})
+	if code := r.run(RunOptions{}); code != 5 {
+		t.Fatalf("exit %d", code)
+	}
+	warn, phase2 := -1, -1
+	for i, ev := range r.face.Events {
+		if ev.Kind == "warning" && strings.Contains(ev.Fields["reason"], "phase-1/gatefix") {
+			warn = i
+		}
+		if ev.Kind == "phase-start" && ev.Fields["phase"] == "2" {
+			phase2 = i
+		}
+	}
+	if warn < 0 || phase2 >= 0 && warn >= phase2 {
+		t.Errorf("event order warning=%d phase2=%d events=%+v", warn, phase2, r.face.Events)
+	}
+	for _, rec := range r.store.Records["run-1"] {
+		if rec.Kind == RecordStep && rec.Step != nil && rec.Step.Phase == "2" && rec.State == StepFailed && strings.HasPrefix(rec.Reason, "watchdog: ") {
+			t.Errorf("phase 2 received halt: %+v", rec)
+		}
+	}
+}
+
+func TestAHeldHaltWithoutAPhaseStopsTheNextStartedStep(t *testing.T) {
+	r := newLoopRig(t)
+	w := &Watch{Store: r.store}
+	r.loop.Watcher = w
+	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+		if ph.ID == "1" {
+			w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Kind: "implement"}, Reason: "stop"})
+		}
+		return r.lander.Land(ctx, ph)
+	})
+	if code := r.run(RunOptions{}); code != 5 {
+		t.Fatalf("exit %d", code)
+	}
+	key := StepKey{Run: "run-1", Phase: "2", Kind: "plan", Attempt: 1}
+	recs := recordsForStep(r.store, key)
+	if len(recs) != 2 || recs[0].State != StepQueued || recs[1].State != StepFailed || recs[1].Reason != `watchdog: watchdog signal rejected: step "implement" is not phase-<N>/<kind>` {
+		t.Errorf("next step records %+v", recs)
+	}
+	for _, ev := range r.events("phase-start") {
+		if ev.Phase == "3" {
+			t.Errorf("phase started after halt: %+v", ev)
+		}
+	}
+}
+
+func TestAPhaselessHaltStopsAnAllOkResumedPhaseBeforeLanding(t *testing.T) {
+	r := newLoopRig(t)
+	for _, kind := range []string{"plan", "implement"} {
+		key := StepKey{Run: "run-1", Phase: "2", Kind: kind, Attempt: 1}
+		r.store.Append("run-1", Record{Kind: RecordStep, Step: &key, State: StepOK})
+	}
+	w := &Watch{Store: r.store}
+	r.loop.Watcher = w
+	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+		if ph.ID == "1" {
+			w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Kind: "implement"}, Reason: "stop"})
+		}
+		return r.lander.Land(ctx, ph)
+	})
+
+	if code := r.run(RunOptions{Resume: true}); code != 5 {
+		t.Fatalf("exit %d", code)
+	}
+	if slices.Contains(r.calls("Land "), "2") {
+		t.Fatalf("landed phase 2 after halt: %v", r.calls("Land "))
+	}
+}
+
+func (s *signalHookStore) Append(run string, rec Record) error {
+	if rec.Kind == RecordSignal {
+		s.once.Do(func() { close(s.recording) })
+		<-s.release
+	}
+	return s.loopStore.Append(run, rec)
+}
+
 type stepRunnerFunc func(context.Context, StepRef, Observer) Outcome
 
 func (f stepRunnerFunc) Run(ctx context.Context, ref StepRef, obs Observer) Outcome {

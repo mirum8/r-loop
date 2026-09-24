@@ -832,6 +832,31 @@ func TestReviewerIsStartedWithItsOwnAskURLAndMCPConfig(t *testing.T) {
 	}
 }
 
+func TestGatefixReviewerStartsWithoutAskMCPConfig(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.worker.Ref.Key.Kind = "gatefix"
+	r.worker.Ref.Kind.Name = "gatefix"
+	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
+	r.sm.Resolve = askingReviewResolve(r)
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if r.count("AskChannel.StepURL") != 0 || r.reviews[0]["AskURL"] != nil {
+		t.Fatalf("reviewer ask URL = %v, calls = %q", r.reviews[0]["AskURL"], r.shared.Calls())
+	}
+	if len(r.resolved) != 1 || r.resolved[0][1] != "" || r.resolved[0][2] != "" {
+		t.Fatalf("resolve = %q", r.resolved)
+	}
+	matches, err := filepath.Glob(filepath.Join(r.runDir, "phase-3", "gatefix-rv-*.mcp.json"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("configs = %v, error = %v", matches, err)
+	}
+}
+
 func TestAnAskNoneReviewerRecordsAskNoneOnceNamingTheReviewer(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "codex"})
 	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}

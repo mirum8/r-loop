@@ -25,4 +25,4 @@ Write `{{.VerdictPath}}` as:
 with one entry per finding, answering every finding id across every findings file exactly once, the `id`, `reviewer` and `title` copied from the findings file. The driver checks this file against the findings and the worktree before it accepts the round.
 
 Do not commit: the driver commits the step's work once the review is done.
-{{template "sentinel" .}}
+{{if or (eq .ReviewedKind "gatefix") (eq .ReviewedKind "gate") (eq .ReviewedKind "milestone")}}{{template "outcome" .}}{{else}}{{template "sentinel" .}}{{end}}
