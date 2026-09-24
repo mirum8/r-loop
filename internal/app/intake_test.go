@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -16,14 +17,15 @@ import (
 )
 
 type intakeHost struct {
-	mu      sync.Mutex
-	args    []string
-	prompt  string
-	replies []map[string]any
-	closed  bool
-	submit  [][]string
-	errs    []error
-	done    chan struct{}
+	mu            sync.Mutex
+	args          []string
+	prompt        string
+	replies       []map[string]any
+	closed        bool
+	submit        [][]string
+	errs          []error
+	done          chan struct{}
+	configAtStart bool
 }
 
 func (h *intakeHost) Reachable() error { return nil }
@@ -33,8 +35,55 @@ func (h *intakeHost) Open(spec core.OpenSpec) (core.Workspace, error) {
 func (h *intakeHost) Start(pane, name, kind string, args []string) (core.Agent, error) {
 	h.mu.Lock()
 	h.args = args
+	for i, arg := range args {
+		if arg == "--mcp-config" && i+1 < len(args) {
+			_, err := os.Stat(args[i+1])
+			h.configAtStart = err == nil
+		}
+	}
 	h.mu.Unlock()
 	return core.Agent{Name: name, Pane: pane}, nil
+}
+
+func TestIntakeWritesItsMCPConfigWhenTheRepoRootAndTempDirHaveASpace(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, tmp := filepath.Join(base, "repo with space"), filepath.Join(base, "tmp with space")
+	for _, dir := range []string{root, tmp} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := newFixtureIn(t, root)
+	f.commit()
+	t.Setenv("TMPDIR", tmp)
+	host := &intakeHost{done: make(chan struct{}), submit: [][]string{{"docs/topic/todo.md", "--phases", "2"}}}
+	opts, err := f.intake(host, "the topic plan, only phase 2", "--plain")
+	<-host.done
+	if err != nil || len(host.errs) != 0 || !host.configAtStart || !reflect.DeepEqual(opts.Phases, []string{"2"}) {
+		t.Fatalf("opts=%+v err=%v host errs=%v config at start=%v", opts, err, host.errs, host.configAtStart)
+	}
+	for i, arg := range host.args {
+		if arg == "--mcp-config" && i+1 < len(host.args) {
+			if !strings.HasPrefix(host.args[i+1], tmp) {
+				t.Fatalf("config path %q does not start with %q", host.args[i+1], tmp)
+			}
+			return
+		}
+	}
+	t.Fatal("missing --mcp-config")
+}
+
+func TestAFreeFormRunWithAMissingIntakeBinaryExits127BeforeStarting(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "providers:\n  ghost:\n    kind: rloop-no-such-binary\n    doneSignal: sentinel\n    ask: mcp\nintake:\n  provider: ghost\n")
+	f.commit()
+	code := f.main("the topic plan")
+	if code != 127 || !strings.Contains(f.err.String(), "intake.provider: provider ghost binary rloop-no-such-binary not found on PATH") || f.herdrCalled() {
+		t.Fatalf("code=%d stderr=%q herdr called=%v", code, f.err.String(), f.herdrCalled())
+	}
 }
 func (h *intakeHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
 	h.mu.Lock()

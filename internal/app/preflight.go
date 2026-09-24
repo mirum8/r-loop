@@ -284,24 +284,42 @@ func (w *Wiring) validateProviders() error {
 	}
 	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider})
 	roles = append(roles, role{field: "intake.provider", provider: cfg.Intake.Provider})
-	for _, r := range roles {
-		if err := checkRole(w.Registry, r); err != nil {
+	resolved := make([]providers.Provider, len(roles))
+	for i, r := range roles {
+		p, err := checkRole(w.Registry, r)
+		if err != nil {
+			return err
+		}
+		resolved[i] = p
+	}
+	if w.Opts.DryRun {
+		return nil
+	}
+	for i, r := range roles {
+		if err := checkBinary(r, resolved[i].Kind); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func checkRole(reg *providers.Registry, r role) error {
+func checkRole(reg *providers.Registry, r role) (providers.Provider, error) {
 	p, err := reg.Resolve(r.provider)
 	if err != nil {
-		return exit(2, "%s: %v", r.field, err)
+		return providers.Provider{}, exit(2, "%s: %v", r.field, err)
 	}
 	if r.review && p.Review == "" {
-		return exit(2, "%s: provider %s has no review command", r.field, r.provider)
+		return providers.Provider{}, exit(2, "%s: provider %s has no review command", r.field, r.provider)
 	}
 	if p.Ask != "mcp" {
-		return exit(2, "%s: provider %s has no MCP ask channel", r.field, r.provider)
+		return providers.Provider{}, exit(2, "%s: provider %s has no MCP ask channel", r.field, r.provider)
+	}
+	return p, nil
+}
+
+func checkBinary(r role, kind string) error {
+	if _, err := exec.LookPath(kind); err != nil {
+		return exit(127, "%s: provider %s binary %s not found on PATH", r.field, r.provider, kind)
 	}
 	return nil
 }

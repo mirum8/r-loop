@@ -127,25 +127,30 @@ func Args(p Provider, model, effort, askURL, mcpConfigPath string) []string {
 	values := map[string]string{"{model}": model, "{effort}": effort, "{url}": askURL, "{mcpConfig}": mcpConfigPath}
 	args := strings.Fields(p.Flags)
 	for _, tmpl := range []string{p.ModelFlag, p.EffortFlag, p.AskFlag} {
-		if flag, ok := expand(tmpl, values); ok {
-			args = append(args, strings.Fields(flag)...)
+		if words, ok := expand(tmpl, values); ok {
+			args = append(args, words...)
 		}
 	}
 	return args
 }
 
-func expand(tmpl string, values map[string]string) (string, bool) {
+func expand(tmpl string, values map[string]string) ([]string, bool) {
 	if tmpl == "" {
-		return "", false
+		return nil, false
 	}
 	var pairs []string
 	for placeholder, value := range values {
 		if strings.Contains(tmpl, placeholder) && value == "" {
-			return "", false
+			return nil, false
 		}
 		pairs = append(pairs, placeholder, value)
 	}
-	return strings.NewReplacer(pairs...).Replace(tmpl), true
+	r := strings.NewReplacer(pairs...)
+	words := strings.Fields(tmpl)
+	for i, word := range words {
+		words[i] = r.Replace(word)
+	}
+	return words, true
 }
 
 func WriteMCPConfig(path, url string) error {

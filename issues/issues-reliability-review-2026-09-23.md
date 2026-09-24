@@ -107,7 +107,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - A notify hook that exits 0 but leaves a background child does not produce a `notify-failed` event
       - Background children left by the gate's process group never keep the run blocked beyond the wait delay
 
-- [ ] [#17] A repo path with a space breaks `--mcp-config`, so the watchdog cannot start
+- [x] [#17] A repo path with a space breaks `--mcp-config`, so the watchdog cannot start  <!-- fixed: r-loop/phase-18 -->
       - With a repo root that contains a space, the claude provider's arguments carry the full MCP config path as one argument after `--mcp-config`
       - With that repo root, the watchdog, a step session and intake each write their MCP config file before the agent starts
       - Templates without placeholders still split on whitespace as today
@@ -167,7 +167,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - When the loop refuses a restart it received (a pending halt, or the restart limit), the caller gets accepted=false with the loop's reason
       - A successful restart still returns accepted=true and starts attempt N+1
 
-- [ ] [#28] Provider binaries are not checked in preflight, so a missing `codex` or `claude` surfaces hours into the run
+- [x] [#28] Provider binaries are not checked in preflight, so a missing `codex` or `claude` surfaces hours into the run  <!-- fixed: r-loop/phase-18 -->
       - Preflight exits 127, naming the provider, the binary and the config field, when any configured role's provider binary is not on PATH
       - The check is skipped in `--dry-run`, as the herdr check is
       - A run whose provider binaries are all on PATH starts exactly as today

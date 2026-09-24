@@ -60,6 +60,11 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return newFixtureIn(t, root)
+}
+
+func newFixtureIn(t *testing.T, root string) *fixture {
+	t.Helper()
 	f := &fixture{t: t, root: root, out: &bytes.Buffer{}, err: &bytes.Buffer{}, todo: filepath.Join(root, "docs", "topic", "todo.md")}
 	git(t, root, "init", "-q", "-b", "main")
 	data, err := os.ReadFile("../plan/testdata/todo.md")
@@ -70,7 +75,67 @@ func newFixture(t *testing.T) *fixture {
 	f.herdr = filepath.Join(t.TempDir(), "herdr")
 	f.fakeHerdr(0)
 	f.env = Env{Dir: root, Home: t.TempDir(), Herdr: f.herdr, Git: "git", PID: 4242, Stdout: f.out, Stderr: f.err}
+	fakeProviders(t)
 	return f
+}
+
+func fakeProviders(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	for _, name := range []string{"claude", "codex"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestAMissingProviderBinaryExits127NamingTheProviderBinaryAndField(t *testing.T) {
+	provider := "providers:\n  ghost:\n    kind: rloop-no-such-binary\n    doneSignal: sentinel\n    ask: mcp\n    review: ghost review\n"
+	for field, cfg := range map[string]string{
+		"watchdog.provider":    "watchdog:\n  provider: ghost\n",
+		"intake.provider":      "intake:\n  provider: ghost\n",
+		"steps.plan.provider":  "steps:\n  plan:\n    provider: ghost\n",
+		"steps.plan.fallback":  "steps:\n  plan:\n    fallback: ghost\n",
+		"steps.plan.reviewers": "steps:\n  plan:\n    reviewers:\n      - ghost\n",
+		"land.fix.provider":    "land:\n  fix:\n    provider: ghost\n",
+	} {
+		t.Run(field, func(t *testing.T) {
+			f := newFixture(t)
+			f.write(".r-loop/config.yaml", provider+cfg)
+			f.commit()
+			_, err := f.preflight(f.todo, "--plain")
+			if code := exitCode(t, err); code != 127 || !strings.Contains(err.Error(), field+": provider ghost binary rloop-no-such-binary not found on PATH") || f.herdrCalled() {
+				t.Fatalf("code=%d err=%v herdr called=%v", code, err, f.herdrCalled())
+			}
+		})
+	}
+}
+
+func TestAMissingProviderBinaryIsNotCheckedInDryRun(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "providers:\n  ghost:\n    kind: rloop-no-such-binary\n    doneSignal: sentinel\n    ask: mcp\nwatchdog:\n  provider: ghost\n")
+	f.commit()
+	f.fakeHerdr(1)
+	if code := f.main(f.todo, "--dry-run", "--plain"); code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, f.err.String())
+	}
+}
+
+func TestARunWithEveryProviderBinaryOnPathPassesPreflight(t *testing.T) {
+	f := newFixture(t)
+	f.commit()
+	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+	for _, name := range []string{"claude", "codex"} {
+		path, err := exec.LookPath(name)
+		if err != nil || filepath.Dir(path) != bin {
+			t.Fatalf("%s path=%q err=%v, want directory %q", name, path, err, bin)
+		}
+	}
+	w, err := f.preflight(f.todo, "--plain")
+	if err != nil || w.Loop.RunID == "" || !f.herdrCalled() {
+		t.Fatalf("w=%v err=%v herdr called=%v", w, err, f.herdrCalled())
+	}
 }
 
 func (f *fixture) write(rel, content string) {

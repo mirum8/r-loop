@@ -31,6 +31,104 @@ type dogHost struct {
 	state    core.AgentState
 }
 
+type configAtStart struct {
+	core.SessionHost
+	mu      sync.Mutex
+	mcp     map[string]string
+	missing []string
+}
+
+func (h *configAtStart) Start(pane, name, kind string, args []string) (core.Agent, error) {
+	h.mu.Lock()
+	for i, arg := range args {
+		if arg == "--mcp-config" && i+1 < len(args) {
+			role := agentRole(name)
+			h.mcp[role] = args[i+1]
+			if _, err := os.Stat(args[i+1]); err != nil {
+				h.missing = append(h.missing, role)
+			}
+		}
+	}
+	h.mu.Unlock()
+	return h.SessionHost.Start(pane, name, kind, args)
+}
+
+type spacedSim struct {
+	*configAtStart
+	root, link string
+}
+
+func (h spacedSim) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	return h.configAtStart.Prompt(agent, strings.ReplaceAll(text, h.root, h.link), wait, timeout)
+}
+
+func TestAWatchdogAndAStepSessionWriteTheirMCPConfigUnderARepoRootWithASpace(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(base, "repo with space")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	f := newFixtureIn(t, root)
+	f.write("docs/topic/todo.md", resumeTodo)
+	f.write(".r-loop/config.yaml", noReviewConfig)
+	f.commit()
+	f.env.PID, f.env.Pane = os.Getpid(), "driver-pane"
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, newSim())
+	steps := &configAtStart{SessionHost: newSim(), mcp: map[string]string{}}
+	w.Loop.Sessions.Host = spacedSim{configAtStart: steps, root: root, link: link}
+	dog := &configAtStart{SessionHost: &dogHost{}, mcp: map[string]string{}}
+	w.Dog.Host = dog
+	if code := w.Execute(core.RunOptions{Phases: []string{"1"}}); code != 0 {
+		t.Fatalf("exit %d\n%s", code, f.out)
+	}
+	mcpPath := filepath.Join(w.Store.Dir(w.Loop.RunID), "watchdog.mcp.json")
+	if !strings.Contains(mcpPath, "repo with space") {
+		t.Errorf("watchdog path %q lacks spaced root", mcpPath)
+	}
+	foundConfigArg := false
+	for i, arg := range w.Dog.Provider.Args {
+		if arg == "--mcp-config" && i+1 < len(w.Dog.Provider.Args) {
+			foundConfigArg = true
+			if w.Dog.Provider.Args[i+1] != mcpPath {
+				t.Errorf("watchdog args %q, want config %q", w.Dog.Provider.Args, mcpPath)
+			}
+			break
+		}
+	}
+	if !foundConfigArg {
+		t.Errorf("watchdog args %q lack --mcp-config", w.Dog.Provider.Args)
+	}
+	if data, err := os.ReadFile(mcpPath); err != nil || !strings.Contains(string(data), "/mcp/watchdog/") {
+		t.Errorf("watchdog config %q: %v", data, err)
+	}
+	if len(dog.missing) != 0 || len(steps.missing) != 0 || len(dog.mcp) != 1 {
+		t.Errorf("dog paths=%v missing=%v step missing=%v", dog.mcp, dog.missing, steps.missing)
+	}
+	for _, path := range dog.mcp {
+		if path != mcpPath {
+			t.Errorf("watchdog config at start %q, want %q", path, mcpPath)
+		}
+	}
+	stepPath := steps.mcp["rloop-p1-plan"]
+	if !strings.HasPrefix(stepPath, root) || !strings.HasSuffix(stepPath, "-p1-plan.mcp.json") {
+		t.Errorf("step path %q", stepPath)
+	}
+	if data, err := os.ReadFile(stepPath); err != nil || !strings.Contains(string(data), "/mcp/") {
+		t.Errorf("step config %q: %v", data, err)
+	}
+}
+
 func (h *dogHost) record(format string, args ...any) {
 	h.mu.Lock()
 	h.calls = append(h.calls, fmt.Sprintf(format, args...))

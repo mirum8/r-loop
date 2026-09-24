@@ -30,6 +30,36 @@ func projectBlocks(t *testing.T, src string) map[string]yaml.Node {
 	return out
 }
 
+func TestArgsKeepAPlaceholderValueWithSpacesAsOneArgument(t *testing.T) {
+	claude, err := NewRegistry(nil, nil, t.TempDir()).Resolve("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/x/repo with space/.r-loop/runs/r1/watchdog.mcp.json"
+	if got, want := Args(claude, "opus", "", "", path), []string{"--model", "opus", "--mcp-config", path}; !reflect.DeepEqual(got, want) {
+		t.Errorf("args %q, want %q", got, want)
+	}
+	blocks := projectBlocks(t, "mine:\n  kind: claude\n  askFlag: \"--cfg={mcpConfig}\"\n  doneSignal: sentinel\n  ask: mcp\n")
+	mine, err := NewRegistry(blocks, nil, t.TempDir()).Resolve("mine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := Args(mine, "", "", "", "/x/a b/c.json"), []string{"--cfg=/x/a b/c.json"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("args %q, want %q", got, want)
+	}
+}
+
+func TestArgsSplitTemplatesWithoutPlaceholdersOnWhitespace(t *testing.T) {
+	blocks := projectBlocks(t, "mine:\n  kind: codex\n  flags: \"  -c a=1\\t--no-alt-screen   -x \"\n  modelFlag: \"-c   model={model}\"\n  doneSignal: sentinel\n")
+	mine, err := NewRegistry(blocks, nil, t.TempDir()).Resolve("mine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := Args(mine, "gpt-5", "", "", ""), []string{"-c", "a=1", "--no-alt-screen", "-x", "-c", "model=gpt-5"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("args %q, want %q", got, want)
+	}
+}
+
 func TestShippedClaudeBlock(t *testing.T) {
 	r := NewRegistry(nil, nil, t.TempDir())
 
