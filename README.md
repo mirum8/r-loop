@@ -102,6 +102,7 @@ r-loop status [--plain] [<run-id>]
 r-loop resume [--replan] [--unattended] [--yes] [--plain] [<run-id>]
 r-loop abort
 r-loop --create-config
+r-loop --migrate-config
 r-loop --version
 ```
 
@@ -176,6 +177,15 @@ Each key is taken from the first place that has it:
 `r-loop --create-config` writes the built-in defaults to `~/.config/r-loop/config.yaml` as a
 starting point. It refuses to overwrite an existing file.
 
+Every agent session names its provider, model and effort; nothing runs on a provider's own
+defaults. A config that is missing one of the three is an error (exit 2).
+`r-loop --migrate-config` updates configs written in the older format, where a `fallback` or a
+reviewer was only a provider name. It rewrites `~/.config/r-loop/config.yaml` and the
+`.r-loop/config.yaml` in the current directory, turning each bare name into a block and filling a
+block's missing `model` or `effort`. The values come from the built-in defaults for that provider.
+The original is kept as `config.yaml.bak`; an existing `.bak` is never overwritten. A provider with no built-in default is reported, and you have to set it by
+hand (exit 1). `install.sh` runs it on the machine file.
+
 The banner (see `--dry-run`) prints every value and where it came from. Use block-style YAML
 only. Flow style (`[a, b]`, `{a: b}`) and unknown keys are errors (exit 2).
 
@@ -198,17 +208,17 @@ milestone closes) and `gate` (finds the test suite command for an issues file).
 | `model` | Model name passed to the provider. |
 | `effort` | Reasoning effort passed to the provider. |
 | `timeout` | Hard limit for one attempt. After it, the step fails. |
-| `fallback` | Provider the watchdog may switch to when the step fails. A name, or a block with `provider`, `model`, `effort`. |
+| `fallback` | Session the watchdog may switch to when the step fails: a block with `provider`, `model`, `effort`. |
 | `reviewers` | Review agents. See below. |
 | `rounds` | Maximum review rounds. `0` turns review off. |
 | `reviewTimeout` | Time limit for one review round. |
 
-A **reviewer** is a provider name (`- codex`), or a block:
+A **reviewer** is a block:
 
 | Key | Meaning |
 |---|---|
 | `provider` | Required. The agent CLI. |
-| `model`, `effort` | Optional. Empty means the provider's default. |
+| `model`, `effort` | Required. |
 | `name` | Reviewer id, for example `ui`. Default: the provider name. Must be unique in the row. |
 | `prompt` | Prompt template. Default: `review`, which uses the provider's own review command. |
 | `requires` | A path inside the repo. If the file is missing, this reviewer is skipped. |
@@ -231,7 +241,7 @@ The `ui` reviewer runs the project's `/test-app` skill (claude, opus, high). It 
 |---|---|---|
 | `fixRounds` | `1` | How many times an agent may try to fix a red check command before the phase is blocked. |
 | `gateTimeout` | `30m` | Time limit for the check command. |
-| `fix` | implement row | Optional block with `provider`, `model`, `effort` for the fix agent. |
+| `fix` | implement row | Optional block with `provider`, `model`, `effort` for the fix agent. A key it leaves out comes from the implement row; naming another provider requires `model` and `effort` too. |
 
 ### `watchdog`
 
@@ -301,8 +311,14 @@ steps:
     provider: claude
     model: opus
     effort: high
+    fallback:
+      provider: codex
+      model: gpt-5.6-sol
+      effort: high
     reviewers:
-      - codex
+      - provider: codex
+        model: gpt-5.6-sol
+        effort: medium
     rounds: 2
 
 watchdog:

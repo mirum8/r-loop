@@ -2969,7 +2969,16 @@ machine's shell.</p>
 <a href="#adr-64">ADR-64</a> and <a href="#adr-66">ADR-66</a> ·
 amended 2026-09-19 — <code>--provider</code> touches the fallback in one case: naming the
 fallback's own provider swaps the two (<a href="#adr-66">ADR-66</a>); <code>--model</code> and
-<code>--effort</code> still touch only the row's own keys</p>
+<code>--effort</code> still touch only the row's own keys ·
+amended 2026-09-24 — no session runs on a provider's defaults: a <code>fallback</code> and every
+reviewer entry are blocks naming <code>provider</code>, <code>model</code> and <code>effort</code>
+(a bare provider name is rejected, exit <code>2</code>); every step row, <code>watchdog</code>,
+<code>intake</code> and the resolved <code>land.fix</code> must end with all three set, so a
+<code>land.fix</code> naming another provider names its model and effort too;
+a watchdog <code>restart_step</code> onto a provider that is not the row's fallback must name its
+<code>model</code> and <code>effort</code>, or it is refused;
+<code>r-loop --migrate-config</code> rewrites an older config's bare names (and blocks missing a model or
+effort) from the built-in defaults, and <code>install.sh</code> runs it on the machine file</p>
 <p><span class="f">Context</span> Steps and reviewers each carry provider, model and effort
 (<a href="#adr-20">ADR-20</a>, <a href="#adr-56">ADR-56</a>). Four sessions did not: a fallback
 ran on its provider's defaults, a gate fix inherited the implement row whole, the watchdog had a
@@ -3616,7 +3625,7 @@ The watchdog session gets its own tools, offered to no other session, and no <co
 maintainer in its own session (<a href="#adr-73">ADR-73</a>):
 <code>signal(kind: warn|halt, step, reason, evidence)</code>,
 <code>propose_remedy(class, command, why, maintainer_said?) → {decision: authorised|refused|ask, reason}</code>,
-<code>restart_step(step, addendum?, provider?, maintainer_said?)</code>, and
+<code>restart_step(step, addendum?, provider?, model?, effort?, maintainer_said?)</code>, and
 <code>answer_question(id, answer, citation)</code>, whose citation is a <code>path:line</code> in
 the primary tree or <code>maintainer</code>; an empty or invalid one is refused and the question
 stays open, and

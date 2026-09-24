@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -215,6 +216,10 @@ func Main(args []string, env Env) int {
 			if len(args) == 1 {
 				return CreateConfig(env)
 			}
+		case "--migrate-config":
+			if len(args) == 1 {
+				return MigrateConfig(env)
+			}
 		}
 	}
 	opts, positional, err := parseFlags(args)
@@ -249,6 +254,38 @@ func CreateConfig(env Env) int {
 	}
 	fmt.Fprintf(env.Stdout, "wrote %s\n", path)
 	return 0
+}
+
+func MigrateConfig(env Env) int {
+	code := 0
+	found := false
+	for _, path := range []string{
+		filepath.Join(env.Home, ".config", "r-loop", "config.yaml"),
+		filepath.Join(env.Dir, ".r-loop", "config.yaml"),
+	} {
+		m, err := config.Migrate(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		found = true
+		if err != nil {
+			return fail(env, err)
+		}
+		for _, c := range m.Changes {
+			fmt.Fprintf(env.Stdout, "%s: %s\n", path, c)
+		}
+		for _, u := range m.Unresolved {
+			fmt.Fprintf(env.Stderr, "r-loop: %s: %s\n", path, u)
+			code = 1
+		}
+		if len(m.Changes) == 0 && len(m.Unresolved) == 0 {
+			fmt.Fprintf(env.Stdout, "%s: nothing to migrate\n", path)
+		}
+	}
+	if !found {
+		fmt.Fprintln(env.Stdout, "no config file to migrate")
+	}
+	return code
 }
 
 func fail(env Env, err error) int {

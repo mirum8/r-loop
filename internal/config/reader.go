@@ -360,15 +360,8 @@ func role(file, path string, n *yaml.Node) (provider, model, effort string, err 
 }
 
 func reviewer(file, path string, n *yaml.Node, named bool) (rv Reviewer, err error) {
-	if n.Kind == yaml.ScalarNode && !isNull(n) {
-		if n.Value == "" {
-			return rv, errAt(file, n, "%s needs a provider name", path)
-		}
-		rv.Provider = n.Value
-		return rv, nil
-	}
 	if n.Kind != yaml.MappingNode {
-		return rv, errAt(file, n, "%s must be a provider name or a block with provider, model and effort", path)
+		return rv, errAt(file, n, "%s must be a block with provider, model and effort (run r-loop --migrate-config)", path)
 	}
 	fields := map[string]*string{"provider": &rv.Provider, "model": &rv.Model, "effort": &rv.Effort}
 	if named {
@@ -385,8 +378,10 @@ func reviewer(file, path string, n *yaml.Node, named bool) (rv Reviewer, err err
 		}
 		*dst = v.Value
 	}
-	if rv.Provider == "" {
-		return rv, errAt(file, n, "%s needs a provider", path)
+	for _, f := range []struct{ need, v string }{{"a provider", rv.Provider}, {"a model", rv.Model}, {"an effort", rv.Effort}} {
+		if f.v == "" {
+			return rv, errAt(file, n, "%s needs %s", path, f.need)
+		}
 	}
 	if rv.Name != "" && !reviewerName.MatchString(rv.Name) {
 		return rv, errAt(file, n, "%s.name must be lowercase letters, digits and dashes, got %q", path, rv.Name)
@@ -432,7 +427,26 @@ func Load(projectDir, homeDir string, overrides []Override) (LoopConfig, error) 
 	if err := r.resolveFix(&cfg); err != nil {
 		return LoopConfig{}, err
 	}
-	return cfg, nil
+	return cfg, cfg.requireRoles()
+}
+
+func (cfg *LoopConfig) requireRoles() error {
+	roles := map[string][3]string{
+		"watchdog": {cfg.Watchdog.Provider, cfg.Watchdog.Model, cfg.Watchdog.Effort},
+		IntakeRow:  {cfg.Intake.Provider, cfg.Intake.Model, cfg.Intake.Effort},
+		"land.fix": {cfg.Land.Fix.Provider, cfg.Land.Fix.Model, cfg.Land.Fix.Effort},
+	}
+	for name, row := range cfg.Steps {
+		roles["steps."+name] = [3]string{row.Provider, row.Model, row.Effort}
+	}
+	for _, path := range slices.Sorted(maps.Keys(roles)) {
+		for i, key := range []string{"provider", "model", "effort"} {
+			if roles[path][i] == "" {
+				return configError(fmt.Sprintf("%s.%s: not set, every session names its provider, model and effort", path, key))
+			}
+		}
+	}
+	return nil
 }
 
 func (r *resolver) resolve() (LoopConfig, error) {

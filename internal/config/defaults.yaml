@@ -10,9 +10,14 @@ steps:
     model: fable
     effort: medium
     timeout: 1h
-    fallback: codex
+    fallback:
+      provider: codex
+      model: gpt-5.6-sol
+      effort: medium
     reviewers:
-      - codex
+      - provider: codex
+        model: gpt-5.6-sol
+        effort: medium
     rounds: 2
     reviewTimeout: 20m
   implement:
@@ -22,9 +27,14 @@ steps:
     model: gpt-5.6-sol
     effort: medium
     timeout: 4h
-    fallback: claude
+    fallback:
+      provider: claude
+      model: opus
+      effort: medium
     reviewers:
-      - claude
+      - provider: claude
+        model: opus
+        effort: medium
       - name: ui
         provider: claude
         model: opus

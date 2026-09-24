@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 )
@@ -16,7 +15,7 @@ func Banner(cfg LoopConfig, extra ...string) string {
 	for _, name := range append(append(append([]string{}, cfg.Pipeline...), "milestone"), extra...) {
 		row := cfg.Steps[name]
 		k := "steps." + name + "."
-		fmt.Fprintf(&b, "%s  %s  %s  %s  %s  %s  ← %s\n", name, row.Provider, orDefault(row.Model), orDefault(row.Effort),
+		fmt.Fprintf(&b, "%s  %s  %s  %s  %s  %s  ← %s\n", name, row.Provider, row.Model, row.Effort,
 			Duration(row.Timeout), row.Check, sources(p[k+"provider"], p[k+"model"], p[k+"effort"]))
 		if row.Rounds > 0 && len(row.Reviewers) > 0 {
 			fmt.Fprintf(&b, "  review rounds %d %s  ← %s\n", row.Rounds, Duration(row.ReviewTimeout), p[k+"rounds"])
@@ -33,16 +32,16 @@ func Banner(cfg LoopConfig, extra ...string) string {
 		sources(p["land.fix.provider"], p["land.fix.model"], p["land.fix.effort"]))
 	fmt.Fprintf(&b, "land gateTimeout %s  ← %s\n", Duration(cfg.Land.GateTimeout), p["land.gateTimeout"])
 	for _, o := range cfg.overrides {
-		fmt.Fprintf(&b, "override: %s %s %s (flag) replaces %s (%s)\n", o.Step, o.Key, o.Value, orDefault(o.old),
+		fmt.Fprintf(&b, "override: %s %s %s (flag) replaces %s (%s)\n", o.Step, o.Key, o.Value, o.old,
 			strings.TrimSuffix(o.oldSource, ":"+o.path))
 	}
 	for _, sw := range cfg.swaps {
 		fmt.Fprintf(&b, "override: steps.%s.fallback swapped to %s (--provider) replaces %s (%s)\n", sw.step, sw.to.Provider,
-			strings.Join(slices.DeleteFunc([]string{sw.old.Provider, sw.old.Model, sw.old.Effort}, func(s string) bool { return s == "" }), " "),
+			roleLine(sw.old.Provider, sw.old.Model, sw.old.Effort),
 			strings.TrimSuffix(sw.oldSource, ":steps."+sw.step+".fallback"))
 	}
 	w := cfg.Watchdog
-	fmt.Fprintf(&b, "watchdog: %s %s %s allow [%s]  ← %s\n", w.Provider, orDefault(w.Model), orDefault(w.Effort),
+	fmt.Fprintf(&b, "watchdog: %s %s %s allow [%s]  ← %s\n", w.Provider, w.Model, w.Effort,
 		strings.Join(w.Allow, ", "), sources(p["watchdog.provider"], p["watchdog.model"], p["watchdog.effort"]))
 	in := cfg.Intake
 	fmt.Fprintf(&b, "intake: %s  ← %s\n", roleLine(in.Provider, in.Model, in.Effort),
@@ -64,14 +63,7 @@ func reviewerLabel(rv Reviewer) string {
 }
 
 func roleLine(provider, model, effort string) string {
-	return provider + " " + orDefault(model) + " " + orDefault(effort)
-}
-
-func orDefault(v string) string {
-	if v == "" {
-		return "provider default"
-	}
-	return v
+	return provider + " " + model + " " + effort
 }
 
 func sources(provider, model, effort string) string {

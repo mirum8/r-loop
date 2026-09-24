@@ -97,9 +97,9 @@ func TestAMissingProviderBinaryExits127NamingTheProviderBinaryAndField(t *testin
 		"watchdog.provider":    "watchdog:\n  provider: ghost\n",
 		"intake.provider":      "intake:\n  provider: ghost\n",
 		"steps.plan.provider":  "steps:\n  plan:\n    provider: ghost\n",
-		"steps.plan.fallback":  "steps:\n  plan:\n    fallback: ghost\n",
-		"steps.plan.reviewers": "steps:\n  plan:\n    reviewers:\n      - ghost\n",
-		"land.fix.provider":    "land:\n  fix:\n    provider: ghost\n",
+		"steps.plan.fallback":  "steps:\n  plan:\n    fallback:\n      provider: ghost\n      model: m\n      effort: e\n",
+		"steps.plan.reviewers": "steps:\n  plan:\n    reviewers:\n      - provider: ghost\n        model: m\n        effort: e\n",
+		"land.fix.provider":    "land:\n  fix:\n    provider: ghost\n    model: m\n    effort: e\n",
 	} {
 		t.Run(field, func(t *testing.T) {
 			f := newFixture(t)
@@ -352,7 +352,7 @@ func TestReviewerWithoutReviewCommandIsRefusedWithExit2(t *testing.T) {
 
 func TestUIReviewerNeedsNoReviewCommandAndReportsItsSkill(t *testing.T) {
 	f := newFixture(t)
-	f.write(".r-loop/config.yaml", "providers:\n  bare:\n    kind: bare\n    doneSignal: sentinel\n    ask: mcp\nsteps:\n  implement:\n    reviewers:\n      - claude\n      - name: ui\n        provider: bare\n        prompt: review-ui\n        requires: .claude/skills/test-app/SKILL.md\n")
+	f.write(".r-loop/config.yaml", "providers:\n  bare:\n    kind: bare\n    doneSignal: sentinel\n    ask: mcp\nsteps:\n  implement:\n    reviewers:\n      - provider: claude\n        model: opus\n        effort: medium\n      - name: ui\n        provider: bare\n        model: m\n        effort: e\n        prompt: review-ui\n        requires: .claude/skills/test-app/SKILL.md\n")
 	f.write(".claude/skills/test-app/SKILL.md", "# test-app\n")
 	f.commit()
 	f.fakeHerdr(1)
@@ -398,7 +398,7 @@ func TestPreflightCreatesTheRunAndPrintsTheBanner(t *testing.T) {
 	if !strings.Contains(string(exclude), ".r-loop/runs/") || !strings.Contains(string(exclude), ".r-loop/wt/") {
 		t.Fatalf("exclude=%q", exclude)
 	}
-	for _, want := range []string{"face: plain\n", "implement  codex  gpt-5.6-sol  medium  4h  diff  ← default\n", "prompt plan: embedded\n", "prompt implement: embedded\n", "prompt milestone: embedded\n", "  fallback codex provider default provider default  ← default\n"} {
+	for _, want := range []string{"face: plain\n", "implement  codex  gpt-5.6-sol  medium  4h  diff  ← default\n", "prompt plan: embedded\n", "prompt implement: embedded\n", "prompt milestone: embedded\n", "  fallback codex gpt-5.6-sol medium  ← default\n"} {
 		if !strings.Contains(f.out.String(), want) {
 			t.Fatalf("%q missing from banner:\n%s", want, f.out.String())
 		}
@@ -633,7 +633,7 @@ func TestMalformedReviewPromptIsRefusedWithExit2(t *testing.T) {
 
 func TestGateFixReviewersAreValidatedWhenImplementIsNotInThePipeline(t *testing.T) {
 	f := newFixture(t)
-	f.write(".r-loop/config.yaml", "pipeline:\n  - plan\nproviders:\n  bare:\n    kind: bare\n    doneSignal: sentinel\nsteps:\n  implement:\n    reviewers:\n      - bare\n")
+	f.write(".r-loop/config.yaml", "pipeline:\n  - plan\nproviders:\n  bare:\n    kind: bare\n    doneSignal: sentinel\nsteps:\n  implement:\n    reviewers:\n      - provider: bare\n        model: m\n        effort: e\n")
 	f.commit()
 
 	_, err := f.preflight(f.todo, "--plain")
@@ -842,5 +842,49 @@ func TestCreateConfigOverAnExistingFileExits2(t *testing.T) {
 
 	if code != 2 || !strings.Contains(f.err.String(), "already exists") {
 		t.Fatalf("code=%d stderr=%q", code, f.err.String())
+	}
+}
+
+func TestMigrateConfigRewritesTheMachineAndProjectFiles(t *testing.T) {
+	f := newFixture(t)
+	home := filepath.Join(f.env.Home, ".config", "r-loop", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(home, []byte("steps:\n  plan:\n    fallback: codex\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.write(".r-loop/config.yaml", "steps:\n  implement:\n    reviewers:\n      - claude\n")
+
+	code := f.main("--migrate-config")
+
+	project := filepath.Join(f.root, ".r-loop", "config.yaml")
+	want := home + ": steps.plan.fallback: codex → codex gpt-5.6-sol medium\n" +
+		project + ": steps.implement.reviewers.0: claude → claude opus medium\n"
+	if code != 0 || f.out.String() != want {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, f.out.String(), f.err.String())
+	}
+	f.out.Reset()
+	if code := f.main("--migrate-config"); code != 0 || !strings.Contains(f.out.String(), home+": nothing to migrate\n") {
+		t.Fatalf("second run code=%d stdout=%q", code, f.out.String())
+	}
+}
+
+func TestMigrateConfigExits1OnAProviderItCannotFill(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "steps:\n  plan:\n    fallback: gemini\n")
+
+	code := f.main("--migrate-config")
+
+	if code != 1 || !strings.Contains(f.err.String(), "steps.plan.fallback: gemini has no built-in model and effort, set them by hand") {
+		t.Fatalf("code=%d stderr=%q", code, f.err.String())
+	}
+}
+
+func TestMigrateConfigWithNoFiles(t *testing.T) {
+	f := newFixture(t)
+
+	if code := f.main("--migrate-config"); code != 0 || f.out.String() != "no config file to migrate\n" {
+		t.Fatalf("code=%d stdout=%q", code, f.out.String())
 	}
 }

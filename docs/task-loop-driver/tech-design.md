@@ -167,9 +167,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `~/.config/r-loop/config.yaml` → the embedded defaults, with provenance `<file>:<key>`,
   `flag:--provider`, `flag:--model`, `flag:--effort` or `default`. Step row keys: `prompt, check,
   provider, model, effort, timeout`, `fallback`, plus the review half on any row: `reviewers`,
-  `rounds`, `reviewTimeout`. **A reviewer entry and a `fallback` are each a scalar provider name
-  (model and effort left to the provider, flag omitted, banner prints `provider default`) or a
-  block with `provider`, `model`, `effort`; a reviewer block also takes `name`, `prompt` and
+  `rounds`, `reviewTimeout`. **A reviewer entry and a `fallback` are each a block with `provider`,
+  `model` and `effort`, all three required (spec ADR-68, amended 2026-09-24: a bare provider name
+  is rejected, exit `2`, naming `r-loop --migrate-config`); a reviewer block also takes `name`, `prompt` and
   `requires` (Milestone 8).** `--provider`, `--model` and `--effort` each take
   `<step>=<value>` and override only that row's own key, never its reviewers; a key
   `land.fix` inherits from the implement row is the overridden value. **A `--provider
@@ -180,15 +180,22 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   (<source>)`; `--model` and `--effort` never touch the fallback. A config file's `fallback` naming
   its row's own provider is still rejected. `land.fix` is an optional block with `provider`, `model`, `effort`, all optional,
   for the `gatefix` step: absent, the implement row's three; a missing key is the implement
-  row's unless the block names another provider, in which case it stays empty (that provider's
-  default) and takes `land.fix.provider`'s provenance. The reader resolves `land.fix` at load, so every later reader sees three plain
-  values. `watchdog.effort` sits beside `watchdog.provider` and `watchdog.model`. `rounds: 0`
+  row's unless the block names another provider, in which case it stays empty and takes
+  `land.fix.provider`'s provenance. The reader resolves `land.fix` at load, so every later reader sees three plain
+  values. After overrides and `land.fix`, every step row, `watchdog`, `intake` and `land.fix` must
+  have provider, model and effort set, else `<path>.<key>: not set, every session names its
+  provider, model and effort` (exit `2`). `r-loop --migrate-config` rewrites a bare `fallback` or
+  reviewer name in `~/.config/r-loop/config.yaml` and the cwd's `.r-loop/config.yaml` into a block,
+  taking model and effort from the embedded defaults' entry at the same path when its provider
+  matches, else from the first default fallback or reviewer with that provider, keeping the
+  original as `config.yaml.bak` (an existing `.bak` is never overwritten); a block that names a
+  provider but leaves out `model` or `effort` gets the missing key the same way; a provider with no default is reported and exits `1`. `watchdog.effort` sits beside `watchdog.provider` and `watchdog.model`. `rounds: 0`
   or an empty `reviewers` list means the step has no review half. Rows: `plan`, `implement`,
   `milestone`. Defaults: pipeline `[plan, implement]`; plan `claude/opus/high/1h/plan-file`,
-  reviewers `[codex]`, `rounds 2`, `reviewTimeout 20m`; implement
-  `codex/gpt-5.6-sol/medium/4h/diff`, reviewers `[claude, ui]` (`ui` = `claude/opus/high`,
+  reviewers `[codex/gpt-5.6-sol/medium]`, `rounds 2`, `reviewTimeout 20m`; implement
+  `codex/gpt-5.6-sol/medium/4h/diff`, reviewers `[claude/opus/medium, ui]` (`ui` = `claude/opus/high`,
   `prompt review-ui`, `requires .claude/skills/test-app/SKILL.md`), `rounds 3`, `reviewTimeout 45m`;
-  fallback plan `codex`, implement `claude` (scalars: provider defaults for model and effort);
+  fallback plan `codex/gpt-5.6-sol/medium`, implement `claude/opus/medium`;
   milestone `claude/opus/medium/1h/report`, no review; `land.fixRounds 1`, `land.gateTimeout 30m`, no `land.fix`;
   `unattended.allow [deps, ports, locks, restart, retry, provider]`, applied only with
   `--unattended`;
@@ -202,8 +209,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   is a row with a review half (`rounds > 0` and at least one reviewer) whose `reviewTimeout` no
   layer sets. Each is exit `2`. A numeric key (a duration, `rounds`, `fixRounds`, `maxRestarts` or a
   factor) set to null (`key:` or `~`) resolves to the next layer that sets it, with that layer's
-  provenance. A null string, list or `fallback` keeps its meaning: provider default, empty list,
-  no fallback.
+  provenance. A null list or `fallback` keeps its meaning: empty list, no fallback; a null
+  provider, model or effort fails the every-session check.
 
 ## Milestone 2 — Sessions and providers
 
@@ -420,11 +427,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   as `r<n> resolve first: <entry> → <answer> (<by>)`.
 - **Banner** — one line per pipeline row and the milestone row, `<step> <provider> <model>
   <effort> <timeout> <check> ← <provenance>`; under a row with a review half, `review rounds <n>
-  <reviewTimeout>` and one `reviewer <provider> <model|provider default> <effort|provider
-  default>` line per reviewer and `fallback <provider> <model|provider default> <effort|provider
-  default>` per row that has one; `gatefix <provider> <model|provider default> <effort|provider
-  default>`; `land gateTimeout <duration> ← <provenance>`; watchdog on/off with `<provider> <model>
-  <effort|provider default>`. Every step,
+  <reviewTimeout>` and one `reviewer <provider> <model> <effort>` line per reviewer and
+  `fallback <provider> <model> <effort>` per row that has one; `gatefix <provider> <model> <effort>`; `land gateTimeout <duration> ← <provenance>`; watchdog on/off with `<provider> <model>
+  <effort>`. Every step,
   reviewer, fallback, gatefix and watchdog line ends `← <provenance>`: one source when its
   provider, model and effort share it, else `provider <src> model <src> effort <src>`. Overrides
   with the value replaced; prompt source per step; `mode: unattended` with the added allow-list,
@@ -576,7 +581,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Second MCP surface** — `<base>/watchdog/<wdToken>`; tools `signal(kind, step, reason,
   evidence) → {accepted, reason?}` · `propose_remedy(class, command, why, maintainer_said?) →
   {decision: authorised|refused|ask, reason?}` ·
-  `restart_step(step, addendum?, provider?, maintainer_said?) → {accepted, reason?}` ·
+  `restart_step(step, addendum?, provider?, model?, effort?, maintainer_said?) → {accepted, reason?}` ·
   `answer_question(id, answer, citation) → {accepted, reason?}` ·
   `ask_maintainer(question, options?, recommended?) → {accepted, reason?}`; `step` is `phase-<N>/<kind>`,
   resolved to the latest attempt. None of these is reachable from a step path, and this path
@@ -616,8 +621,10 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `unattended.allow` is added to `watchdog.allow`, and an allow-listed `provider` restart may name
   only the row's `fallback` — any other provider needs `maintainer_said`, unless a `provider`
   remedy the maintainer authorised names it, which authorises the restart without asking again. A restart naming the fallback runs
-  the new attempt on the fallback's provider, model and effort; one naming any other provider
-  runs on that provider's defaults; neither carries the row's own model or effort.
+  the new attempt on the fallback's provider, model and effort (or the `model` and `effort` given);
+  one naming any other provider must give `model` and `effort`, else it is refused with `restart
+  on <provider> needs a model and an effort: it is not the row's fallback`; neither carries the
+  row's own model or effort.
 - **Citations** — `path:line`, the path relative to the repository root, existing in the
   **primary tree** and not under `.r-loop/`, or the literal `maintainer` when the watchdog asked
   the maintainer in its own session. An empty or invalid citation is refused and the question

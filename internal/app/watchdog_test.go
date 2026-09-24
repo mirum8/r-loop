@@ -778,9 +778,9 @@ func TestAStepSessionProviderWithoutMCPIsRefusedInPreflight(t *testing.T) {
 	provider := "providers:\n  plainbot:\n    kind: codex\n    doneSignal: sentinel\n    review: plainbot review\n    ask: none\n"
 	for field, cfg := range map[string]string{
 		"steps.plan.provider":  "steps:\n  plan:\n    provider: plainbot\n",
-		"steps.plan.fallback":  "steps:\n  plan:\n    fallback: plainbot\n",
-		"steps.plan.reviewers": "steps:\n  plan:\n    reviewers:\n      - plainbot\n",
-		"land.fix.provider":    "land:\n  fix:\n    provider: plainbot\n",
+		"steps.plan.fallback":  "steps:\n  plan:\n    fallback:\n      provider: plainbot\n      model: m\n      effort: e\n",
+		"steps.plan.reviewers": "steps:\n  plan:\n    reviewers:\n      - provider: plainbot\n        model: m\n        effort: e\n",
+		"land.fix.provider":    "land:\n  fix:\n    provider: plainbot\n    model: m\n    effort: e\n",
 	} {
 		t.Run(field, func(t *testing.T) {
 			f := newFixture(t)
