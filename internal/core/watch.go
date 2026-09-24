@@ -364,7 +364,7 @@ func (w *Watch) accept(sig Signal, check string) (Signal, error) {
 		w.settled.Broadcast()
 		w.mu.Unlock()
 	}()
-	if reason := w.rejection(&sig, runID); reason != "" {
+	if reason := w.rejection(&sig); reason != "" {
 		sig.Rejected, sig.RejectReason = true, reason
 	}
 	key := sig.Step
@@ -485,7 +485,7 @@ func (w *Watch) dropped(sig Signal, runID string) error {
 	return fmt.Errorf("signal %d: %w", sig.Seq, errSignalDropped)
 }
 
-func (w *Watch) rejection(sig *Signal, runID string) string {
+func (w *Watch) rejection(sig *Signal) string {
 	if sig.Kind != SignalWarn && sig.Kind != SignalHalt {
 		return fmt.Sprintf("kind %q is not warn or halt", sig.Kind)
 	}
@@ -504,12 +504,8 @@ func (w *Watch) rejection(sig *Signal, runID string) string {
 		}
 		return ""
 	}
-	if st, err := w.Store.Load(runID); err == nil {
-		for _, l := range st.Landed {
-			if l.Phase == sig.Step.Phase {
-				return fmt.Sprintf("phase %s has landed", l.Phase)
-			}
-		}
+	if g, ok := w.Store.(*RecordGuard); ok && g.Landed(sig.Step.Phase) {
+		return fmt.Sprintf("phase %s has landed", sig.Step.Phase)
 	}
 	name := fmt.Sprintf("phase-%s/%s", sig.Step.Phase, sig.Step.Kind)
 	w.mu.Lock()

@@ -2,6 +2,8 @@ package core
 
 import (
 	"cmp"
+	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -196,6 +198,55 @@ func (st *RunState) Span(key StepKey, state StepState, at time.Time) {
 		sp.Ended = at
 	}
 	st.Spans[key] = sp
+}
+
+func (st *RunState) Apply(rec Record) error {
+	switch rec.Kind {
+	case RecordStep:
+		if rec.Step == nil {
+			return errors.New("step record without a step")
+		}
+		if st.Steps == nil {
+			st.Steps = map[StepKey]StepState{}
+		}
+		st.Steps[*rec.Step] = rec.State
+		st.Span(*rec.Step, rec.State, rec.At)
+	case RecordRun:
+		st.Status = rec.Run
+	case RecordLanding:
+		if rec.Landing != nil {
+			st.Landed = append(st.Landed, *rec.Landing)
+		}
+	case RecordEvent:
+		if rec.Event != nil {
+			st.Events = append(st.Events, *rec.Event)
+		}
+	case RecordQuestion:
+		if rec.Question != nil {
+			st.Questions = upsertQuestion(st.Questions, *rec.Question)
+		}
+	case RecordSignal:
+		if rec.Signal != nil {
+			st.Signals = append(st.Signals, *rec.Signal)
+		}
+	case RecordRemedy:
+		if rec.Remedy != nil {
+			st.Remedies = append(st.Remedies, *rec.Remedy)
+		}
+	default:
+		return fmt.Errorf("unknown record kind %q", rec.Kind)
+	}
+	return nil
+}
+
+func upsertQuestion(qs []Question, q Question) []Question {
+	for i := range qs {
+		if qs[i].ID == q.ID {
+			qs[i] = q
+			return qs
+		}
+	}
+	return append(qs, q)
 }
 
 func (p Plan) Unticked() []string {

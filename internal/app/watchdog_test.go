@@ -31,6 +31,20 @@ type dogHost struct {
 	state    core.AgentState
 }
 
+type lateDog struct {
+	*dogHost
+	store core.Store
+	runID func() string
+}
+
+func (h *lateDog) ClosePane(pane string) error {
+	err := h.store.Append(h.runID(), core.Record{Kind: core.RecordSignal, Signal: &core.Signal{Seq: 99, Kind: core.SignalWarn, Source: core.SourceWatchdog, Step: core.StepKey{Phase: "1", Kind: "implement"}, Reason: "late word"}})
+	if err != nil {
+		return err
+	}
+	return h.dogHost.ClosePane(pane)
+}
+
 type configAtStart struct {
 	core.SessionHost
 	mu      sync.Mutex
@@ -275,6 +289,148 @@ func TestExecuteStartsTheWatchdogAndAHaltThroughItsMCPSurfaceExits5(t *testing.T
 	}
 	if last := calls[len(calls)-1]; last != "ClosePane wd-pane" {
 		t.Errorf("watchdog pane left open: %q", calls)
+	}
+}
+
+func TestTheFinalReportHoldsARecordAppendedWhileTheWatchdogCloses(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	sim := newSim()
+	sim.hang["rloop-p1-implement"] = true
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, sim)
+	dog := &lateDog{dogHost: &dogHost{}, store: w.Store, runID: func() string { return w.Loop.RunID }}
+	w.Dog.Host = dog
+	done := make(chan int, 1)
+	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
+	for deadline := time.Now().Add(10 * time.Second); !dog.prompted("step started phase-1/implement"); {
+		if time.Now().After(deadline) {
+			t.Fatalf("implement never reported to the watchdog: %q", dog.Calls())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: w.Ask.WatchdogURL(), MaxRetries: -1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "signal", Arguments: map[string]any{"kind": "halt", "step": "phase-1/implement", "reason": "off the plan", "evidence": "docs/topic/todo.md:1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := res.StructuredContent.(map[string]any); out["accepted"] != true {
+		t.Fatalf("signal result %v", res.StructuredContent)
+	}
+	select {
+	case code := <-done:
+		if code != 5 {
+			t.Fatalf("exit %d, want 5\n%s", code, f.out)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("run never halted")
+	}
+	report, err := os.ReadFile(filepath.Join(w.Store.Dir(w.Loop.RunID), "report.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "warn from watchdog, phase 1 implement: late word") {
+		t.Errorf("late watchdog signal missing from report:\n%s", report)
+	}
+}
+
+func TestASignalCallIsHandledWhileAWarnHookRuns(t *testing.T) {
+	dir := t.TempDir()
+	hook := filepath.Join(dir, "hook.sh")
+	entered := filepath.Join(dir, "entered")
+	gate := filepath.Join(dir, "gate")
+	t.Cleanup(func() { _ = os.WriteFile(gate, nil, 0o644) })
+	script := fmt.Sprintf("touch %q\nwhile [ ! -e %q ]; do sleep 0.05; done\n", entered, gate)
+	if err := os.WriteFile(hook, []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := newResumeFixture(t, noReviewConfig+"notify:\n  onWarn: sh "+hook+"\n")
+	sim := newSim()
+	sim.hang["rloop-p1-implement"] = true
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, sim)
+	dog := &dogHost{}
+	w.Dog.Host = dog
+	done := make(chan int, 1)
+	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
+	for deadline := time.Now().Add(10 * time.Second); !dog.prompted("step started phase-1/implement"); {
+		if time.Now().After(deadline) {
+			t.Fatalf("implement never reported to the watchdog: %q", dog.Calls())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: w.Ask.WatchdogURL(), MaxRetries: -1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	call := func(kind, reason string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "signal", Arguments: map[string]any{"kind": kind, "step": "phase-1/implement", "reason": reason, "evidence": "docs/topic/todo.md:1"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out, _ := res.StructuredContent.(map[string]any); out["accepted"] != true {
+			t.Fatalf("signal %s result %v", reason, res.StructuredContent)
+		}
+	}
+	call("warn", "slow")
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		if _, err := os.Stat(entered); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("warn hook never entered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	call("warn", "slower")
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		st, err := w.Store.Load(w.Loop.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, event := range st.Events {
+			if event.Kind == "warning" && event.Fields["reason"] == "slower" {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("second warning was not handled while hook ran")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	call("halt", "off the plan")
+	if err := os.WriteFile(gate, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case code := <-done:
+		if code != 5 {
+			t.Fatalf("exit %d, want 5\n%s", code, f.out)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("run never halted")
 	}
 }
 

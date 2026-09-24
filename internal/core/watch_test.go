@@ -414,7 +414,12 @@ func TestARejectedWatchdogSignalTurnsIntoAHalt(t *testing.T) {
 func TestASignalForALandedPhaseIsRejected(t *testing.T) {
 	store := &fakeStore{}
 	store.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: "1", MergeSHA: "abc"}})
+	g := &RecordGuard{Store: store}
+	if _, err := g.Follow("run-1"); err != nil {
+		t.Fatal(err)
+	}
 	w := newWatch(store)
+	w.Store = g
 	w.StepStarted(implementRef(2, 1), &Session{})
 	defer w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
 
@@ -429,6 +434,32 @@ func TestASignalForALandedPhaseIsRejected(t *testing.T) {
 	fwd := receive(t, w)
 	if fwd.Kind != SignalWarn {
 		t.Errorf("forwarded %+v", fwd)
+	}
+}
+
+func TestAcceptingASignalLoadsNoRunState(t *testing.T) {
+	store := &countingStore{}
+	g := &RecordGuard{Store: store}
+	if _, err := g.Follow("run-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: "1"}}); err != nil {
+		t.Fatal(err)
+	}
+	store.loads.Store(0)
+	w := &Watch{Store: g, Face: &fakeFace{}, Now: func() time.Time { return watchT0 }, Poll: time.Hour}
+	w.StepStarted(implementRef(2, 1), &Session{})
+	defer w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
+	rejected, _ := w.Accept(Signal{Kind: SignalHalt, Source: SourceDriver, Step: StepKey{Phase: "1", Kind: "implement"}, Reason: "stale"})
+	if !rejected.Rejected || rejected.RejectReason != "phase 1 has landed" {
+		t.Fatalf("rejected = %+v", rejected)
+	}
+	accepted, _ := w.Accept(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Phase: "2", Kind: "implement"}, Reason: "slow"})
+	if accepted.Rejected {
+		t.Fatalf("accepted = %+v", accepted)
+	}
+	if n := store.loads.Load(); n != 0 {
+		t.Fatalf("loads = %d", n)
 	}
 }
 

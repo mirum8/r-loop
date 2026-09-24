@@ -329,37 +329,15 @@ func (f *fakeStore) Load(runID string) (RunState, error) {
 	defer f.mu.Unlock()
 	st := RunState{ID: runID, Todo: f.Metas[runID].Todo, Started: f.Metas[runID].Started, Status: RunCreated, Steps: map[StepKey]StepState{}}
 	for _, rec := range f.Records[runID] {
-		switch rec.Kind {
-		case RecordStep:
-			st.Steps[*rec.Step] = rec.State
-			st.Span(*rec.Step, rec.State, rec.At)
+		if err := st.Apply(rec); err != nil {
+			return st, err
+		}
+		if rec.Kind == RecordStep {
 			key := *rec.Step
 			st.LastStep = &key
-		case RecordRun:
-			st.Status = rec.Run
-		case RecordLanding:
-			st.Landed = append(st.Landed, *rec.Landing)
-		case RecordQuestion:
-			st.Questions = upsertQuestion(st.Questions, *rec.Question)
-		case RecordSignal:
-			st.Signals = append(st.Signals, *rec.Signal)
-		case RecordRemedy:
-			st.Remedies = append(st.Remedies, *rec.Remedy)
-		case RecordEvent:
-			st.Events = append(st.Events, *rec.Event)
 		}
 	}
 	return st, f.Err
-}
-
-func upsertQuestion(qs []Question, q Question) []Question {
-	for i := range qs {
-		if qs[i].ID == q.ID {
-			qs[i] = q
-			return qs
-		}
-	}
-	return append(qs, q)
 }
 
 func (f *fakeStore) Current() (string, int, bool) {
@@ -442,13 +420,33 @@ func (f *fakeAskChannel) Answer(id, answer, by, citation string) error {
 
 type fakeFace struct {
 	callLog
+	mu     sync.Mutex
 	Events []Event
 	Closed bool
 }
 
 func (f *fakeFace) Emit(ev Event) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.record("Face.Emit %s", ev.Kind)
 	f.Events = append(f.Events, ev)
+}
+
+func (f *fakeFace) events() []Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Event(nil), f.Events...)
+}
+
+func (f *fakeFace) seen(kind string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, ev := range f.Events {
+		if ev.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeFace) Close() {

@@ -150,7 +150,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - A sentinel still malformed after a bounded grace period fails the step with a reason that includes the parse error
       - Every step prompt's sentinel section tells the agent to write the file atomically (temp file in the same directory, then rename), asserted by a render test
 
-- [ ] [#25] Every emit reloads the whole run and rewrites the report while holding the loop lock
+- [x] [#25] Every emit reloads the whole run and rewrites the report while holding the loop lock  <!-- fixed: r-loop/phase-26 -->
       - N emitted events cost O(N) store reads in total, not O(N²), shown by a counting fake store
       - The loop lock is not held during report file I/O or `Face.Emit`: with a face whose Emit blocks, emits from other goroutines and step records still proceed
       - `report.md` reflects every appended record once the run ends, and is at most a bounded delay behind while the run is live
@@ -189,7 +189,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - A request to the watchdog path with a body over the limit is refused with 413
       - A step-path request calling a watchdog tool is still refused, and the watchdog's own calls still succeed
 
-- [ ] [#32] Notify hooks run synchronously for up to 60 s on the loop goroutine
+- [x] [#32] Notify hooks run synchronously for up to 60 s on the loop goroutine  <!-- fixed: r-loop/phase-26 -->
       - A slow `onWarn` hook (e.g. `sleep 30`) does not delay the loop's handling of step completion, a halt or an abort beyond the normal poll interval
       - A watchdog `signal` MCP call returns promptly while a hook is running
       - Hooks still fire once per transition with the same environment, and a failed or timed-out hook still emits `notify-failed`
