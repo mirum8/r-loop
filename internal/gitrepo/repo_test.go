@@ -1058,3 +1058,41 @@ func TestDeleteBranchDeletesAMergedBranchAndRefusesAnUnmergedOne(t *testing.T) {
 		t.Fatalf("branches = %q", got)
 	}
 }
+
+func TestSnapshotSeesAnIgnoredTaskPlan(t *testing.T) {
+	r, dir := newRepo(t)
+	write(t, filepath.Join(dir, ".gitignore"), ".task-plans/\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "ignore plans")
+	before, err := r.Snapshot("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, ".task-plans", "phase-1-x.md"), "status: planned\n")
+
+	after, err := r.Snapshot("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := r.TreeDiff(before, after)
+	if err != nil || !reflect.DeepEqual(paths, []string{".task-plans/phase-1-x.md"}) {
+		t.Fatalf("TreeDiff = %v, %v", paths, err)
+	}
+}
+
+func TestCommitAllCommitsAnIgnoredTaskPlan(t *testing.T) {
+	r, dir := newRepo(t)
+	write(t, filepath.Join(dir, ".gitignore"), ".task-plans/\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "ignore plans")
+	write(t, filepath.Join(dir, ".task-plans", "phase-1-x.md"), "status: planned\n")
+
+	if _, err := r.CommitAll("", "plan"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := git(t, dir, "show", "--name-only", "--format=", "HEAD"); got != ".task-plans/phase-1-x.md" {
+		t.Fatalf("HEAD touches %q", got)
+	}
+}

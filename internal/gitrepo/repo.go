@@ -313,6 +313,9 @@ func (r *Repo) CommitAll(dir, message string) (string, error) {
 	if _, err := r.git(dir, "add", "--renormalize", "-u"); err != nil {
 		return "", err
 	}
+	if err := r.addTaskPlans(dir, nil); err != nil {
+		return "", err
+	}
 	dirty, err := r.Dirty(dir)
 	if err != nil {
 		return "", err
@@ -460,6 +463,9 @@ func (r *Repo) tempTree(dir string, add ...string) (string, error) {
 			if _, err := run(r.path(dir), env, "add", "--renormalize", "-u"); err != nil {
 				return "", err
 			}
+			if err := r.addTaskPlans(dir, env); err != nil {
+				return "", err
+			}
 		} else if len(add) > 2 && add[0] == "add" {
 			if _, err := run(r.path(dir), env, append([]string{"add", "--renormalize", "--"}, add[2:]...)...); err != nil {
 				return "", err
@@ -468,6 +474,16 @@ func (r *Repo) tempTree(dir string, add ...string) (string, error) {
 	}
 	tree, err := run(r.path(dir), env, "write-tree")
 	return strings.TrimSpace(tree), err
+}
+
+func (r *Repo) addTaskPlans(dir string, env []string) error {
+	if _, err := os.Stat(filepath.Join(r.path(dir), ".task-plans")); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	_, err := run(r.path(dir), env, "add", "-f", "--", ".task-plans")
+	return err
 }
 
 func (r *Repo) seedIndex(dir string, f *os.File) error {
