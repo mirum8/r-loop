@@ -189,13 +189,19 @@ func planTouched(ctx CheckContext) string {
 }
 
 func isTestPath(p string) bool {
-	base := path.Base(p)
-	for _, pattern := range []string{"*_test.go", "*.test.*", "*_test.*"} {
+	dir, base := path.Split(p)
+	for _, pattern := range []string{"*_test.go", "*.test.*", "*_test.*", "*.spec.*", "test_*.py", "*Test.java", "*Test.kt"} {
 		if ok, _ := path.Match(pattern, base); ok {
 			return true
 		}
 	}
-	return strings.HasPrefix(p, "test/")
+	for _, segment := range strings.Split(dir, "/") {
+		switch segment {
+		case "test", "tests", "__tests__":
+			return true
+		}
+	}
+	return false
 }
 
 func shellQuote(s string) string {

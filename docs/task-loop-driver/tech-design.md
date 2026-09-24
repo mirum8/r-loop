@@ -369,7 +369,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   landing starts again from the merge. A red gate with no fix round left blocks the phase.
 - **Land** — in the primary tree: `MergeNoFF(r-loop/phase-<N>)` (`--no-commit`) → the merged tree
   is on disk, uncommitted → `Run(root, gate command, gate timeout)`, the gate command being the
-  `Done when:` line's inline code spans joined with ` && `, or its trimmed text when it has none
+  `Done when:` line's inline code spans: a span whose prose since the previous span ends in `prints` or `lists` (optionally followed by `the`) is an expected-output literal of the nearest command span before it and is never run; every other span is a command. A command followed by `prints nothing`/`lists nothing`, or carrying literals, runs as `{ out=$( ( <cmd> ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; <checks>; }`, its stdout+stderr judged: `test -z "$out"` for nothing (exit status ignored, so a silent `grep` with no match passes); for literals, `test "$st" = 0` then `printf '%s\n' "$out" | grep -qF -e '<literal>'` per literal. A command containing `#` or a newline is surrounded by newlines inside its subshell so comments and heredocs cannot absorb the wrapper. Clauses are joined with ` && ` (a line of only commands gives its spans joined with ` && `), or the gate is the line's trimmed text when it has no span
   (the gate fix's `GateCommand` is the same string); exit ≠ 0 → `AbortMerge()`, halt
   with the output, nothing ticked, a gate-fix round when one is left; no command → `gate-skipped` recorded, never a halt → `Tick`
   → `Commit("phase <N>: <title>")` → `CommitTouches` must include the todo and one other path, else
@@ -688,7 +688,7 @@ and the driver validates that argv before anything of a run exists.
   `ErrNoGate`. Config row `steps.gate` (default `claude/sonnet/medium/30m/report`).
 - **Land** — `LandGate.Suite` set only for a backlog. For a phase with no `Done when:`: suite first
   (before the merge); after the merge, read `## Gate` from the phase plan in the primary tree
-  (`ErrNoGate` if absent); red check: changed test files (`isTestPath`) must exist, are copied onto
+  (`ErrNoGate` if absent); red check: changed test files (`isTestPath`: a file name matching `*_test.*`, `*.test.*`, `*.spec.*`, `test_*.py`, `*Test.java` or `*Test.kt`, or any directory segment `test`, `tests` or `__tests__`; `foreign-test-edit` uses the same rule) must exist, are copied onto
   `.r-loop/wt/phase-N-red` at `HEAD` (the base, mid-merge) and the item command must exit non-zero
   there (`ErrGate` otherwise); gate = `<item> && <suite>`. `ErrGate` → gate-fix rounds; `ErrNoGate`
   → the phase blocks.

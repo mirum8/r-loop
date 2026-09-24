@@ -258,6 +258,38 @@ func TestForeignTestEditMatchesEveryTestPattern(t *testing.T) {
 	}
 }
 
+func TestIsTestPathCoversOtherLanguagesAndNestedTestDirs(t *testing.T) {
+	for _, p := range []string{"src/test/java/a/FooTest.java", "app/FooTest.kt", "tests/test_foo.py", "web/foo.spec.ts", "pkg/__tests__/x.js", "module/src/test/java/a/Bar.java", "sub/tests/helpers.py", "sub/test/fixtures/data.json", "a/b_test.go", "web/app.test.ts", "lib/thing_test.py", "test/unit/x.go"} {
+		if !isTestPath(p) {
+			t.Errorf("isTestPath(%q) = false", p)
+		}
+	}
+	for _, p := range []string{"src/main/java/Contest.java", "latest.go", "internal/core/land.go", "contest/main.go", "docs/testing.md"} {
+		if isTestPath(p) {
+			t.Errorf("isTestPath(%q) = true", p)
+		}
+	}
+}
+
+func TestForeignTestEditMatchesTheWidenedTestPaths(t *testing.T) {
+	for _, p := range []string{"src/test/java/a/FooTest.java", "app/FooTest.kt", "tests/test_foo.py", "web/foo.spec.ts", "pkg/__tests__/x.js", "module/src/test/java/a/Bar.java", "sub/tests/helpers.py", "sub/test/x.go"} {
+		t.Run(p, func(t *testing.T) {
+			repo := &fakeRepo{RootDir: "/repo", Changed: []string{p}, RunOutput: p + "\n"}
+			ctx := checkCtx(&fakeStore{}, repo, "implement", 1, time.Minute)
+			sig := oneWarning(t, shipped(t, "foreign-test-edit").Run(ctx), ctx)
+			if !strings.Contains(sig.Reason, p) {
+				t.Errorf("reason = %q", sig.Reason)
+			}
+		})
+	}
+}
+
+func TestForeignTestEditQuietOnProductionLookalikes(t *testing.T) {
+	repo := &fakeRepo{RootDir: "/repo", Changed: []string{"src/main/java/Contest.java", "latest.go"}, RunOutput: "src/main/java/Contest.java\nlatest.go\n"}
+	ctx := checkCtx(&fakeStore{}, repo, "implement", 1, time.Minute)
+	noWarning(t, shipped(t, "foreign-test-edit").Run(ctx))
+}
+
 func TestEachCheckFiresAtMostOncePerAttempt(t *testing.T) {
 	repo := &fakeRepo{RootDir: "/repo", Changed: []string{"cmd/stray.go", "docs/demo/todo.md", "internal/x/old_test.go"}, RunOutput: "internal/x/old_test.go\n", Added: 5000}
 	store := landedStore(t)

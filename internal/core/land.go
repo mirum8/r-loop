@@ -14,18 +14,63 @@ import (
 )
 
 var codeSpanRe = regexp.MustCompile("`([^`]+)`")
+var printsBeforeRe = regexp.MustCompile(`(?i)\b(prints|lists)(\s+the)?\s*$`)
+var printsNothingRe = regexp.MustCompile(`(?i)^\s*(prints|lists)\s+nothing\b`)
 
 func gateCommand(doneWhen string) string {
-	var spans []string
-	for _, m := range codeSpanRe.FindAllStringSubmatch(doneWhen, -1) {
-		if c := strings.TrimSpace(m[1]); c != "" {
-			spans = append(spans, c)
+	var spans [][]int
+	for _, m := range codeSpanRe.FindAllStringSubmatchIndex(doneWhen, -1) {
+		if strings.TrimSpace(doneWhen[m[2]:m[3]]) != "" {
+			spans = append(spans, m)
 		}
 	}
 	if len(spans) == 0 {
 		return strings.TrimSpace(doneWhen)
 	}
-	return strings.Join(spans, " && ")
+	type clause struct {
+		cmd      string
+		literals []string
+		nothing  bool
+	}
+	var clauses []clause
+	prevEnd := 0
+	for i, m := range spans {
+		gap := doneWhen[prevEnd:m[0]]
+		value := strings.TrimSpace(doneWhen[m[2]:m[3]])
+		if len(clauses) > 0 && printsBeforeRe.MatchString(gap) {
+			clauses[len(clauses)-1].literals = append(clauses[len(clauses)-1].literals, value)
+		} else {
+			nextStart := len(doneWhen)
+			if i+1 < len(spans) {
+				nextStart = spans[i+1][0]
+			}
+			clauses = append(clauses, clause{cmd: value, nothing: printsNothingRe.MatchString(doneWhen[m[1]:nextStart])})
+		}
+		prevEnd = m[1]
+	}
+	var rendered []string
+	for _, c := range clauses {
+		if !c.nothing && len(c.literals) == 0 {
+			rendered = append(rendered, c.cmd)
+			continue
+		}
+		var checks []string
+		if c.nothing {
+			checks = append(checks, `test -z "$out"`)
+		}
+		if len(c.literals) > 0 {
+			checks = append(checks, `test "$st" = 0`)
+			for _, literal := range c.literals {
+				checks = append(checks, `printf '%s\n' "$out" | grep -qF -e `+shellQuote(literal))
+			}
+		}
+		cmd := c.cmd
+		if strings.ContainsAny(cmd, "#\n") {
+			cmd = "\n" + cmd + "\n"
+		}
+		rendered = append(rendered, `{ out=$( ( `+cmd+` ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; `+strings.Join(checks, " && ")+`; }`)
+	}
+	return strings.Join(rendered, " && ")
 }
 
 var (
