@@ -63,7 +63,7 @@ func (s *Server) Serve(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	wdToken, err := s.token("wd-token")
+	wdToken, err := newToken()
 	if err != nil {
 		return "", err
 	}
@@ -95,6 +95,14 @@ func (s *Server) Serve(ctx context.Context) (string, error) {
 		s.wg.Add(1)
 		defer s.wg.Done()
 		if r.URL.Path == s.wdPath {
+			if r.Method == http.MethodPost {
+				body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+				if err != nil {
+					http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+					return
+				}
+				r.Body = io.NopCloser(bytes.NewReader(body))
+			}
 			watchdogHandler.ServeHTTP(w, r)
 			return
 		}

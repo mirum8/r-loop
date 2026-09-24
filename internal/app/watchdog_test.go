@@ -20,15 +20,18 @@ import (
 )
 
 type dogHost struct {
-	mu       sync.Mutex
-	calls    []string
-	startErr error
-	stale    map[string]string
-	onPrompt func(text string)
-	question func(id string)
-	triage   func(text string)
-	blocked  string
-	state    core.AgentState
+	mu         sync.Mutex
+	calls      []string
+	config     string
+	configPath string
+	configPerm os.FileMode
+	startErr   error
+	stale      map[string]string
+	onPrompt   func(text string)
+	question   func(id string)
+	triage     func(text string)
+	blocked    string
+	state      core.AgentState
 }
 
 type lateDog struct {
@@ -101,14 +104,15 @@ func TestAWatchdogAndAStepSessionWriteTheirMCPConfigUnderARepoRootWithASpace(t *
 	f.sim(w, newSim())
 	steps := &configAtStart{SessionHost: newSim(), mcp: map[string]string{}}
 	w.Loop.Sessions.Host = spacedSim{configAtStart: steps, root: root, link: link}
-	dog := &configAtStart{SessionHost: &dogHost{}, mcp: map[string]string{}}
+	dogH := &dogHost{}
+	dog := &configAtStart{SessionHost: dogH, mcp: map[string]string{}}
 	w.Dog.Host = dog
 	if code := w.Execute(core.RunOptions{Phases: []string{"1"}}); code != 0 {
 		t.Fatalf("exit %d\n%s", code, f.out)
 	}
-	mcpPath := filepath.Join(w.Store.Dir(w.Loop.RunID), "watchdog.mcp.json")
-	if !strings.Contains(mcpPath, "repo with space") {
-		t.Errorf("watchdog path %q lacks spaced root", mcpPath)
+	mcpPath, data, _ := dogH.startConfig()
+	if mcpPath == "" || strings.HasPrefix(mcpPath, root) {
+		t.Errorf("watchdog config %q is under the repo", mcpPath)
 	}
 	foundConfigArg := false
 	for i, arg := range w.Dog.Provider.Args {
@@ -123,8 +127,8 @@ func TestAWatchdogAndAStepSessionWriteTheirMCPConfigUnderARepoRootWithASpace(t *
 	if !foundConfigArg {
 		t.Errorf("watchdog args %q lack --mcp-config", w.Dog.Provider.Args)
 	}
-	if data, err := os.ReadFile(mcpPath); err != nil || !strings.Contains(string(data), "/mcp/watchdog/") {
-		t.Errorf("watchdog config %q: %v", data, err)
+	if !strings.Contains(data, "/mcp/watchdog/") {
+		t.Errorf("watchdog config %q", data)
 	}
 	if len(dog.missing) != 0 || len(steps.missing) != 0 || len(dog.mcp) != 1 {
 		t.Errorf("dog paths=%v missing=%v step missing=%v", dog.mcp, dog.missing, steps.missing)
@@ -140,6 +144,147 @@ func TestAWatchdogAndAStepSessionWriteTheirMCPConfigUnderARepoRootWithASpace(t *
 	}
 	if data, err := os.ReadFile(stepPath); err != nil || !strings.Contains(string(data), "/mcp/") {
 		t.Errorf("step config %q: %v", data, err)
+	}
+}
+
+func TestNoFileUnderTheRepoHoldsTheWatchdogTokenWhileTheRunIsLive(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, newSim())
+	dog := &dogHost{}
+	var once sync.Once
+	var token string
+	var leaks []string
+	dog.onPrompt = func(string) {
+		once.Do(func() {
+			token = filepath.Base(w.Ask.WatchdogURL())
+			if err := filepath.WalkDir(f.root, func(path string, entry os.DirEntry, err error) error {
+				if err != nil || !entry.Type().IsRegular() {
+					return err
+				}
+				data, err := os.ReadFile(path)
+				if err == nil && (strings.Contains(string(data), token) || strings.Contains(string(data), "/mcp/watchdog/")) {
+					leaks = append(leaks, path)
+				}
+				return err
+			}); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	w.Dog.Host = dog
+	if code := w.Execute(core.RunOptions{Phases: []string{"1"}}); code != 0 {
+		t.Fatalf("exit %d\n%s", code, f.out)
+	}
+	if token == "" || len(leaks) != 0 {
+		t.Errorf("token = %q, leaked files = %v", token, leaks)
+	}
+	path, _, _ := dog.startConfig()
+	if path == "" || strings.HasPrefix(path, f.root) {
+		t.Errorf("watchdog config path = %q", path)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("watchdog config remains: %v", err)
+	}
+}
+
+func TestATempDirInsideTheRepoRefusesToStartTheWatchdog(t *testing.T) {
+	for _, variant := range []string{"absolute", "relative", "case-variant", "symlink-to-subdirectory"} {
+		t.Run(variant, func(t *testing.T) {
+			f := newResumeFixture(t, noReviewConfig)
+			w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.sim(w, newSim())
+			dog := &dogHost{}
+			w.Dog.Host = dog
+			base := filepath.Join(f.root, ".tmp")
+			if err := os.Mkdir(base, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			switch variant {
+			case "absolute":
+				t.Setenv("TMPDIR", base)
+			case "relative":
+				t.Chdir(f.root)
+				t.Setenv("TMPDIR", ".tmp")
+			case "case-variant":
+				upper := strings.ToUpper(f.root)
+				if _, err := os.Stat(upper); err != nil {
+					t.Skip("case-sensitive filesystem")
+				}
+				t.Setenv("TMPDIR", filepath.Join(upper, ".tmp"))
+			case "symlink-to-subdirectory":
+				link := filepath.Join(t.TempDir(), "link")
+				if err := os.Symlink(base, link); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("TMPDIR", link)
+			}
+			if code := w.Execute(core.RunOptions{Phases: []string{"1"}}); code != 2 {
+				t.Errorf("exit %d, want 2", code)
+			}
+			if !strings.Contains(f.err.String(), "inside the repository") {
+				t.Errorf("stderr %q", f.err.String())
+			}
+			for _, call := range dog.Calls() {
+				if strings.HasPrefix(call, "Start ") {
+					t.Errorf("watchdog started: %q", call)
+				}
+			}
+			entries, err := os.ReadDir(base)
+			if err != nil || len(entries) != 0 {
+				t.Errorf("temp dir entries = %v, %v", entries, err)
+			}
+			if err := filepath.WalkDir(f.root, func(path string, entry os.DirEntry, err error) error {
+				if err == nil && entry.Name() == "watchdog.mcp.json" {
+					t.Errorf("watchdog config in repo: %s", path)
+				}
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestARelativeTempDirOutsideTheRepoGivesTheWatchdogAnAbsoluteConfigPath(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, newSim())
+	dog := &dogHost{}
+	w.Dog.Host = dog
+	cwd := t.TempDir()
+	if err := os.Mkdir(filepath.Join(cwd, "tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(cwd)
+	t.Setenv("TMPDIR", "tmp")
+	if code := w.Execute(core.RunOptions{Phases: []string{"1"}}); code != 0 {
+		t.Fatalf("exit %d\n%s", code, f.out)
+	}
+	if len(w.Dog.Provider.Args) < 2 {
+		t.Fatalf("watchdog args %q", w.Dog.Provider.Args)
+	}
+	var mcpPath string
+	for i, arg := range w.Dog.Provider.Args {
+		if arg == "--mcp-config" && i+1 < len(w.Dog.Provider.Args) {
+			mcpPath = w.Dog.Provider.Args[i+1]
+		}
+	}
+	if !filepath.IsAbs(mcpPath) || !strings.HasPrefix(mcpPath, filepath.Join(cwd, "tmp")+string(os.PathSeparator)) {
+		t.Fatalf("watchdog config arg %q, want absolute path under %s", mcpPath, filepath.Join(cwd, "tmp"))
+	}
+	path, data, _ := dog.startConfig()
+	if path != mcpPath || !strings.Contains(data, w.Ask.WatchdogURL()) {
+		t.Errorf("watchdog start config %q: %q", path, data)
 	}
 }
 
@@ -160,8 +305,26 @@ func (h *dogHost) Open(spec core.OpenSpec) (core.Workspace, error) {
 	return core.Workspace{}, nil
 }
 func (h *dogHost) Start(pane, name, kind string, args []string) (core.Agent, error) {
+	h.mu.Lock()
+	for _, arg := range args {
+		if strings.HasSuffix(arg, "watchdog.mcp.json") {
+			h.configPath = arg[strings.Index(arg, "/"):]
+			data, _ := os.ReadFile(h.configPath)
+			h.config = string(data)
+			if info, err := os.Stat(h.configPath); err == nil {
+				h.configPerm = info.Mode().Perm()
+			}
+		}
+	}
+	h.mu.Unlock()
 	h.record("Start %s %s %s %s", pane, name, kind, strings.Join(args, " "))
 	return core.Agent{Name: name, Pane: pane}, h.startErr
+}
+
+func (h *dogHost) startConfig() (path, data string, perm os.FileMode) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.configPath, h.config, h.configPerm
 }
 func (h *dogHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
 	h.record("Prompt %s %s", agent, text)
@@ -273,16 +436,19 @@ func TestExecuteStartsTheWatchdogAndAHaltThroughItsMCPSurfaceExits5(t *testing.T
 		t.Fatal("run never halted")
 	}
 	runDir := w.Store.Dir(w.Loop.RunID)
-	mcpPath := filepath.Join(runDir, "watchdog.mcp.json")
+	mcpPath, data, perm := dog.startConfig()
 	calls := dog.Calls()
 	if len(calls) < 3 || calls[0] != `Split "driver-pane" right `+f.root || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model opus --effort high --mcp-config "+mcpPath || !strings.Contains(calls[2], runDir) {
 		t.Errorf("watchdog calls %q", calls)
 	}
-	if data, _ := os.ReadFile(mcpPath); !strings.Contains(string(data), w.Ask.WatchdogURL()) {
+	if !strings.Contains(data, w.Ask.WatchdogURL()) {
 		t.Errorf("mcp config %s", data)
 	}
-	if info, err := os.Stat(mcpPath); err != nil || info.Mode().Perm() != 0o600 {
-		t.Errorf("mcp config mode %v, %v", info, err)
+	if perm != 0o600 || strings.HasPrefix(mcpPath, f.root) {
+		t.Errorf("mcp config path %q, mode %v", mcpPath, perm)
+	}
+	if _, err := os.Stat(mcpPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("mcp config remains: %v", err)
 	}
 	if !dog.prompted("step ended phase-1/implement failed watchdog: off the plan") {
 		t.Errorf("no step ended for implement: %q", calls)
@@ -537,6 +703,7 @@ func TestABacklogRunWiresThePhaseCheckForBacklogItems(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.Dog.Host = &dogHost{}
+	t.Cleanup(func() { os.RemoveAll(w.dogDir) })
 	if err := w.startWatchdog(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -586,11 +753,11 @@ func TestAWatchdogAskFlagWithTheConfigPathEmbeddedStillGetsItsConfig(t *testing.
 		t.Fatalf("exit %d\n%s", code, f.out)
 	}
 
-	mcpPath := filepath.Join(w.Store.Dir(w.Loop.RunID), "watchdog.mcp.json")
+	mcpPath, data, _ := dog.startConfig()
 	if calls := dog.Calls(); len(calls) < 2 || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model opus --cfg="+mcpPath {
 		t.Errorf("watchdog calls %q", calls)
 	}
-	if data, _ := os.ReadFile(mcpPath); !strings.Contains(string(data), "/mcp/watchdog/") {
+	if !strings.Contains(data, "/mcp/watchdog/") {
 		t.Errorf("mcp config %q", data)
 	}
 }

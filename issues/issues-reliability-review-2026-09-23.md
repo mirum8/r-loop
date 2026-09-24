@@ -184,7 +184,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - A `### Phase N` line inside a fence is not read as a phase heading
       - Unfenced headings still end the block as today
 
-- [ ] [#31] Step agents can read the watchdog token and URL from the run directory and call watchdog-only tools
+- [x] [#31] Step agents can read the watchdog token and URL from the run directory and call watchdog-only tools  <!-- fixed: r-loop/phase-32 -->
       - A step agent cannot reach watchdog tools using anything in the repository tree: the watchdog's token and URL are not stored under the repo, or the endpoint authenticates in a way a step can't
       - A request to the watchdog path with a body over the limit is refused with 413
       - A step-path request calling a watchdog tool is still refused, and the watchdog's own calls still succeed
