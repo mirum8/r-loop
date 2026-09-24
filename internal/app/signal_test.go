@@ -67,10 +67,6 @@ func installSignalTestDisplay(w *Wiring) (*io.PipeWriter, *bytes.Buffer) {
 	return writer, out
 }
 
-type panicNotifier struct{}
-
-func (panicNotifier) Fire(string, map[string]string) { panic("boom") }
-
 type panicCleanupHost struct{ core.SessionHost }
 
 func (panicCleanupHost) Close(string) error     { panic("boom") }
@@ -96,7 +92,9 @@ func TestAPanicInTheDriverStopsTheDisplayAndHaltsTheRun(t *testing.T) {
 	f.sim(w, sim)
 	writer, out := installSignalTestDisplay(w)
 	defer writer.Close()
-	w.Loop.Notifier = panicNotifier{}
+	pf := panicEventFace{Face: w.TUI}
+	w.Face = pf
+	w.Loop.Face = pf
 	var stderr bytes.Buffer
 	w.Env.Stderr = &stderr
 	done := make(chan int, 1)

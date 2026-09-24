@@ -200,7 +200,7 @@ func (r *loopRig) calls(prefix string) []string {
 
 func (r *loopRig) events(kind string) []Event {
 	var out []Event
-	for _, ev := range r.face.Events {
+	for _, ev := range r.face.events() {
 		if ev.Kind == kind {
 			out = append(out, ev)
 		}
@@ -210,7 +210,7 @@ func (r *loopRig) events(kind string) []Event {
 
 func (r *loopRig) kinds() []string {
 	var out []string
-	for _, ev := range r.face.Events {
+	for _, ev := range r.face.events() {
 		if ev.Kind != "step" {
 			out = append(out, ev.Kind)
 		}
@@ -480,7 +480,10 @@ func TestAHaltStillBeingRecordedWhenTheLastPhaseEndsHaltsTheRun(t *testing.T) {
 
 func TestAHaltHeldDuringTheLastPhasesLandHaltsTheRun(t *testing.T) {
 	r := newLoopRig(t)
-	w := &Watch{Store: r.store}
+	g := &RecordGuard{Store: r.store}
+	r.loop.Store = g
+	r.lander.store = g
+	w := &Watch{Store: g}
 	r.loop.Watcher = w
 	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
 		if ph.ID == "3" {
@@ -509,7 +512,10 @@ func TestAHaltHeldDuringTheLastPhasesLandHaltsTheRun(t *testing.T) {
 
 func TestARejectedHaltForALandedPhaseDoesNotBlockItOrItsDependents(t *testing.T) {
 	r := newLoopRig(t)
-	w := &Watch{Store: r.store}
+	g := &RecordGuard{Store: r.store}
+	r.loop.Store = g
+	r.lander.store = g
+	w := &Watch{Store: g}
 	r.loop.Watcher = w
 	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
 		landing, err := r.lander.Land(ctx, ph)
@@ -551,7 +557,8 @@ func TestAHaltHeldDuringALandIsAppliedBeforeTheNextPhaseStarts(t *testing.T) {
 		t.Fatalf("exit %d", code)
 	}
 	warn, phase2 := -1, -1
-	for i, ev := range r.face.Events {
+	events := r.face.events()
+	for i, ev := range events {
 		if ev.Kind == "warning" && strings.Contains(ev.Fields["reason"], "phase-1/gatefix") {
 			warn = i
 		}
@@ -560,7 +567,7 @@ func TestAHaltHeldDuringALandIsAppliedBeforeTheNextPhaseStarts(t *testing.T) {
 		}
 	}
 	if warn < 0 || phase2 >= 0 && warn >= phase2 {
-		t.Errorf("event order warning=%d phase2=%d events=%+v", warn, phase2, r.face.Events)
+		t.Errorf("event order warning=%d phase2=%d events=%+v", warn, phase2, events)
 	}
 	for _, rec := range r.store.Records["run-1"] {
 		if rec.Kind == RecordStep && rec.Step != nil && rec.Step.Phase == "2" && rec.State == StepFailed && strings.HasPrefix(rec.Reason, "watchdog: ") {
@@ -1641,9 +1648,10 @@ func TestAGateFixReviewRoundIsARunningStepEventNamingTheRound(t *testing.T) {
 
 	stepRecorder{store, face}.Reviewing(s, 1)
 
-	f := face.Events[0].Fields
-	if face.Events[0].Kind != "step" || f["state"] != "running" || f["round"] != "1" || f["rounds"] != "1" || f["model"] != "gpt-5" || f["effort"] != "high" || f["backstop"] != "1h0m0s" || f["workspace"] != "ws-5" {
-		t.Fatalf("event %+v", face.Events)
+	events := face.events()
+	f := events[0].Fields
+	if events[0].Kind != "step" || f["state"] != "running" || f["round"] != "1" || f["rounds"] != "1" || f["model"] != "gpt-5" || f["effort"] != "high" || f["backstop"] != "1h0m0s" || f["workspace"] != "ws-5" {
+		t.Fatalf("event %+v", events)
 	}
 }
 

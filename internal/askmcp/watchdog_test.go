@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -121,6 +122,49 @@ func TestSignalOnTheWatchdogPathReachesItsHandlerAsAWatchdogSignalForTheLatestAt
 	want := core.Signal{Kind: core.SignalHalt, Source: core.SourceWatchdog, Step: core.StepKey{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 2}, Reason: "rewriting the plan", Evidence: "git diff"}
 	if got != want {
 		t.Fatalf("signal = %+v", got)
+	}
+}
+
+func TestTheSignalToolResolvesTheAttemptFromTheLiveViewWithoutLoading(t *testing.T) {
+	st := &memStore{steps: map[core.StepKey]core.StepState{
+		{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 1}: core.StepFailed,
+		{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 2}: core.StepRunning,
+	}}
+	s := serveWatchdog(t, st)
+	g := &core.RecordGuard{Store: st}
+	if _, err := g.Follow("run-7"); err != nil {
+		t.Fatal(err)
+	}
+	st.loadErr = errors.New("loaded")
+	s.Store = g
+	got := make(chan core.Signal, 1)
+	s.Handle(WatchdogHandlers{Signal: func(sig core.Signal) (bool, string) {
+		got <- sig
+		return true, ""
+	}})
+	cs := connect(t, s.WatchdogURL())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "signal", Arguments: map[string]any{
+		"kind": "warn", "step": "phase-3/implement", "reason": "slow", "evidence": "log",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("tool error: %+v", res.Content)
+	}
+	out, _ := res.StructuredContent.(map[string]any)
+	if out["accepted"] != true {
+		t.Fatalf("signal result = %+v", out)
+	}
+	select {
+	case sig := <-got:
+		if sig.Step != (core.StepKey{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 2}) {
+			t.Fatalf("signal step = %+v", sig.Step)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("signal handler was not called")
 	}
 }
 

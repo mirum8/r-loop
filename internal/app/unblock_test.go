@@ -230,6 +230,20 @@ func TestARunWhoseEveryPhaseIsBlockedFinishesWithNothingToRun(t *testing.T) {
 	}
 }
 
+func TestARunFinishedBeforeTheLoopStillGetsItsReport(t *testing.T) {
+	k := startWalk(t, nil)
+	if code := k.w.Execute(core.RunOptions{Phases: []string{"1", "3"}}); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	report, err := os.ReadFile(filepath.Join(k.w.Store.Dir(k.w.Loop.RunID), "report.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "- Pick the database still open: phase 1, 3 skipped\n") {
+		t.Errorf("unblock result missing from report:\n%s", report)
+	}
+}
+
 func TestAFinishedRunRecordThatFailsBeforeTheLoopIsNamedOnStderrAndInTheFace(t *testing.T) {
 	k := startWalk(t, nil)
 	k.w.records.Store = failingStore{Store: k.w.Store, fail: func(rec core.Record) bool {

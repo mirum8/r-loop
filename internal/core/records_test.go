@@ -118,6 +118,63 @@ func TestFatalRecordPolicyForEveryRecordKind(t *testing.T) {
 	}
 }
 
+func TestAFollowingGuardFoldsEveryAppendIntoItsView(t *testing.T) {
+	store := &fakeStore{}
+	if err := store.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: "2"}}); err != nil {
+		t.Fatal(err)
+	}
+	g := &RecordGuard{Store: store}
+	ch, err := g.Follow("run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 1; attempt <= 2; attempt++ {
+		key := StepKey{Run: "run-1", Phase: "1", Kind: "plan", Attempt: attempt}
+		if err := g.Append("run-1", Record{Kind: RecordStep, Step: &key, State: StepRunning}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := g.Append("run-1", Record{Kind: RecordLanding, Landing: &Landing{Phase: "1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !g.Landed("1") || !g.Landed("2") || g.Landed("3") {
+		t.Fatal("landed view is stale")
+	}
+	if n, ok := g.Latest("1", "plan"); !ok || n != 2 {
+		t.Fatalf("latest = %d, %t", n, ok)
+	}
+	select {
+	case <-ch:
+	default:
+		t.Fatal("append did not wake follower")
+	}
+	st, ok := g.Snapshot()
+	if !ok || len(st.Landed) != 2 {
+		t.Fatalf("snapshot = %+v, %t", st, ok)
+	}
+}
+
+func TestAGuardThatIsNotFollowingKnowsNothing(t *testing.T) {
+	store := &fakeStore{}
+	g := &RecordGuard{Store: store}
+	if g.Landed("1") {
+		t.Fatal("landed before follow")
+	}
+	if n, ok := g.Latest("1", "plan"); ok || n != 0 {
+		t.Fatalf("latest before follow = %d, %t", n, ok)
+	}
+	if _, ok := g.Snapshot(); ok {
+		t.Fatal("snapshot before follow")
+	}
+	store.Err = errors.New("loaded")
+	if _, err := g.Follow("run-1"); !errors.Is(err, store.Err) {
+		t.Fatalf("follow = %v", err)
+	}
+	if n, ok := g.Latest("1", "plan"); ok || n != 0 {
+		t.Fatalf("latest after failed follow = %d, %t", n, ok)
+	}
+}
+
 func TestFinishRecordsTheCommitIntentThenCommitsThenRecordsOk(t *testing.T) {
 	r := newRig(t)
 	r.sm.Store = &RecordGuard{Store: orderStore{Store: r.store, log: r.shared}}

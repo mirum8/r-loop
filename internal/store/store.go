@@ -218,50 +218,13 @@ func legacyPhase(line []byte) []byte {
 }
 
 func apply(st *core.RunState, order *[]core.StepKey, rec core.Record) error {
-	switch rec.Kind {
-	case core.RecordStep:
-		if rec.Step == nil {
-			return errors.New("step record without a step")
-		}
-		st.Steps[*rec.Step] = rec.State
-		st.Span(*rec.Step, rec.State, rec.At)
+	if err := st.Apply(rec); err != nil {
+		return err
+	}
+	if rec.Kind == core.RecordStep {
 		*order = append(*order, *rec.Step)
-	case core.RecordRun:
-		st.Status = rec.Run
-	case core.RecordLanding:
-		if rec.Landing != nil {
-			st.Landed = append(st.Landed, *rec.Landing)
-		}
-	case core.RecordEvent:
-		if rec.Event != nil {
-			st.Events = append(st.Events, *rec.Event)
-		}
-	case core.RecordQuestion:
-		if rec.Question != nil {
-			st.Questions = upsertQuestion(st.Questions, *rec.Question)
-		}
-	case core.RecordSignal:
-		if rec.Signal != nil {
-			st.Signals = append(st.Signals, *rec.Signal)
-		}
-	case core.RecordRemedy:
-		if rec.Remedy != nil {
-			st.Remedies = append(st.Remedies, *rec.Remedy)
-		}
-	default:
-		return fmt.Errorf("unknown record kind %q", rec.Kind)
 	}
 	return nil
-}
-
-func upsertQuestion(qs []core.Question, q core.Question) []core.Question {
-	for i := range qs {
-		if qs[i].ID == q.ID {
-			qs[i] = q
-			return qs
-		}
-	}
-	return append(qs, q)
 }
 
 func lastStep(steps map[core.StepKey]core.StepState, order []core.StepKey) *core.StepKey {

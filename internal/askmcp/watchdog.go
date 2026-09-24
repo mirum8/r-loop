@@ -268,6 +268,12 @@ func (s *Server) resolve(step string) (core.StepKey, error) {
 	if key.Kind == "check" || s.Store == nil {
 		return key, nil
 	}
+	if g, ok := s.Store.(*core.RecordGuard); ok {
+		if n, following := g.Latest(key.Phase, key.Kind); following {
+			key.Attempt = n
+			return key, nil
+		}
+	}
 	st, err := s.Store.Load(s.RunID)
 	if err != nil {
 		return core.StepKey{}, fmt.Errorf("resolve %s: %w", step, err)

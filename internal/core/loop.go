@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -84,23 +85,31 @@ type RunLoop struct {
 	RemedyWindow time.Duration
 	MaxRestarts  int
 
-	mu         sync.Mutex
-	cancel     context.CancelCauseFunc
-	runDir     string
-	live       *Session
-	pending    map[string]bool
-	blocked    []string
-	restarts   map[string]int
-	open       map[*Session]int
-	asked      map[string]openAsk
-	warnings   map[string]string
-	halted     *Signal
-	haltLanded bool
-	nextHalt   *Signal
-	stopReason string
-	serving    bool
-	tagWarn    sync.Once
+	mu          sync.Mutex
+	cancel      context.CancelCauseFunc
+	runDir      string
+	live        *Session
+	pending     map[string]bool
+	blocked     []string
+	restarts    map[string]int
+	open        map[*Session]int
+	asked       map[string]openAsk
+	warnings    map[string]string
+	halted      *Signal
+	haltLanded  bool
+	nextHalt    *Signal
+	stopReason  string
+	serving     bool
+	tagWarn     sync.Once
+	questions   sync.WaitGroup
+	hooksDone   chan struct{}
+	reportStop  chan struct{}
+	reportDone  chan struct{}
+	reportClose func()
 }
+
+var reportEvery = time.Second
+var writeReportFile = writeFileAtomic
 
 type openAsk struct {
 	q        Question
@@ -129,6 +138,9 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 	l.cancel = cancel
 	l.mu.Unlock()
 	l.runDir = l.Store.Dir(l.RunID)
+	if _, ok := l.Store.(*RecordGuard); !ok {
+		l.Store = &RecordGuard{Store: l.Store}
+	}
 	list, err := RunList(l.Plan, l.TodoPath, opts)
 	if err != nil {
 		return l.usage(err)
@@ -144,6 +156,8 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 		}
 		l.emit(Event{Kind: "human", Fields: map[string]string{"what": "resume"}})
 	}
+	l.startReport()
+	defer l.endReport()
 	l.pending = map[string]bool{}
 	l.restarts = map[string]int{}
 	for _, ev := range prior.Events {
@@ -219,6 +233,7 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 			return l.recordHalt(err, firstPhase, firstStep)
 		}
 		l.emit(Event{Kind: "finished"})
+		l.closeReport()
 		l.fire(l.Hooks.OnDone, "finished", "", "", "")
 		return 0
 	}
@@ -228,6 +243,7 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 	}
 	slices.SortFunc(l.blocked, ComparePhaseIDs)
 	l.emit(Event{Kind: "halt", Fields: map[string]string{"blocked": joinIDs(l.blocked), "resume": "r-loop resume"}})
+	l.closeReport()
 	l.fire(l.Hooks.OnHalt, "halted", firstPhase, firstStep, firstReason)
 	return first
 }
@@ -236,6 +252,7 @@ func (l *RunLoop) recordHalt(err error, phase, step string) int {
 	reason := "record: " + err.Error()
 	l.Face.Emit(Event{At: time.Now(), Kind: "error", Phase: phase, Step: step, Fields: map[string]string{"reason": reason}})
 	l.setRun(RunHalted, reason)
+	l.closeReport()
 	l.fire(l.Hooks.OnHalt, "halted", phase, step, reason)
 	return 2
 }
@@ -726,7 +743,7 @@ func (l *RunLoop) haltEnded(sig Signal) {
 	if l.halted == nil {
 		l.halted = &sig
 	}
-	if state, err := l.Store.Load(l.RunID); err == nil && landed(state, sig.Step.Phase) {
+	if g, ok := l.Store.(*RecordGuard); ok && g.Landed(sig.Step.Phase) {
 		l.haltLanded = true
 		return
 	}
@@ -977,6 +994,7 @@ func (l *RunLoop) ended(ref StepRef, out Outcome) (Outcome, bool) {
 	}
 	l.setRun(RunHalted, invariantQuestion)
 	l.emit(Event{Kind: "halt", Phase: ref.Key.Phase, Step: ref.Key.Kind, Fields: map[string]string{"reason": invariantQuestion}})
+	l.closeReport()
 	l.fire(l.Hooks.OnHalt, "halted", ref.Key.Phase, ref.Key.Kind, invariantQuestion)
 	return out, true
 }
@@ -1000,10 +1018,12 @@ func (l *RunLoop) ServeQuestions(ctx context.Context) {
 	if l.runDir == "" {
 		l.runDir = l.Store.Dir(l.RunID)
 	}
+	l.questions.Add(1)
 	go l.serveQuestions(ctx)
 }
 
 func (l *RunLoop) serveQuestions(ctx context.Context) {
+	defer l.questions.Done()
 	defer func() {
 		if r := recover(); r != nil {
 			ev, err := panicked("", "", "question server", r)
@@ -1019,7 +1039,11 @@ func (l *RunLoop) serveQuestions(ctx context.Context) {
 			if !ok {
 				return
 			}
-			go l.question(ctx, q)
+			l.questions.Add(1)
+			go func() {
+				defer l.questions.Done()
+				l.question(ctx, q)
+			}()
 		}
 	}
 }
@@ -1507,13 +1531,10 @@ func (l *RunLoop) emitHalf(ref StepRef, s *Session, round int, half string) {
 
 func (l *RunLoop) emitFields(ref StepRef, f map[string]string) {
 	ev := Event{At: time.Now(), Kind: "step", Phase: ref.Key.Phase, Step: ref.Key.Kind, Fields: f}
-	l.mu.Lock()
 	if err := l.Store.Append(l.RunID, Record{Kind: RecordEvent, At: ev.At, Event: &ev}); err != nil {
 		l.Face.Emit(Event{At: ev.At, Kind: "warning", Fields: map[string]string{"reason": "store: " + err.Error()}})
 	}
 	l.Face.Emit(ev)
-	l.writeReport()
-	l.mu.Unlock()
 	l.tag(f)
 }
 
@@ -1578,40 +1599,124 @@ func stepFields(ref StepRef, state StepState, reason, ws string, round int) map[
 
 func (l *RunLoop) emit(ev Event) {
 	ev.At = time.Now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	if err := l.Store.Append(l.RunID, Record{Kind: RecordEvent, At: ev.At, Event: &ev}); err != nil {
 		l.Face.Emit(Event{At: ev.At, Kind: "warning", Fields: map[string]string{"reason": "store: " + err.Error()}})
 	}
 	l.Face.Emit(ev)
-	l.writeReport()
 }
 
 func (l *RunLoop) show(ev Event) {
 	ev.At = time.Now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	l.Face.Emit(ev)
-	l.writeReport()
 }
 
 func (l *RunLoop) setRun(status RunStatus, reason string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	if err := l.Store.Append(l.RunID, Record{Kind: RecordRun, At: time.Now(), Run: status, Reason: reason}); err != nil {
 		l.Face.Emit(Event{At: time.Now(), Kind: "warning", Fields: map[string]string{"reason": "store: " + err.Error()}})
 	}
-	l.writeReport()
 }
 
 func (l *RunLoop) writeReport() {
 	st, err := l.Store.Load(l.RunID)
+	if err != nil {
+		l.Face.Emit(Event{At: time.Now(), Kind: "warning", Fields: map[string]string{"reason": "report: " + err.Error()}})
+		return
+	}
+	l.renderReport(st)
+}
+
+func (l *RunLoop) startReport() {
+	g, _ := l.Store.(*RecordGuard)
+	changed, err := g.Follow(l.RunID)
+	if err != nil {
+		l.Face.Emit(Event{At: time.Now(), Kind: "warning", Fields: map[string]string{"reason": "report: " + err.Error()}})
+		return
+	}
+	stop, done := make(chan struct{}), make(chan struct{})
+	l.reportStop, l.reportDone = stop, done
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-changed:
+			}
+			if st, ok := g.Snapshot(); ok {
+				l.renderReport(st)
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(reportEvery):
+			}
+		}
+	}()
+	l.reportClose = sync.OnceFunc(func() {
+		close(stop)
+		<-done
+	})
+}
+
+func (l *RunLoop) closeReport() {
+	if l.reportClose != nil {
+		l.reportClose()
+	}
+	l.writeReport()
+}
+
+func (l *RunLoop) WriteReport() {
+	if l.RunID == "" {
+		return
+	}
+	l.mu.Lock()
+	if l.runDir == "" {
+		l.runDir = l.Store.Dir(l.RunID)
+	}
+	l.mu.Unlock()
+	l.writeReport()
+}
+
+func (l *RunLoop) endReport() {
+	l.questions.Wait()
+	l.waitHooks()
+	l.closeReport()
+}
+
+func (l *RunLoop) renderReport(st RunState) {
+	var writeErr error
+	err := quietly(func() {
+		writeErr = writeReportFile(l.reportPath(), []byte(Report(st, l.Plan)))
+	})
 	if err == nil {
-		err = os.WriteFile(l.reportPath(), []byte(Report(st, l.Plan)), 0o644)
+		err = writeErr
 	}
 	if err != nil {
 		l.Face.Emit(Event{At: time.Now(), Kind: "warning", Fields: map[string]string{"reason": "report: " + err.Error()}})
 	}
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	tmp := path + "." + rand.Text() + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	if info, err := os.Stat(path); err == nil {
+		if err := f.Chmod(info.Mode().Perm()); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (l *RunLoop) reportPath() string {
@@ -1622,7 +1727,7 @@ func (l *RunLoop) fire(hook, status, phase, step, reason string) {
 	if l.Notifier == nil {
 		return
 	}
-	l.Notifier.Fire(hook, map[string]string{
+	env := map[string]string{
 		"R_LOOP_RUN":    l.RunID,
 		"R_LOOP_STATUS": status,
 		"R_LOOP_PHASE":  phase,
@@ -1630,7 +1735,29 @@ func (l *RunLoop) fire(hook, status, phase, step, reason string) {
 		"R_LOOP_REASON": reason,
 		"R_LOOP_TODO":   l.TodoPath,
 		"R_LOOP_REPORT": l.reportPath(),
-	})
+	}
+	l.mu.Lock()
+	prev, done := l.hooksDone, make(chan struct{})
+	l.hooksDone = done
+	l.mu.Unlock()
+	go func() {
+		defer close(done)
+		if prev != nil {
+			<-prev
+		}
+		if err := quietly(func() { l.Notifier.Fire(hook, env) }); err != nil {
+			l.Face.Emit(Event{At: time.Now(), Kind: "notify-failed", Fields: map[string]string{"hook": hook, "status": status, "reason": err.Error()}})
+		}
+	}()
+}
+
+func (l *RunLoop) waitHooks() {
+	l.mu.Lock()
+	done := l.hooksDone
+	l.mu.Unlock()
+	if done != nil {
+		<-done
+	}
 }
 
 func joinIDs(ids []string) string {

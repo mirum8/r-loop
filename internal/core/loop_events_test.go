@@ -264,6 +264,7 @@ func TestAPanicAnsweringALandStageQuestionIsRecordedWithoutACrash(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("question did not return")
 	}
+	r.loop.WriteReport()
 	if _, err := os.Stat(filepath.Join(r.store.dir, "report.md")); err != nil {
 		t.Fatalf("report was not written in the test run directory: %v", err)
 	}

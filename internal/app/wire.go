@@ -306,6 +306,7 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 		}
 		cancel(nil)
 		w.Ask.Wait()
+		w.Loop.WriteReport()
 		w.release()
 		w.Face.Close()
 		if err := w.records.Failed(); err != nil {
@@ -429,7 +430,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		w.TUI.Abort = func() error { return w.Store.MarkAbort(w.Loop.RunID) }
 		w.Face = w.TUI
 	}
-	w.Ask = &askmcp.Server{Store: w.Store}
+	w.Ask = &askmcp.Server{Store: w.records}
 	w.Notify = &notify.Shell{Emit: w.Face.Emit}
 	rows := map[string]core.StepRow{}
 	promptNames := map[string]string{}
@@ -506,7 +507,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Ask:         w.Ask,
 		MaxRestarts: cfg.Watchdog.MaxRestarts,
 	}
-	w.Watch = &core.Watch{Store: w.Store, Face: w.Face, Checks: core.ShippedChecks(cfg.Watchdog.OvertimeFactor, cfg.Watchdog.DiffFactor), Repo: repo, Plan: pl}
+	w.Watch = &core.Watch{Store: w.records, Face: w.Face, Checks: core.ShippedChecks(cfg.Watchdog.OvertimeFactor, cfg.Watchdog.DiffFactor), Repo: repo, Plan: pl}
 	w.Loop.Watcher = w.Watch
 	allow := cfg.Watchdog.Allow
 	if opts.Unattended {
@@ -516,8 +517,8 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	for _, k := range kinds {
 		fallbacks[k.Name] = k.Row.Fallback
 	}
-	w.Remedies = &core.Remedies{Allow: allow, Store: w.Store, Face: w.Face, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks, Asks: w.asks}
-	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.Store, Face: w.Face, Root: root, Pane: env.Pane, Label: cfg.Label, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow, Unattended: opts.Unattended}
+	w.Remedies = &core.Remedies{Allow: allow, Store: w.records, Face: w.Face, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks, Asks: w.asks}
+	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.records, Face: w.Face, Root: root, Pane: env.Pane, Label: cfg.Label, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow, Unattended: opts.Unattended}
 	w.Remedies.Dog = w.Dog
 	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Repo: repo}
 	w.Loop.RemedyWindow = cfg.Watchdog.RemedyWindow

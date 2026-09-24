@@ -226,6 +226,51 @@ func TestFailingHookLeavesTheLoopsExitCodeUnchanged(t *testing.T) {
 	}
 }
 
+func TestASlowWarnHookDoesNotDelayTheHalt(t *testing.T) {
+	st := store.New(t.TempDir())
+	id, err := st.Create(core.RunMeta{Todo: "todo.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	face := &events{}
+	loop := &core.RunLoop{
+		Plan:     core.Plan{Phases: []core.Phase{{ID: "1", Items: []core.Item{{Text: "a"}}}}},
+		TodoPath: "todo.md",
+		Kinds:    []core.StepKind{{Name: "implement", Check: "diff"}},
+		Sessions: &core.SessionManager{Repo: repo{}},
+		Store:    st,
+		Face:     face,
+		Notifier: &Shell{Log: filepath.Join(t.TempDir(), "notify.log"), Emit: face.Emit, Timeout: 2 * time.Second},
+		Hooks:    core.Hooks{OnWarn: "sleep 30", OnHalt: "exit 1"},
+		Runners:  map[string]core.StepRunner{"diff": failingRunner{}},
+		RunID:    id,
+	}
+	returned := make(chan int, 1)
+	go func() { returned <- loop.Run(context.Background(), core.RunOptions{}) }()
+	deadline := time.After(time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for len(face.kind("halt")) == 0 {
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatal("halt was delayed by the warn hook")
+		}
+	}
+	select {
+	case code := <-returned:
+		if code == 0 {
+			t.Fatal("failed run returned success")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not finish after hook timeout")
+	}
+	failed := face.kind("notify-failed")
+	if len(failed) != 2 || failed[0].Fields["status"] != "blocked" || failed[0].Fields["reason"] != "timed out after 2s" || failed[1].Fields["status"] != "halted" || !strings.Contains(failed[1].Fields["reason"], "exit status 1") {
+		t.Fatalf("notify-failed events = %+v", failed)
+	}
+}
+
 func TestTimeoutKillsTheHooksChildrenToo(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker")
