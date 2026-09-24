@@ -539,7 +539,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   watchdog's pane (ADR-73).
 - **Stop** — `ctrl+c` on a live run asks `stop the run? … [y/n]`; `y` marks the run aborted,
   exactly as `r-loop abort` does (the live step's session and worktree are left for resume); any
-  other key cancels. A second ctrl+c while the prompt is up, or any ctrl+c after `y` (even once the run shows halted), force-quits: it marks the run aborted if that was not yet done, quits the program and restores the terminal; the run exits 1. The driver owns SIGINT/SIGTERM/SIGHUP — the TUI installs no signal handler of its own. Before a run exists `y` only says `stopping before the run starts`.
+  other key cancels. A second ctrl+c while the prompt is up, or any ctrl+c after `y` (even once the run shows halted), force-quits: it marks the run aborted if that was not yet done, quits the program and restores the terminal; the run exits 1. The driver owns SIGINT/SIGTERM/SIGHUP — the TUI installs no signal handler of its own. Before a run exists `y` only says `stopping before the run starts`. Once the run has finished or halted, `q`, `й` (either case), `esc` or `ctrl+c` quits.
 - **Dry run** — `--dry-run` always prints plain lines and starts no session. After the banner and
   `run list:` (one line per phase and its pipeline), a backlog item with no criteria gets
   `warning: phase N has no acceptance criteria…`, and each open `## Resolve first` entry that

@@ -707,9 +707,6 @@ func TestAHaltedRunStaysOnScreenWithReportAndResumeUntilQ(t *testing.T) {
 			t.Errorf("view lacks %q:\n%s", want, view)
 		}
 	}
-	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC}); cmd != nil {
-		t.Fatal("ctrl+c quit a halted run")
-	}
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
 	if cmd == nil {
 		t.Fatal("q did not quit")
@@ -1094,5 +1091,45 @@ func TestANewStepStartsWithNoReviews(t *testing.T) {
 
 	if len(m.Live.Reviews) != 0 {
 		t.Fatalf("reviews carried over: %+v", m.Live.Reviews)
+	}
+}
+
+func TestAnyQuitKeyClosesAnEndedRun(t *testing.T) {
+	keys := map[string]tea.KeyMsg{
+		"q":      {Type: tea.KeyRunes, Runes: []rune("q")},
+		"Q":      {Type: tea.KeyRunes, Runes: []rune("Q")},
+		"й":      {Type: tea.KeyRunes, Runes: []rune("й")},
+		"Й":      {Type: tea.KeyRunes, Runes: []rune("Й")},
+		"esc":    {Type: tea.KeyEsc},
+		"ctrl+c": {Type: tea.KeyCtrlC},
+	}
+	for _, end := range []string{"finished", "halt"} {
+		for name, key := range keys {
+			m := newModel(recorded()).Apply(core.Event{At: at(90), Kind: end, Fields: map[string]string{"resume": "r-loop resume"}})
+			_, cmd := m.Update(key)
+			if cmd == nil {
+				t.Errorf("%s after %s: no command", name, end)
+				continue
+			}
+			if _, ok := cmd().(tea.QuitMsg); !ok {
+				t.Errorf("%s after %s did not quit", name, end)
+			}
+		}
+	}
+}
+
+func TestQuitKeysDoNotCloseALiveRun(t *testing.T) {
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune("q")},
+		{Type: tea.KeyRunes, Runes: []rune("й")},
+		{Type: tea.KeyEsc},
+	} {
+		if _, cmd := newModel(recorded()).Update(key); cmd != nil {
+			t.Errorf("%s quit a live run", key)
+		}
+	}
+	next, cmd := newModel(recorded()).Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd != nil || !next.(Model).stopping {
+		t.Fatal("ctrl+c on a live run did not ask to stop")
 	}
 }

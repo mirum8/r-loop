@@ -492,7 +492,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyMsg:
 		switch {
-		case msg.String() == "q" && m.Status != "":
+		case m.Status != "" && quitKey(msg):
 			return m, tea.Quit
 		case msg.Type == tea.KeyCtrlC && (m.stopping || m.aborting):
 			if m.Status == "" && !m.aborting && m.RunID != "" && m.abort != nil {
@@ -506,6 +506,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func quitKey(key tea.KeyMsg) bool {
+	switch key.Type {
+	case tea.KeyEsc, tea.KeyCtrlC:
+		return true
+	case tea.KeyRunes:
+		switch key.String() {
+		case "q", "Q", "й", "Й":
+			return true
+		}
+	}
+	return false
 }
 
 type Face struct {
