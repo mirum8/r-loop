@@ -68,10 +68,14 @@ func newIntake(args []string, given Options, env Env) (*intake, error) {
 		return nil, exit(2, "%v", err)
 	}
 	reg := providers.NewRegistry(cfg.Providers, cfg.Provenance, filepath.Join(env.Home, ".config", "r-loop", "providers"))
-	if err := checkRole(reg, role{field: "intake.provider", provider: cfg.Intake.Provider}); err != nil {
+	r := role{field: "intake.provider", provider: cfg.Intake.Provider}
+	p, err := checkRole(reg, r)
+	if err != nil {
 		return nil, err
 	}
-	p, _ := reg.Resolve(cfg.Intake.Provider)
+	if err := checkBinary(r, p.Kind); err != nil {
+		return nil, err
+	}
 	if _, err := exec.LookPath(env.Herdr); err != nil {
 		return nil, exit(127, "herdr binary %s not found", env.Herdr)
 	}
