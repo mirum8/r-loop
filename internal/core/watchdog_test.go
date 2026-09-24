@@ -1251,3 +1251,68 @@ func TestALabelledWatchdogOpensALabelledWorkspace(t *testing.T) {
 		t.Fatalf("label = %q", got)
 	}
 }
+
+type focusHost struct {
+	askingHost
+	focused []string
+	err     error
+}
+
+func (h *focusHost) Focus(agent string) error {
+	h.focused = append(h.focused, agent)
+	return h.err
+}
+
+func TestAWatchdogAskingTheMaintainerTakesFocusOncePerQuestion(t *testing.T) {
+	host := &focusHost{}
+	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	dog.Face = &fakeFace{}
+
+	if err := dog.AskMaintainer("which store?", nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.AskMaintainer("again?", nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.AskMaintainer("and now?", nil, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"rloop-wd-run-1", "rloop-wd-run-1"}
+	if !reflect.DeepEqual(host.focused, want) {
+		t.Fatalf("focused %v, want %v", host.focused, want)
+	}
+}
+
+func TestAWatchdogBlockedOnAPromptTakesFocus(t *testing.T) {
+	host := &focusHost{askingHost: askingHost{blockedFor: 1}}
+	host.States = map[string]AgentState{"rloop-wd-run-1": AgentBlocked}
+	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	dog.Face = &fakeFace{}
+
+	if err := dog.Notify("step started phase-2/implement", false, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{"rloop-wd-run-1"}; !reflect.DeepEqual(host.focused, want) {
+		t.Fatalf("focused %v, want %v", host.focused, want)
+	}
+}
+
+func TestAFailedFocusIsAWarningNotAnError(t *testing.T) {
+	host := &focusHost{err: errors.New("herdr: no such agent")}
+	face := &fakeFace{}
+	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	dog.Face = face
+
+	if err := dog.AskMaintainer("which store?", nil, ""); err != nil {
+		t.Fatalf("AskMaintainer = %v", err)
+	}
+
+	if want := []string{"watchdog-waiting", "warning"}; !reflect.DeepEqual(emittedKinds(face), want) {
+		t.Fatalf("emitted %v, want %v", emittedKinds(face), want)
+	}
+}

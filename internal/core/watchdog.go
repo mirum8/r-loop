@@ -381,7 +381,17 @@ func (d *Watchdog) markWaiting(fields map[string]string, byPrompt bool) error {
 	if was {
 		return nil
 	}
-	return d.emit("watchdog-waiting", fields, func() { d.asking, d.blocked = true, byPrompt })
+	if err := d.emit("watchdog-waiting", fields, func() { d.asking, d.blocked = true, byPrompt }); err != nil {
+		return err
+	}
+	host, ok := d.Host.(interface{ Focus(string) error })
+	if !ok {
+		return nil
+	}
+	if err := host.Focus(d.agent()); err != nil {
+		return d.emit("warning", map[string]string{"reason": "focus watchdog: " + err.Error()}, func() {})
+	}
+	return nil
 }
 
 func (d *Watchdog) markResumed(byPrompt bool) error {

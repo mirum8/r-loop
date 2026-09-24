@@ -336,6 +336,11 @@ func (c Client) Interrupt(agent string) error {
 	return c.call(&out, "agent", "send-keys", agent, "ctrl+c")
 }
 
+func (c Client) Focus(agent string) error {
+	var out struct{}
+	return c.call(&out, "agent", "focus", agent)
+}
+
 func (c Client) ClosePane(pane string) error {
 	var out struct{}
 	return c.call(&out, "pane", "close", pane)
