@@ -94,6 +94,7 @@ type Wiring struct {
 	triageMu sync.Mutex
 	triaging *triageRun
 	lock     *store.Lock
+	dogDir   string
 }
 
 type overrides struct {
@@ -297,6 +298,11 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 	if w.TUI != nil {
 		w.TUI.OnExit = func(err error) { cancel(displayExit(err)) }
 	}
+	defer func() {
+		if err := os.RemoveAll(w.dogDir); err != nil {
+			fmt.Fprintf(w.Env.Stderr, "r-loop: remove watchdog config: %v\n", err)
+		}
+	}()
 	defer func() {
 		if w.TUI != nil && context.Cause(ctx) != nil {
 			w.TUI.Stop()
@@ -550,8 +556,26 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 }
 
 func (w *Wiring) startDog(ctx context.Context, provider, model, effort string) error {
+	dir, err := os.MkdirTemp("", "r-loop-watchdog-")
+	if err != nil {
+		return exit(2, "%v", err)
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		os.RemoveAll(dir)
+		return exit(2, "%v", err)
+	}
+	dir = absDir
+	if inside, err := under(w.Dog.Root, dir); err != nil || inside {
+		os.RemoveAll(dir)
+		if err != nil {
+			return exit(2, "%v", err)
+		}
+		return exit(2, "watchdog config dir %s is inside the repository %s: set TMPDIR outside it", dir, w.Dog.Root)
+	}
+	w.dogDir = dir
 	url := w.Ask.WatchdogURL()
-	mcpPath := filepath.Join(w.Dog.RunDir, "watchdog.mcp.json")
+	mcpPath := filepath.Join(dir, "watchdog.mcp.json")
 	args, err := w.resolve(provider, model, effort, url, mcpPath)
 	if err != nil {
 		return exit(2, "watchdog.provider: %v", err)
@@ -566,6 +590,33 @@ func (w *Wiring) startDog(ctx context.Context, provider, model, effort string) e
 		return exit(4, "watchdog did not start: %v", err)
 	}
 	return nil
+}
+
+func under(root, dir string) (bool, error) {
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return false, err
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return false, err
+	}
+	abs, err = filepath.EvalSymlinks(abs)
+	if err != nil {
+		return false, err
+	}
+	for p := abs; ; p = filepath.Dir(p) {
+		info, err := os.Stat(p)
+		if err != nil {
+			return false, err
+		}
+		if os.SameFile(rootInfo, info) {
+			return true, nil
+		}
+		if filepath.Dir(p) == p {
+			return false, nil
+		}
+	}
 }
 
 func (w *Wiring) startTUI() {

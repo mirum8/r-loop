@@ -137,6 +137,12 @@ func TestAPanicInExecuteCleanupStillRestoresTheTerminal(t *testing.T) {
 	if !strings.Contains(out.String(), "\x1b[?1049l") {
 		t.Fatalf("terminal was not restored: %q", out.String())
 	}
+	if w.dogDir == "" {
+		t.Fatal("watchdog config dir was never created")
+	}
+	if _, err := os.Stat(w.dogDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("watchdog config dir remains after panic: %s: %v", w.dogDir, err)
+	}
 }
 
 func TestAPanicInTheFaceStillRestoresTheTerminal(t *testing.T) {

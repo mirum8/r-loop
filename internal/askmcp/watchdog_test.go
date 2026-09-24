@@ -76,27 +76,34 @@ func call(t *testing.T, cs *mcp.ClientSession, name string, args map[string]any)
 	return m
 }
 
-func TestWatchdogURLHasItsOwnPrivateToken(t *testing.T) {
+func TestTheWatchdogTokenLivesOnlyInItsURLNeverInTheRunDir(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
-
-	data, err := os.ReadFile(filepath.Join(s.RunDir, "wd-token"))
+	match := regexp.MustCompile(`^http://127\.0\.0\.1:\d+/mcp/watchdog/([0-9a-f]{32})$`).FindStringSubmatch(s.WatchdogURL())
+	if match == nil {
+		t.Fatalf("watchdog url = %q", s.WatchdogURL())
+	}
+	wd := match[1]
+	step, err := os.ReadFile(filepath.Join(s.RunDir, "token"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	wd := string(data)
-	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(wd) {
-		t.Fatalf("wd token = %q", wd)
-	}
-	info, _ := os.Stat(filepath.Join(s.RunDir, "wd-token"))
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode = %v", info.Mode().Perm())
-	}
-	step, _ := os.ReadFile(filepath.Join(s.RunDir, "token"))
 	if wd == string(step) {
 		t.Fatal("watchdog token equals the step token")
 	}
-	if !regexp.MustCompile(`^http://127\.0\.0\.1:\d+/mcp/watchdog/` + wd + `$`).MatchString(s.WatchdogURL()) {
-		t.Fatalf("watchdog url = %q", s.WatchdogURL())
+	if _, err := os.Stat(filepath.Join(s.RunDir, "wd-token")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("wd-token stat = %v", err)
+	}
+	if err := filepath.WalkDir(s.RunDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || !entry.Type().IsRegular() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err == nil && strings.Contains(string(data), wd) {
+			t.Errorf("watchdog token in %s", path)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -369,7 +376,7 @@ func TestWatchdogToolsOnAStepPathAre404(t *testing.T) {
 	if len(tools.Tools) != 1 || tools.Tools[0].Name != "ask_watchdog" {
 		t.Fatalf("step tools = %+v", tools.Tools)
 	}
-	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "ask_maintainer"} {
+	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "ask_maintainer", "submit_triage", "submit_gate"} {
 		_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{"kind": "halt", "step": "phase-3/implement"}})
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not found") {
 			t.Fatalf("%s on a step path: err = %v", name, err)
@@ -420,6 +427,36 @@ func TestAnOversizedBodyOnAStepPathIsRefusedWithoutBeingReadWhole(t *testing.T) 
 
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
+
+func TestAnOversizedBodyOnTheWatchdogPathIsRefusedWith413(t *testing.T) {
+	s := serveWatchdog(t, &memStore{steps: map[core.StepKey]core.StepState{
+		{Run: "run-7", Phase: "3", Kind: "implement", Attempt: 1}: core.StepRunning,
+	}})
+	called := false
+	s.Handle(WatchdogHandlers{Signal: func(core.Signal) (bool, string) {
+		called = true
+		return true, ""
+	}})
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"signal","arguments":{"kind":"halt","step":"phase-3/implement","reason":"` + strings.Repeat("x", 5<<20) + `"}}}`
+	req, err := http.NewRequest(http.MethodPost, s.WatchdogURL(), strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge || called {
+		t.Fatalf("status = %d, handler called = %v", resp.StatusCode, called)
+	}
+	call(t, connect(t, s.WatchdogURL()), "signal", map[string]any{"kind": "halt", "step": "phase-3/implement", "reason": "normal request", "evidence": "test"})
+	if !called {
+		t.Fatal("normal watchdog call did not reach the handler")
 	}
 }
 
