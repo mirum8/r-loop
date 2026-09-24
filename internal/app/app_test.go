@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"r-loop/internal/core"
 	"r-loop/internal/face/tui"
@@ -431,6 +432,34 @@ func TestWireBuildsTheGateFixKindAndTheMilestoneBoundary(t *testing.T) {
 	args, err := w.Loop.Sessions.Resolve("codex", "gpt-x", "high", "", "")
 	if err != nil || args.Kind != "codex" || strings.Join(args.Args, " ") != "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -c model=gpt-x -c model_reasoning_effort=high" {
 		t.Fatalf("args=%+v err=%v", args, err)
+	}
+}
+
+func TestZeroGateTimeoutExitsTwoNamingTheFileLineAndKey(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "land:\n  gateTimeout: 0s\n")
+	f.commit()
+
+	_, err := f.preflight(f.todo, "--plain")
+	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), `.r-loop/config.yaml:2: land.gateTimeout: "0s" is not a positive duration`) {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestNullGateTimeoutWiresTheDefaultIntoTheGate(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "land:\n  gateTimeout:\n")
+	f.commit()
+
+	w, err := f.preflight(f.todo, "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Gate.GateTimeout != 30*time.Minute || w.Probe.Timeout != 30*time.Minute {
+		t.Errorf("gate timeout = %s, probe timeout = %s", w.Gate.GateTimeout, w.Probe.Timeout)
+	}
+	if !strings.Contains(f.out.String(), "land gateTimeout 30m  ← default\n") {
+		t.Errorf("banner:\n%s", f.out.String())
 	}
 }
 

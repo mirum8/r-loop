@@ -123,7 +123,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - The report commit touches exactly the report file
       - A report step that writes only its report commits as it does today
 
-- [ ] [#20] Config accepts zero or negative timeouts, and a key set to null in a higher layer overrides the default with zero
+- [x] [#20] Config accepts zero or negative timeouts, and a key set to null in a higher layer overrides the default with zero  <!-- fixed: r-loop/phase-21 -->
       - Loading config refuses a zero or negative `land.gateTimeout`, `watchdog.checkTimeout`/`stallGrace`/`unblockTimeout`/`remedyWindow` or row timeout, exiting 2 with the file, line and key
       - A key set to null (`gateTimeout:` or `~`) resolves to the next layer's value, and the banner's provenance names that layer
       - The land gate never runs with a zero timeout

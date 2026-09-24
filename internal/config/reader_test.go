@@ -255,6 +255,132 @@ func TestGateTimeoutNotADurationRejected(t *testing.T) {
 	d.loadErr(t, "config.yaml:2:")
 }
 
+func TestZeroOrNegativeTimeoutRejectedWithFileLineAndKey(t *testing.T) {
+	for _, tt := range []struct {
+		name, content, want string
+		home                bool
+	}{
+		{"land zero", "land:\n  gateTimeout: 0s\n", `.r-loop/config.yaml:2: land.gateTimeout: "0s" is not a positive duration`, false},
+		{"home land negative", "land:\n  gateTimeout: -5m\n", `~/.config/r-loop/config.yaml:2: land.gateTimeout: "-5m" is not a positive duration`, true},
+		{"check zero", "watchdog:\n  checkTimeout: 0\n", `.r-loop/config.yaml:2: watchdog.checkTimeout: "0" is not a positive duration`, false},
+		{"stall negative", "watchdog:\n  stallGrace: -1s\n", `.r-loop/config.yaml:2: watchdog.stallGrace: "-1s" is not a positive duration`, false},
+		{"unblock zero", "watchdog:\n  unblockTimeout: 0s\n", `.r-loop/config.yaml:2: watchdog.unblockTimeout: "0s" is not a positive duration`, false},
+		{"remedy zero", "watchdog:\n  remedyWindow: 0s\n", `.r-loop/config.yaml:2: watchdog.remedyWindow: "0s" is not a positive duration`, false},
+		{"triage zero", "watchdog:\n  triageTimeout: 0s\n", `.r-loop/config.yaml:2: watchdog.triageTimeout: "0s" is not a positive duration`, false},
+		{"row zero", "steps:\n  plan:\n    timeout: 0s\n", `.r-loop/config.yaml:3: steps.plan.timeout: "0s" is not a positive duration`, false},
+		{"review negative", "steps:\n  plan:\n    reviewTimeout: -20m\n", `.r-loop/config.yaml:3: steps.plan.reviewTimeout: "-20m" is not a positive duration`, false},
+		{"no review half zero", "steps:\n  milestone:\n    reviewTimeout: 0s\n", `.r-loop/config.yaml:3: steps.milestone.reviewTimeout: "0s" is not a positive duration`, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newDirs(t)
+			if tt.home {
+				d.writeHome(t, tt.content)
+			} else {
+				d.writeProject(t, tt.content)
+			}
+			d.loadErr(t, tt.want)
+		})
+	}
+}
+
+func TestEmptyQuotedTimeoutRejectedWithFileLineAndKey(t *testing.T) {
+	for _, tt := range []struct{ name, content, want string }{
+		{"land", "land:\n  gateTimeout: \"\"\n", `.r-loop/config.yaml:2: land.gateTimeout: "" is not a duration`},
+		{"watchdog", "watchdog:\n  stallGrace: \"\"\n", `.r-loop/config.yaml:2: watchdog.stallGrace: "" is not a duration`},
+		{"row", "steps:\n  plan:\n    timeout: \"\"\n", `.r-loop/config.yaml:3: steps.plan.timeout: "" is not a duration`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newDirs(t)
+			d.writeProject(t, tt.content)
+			d.loadErr(t, tt.want)
+		})
+	}
+}
+
+func TestNullTimeoutFallsThroughToTheNextLayerAndTheBannerNamesIt(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "land:\n  gateTimeout: 12m\n")
+	d.writeProject(t, "land:\n  gateTimeout:\n")
+
+	cfg := d.load(t)
+	if cfg.Land.GateTimeout != 12*time.Minute {
+		t.Errorf("GateTimeout = %s", cfg.Land.GateTimeout)
+	}
+	if got := cfg.Provenance["land.gateTimeout"]; got != "~/.config/r-loop/config.yaml:land.gateTimeout" {
+		t.Errorf("provenance = %q", got)
+	}
+	if !strings.Contains(Banner(cfg), "land gateTimeout 12m  ← ~/.config/r-loop/config.yaml:land.gateTimeout\n") {
+		t.Errorf("banner:\n%s", Banner(cfg))
+	}
+}
+
+func TestTildeTimeoutsFallThroughToTheDefaults(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "land:\n  gateTimeout: ~\nwatchdog:\n  triageTimeout: ~\n  stallGrace: ~\nsteps:\n  plan:\n    timeout: ~\n    reviewTimeout: ~\n")
+
+	cfg := d.load(t)
+	for _, tt := range []struct {
+		path      string
+		got, want time.Duration
+	}{
+		{"land.gateTimeout", cfg.Land.GateTimeout, 30 * time.Minute},
+		{"watchdog.triageTimeout", cfg.Watchdog.TriageTimeout, 2 * time.Hour},
+		{"watchdog.stallGrace", cfg.Watchdog.StallGrace, 2 * time.Minute},
+		{"steps.plan.timeout", cfg.Steps["plan"].Timeout, time.Hour},
+		{"steps.plan.reviewTimeout", cfg.Steps["plan"].ReviewTimeout, 20 * time.Minute},
+	} {
+		if tt.got != tt.want || cfg.Provenance[tt.path] != "default" {
+			t.Errorf("%s = %s from %q, want %s from default", tt.path, tt.got, cfg.Provenance[tt.path], tt.want)
+		}
+	}
+	if !strings.Contains(Banner(cfg), "land gateTimeout 30m  ← default\n") {
+		t.Errorf("banner:\n%s", Banner(cfg))
+	}
+}
+
+func TestNullCountAndFactorFallThrough(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "land:\n  fixRounds:\nsteps:\n  plan:\n    rounds: ~\nwatchdog:\n  overtimeFactor: ~\n")
+
+	cfg := d.load(t)
+	if cfg.Land.FixRounds != 1 || cfg.Steps["plan"].Rounds != 2 || cfg.Watchdog.OvertimeFactor != 2 {
+		t.Errorf("fix rounds = %d, plan rounds = %d, overtime factor = %g", cfg.Land.FixRounds, cfg.Steps["plan"].Rounds, cfg.Watchdog.OvertimeFactor)
+	}
+	if got := cfg.Provenance["steps.plan.rounds"]; got != "default" {
+		t.Errorf("rounds provenance = %q", got)
+	}
+}
+
+func TestEmptyQuotedRoundsRejected(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  plan:\n    rounds: \"\"\n")
+	d.loadErr(t, `.r-loop/config.yaml:3: steps.plan.rounds: "" is not an integer ≥ 0`)
+}
+
+func TestAddedRowWithoutTimeoutRejected(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "pipeline:\n  - plan\n  - implement\n  - docs\nsteps:\n  docs:\n    prompt: docs\n    check: diff\n    provider: claude\n")
+	d.loadErr(t, ".r-loop/config.yaml:7: steps.docs.timeout: not set, want a positive duration")
+}
+
+func TestAddedRowWithReviewHalfWithoutReviewTimeoutRejected(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  docs:\n    prompt: docs\n    check: diff\n    provider: claude\n    timeout: 30m\n    reviewers:\n      - codex\n    rounds: 1\n")
+	d.loadErr(t, ".r-loop/config.yaml:3: steps.docs.reviewTimeout: not set, want a positive duration for the review half")
+}
+
+func TestRowsWithoutAReviewHalfLoadWithoutReviewTimeout(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  docs:\n    prompt: docs\n    check: diff\n    provider: claude\n    timeout: 30m\n    reviewers:\n      - codex\n")
+
+	cfg := d.load(t)
+	for _, name := range []string{"docs", "milestone", "gate"} {
+		if got := cfg.Steps[name].ReviewTimeout; got != 0 {
+			t.Errorf("%s review timeout = %s", name, got)
+		}
+	}
+}
+
 func TestLandFixWithOnlyEffortInheritsImplementProviderAndModel(t *testing.T) {
 	d := newDirs(t)
 	d.writeProject(t, "land:\n  fix:\n    effort: high\n")
@@ -415,6 +541,7 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 		"  fallback gemini pro high  ← .r-loop/config.yaml:steps.implement.fallback",
 		"milestone  claude  opus  medium  1h  report  ← default",
 		"gatefix codex gpt-5.6-sol high  ← provider flag:--provider model default effort .r-loop/config.yaml:land.fix.effort",
+		"land gateTimeout 30m  ← default",
 		"override: implement provider codex (flag) replaces claude (.r-loop/config.yaml)",
 		"override: plan model sonnet (flag) replaces fable (default)",
 		"watchdog: claude opus low allow [deps]  ← provider default model default effort .r-loop/config.yaml:watchdog.effort",

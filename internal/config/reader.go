@@ -245,26 +245,45 @@ func (r *resolver) scalar(path string) (string, *yaml.Node, *layer, error) {
 	return n.Value, n, l, nil
 }
 
+func (r *resolver) numeric(path string) (string, *yaml.Node, *layer, error) {
+	for _, l := range r.layers {
+		n := l.nodes[path]
+		if n == nil || isNull(n) {
+			continue
+		}
+		r.prov[path] = source(l, path)
+		if n.Kind != yaml.ScalarNode {
+			return "", n, l, errAt(l.file, n, "%s must be a single value", path)
+		}
+		return n.Value, n, l, nil
+	}
+	r.prov[path] = defaultSource
+	return "", nil, nil, nil
+}
+
 func (r *resolver) str(path string) (string, error) {
 	v, _, _, err := r.scalar(path)
 	return v, err
 }
 
 func (r *resolver) duration(path string) (time.Duration, error) {
-	v, n, l, err := r.scalar(path)
-	if err != nil || v == "" {
+	v, n, l, err := r.numeric(path)
+	if err != nil || n == nil {
 		return 0, err
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
 		return 0, errAt(l.file, n, "%s: %q is not a duration", path, v)
 	}
+	if d <= 0 {
+		return 0, errAt(l.file, n, "%s: %q is not a positive duration", path, v)
+	}
 	return d, nil
 }
 
 func (r *resolver) count(path string) (int, error) {
-	v, n, l, err := r.scalar(path)
-	if err != nil || v == "" {
+	v, n, l, err := r.numeric(path)
+	if err != nil || n == nil {
 		return 0, err
 	}
 	i, err := strconv.Atoi(v)
@@ -275,7 +294,7 @@ func (r *resolver) count(path string) (int, error) {
 }
 
 func (r *resolver) factor(path string) (float64, error) {
-	v, n, l, err := r.scalar(path)
+	v, n, l, err := r.numeric(path)
 	if err != nil {
 		return 0, err
 	}
@@ -516,6 +535,14 @@ func (r *resolver) row(name string) (StepRow, error) {
 		}
 		ids[id] = true
 		row.Reviewers = append(row.Reviewers, rv)
+	}
+	if row.Timeout == 0 {
+		n, l := r.lookup("steps." + name)
+		return row, errAt(l.file, n, "%stimeout: not set, want a positive duration", p)
+	}
+	if row.ReviewTimeout == 0 && row.Rounds > 0 && len(row.Reviewers) > 0 {
+		n, l := r.lookup("steps." + name)
+		return row, errAt(l.file, n, "%sreviewTimeout: not set, want a positive duration for the review half", p)
 	}
 	fb, fl := r.lookup(p + "fallback")
 	if fb == nil || isNull(fb) {
