@@ -5,9 +5,14 @@ steps:
     model: sonnet
     effort: low
     timeout: 20m
-    fallback: codex
+    fallback:
+      provider: codex
+      model: gpt-5.6-sol
+      effort: medium
     reviewers:
-      - codex
+      - provider: codex
+        model: gpt-5.6-sol
+        effort: medium
     rounds: 1
     reviewTimeout: 10m
   implement:
@@ -15,9 +20,14 @@ steps:
     model: sonnet
     effort: low
     timeout: 30m
-    fallback: codex
+    fallback:
+      provider: codex
+      model: gpt-5.6-sol
+      effort: medium
     reviewers:
-      - codex
+      - provider: codex
+        model: gpt-5.6-sol
+        effort: medium
     rounds: 1
     reviewTimeout: 10m
   milestone:
@@ -30,17 +40,14 @@ steps:
     model: sonnet
     effort: low
     timeout: 10m
-
 land:
   gateTimeout: 5m
-
 watchdog:
   provider: claude
   model: sonnet
   effort: medium
   checkTimeout: 5m
   unblockTimeout: 15m
-
 intake:
   provider: claude
   model: sonnet
