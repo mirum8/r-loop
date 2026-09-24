@@ -15,6 +15,7 @@ var (
 	boldRe           = regexp.MustCompile(`\*\*(.+?)\*\*`)
 	labelRe          = regexp.MustCompile(`\b([A-Z][A-Za-z]{2,}):`)
 	segmentStartRe   = regexp.MustCompile(`(^ ?[-*][ \t]+(\[[ xX]\][ \t]+)?|[.?!][ \t]+)$`)
+	blocksAllRe      = regexp.MustCompile(`(?i)\ball\b`)
 )
 
 var knownLabels = map[string]bool{
@@ -62,12 +63,13 @@ func OnlyResolveFirstChanged(before, after []byte) bool {
 
 func outsideResolveFirst(data []byte) []string {
 	lines := strings.SplitAfter(string(data), "\n")
+	mask, _ := fenced(lines)
 	for i, l := range lines {
-		if !resolveHeadingRe.MatchString(l) {
+		if mask[i] || !resolveHeadingRe.MatchString(l) {
 			continue
 		}
 		end := i + 1
-		for end < len(lines) && !anyHeadingRe.MatchString(lines[end]) {
+		for end < len(lines) && (mask[end] || !anyHeadingRe.MatchString(lines[end])) {
 			end++
 		}
 		return append(slices.Clone(lines[:i+1]), lines[end:]...)
@@ -80,10 +82,10 @@ type entrySpan struct {
 	start, end int
 }
 
-func resolveFirst(lines []string) (bool, []entrySpan) {
+func resolveFirst(lines []string, mask []bool) (bool, []entrySpan) {
 	begin := -1
 	for i, l := range lines {
-		if resolveHeadingRe.MatchString(l) {
+		if !mask[i] && resolveHeadingRe.MatchString(l) {
 			begin = i + 1
 			break
 		}
@@ -92,17 +94,17 @@ func resolveFirst(lines []string) (bool, []entrySpan) {
 		return false, nil
 	}
 	stop := begin
-	for stop < len(lines) && !anyHeadingRe.MatchString(lines[stop]) {
+	for stop < len(lines) && (mask[stop] || !anyHeadingRe.MatchString(lines[stop])) {
 		stop++
 	}
 
 	var spans []entrySpan
 	for i := begin; i < stop; i++ {
-		if !entryStartRe.MatchString(lines[i]) {
+		if mask[i] || !entryStartRe.MatchString(lines[i]) {
 			continue
 		}
 		next := i + 1
-		for next < stop && !entryStartRe.MatchString(lines[next]) {
+		for next < stop && (mask[next] || !entryStartRe.MatchString(lines[next])) {
 			next++
 		}
 		end := next
@@ -163,10 +165,8 @@ func parseEntry(lines []string) core.Entry {
 	}
 	e.Kind = classify(head, e.Owner)
 
-	if idx := strings.Index(e.Blocks, "Phase"); idx >= 0 {
-		e.BlocksPhases = phaseRefs(e.Blocks[idx:])
-	}
-	e.BlocksAll = len(e.BlocksPhases) == 0
+	e.BlocksPhases = phaseRefs(e.Blocks)
+	e.BlocksAll = len(e.BlocksPhases) == 0 || blocksAllRe.MatchString(e.Blocks)
 	if e.Ticked && e.Resolved == "" {
 		e.Malformed = append(e.Malformed, "ticked without Resolved")
 	}

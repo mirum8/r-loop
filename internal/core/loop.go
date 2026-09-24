@@ -188,6 +188,17 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 		if !l.pending[ph.ID] {
 			continue
 		}
+		if opts.Resume {
+			if d := l.unmetDependency(ph); d != "" {
+				delete(l.pending, ph.ID)
+				l.blocked = append(l.blocked, ph.ID)
+				l.emit(Event{Kind: "phase-skipped", Phase: ph.ID, Fields: map[string]string{"phase": ph.ID, "because": d}})
+				if first == 0 {
+					first, firstPhase, firstReason = 1, ph.ID, fmt.Sprintf("depends on phase %s, which has not landed", d)
+				}
+				continue
+			}
+		}
 		if l.dogGone(ph.ID) {
 			break
 		}
@@ -1434,6 +1445,15 @@ func (l *RunLoop) block(ph Phase, step string, out Outcome) int {
 
 func (l *RunLoop) dependents(n string) []string {
 	return Dependents(l.Plan, n)
+}
+
+func (l *RunLoop) unmetDependency(ph Phase) string {
+	for _, d := range ph.DependsOn {
+		if slices.Contains(l.blocked, d) || l.pending[d] {
+			return d
+		}
+	}
+	return ""
 }
 
 func Dependents(plan Plan, n string) []string {

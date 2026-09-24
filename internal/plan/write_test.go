@@ -123,3 +123,44 @@ func TestTickLetteredPhaseLeavesItsNumberAlone(t *testing.T) {
 		t.Errorf("got %q", b)
 	}
 }
+
+func TestTickTicksItemsAfterAFence(t *testing.T) {
+	path := writePlan(t, fencedCommentPlan)
+	if err := (Reader{}).Tick(path, core.Phase{ID: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.ReplaceAll(strings.ReplaceAll(fencedCommentPlan, "- [ ] before", "- [x] before"), "- [ ] after", "- [x] after")
+	if string(got) != want {
+		t.Errorf("file = %q, want %q", got, want)
+	}
+}
+
+func TestTickIgnoresAFencedPhaseHeading(t *testing.T) {
+	path := writePlan(t, fencedHeadingPlan)
+	if err := (Reader{}).Tick(path, core.Phase{ID: "2"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(fencedHeadingPlan, "- [ ] real two", "- [x] real two", 1)
+	if string(got) != want {
+		t.Errorf("after phase 2 = %q", got)
+	}
+	if err := (Reader{}).Tick(path, core.Phase{ID: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = strings.Replace(want, "- [ ] real one", "- [x] real one", 1)
+	if string(got) != want {
+		t.Errorf("after phase 1 = %q, want %q", got, want)
+	}
+}

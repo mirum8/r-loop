@@ -17,12 +17,16 @@ func (Reader) Tick(path string, ph core.Phase) error {
 	if err != nil {
 		return err
 	}
-	if isBacklog(lines) {
+	mask, _ := fenced(lines)
+	if isBacklog(lines, mask) {
 		return tickBacklog(path, lines, ph)
 	}
 	phase := ph.ID
 	start := -1
 	for i, l := range lines {
+		if mask[i] {
+			continue
+		}
 		if m := phaseRe.FindStringSubmatch(strings.TrimRight(l, "\r\n")); m != nil && label(m[1]) == phase {
 			start = i
 			break
@@ -32,8 +36,8 @@ func (Reader) Tick(path string, ph core.Phase) error {
 		return fmt.Errorf("%s: no phase %s", path, phase)
 	}
 	ticked := 0
-	for i := start + 1; i < len(lines) && !headingRe.MatchString(lines[i]); i++ {
-		if strings.HasPrefix(lines[i], "- [ ]") {
+	for i := start + 1; i < len(lines) && (mask[i] || !headingRe.MatchString(lines[i])); i++ {
+		if !mask[i] && strings.HasPrefix(lines[i], "- [ ]") {
 			lines[i] = "- [x]" + strings.TrimPrefix(lines[i], "- [ ]")
 			ticked++
 		}

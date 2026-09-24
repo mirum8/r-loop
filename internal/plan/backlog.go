@@ -28,8 +28,11 @@ type backlogItem struct {
 	done   bool
 }
 
-func isBacklog(lines []string) bool {
-	for _, l := range lines {
+func isBacklog(lines []string, mask []bool) bool {
+	for i, l := range lines {
+		if mask[i] {
+			continue
+		}
 		if phaseStartRe.MatchString(l) {
 			return false
 		}
