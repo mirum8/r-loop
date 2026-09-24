@@ -489,7 +489,7 @@ func (r *Repo) ReadTreeFile(tree, path string) ([]byte, error) {
 	return []byte(out), err
 }
 
-func (r *Repo) MergeNoFF(ctx context.Context, branch string) error {
+func (r *Repo) MergeNoFF(ctx context.Context, branch string, keep ...string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("git merge --no-ff --no-commit %s: interrupted: %w", branch, err)
 	}
@@ -509,6 +509,11 @@ func (r *Repo) MergeNoFF(ctx context.Context, branch string) error {
 	var started bool
 	_, mergeErr := runCtxStarted(ctx, r.root, nil, func() { _, err := os.Stat(lockPath); lockWasAbsent = errors.Is(err, os.ErrNotExist) }, &started, "merge", "--no-ff", "--no-commit", branch)
 	if mergeErr == nil {
+		if len(keep) > 0 {
+			if _, err := r.git("", append([]string{"checkout", "HEAD", "--"}, keep...)...); err != nil {
+				return errors.Join(err, r.AbortMerge())
+			}
+		}
 		return nil
 	}
 	if ctx.Err() != nil || errors.Is(mergeErr, context.DeadlineExceeded) {
@@ -534,6 +539,25 @@ func (r *Repo) MergeNoFF(ctx context.Context, branch string) error {
 	conflicts := split0(out)
 	if len(conflicts) == 0 {
 		return mergeErr
+	}
+	if len(keep) > 0 {
+		allowed := make(map[string]bool, len(keep))
+		for _, p := range keep {
+			allowed[p] = true
+		}
+		onlyKeep := true
+		for _, p := range conflicts {
+			if !allowed[p] {
+				onlyKeep = false
+				break
+			}
+		}
+		if onlyKeep {
+			if _, err := r.git("", append([]string{"checkout", "HEAD", "--"}, keep...)...); err != nil {
+				return errors.Join(err, r.AbortMerge())
+			}
+			return nil
+		}
 	}
 	if err := r.AbortMerge(); err != nil {
 		return errors.Join(fmt.Errorf("%w: %s", core.ErrMergeConflict, strings.Join(conflicts, ", ")), err)

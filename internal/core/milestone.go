@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -35,8 +36,18 @@ func (b *MilestoneBoundary) After(ctx context.Context, phase Phase) {
 		recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "report-skipped", Phase: phase.ID, Step: b.Kind.Name, Fields: map[string]string{"milestone": strconv.Itoa(m.Number), "reason": err.Error()}})
 		return
 	}
+	branch, err := b.Repo.HeadBranch()
+	if err != nil {
+		recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "report-skipped", Phase: phase.ID, Step: b.Kind.Name, Fields: map[string]string{"milestone": strconv.Itoa(m.Number), "reason": "head: " + err.Error()}})
+		return
+	}
+	base, err := b.Repo.HeadSHA("")
+	if err != nil {
+		recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "report-skipped", Phase: phase.ID, Step: b.Kind.Name, Fields: map[string]string{"milestone": strconv.Itoa(m.Number), "reason": "head: " + err.Error()}})
+		return
+	}
 	if reason := b.report(ctx, phase, m); reason != "" {
-		if err := b.restore(); err != nil {
+		if err := b.restore(branch, base); err != nil {
 			reason += "; restore: " + err.Error()
 		}
 		recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "report-skipped", Phase: phase.ID, Step: b.Kind.Name, Fields: map[string]string{"milestone": strconv.Itoa(m.Number), "reason": reason}})
@@ -70,7 +81,8 @@ func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone
 		RunDir:    b.RunDir,
 	}
 	ref.Vars = StepVars(ref, b.Plan, b.Plan.Path, b.RunDir)
-	ref.Vars["ReportPath"] = fmt.Sprintf("docs/%s/reports/milestone-%d-%s.md", b.Topic, m.Number, kebab(m.Name))
+	report := fmt.Sprintf("docs/%s/reports/milestone-%d-%s.md", b.Topic, m.Number, kebab(m.Name))
+	ref.Vars["ReportPath"] = report
 	key := ref.Key
 	if err := b.Sessions.Store.Append(b.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepQueued}); err != nil {
 		return "record: " + err.Error()
@@ -113,17 +125,47 @@ func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone
 	if out.State != StepOK {
 		return fmt.Sprintf("%s: %s", out.State, out.Reason)
 	}
+	now, err := b.Repo.Snapshot("")
+	if err != nil {
+		return "snapshot: " + err.Error()
+	}
+	changed, err := b.Repo.TreeDiff(s.StartTree, now)
+	if err != nil {
+		return "tree diff: " + err.Error()
+	}
+	var extra []string
+	for _, p := range changed {
+		if p != report {
+			extra = append(extra, p)
+		}
+	}
+	if len(extra) > 0 {
+		return "milestone report changed " + strings.Join(extra, ", ") + " besides " + report
+	}
 	if err := recordFailed(b.Sessions.Store); err != nil {
 		return "record: " + err.Error()
 	}
-	if _, err := b.Repo.Commit(ctx, fmt.Sprintf("docs(report): milestone %d", m.Number)); err != nil {
+	sha, err := b.Repo.Commit(ctx, fmt.Sprintf("docs(report): milestone %d", m.Number), report)
+	if err != nil {
 		return "commit: " + err.Error()
+	}
+	touched, err := b.Repo.CommitTouches(sha)
+	if err != nil || len(touched) != 1 || touched[0] != report {
+		reason := fmt.Sprintf("report commit %s touched %s, not only %s", sha, strings.Join(touched, ", "), report)
+		if err != nil {
+			reason += "; touches: " + err.Error()
+		}
+		return reason
 	}
 	return ""
 }
 
-func (b *MilestoneBoundary) restore() error {
-	if err := b.Repo.ResetHard("HEAD"); err != nil {
+func (b *MilestoneBoundary) restore(branch, base string) error {
+	now, err := b.Repo.HeadBranch()
+	if err != nil || now != branch {
+		return fmt.Errorf("the primary tree left %s for %s; not resetting", branch, now)
+	}
+	if err := b.Repo.ResetHard(base); err != nil {
 		return err
 	}
 	left, err := b.Repo.Dirty("")

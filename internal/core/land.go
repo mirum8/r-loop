@@ -238,7 +238,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 	if err := g.Store.Append(g.RunID, Record{Kind: RecordEvent, At: mergeAt, Event: &mergeIntent}); err != nil {
 		return Landing{}, "", "", fmt.Errorf("record: %w", err)
 	}
-	if err := g.Repo.MergeNoFF(ctx, fmt.Sprintf("r-loop/phase-%s", n)); err != nil {
+	if err := g.Repo.MergeNoFF(ctx, fmt.Sprintf("r-loop/phase-%s", n), g.todoRel()); err != nil {
 		return Landing{}, "", "", err
 	}
 	mergedIndex, err := g.Repo.IndexTree()
@@ -428,11 +428,16 @@ func (g *LandGate) redAtBase(ctx context.Context, phase Phase, item string) (str
 }
 
 func (g *LandGate) todoRel() string {
-	p := g.TodoPath
+	return repoRel(g.Repo.Root(), g.TodoPath)
+}
+
+func repoRel(root, p string) string {
+	if p == "" {
+		return ""
+	}
 	if !filepath.IsAbs(p) {
 		return filepath.ToSlash(filepath.Clean(p))
 	}
-	root := g.Repo.Root()
 	if r, err := filepath.EvalSymlinks(root); err == nil {
 		root = r
 	}

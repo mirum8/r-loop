@@ -112,13 +112,13 @@ Verified against `r-loop` @ `main` `058c81b`.
       - With that repo root, the watchdog, a step session and intake each write their MCP config file before the agent starts
       - Templates without placeholders still split on whitespace as today
 
-- [ ] [#18] No evidence check stops a step from editing the todo or issues file: a self-ticked item blocks the phase forever, and a backlog edit ticks the wrong item
+- [x] [#18] No evidence check stops a step from editing the todo or issues file: a self-ticked item blocks the phase forever, and a backlog edit ticks the wrong item  <!-- fixed: r-loop/phase-19 -->
       - A work step whose tree diff touches the todo or backlog file fails its evidence check with a reason naming that file
       - A phase branch that ticked its own item cannot block landing: it is rejected earlier, or the todo is restored before Tick, and the phase is ticked exactly once
       - Inserting another backlog item during a step never changes which item land ticks
       - Steps whose job is to write their own plan file are still accepted
 
-- [ ] [#19] The milestone report session can commit arbitrary code to main; only a non-empty report is checked
+- [x] [#19] The milestone report session can commit arbitrary code to main; only a non-empty report is checked  <!-- fixed: r-loop/phase-19 -->
       - A milestone report step that changes any path other than its report fails or has those changes discarded, and those paths never appear in the report commit
       - The report commit touches exactly the report file
       - A report step that writes only its report commits as it does today
@@ -145,7 +145,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - An exiting driver clears `current` only when it still names this driver's run and never removes another process's pointer
       - After the lock holder crashes, the next start or resume can take the lock without manual cleanup
 
-- [ ] [#24] A half-written sentinel fails the step permanently
+- [x] [#24] A half-written sentinel fails the step permanently  <!-- fixed: r-loop/phase-19 -->
       - A sentinel that is empty or truncated on one tick and valid on a later tick ends the step by its valid content, not "sentinel unreadable"
       - A sentinel still malformed after a bounded grace period fails the step with a reason that includes the parse error
       - Every step prompt's sentinel section tells the agent to write the file atomically (temp file in the same directory, then rename), asserted by a render test

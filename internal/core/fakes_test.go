@@ -249,8 +249,8 @@ func (f *fakeRepo) GitlinkPaths(tree string) ([]string, error) {
 	return nil, f.Err
 }
 
-func (f *fakeRepo) MergeNoFF(ctx context.Context, branch string) error {
-	f.record("Repo.MergeNoFF %s", branch)
+func (f *fakeRepo) MergeNoFF(ctx context.Context, branch string, keep ...string) error {
+	f.record("Repo.MergeNoFF %s", strings.TrimSpace(branch+" "+strings.Join(keep, " ")))
 	return f.MergeErr
 }
 

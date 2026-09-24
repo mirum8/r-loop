@@ -17,6 +17,7 @@ import (
 
 	"r-loop/internal/core"
 	"r-loop/internal/gitrepo"
+	"r-loop/internal/plan"
 )
 
 func waitForPID(t *testing.T, path string) int {
@@ -933,6 +934,96 @@ func TestLandGateConflictLeavesTheTodoUntouched(t *testing.T) {
 	e.assertUntouched(head)
 }
 
+func TestLandRestoresATodoThePhaseBranchTickedAndTicksItOnce(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	writeFile(t, filepath.Join(e.worktree(1), "docs/demo/todo.md"), strings.Replace(todoText, "- [ ] p1 item", "- [x] p1 item", 1))
+	if _, err := e.repo.CommitAll(".r-loop/wt/phase-1", "self tick"); err != nil {
+		t.Fatal(err)
+	}
+	g := e.gate()
+	g.Plan = plan.Reader{}
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatal(err)
+	}
+	got := gitCmd(t, e.root, "show", "HEAD:docs/demo/todo.md")
+	if got != strings.TrimSpace(strings.Replace(todoText, "- [ ] p1 item", "- [x] p1 item", 1)) || strings.Count(got, "- [x]") != 1 {
+		t.Fatalf("todo = %q", got)
+	}
+	if gitCmd(t, e.root, "show", "HEAD:feature.txt") != "new" || gitCmd(t, e.root, "status", "--porcelain") != "" {
+		t.Fatal("feature missing or tree dirty")
+	}
+}
+
+func TestLandTicksOnceWhenTheBranchSelfTickConflictsWithMainsTodo(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	writeFile(t, filepath.Join(e.worktree(1), "docs/demo/todo.md"), strings.Replace(todoText, "- [ ] p1 item", "- [x] p1 item", 1))
+	if _, err := e.repo.CommitAll(".r-loop/wt/phase-1", "self tick"); err != nil {
+		t.Fatal(err)
+	}
+	mainTodo := strings.Replace(todoText, "- [ ] p1 item", "- [ ] p1 item, reworded", 1)
+	writeFile(t, e.todo, mainTodo)
+	gitCmd(t, e.root, "add", "-A")
+	gitCmd(t, e.root, "commit", "-q", "-m", "reword")
+	g := e.gate()
+	g.Plan = plan.Reader{}
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatal(err)
+	}
+	got := gitCmd(t, e.root, "show", "HEAD:docs/demo/todo.md")
+	if got != strings.TrimSpace(strings.Replace(mainTodo, "- [ ] p1 item, reworded", "- [x] p1 item, reworded", 1)) || strings.Count(got, "- [x]") != 1 {
+		t.Fatalf("todo = %q", got)
+	}
+	if gitCmd(t, e.root, "show", "HEAD:feature.txt") != "new" || gitCmd(t, e.root, "status", "--porcelain") != "" {
+		t.Fatal("feature missing or tree dirty")
+	}
+}
+
+func TestLandRestoresATodoThePhaseBranchDeleted(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	gitCmd(t, e.worktree(1), "rm", "-q", "docs/demo/todo.md")
+	if _, err := e.repo.CommitAll(".r-loop/wt/phase-1", "delete todo"); err != nil {
+		t.Fatal(err)
+	}
+	g := e.gate()
+	g.Plan = plan.Reader{}
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatal(err)
+	}
+	got := gitCmd(t, e.root, "show", "HEAD:docs/demo/todo.md")
+	if got != strings.TrimSpace(strings.Replace(todoText, "- [ ] p1 item", "- [x] p1 item", 1)) {
+		t.Fatalf("todo = %q", got)
+	}
+}
+
+func TestLandTicksTheSameBacklogItemWhenThePhaseBranchInsertedOne(t *testing.T) {
+	e := newLandEnv(t)
+	backlog := "# Backlog\n\n- [ ] first item\n- [ ] second item\n- [ ] third item\n"
+	writeFile(t, e.todo, backlog)
+	gitCmd(t, e.root, "add", "-A")
+	gitCmd(t, e.root, "commit", "-q", "-m", "backlog")
+	if err := e.repo.AddWorktree(".r-loop/wt/phase-2", "r-loop/phase-2", "main"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(e.worktree(2), "feature.txt"), "new\n")
+	writeFile(t, filepath.Join(e.worktree(2), "docs/demo/todo.md"), strings.Replace(backlog, "- [ ] first item", "- [ ] inserted item\n- [ ] first item", 1))
+	if _, err := e.repo.CommitAll(".r-loop/wt/phase-2", "insert backlog item"); err != nil {
+		t.Fatal(err)
+	}
+	g := e.gate()
+	g.Plan = plan.Reader{}
+	if _, err := g.Land(context.Background(), core.Phase{ID: "2", Title: "second item", Items: []core.Item{{Text: "second item"}}}); err != nil {
+		t.Fatal(err)
+	}
+	got := gitCmd(t, e.root, "show", "HEAD:docs/demo/todo.md")
+	want := "# Backlog\n\n- [ ] first item\n- [x] second item  <!-- fixed: r-loop/phase-2 -->\n- [ ] third item"
+	if got != want {
+		t.Fatalf("todo = %q, want %q", got, want)
+	}
+}
+
 func TestLandGateRefusesAMergeWithoutCode(t *testing.T) {
 	e := newLandEnv(t)
 	if err := e.repo.AddWorktree(".r-loop/wt/phase-1", "r-loop/phase-1", "main"); err != nil {
@@ -982,7 +1073,7 @@ func (h *reportHost) Prompt(agent, text string, wait bool, timeout time.Duration
 		panic("boom")
 	}
 	report, sentinel, _ := strings.Cut(text, "\n")
-	if outcome == "ok" || outcome == "partial" {
+	if outcome == "ok" || outcome == "partial" || outcome == "extra" || outcome == "staged" || outcome == "commit" || outcome == "checkout" {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(cwd, report)), 0o755); err != nil {
 			return err
 		}
@@ -996,13 +1087,48 @@ func (h *reportHost) Prompt(agent, text string, wait bool, timeout time.Duration
 			return err
 		}
 	}
+	if outcome == "extra" {
+		if err := os.WriteFile(filepath.Join(cwd, "a.txt"), []byte("scribbled\n"), 0o644); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(cwd, "stray.txt"), []byte("stray\n"), 0o644); err != nil {
+			return err
+		}
+		outcome = "ok"
+	}
+	if outcome == "staged" {
+		if err := os.WriteFile(filepath.Join(cwd, "a.txt"), []byte("scribbled\n"), 0o644); err != nil {
+			return err
+		}
+		if out, err := exec.Command("git", "-C", cwd, "add", "a.txt").CombinedOutput(); err != nil {
+			return fmt.Errorf("git add: %w: %s", err, out)
+		}
+		if err := os.WriteFile(filepath.Join(cwd, "a.txt"), []byte("one\n"), 0o644); err != nil {
+			return err
+		}
+		outcome = "ok"
+	}
+	if outcome == "commit" || outcome == "checkout" {
+		if outcome == "checkout" {
+			if out, err := exec.Command("git", "-C", cwd, "checkout", "-qb", "other").CombinedOutput(); err != nil {
+				return fmt.Errorf("git checkout: %w: %s", err, out)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(cwd, "a.txt"), []byte("scribbled\n"), 0o644); err != nil {
+			return err
+		}
+		if out, err := exec.Command("git", "-C", cwd, "-c", "user.name=agent", "-c", "user.email=agent@example.com", "commit", "-qam", "agent").CombinedOutput(); err != nil {
+			return fmt.Errorf("git commit: %w: %s", err, out)
+		}
+		outcome = "ok"
+	}
 	data, _ := json.Marshal(map[string]string{"outcome": outcome, "reason": "report failed"})
 	return os.WriteFile(sentinel, data, 0o644)
 }
 
-func (h *reportHost) State(agent string) (core.AgentState, error)            { return core.AgentWorking, nil }
-func (h *reportHost) AgentPane(agent string) (string, error)                 { return "", nil }
-func (h *reportHost) Read(agent string, lines int) (string, error)           { return "", nil }
+func (h *reportHost) State(agent string) (core.AgentState, error)  { return core.AgentWorking, nil }
+func (h *reportHost) AgentPane(agent string) (string, error)       { return "", nil }
+func (h *reportHost) Read(agent string, lines int) (string, error) { return "", nil }
 func (h *reportHost) Interrupt(agent string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1093,6 +1219,95 @@ func TestMilestoneReportSpawnedOnlyAfterTheLastPhaseInThePrimaryTree(t *testing.
 	}
 	if st := gitCmd(t, e.root, "status", "--porcelain"); st != "" {
 		t.Errorf("primary tree not clean:\n%s", st)
+	}
+}
+
+func TestMilestoneReportThatChangedAnotherPathIsSkippedAndDiscarded(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, _, _ := e.boundaryGate("extra")
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatal(err)
+	}
+	landing, err := g.Land(context.Background(), phaseTwo(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.head() != landing.MergeSHA || readFile(t, filepath.Join(e.root, "a.txt")) != "one\n" || gitCmd(t, e.root, "status", "--porcelain") != "" {
+		t.Fatal("report changes remain")
+	}
+	if _, err := os.Stat(filepath.Join(e.root, "stray.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stray remains: %v", err)
+	}
+	events := e.store.events("report-skipped")
+	if len(events) != 1 || !strings.Contains(events[0].Fields["reason"], "a.txt") || !strings.Contains(events[0].Fields["reason"], "stray.txt") {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestMilestoneReportCommitCarryingAStagedPathIsUndone(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, _, _ := e.boundaryGate("staged")
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatal(err)
+	}
+	landing, err := g.Land(context.Background(), phaseTwo(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.head() != landing.MergeSHA || readFile(t, filepath.Join(e.root, "a.txt")) != "one\n" || gitCmd(t, e.root, "status", "--porcelain") != "" {
+		t.Fatal("staged changes remain")
+	}
+	events := e.store.events("report-skipped")
+	if len(events) != 1 || !strings.Contains(events[0].Fields["reason"], "touched") || !strings.Contains(events[0].Fields["reason"], "a.txt") {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestMilestoneReportAgentCommitIsUndone(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, _, _ := e.boundaryGate("commit")
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatal(err)
+	}
+	landing, err := g.Land(context.Background(), phaseTwo(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.head() != landing.MergeSHA || readFile(t, filepath.Join(e.root, "a.txt")) != "one\n" || gitCmd(t, e.root, "status", "--porcelain") != "" {
+		t.Fatal("agent commit remains")
+	}
+	if _, err := os.Stat(filepath.Join(e.root, "docs/demo/reports/milestone-1-the-core.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("report remains: %v", err)
+	}
+	if len(e.store.events("report-skipped")) != 1 {
+		t.Fatal("missing report-skipped")
+	}
+}
+
+func TestMilestoneReportThatLeftTheBranchResetsNothing(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, _, _ := e.boundaryGate("checkout")
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatal(err)
+	}
+	landing, err := g.Land(context.Background(), phaseTwo(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gitCmd(t, e.root, "rev-parse", "main") != landing.MergeSHA || gitCmd(t, e.root, "show", "other:a.txt") != "scribbled" {
+		t.Fatal("branch commit lost")
+	}
+	events := e.store.events("report-skipped")
+	if len(events) != 1 || !strings.Contains(events[0].Fields["reason"], "left main for other") {
+		t.Fatalf("events = %+v", events)
 	}
 }
 
