@@ -148,7 +148,7 @@ func TestPromptWithoutWait(t *testing.T) {
 	if err := c.Prompt("a1", "do it; rm -rf $HOME\n'quoted' \"too\"", false, time.Minute); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
-	assertArgv(t, argv(), []string{"agent", "prompt", "a1", "do it; rm -rf $HOME\n'quoted' \"too\""})
+	assertArgv(t, argv(), []string{"agent", "prompt", "a1", "do it; rm -rf $HOME\n'quoted' \"too\"", "--wait", "--until", "working", "--until", "blocked", "--timeout", "10000"})
 }
 
 func TestPromptWithWaitPassesTimeoutInMilliseconds(t *testing.T) {
@@ -172,6 +172,84 @@ func TestPromptErrorCodes(t *testing.T) {
 				t.Fatalf("got %#v", err)
 			}
 		})
+	}
+}
+
+func stalledPrompt(t *testing.T, enterSubmits bool) (Client, func() [][]string) {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	entered := filepath.Join(dir, "entered")
+	working := "[ -e \"" + entered + "\" ]"
+	if !enterSubmits {
+		working = "false"
+	}
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\0' \"$@\" >> \"" + log + "\"\n" +
+		"printf '\\n' >> \"" + log + "\"\n" +
+		"case \"$2\" in\n" +
+		"prompt) printf '%s' '{\"error\":{\"code\":\"agent_prompt_stalled\",\"message\":\"no activity\"}}' >&2; exit 1 ;;\n" +
+		"send-keys) touch \"" + entered + "\"; printf '%s' '{\"result\":{\"type\":\"ok\"}}' ;;\n" +
+		"wait) if [ \"$4\" != --until ]; then printf '%s' '{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'; elif " + working + "; then printf '%s' '{\"result\":{\"agent\":{\"agent_status\":\"working\"}}}'; else printf '%s' '{\"error\":{\"code\":\"timeout\",\"message\":\"timed out waiting for agent status\"}}' >&2; exit 1; fi ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return Client{Bin: bin}, func() [][]string {
+		data, err := os.ReadFile(log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var calls [][]string
+		for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+			calls = append(calls, strings.Split(strings.TrimSuffix(line, "\x00"), "\x00"))
+		}
+		return calls
+	}
+}
+
+func TestPromptWhoseEnterWasSwallowedIsSubmittedWithOneMoreEnter(t *testing.T) {
+	c, calls := stalledPrompt(t, true)
+
+	err := c.Prompt("rl-p10c-plan-rv-codex", "review the plan", false, 0)
+
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	assertCalls(t, calls(), [][]string{
+		{"agent", "prompt", "rl-p10c-plan-rv-codex", "review the plan", "--wait", "--until", "working", "--until", "blocked", "--timeout", "10000"},
+		{"agent", "send-keys", "rl-p10c-plan-rv-codex", "enter"},
+		{"agent", "wait", "rl-p10c-plan-rv-codex", "--until", "working", "--until", "blocked", "--timeout", "10000"},
+	})
+}
+
+func TestWaitingPromptWhoseEnterWasSwallowedWaitsForTheTurnAfterOneMoreEnter(t *testing.T) {
+	c, calls := stalledPrompt(t, true)
+
+	err := c.Prompt("rl-watchdog", "check phase 1", true, 90*time.Second)
+
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	assertCalls(t, calls(), [][]string{
+		{"agent", "prompt", "rl-watchdog", "check phase 1", "--wait", "--timeout", "90000"},
+		{"agent", "send-keys", "rl-watchdog", "enter"},
+		{"agent", "wait", "rl-watchdog", "--until", "working", "--until", "blocked", "--timeout", "10000"},
+		{"agent", "wait", "rl-watchdog", "--timeout", "90000"},
+	})
+}
+
+func TestPromptThatStillDoesNotStartAfterOneMoreEnterFails(t *testing.T) {
+	c, calls := stalledPrompt(t, false)
+
+	err := c.Prompt("a1", "go", false, 0)
+
+	if err == nil || !strings.Contains(err.Error(), "not submitted") {
+		t.Fatalf("got %v", err)
+	}
+	if got := calls(); len(got) != 3 {
+		t.Fatalf("calls %q", got)
 	}
 }
 

@@ -21,6 +21,7 @@ var ErrNoBinary = errors.New("herdr binary not found")
 
 var (
 	callTimeout     = 30 * time.Second
+	submitTimeout   = 10 * time.Second
 	paneBusyBudget  = 20 * time.Second
 	paneBusyBackoff = 250 * time.Millisecond
 )
@@ -282,15 +283,30 @@ func (c Client) Prompt(agent, text string, wait bool, timeout time.Duration) err
 }
 
 func (c Client) PromptContext(ctx context.Context, agent, text string, wait bool, timeout time.Duration) error {
-	args := []string{"agent", "prompt", agent, text}
+	started := []string{"--until", "working", "--until", "blocked", "--timeout", strconv.FormatInt(submitTimeout.Milliseconds(), 10)}
+	finished := []string{"--timeout", strconv.FormatInt(timeout.Milliseconds(), 10)}
+	args := append([]string{"agent", "prompt", agent, text, "--wait"}, started...)
+	limit := callTimeout + submitTimeout
 	if wait {
-		args = append(args, "--wait", "--timeout", strconv.FormatInt(timeout.Milliseconds(), 10))
+		args = append([]string{"agent", "prompt", agent, text, "--wait"}, finished...)
+		limit = callTimeout + timeout
 	}
 	var out struct{}
-	if wait {
-		return c.callWithinContext(ctx, callTimeout+timeout, &out, args...)
+	err := c.callWithinContext(ctx, limit, &out, args...)
+	var herr Error
+	if !errors.As(err, &herr) || herr.Code != "agent_prompt_stalled" {
+		return err
 	}
-	return c.callWithinContext(ctx, callTimeout, &out, args...)
+	if err := c.callWithinContext(ctx, callTimeout, &out, "agent", "send-keys", agent, "enter"); err != nil {
+		return err
+	}
+	if err := c.callWithinContext(ctx, callTimeout+submitTimeout, &out, append([]string{"agent", "wait", agent}, started...)...); err != nil {
+		return fmt.Errorf("herdr: prompt to %s not submitted: %w", agent, err)
+	}
+	if !wait {
+		return nil
+	}
+	return c.callWithinContext(ctx, callTimeout+timeout, &out, append([]string{"agent", "wait", agent}, finished...)...)
 }
 
 func (c Client) State(agent string) (core.AgentState, error) {
