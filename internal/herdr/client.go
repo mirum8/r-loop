@@ -211,7 +211,14 @@ func (c Client) Start(pane, name, kind string, args []string) (core.Agent, error
 		}
 		break
 	}
-	if _, err := c.acceptTrust(name, codexTrustQuestion, "enter"); err != nil {
+	if kind == "codex" {
+		if err := c.awaitCodexPrompt(name); err != nil {
+			return core.Agent{}, err
+		}
+		if err := c.awaitSettled(name); err != nil {
+			return core.Agent{}, err
+		}
+	} else if _, err := c.acceptTrust(name, codexTrustQuestion, "enter"); err != nil {
 		return core.Agent{}, err
 	}
 	return core.Agent{Name: out.Result.Agent.Name, Pane: out.Result.Agent.Pane}, nil
@@ -219,9 +226,57 @@ func (c Client) Start(pane, name, kind string, args []string) (core.Agent, error
 
 const (
 	codexTrustQuestion = "Do you trust the contents of this directory?"
+	codexTrustFolder   = "Trust this folder?"
+	codexBanner        = ">_ OpenAI Codex"
 	claudeTrustAnswer  = "Yes, I trust this folder"
 	claudeBanner       = "Claude Code v"
 )
+
+func (c Client) awaitCodexPrompt(agent string) error {
+	trusted := false
+	deadline := time.Now().Add(paneBusyBudget)
+	for {
+		raw, err := c.exec("agent", "read", agent, "--source", "visible")
+		if err != nil {
+			return err
+		}
+		screen := string(raw)
+		asks := strings.Contains(screen, codexTrustQuestion) || strings.Contains(screen, codexTrustFolder)
+		switch {
+		case asks && !trusted:
+			var out struct{}
+			if err := c.call(&out, "agent", "send-keys", agent, "enter"); err != nil {
+				return err
+			}
+			trusted = true
+			deadline = time.Now().Add(paneBusyBudget)
+			continue
+		case !asks && strings.Contains(screen, codexBanner):
+			return nil
+		}
+		if time.Now().After(deadline) {
+			if trusted {
+				return fmt.Errorf("herdr: agent %s never showed codex's prompt after the trust dialog", agent)
+			}
+			return fmt.Errorf("herdr: agent %s never showed codex's prompt", agent)
+		}
+		time.Sleep(paneBusyBackoff)
+	}
+}
+
+func (c Client) awaitSettled(agent string) error {
+	deadline := time.Now().Add(paneBusyBudget)
+	for {
+		st, err := c.State(agent)
+		if err != nil || st == core.AgentIdle || st == core.AgentDone {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("herdr: agent %s never settled after start", agent)
+		}
+		time.Sleep(paneBusyBackoff)
+	}
+}
 
 func (c Client) acceptTrust(agent, marker string, keys ...string) (bool, error) {
 	asks := func() (bool, error) {

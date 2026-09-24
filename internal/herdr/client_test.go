@@ -541,6 +541,7 @@ func scripted(t *testing.T, before, after string) (Client, func() [][]string) {
 		"start) printf '%s' '{\"result\":{\"agent\":{\"name\":\"'\"$3\"'\",\"pane_id\":\"'\"$7\"'\",\"agent_status\":\"idle\"}}}' ;;\n" +
 		"send-keys) touch \"" + entered + "\"; printf '%s' '{\"result\":{\"type\":\"ok\"}}' ;;\n" +
 		"read) if [ -e \"" + entered + "\" ]; then cat \"" + filepath.Join(dir, "after") + "\"; else cat \"" + filepath.Join(dir, "before") + "\"; fi ;;\n" +
+		"get) printf '%s' '{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}' ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -577,12 +578,148 @@ func TestStartAcceptsDirectoryTrustDialogBeforeReturning(t *testing.T) {
 	if agent != (core.Agent{Name: "rloop-p1-plan-rv-codex-r1", Pane: "w4M:p2"}) {
 		t.Fatalf("agent %+v", agent)
 	}
-	assertCalls(t, calls(), [][]string{
-		{"agent", "start", "rloop-p1-plan-rv-codex-r1", "--kind", "codex", "--pane", "w4M:p2", "--"},
-		{"agent", "read", "rloop-p1-plan-rv-codex-r1", "--source", "visible"},
-		{"agent", "send-keys", "rloop-p1-plan-rv-codex-r1", "enter"},
-		{"agent", "read", "rloop-p1-plan-rv-codex-r1", "--source", "visible"},
-	})
+	if n := countCalls(calls(), "send-keys", "rloop-p1-plan-rv-codex-r1", "enter"); n != 1 {
+		t.Fatalf("enter pressed %d times, calls %q", n, calls())
+	}
+}
+
+func countCalls(calls [][]string, verb string, args ...string) int {
+	n := 0
+	for _, c := range calls {
+		if len(c) >= 2 && c[1] == verb && reflect.DeepEqual(c[2:], args) {
+			n++
+		}
+	}
+	return n
+}
+
+const newTrustScreen = "  Folder access\n  /repo/.r-loop/wt/phase-1\n\n  Trust this folder? Codex can read, edit, and run files here, subject to\n  your permission settings. Your trust decision will be saved.\n\n› 1. Trust and continue\n  2. Quit\n\n  enter continue · esc quit\n"
+
+func codexBoot(t *testing.T, before, after, states []string) (Client, func() [][]string) {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	entered := filepath.Join(dir, "entered")
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, s := range before {
+		write("before-"+strconv.Itoa(i+1), s)
+	}
+	for i, s := range after {
+		write("after-"+strconv.Itoa(i+1), s)
+	}
+	for i, s := range states {
+		write("state-"+strconv.Itoa(i+1), s)
+	}
+	next := func(counter, prefix string, last int) string {
+		return "n=$(cat \"" + filepath.Join(dir, counter) + "\" 2>/dev/null || echo 0); n=$((n+1)); echo $n > \"" + filepath.Join(dir, counter) + "\"; " +
+			"[ $n -gt " + strconv.Itoa(last) + " ] && n=" + strconv.Itoa(last) + "; f=\"" + filepath.Join(dir, prefix) + "-$n\""
+	}
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\0' \"$@\" >> \"" + log + "\"\n" +
+		"printf '\\n' >> \"" + log + "\"\n" +
+		"case \"$2\" in\n" +
+		"start) printf '%s' '{\"result\":{\"agent\":{\"name\":\"'\"$3\"'\",\"pane_id\":\"'\"$7\"'\",\"agent_status\":\"idle\"}}}' ;;\n" +
+		"send-keys) touch \"" + entered + "\"; printf '%s' '{\"result\":{\"type\":\"ok\"}}' ;;\n" +
+		"read) if [ -e \"" + entered + "\" ]; then " + next("afters", "after", len(after)) + "; else " + next("befores", "before", len(before)) + "; fi; cat \"$f\" ;;\n" +
+		"get) " + next("gets", "state", len(states)) + "; printf '%s' '{\"result\":{\"agent\":{\"agent_status\":\"'\"$(cat \"$f\")\"'\"}}}' ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return Client{Bin: bin}, func() [][]string {
+		data, err := os.ReadFile(log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var calls [][]string
+		for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+			calls = append(calls, strings.Split(strings.TrimSuffix(line, "\x00"), "\x00"))
+		}
+		return calls
+	}
+}
+
+func TestStartAnswersCodexsTrustThisFolderDialog(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := codexBoot(t, []string{newTrustScreen}, []string{chatScreen}, []string{"idle"})
+
+	_, err := c.Start("w4M:p2", "rv", "codex", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if n := countCalls(calls(), "send-keys", "rv", "enter"); n != 1 {
+		t.Fatalf("enter pressed %d times, calls %q", n, calls())
+	}
+}
+
+func TestStartWaitsForCodexsTrustDialogToBeDrawn(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := codexBoot(t, []string{"", "", newTrustScreen}, []string{chatScreen}, []string{"idle"})
+
+	_, err := c.Start("w4M:p2", "rv", "codex", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if n := countCalls(calls(), "send-keys", "rv", "enter"); n != 1 {
+		t.Fatalf("enter pressed %d times, calls %q", n, calls())
+	}
+}
+
+func TestStartReturnsOnlyOnceCodexIsIdleAtItsPrompt(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := codexBoot(t, []string{chatScreen}, nil, []string{"working", "working", "idle"})
+
+	_, err := c.Start("w4M:p2", "rv", "codex", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if n := countCalls(calls(), "get", "rv"); n != 3 {
+		t.Fatalf("agent get called %d times, calls %q", n, calls())
+	}
+	if n := countCalls(calls(), "send-keys", "rv", "enter"); n != 0 {
+		t.Fatalf("enter pressed %d times on a trusted directory", n)
+	}
+}
+
+func TestStartAcceptsCodexSettlingDoneAfterItsTrustDialog(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, _ := codexBoot(t, []string{newTrustScreen}, []string{chatScreen}, []string{"working", "done"})
+
+	_, err := c.Start("w4M:p2", "rv", "codex", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+}
+
+func TestStartFailsWhenCodexNeverDrawsItsPrompt(t *testing.T) {
+	shrinkPaneBusyWait(t, 50*time.Millisecond)
+	c, _ := codexBoot(t, []string{""}, nil, []string{"idle"})
+
+	_, err := c.Start("w4M:p2", "rv", "codex", nil)
+
+	if err == nil {
+		t.Fatal("Start succeeded without codex's prompt on screen")
+	}
+}
+
+func TestStartFailsWhenCodexNeverSettlesIdle(t *testing.T) {
+	shrinkPaneBusyWait(t, 50*time.Millisecond)
+	c, _ := codexBoot(t, []string{chatScreen}, nil, []string{"working"})
+
+	_, err := c.Start("w4M:p2", "rv", "codex", nil)
+
+	if err == nil {
+		t.Fatal("Start succeeded while codex was still working")
+	}
 }
 
 func TestStartFailsWhenTrustDialogDoesNotClear(t *testing.T) {
