@@ -1,6 +1,7 @@
 package gitrepo
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -966,6 +968,74 @@ func TestDiffStatCountsSymlinkNotTarget(t *testing.T) {
 
 	if added, deleted, err := r.DiffStat("", "HEAD"); err != nil || added != 2 || deleted != 0 {
 		t.Fatalf("DiffStat = %d, %d, %v; want 2, 0", added, deleted, err)
+	}
+}
+
+func TestDiffStatCountsUntrackedBinaryAsZero(t *testing.T) {
+	r, dir := newRepo(t)
+	write(t, filepath.Join(dir, "bin.dat"), "a\x00b\nc\nd\n")
+	write(t, filepath.Join(dir, "t.txt"), "x\ny")
+
+	if added, deleted, err := r.DiffStat("", "HEAD"); err != nil || added != 2 || deleted != 0 {
+		t.Fatalf("DiffStat = %d, %d, %v; want 2, 0", added, deleted, err)
+	}
+}
+
+func TestDiffStatTreatsNULPastFirst8000BytesAsText(t *testing.T) {
+	r, dir := newRepo(t)
+	write(t, filepath.Join(dir, "late.dat"), strings.Repeat("a", 8000)+"\n\x00\n")
+
+	if added, deleted, err := r.DiffStat("", "HEAD"); err != nil || added != 2 || deleted != 0 {
+		t.Fatalf("DiffStat = %d, %d, %v; want 2, 0", added, deleted, err)
+	}
+}
+
+func TestDiffStatStreamsLargeUntrackedFile(t *testing.T) {
+	r, dir := newRepo(t)
+	data := bytes.Repeat([]byte("x\n"), 16<<20)
+	if err := os.WriteFile(filepath.Join(dir, "big.txt"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data = nil
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	added, deleted, err := r.DiffStat("", "HEAD")
+	runtime.ReadMemStats(&after)
+	if err != nil || added != 16<<20 || deleted != 0 {
+		t.Fatalf("DiffStat = %d, %d, %v; want %d, 0", added, deleted, err, 16<<20)
+	}
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc >= 4<<20 {
+		t.Fatalf("DiffStat allocated %d bytes; want less than %d", alloc, 4<<20)
+	}
+}
+
+func TestDiffStatCountsUntrackedTextLines(t *testing.T) {
+	r, dir := newRepo(t)
+	write(t, filepath.Join(dir, "empty.txt"), "")
+	write(t, filepath.Join(dir, "blank.txt"), "\n\n")
+	write(t, filepath.Join(dir, "open.txt"), "x\ny")
+	write(t, filepath.Join(dir, "long.txt"), strings.Repeat("a", 40000))
+
+	if added, deleted, err := r.DiffStat("", "HEAD"); err != nil || added != 5 || deleted != 0 {
+		t.Fatalf("DiffStat = %d, %d, %v; want 5, 0", added, deleted, err)
+	}
+}
+
+func TestDiffStatReturnsErrorForUnreadableUntrackedFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read files with no permissions")
+	}
+	r, dir := newRepo(t)
+	path := filepath.Join(dir, "secret.txt")
+	write(t, path, "s\n")
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0o644) })
+
+	if _, _, err := r.DiffStat("", "HEAD"); err == nil {
+		t.Fatal("DiffStat returned no error for an unreadable file")
 	}
 }
 

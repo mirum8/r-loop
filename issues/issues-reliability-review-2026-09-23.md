@@ -195,7 +195,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - Hooks still fire once per transition with the same environment, and a failed or timed-out hook still emits `notify-failed`
       - `onDone`/`onHalt` at run end still complete, bounded by their timeout, before the process exits
 
-- [ ] [#33] `DiffStat` reads every untracked file fully into memory, binaries included
+- [x] [#33] `DiffStat` reads every untracked file fully into memory, binaries included  <!-- fixed: r-loop/phase-34 -->
       - An untracked binary file (containing NUL bytes) counts as 0 added lines, as numstat does for tracked binaries
       - A very large untracked file is streamed or capped, never loaded into memory whole
       - Line counts for untracked text files are unchanged, including a last line with no trailing newline
