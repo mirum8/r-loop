@@ -5,4 +5,4 @@ Work in `{{.Worktree}}` on `{{.Base}}`. Find the one shell command that builds t
 Run the command from the repository root and check that it passes. If it fails for a reason outside the code, such as a missing tool or service, choose a command that the repository can pass on its own.
 
 Write the command in backticks, on its own line, to `{{.ReportPath}}`. Under it, write one sentence that names where you found it. Change no other file, and remove any file the build leaves that is not ignored by git.
-{{template "sentinel" .}}
+{{template "outcome" .}}

@@ -37,22 +37,24 @@ type Watch struct {
 
 	PhaseCheck *PhaseCheck
 
-	once     sync.Once
-	mu       sync.Mutex
-	signals  chan Signal
-	parked   []Signal
-	restarts chan Restart
-	held     *StepKey
-	closed   chan struct{}
-	runID    string
-	live     *StepKey
-	ended    map[StepKey]endedStep
-	tickers  map[StepKey]*ticking
-	seq      int
-	halt     *Signal
-	checking string
-	gone     bool
-	goneHalt bool
+	once      sync.Once
+	mu        sync.Mutex
+	signals   chan Signal
+	parked    []Signal
+	restarts  chan Restart
+	held      *StepKey
+	closed    chan struct{}
+	runID     string
+	live      *StepKey
+	ended     map[StepKey]endedStep
+	tickers   map[StepKey]*ticking
+	seq       int
+	halt      *Signal
+	accepting int
+	settled   *sync.Cond
+	checking  string
+	gone      bool
+	goneHalt  bool
 }
 
 var errSignalDropped = errors.New("the signal queue is full; signal dropped")
@@ -72,6 +74,7 @@ func (w *Watch) init() {
 		w.restarts = make(chan Restart)
 		w.ended = map[StepKey]endedStep{}
 		w.tickers = map[StepKey]*ticking{}
+		w.settled = sync.NewCond(&w.mu)
 	})
 }
 
@@ -202,6 +205,12 @@ func (w *Watch) Route(ctx context.Context, q Question) bool {
 	return false
 }
 
+func (w *Watch) Withdraw(id string) {
+	if w.Router != nil {
+		w.Router.Withdraw(id)
+	}
+}
+
 func (w *Watch) WatchdogGone() {
 	w.init()
 	w.mu.Lock()
@@ -240,7 +249,9 @@ func (w *Watch) StepStarted(ref StepRef, s *Session) {
 	delete(w.ended, key)
 	w.tickers[key] = t
 	if w.halt != nil {
-		w.halt.Step = key
+		if w.halt.Step.Phase == "" || w.halt.Step.Phase == key.Phase {
+			w.halt.Step = key
+		}
 		w.parked = append(w.parked, *w.halt)
 		w.halt = nil
 		w.unpark()
@@ -321,12 +332,19 @@ func (w *Watch) accept(sig Signal, check string) (Signal, error) {
 	w.init()
 	w.mu.Lock()
 	w.seq++
+	w.accepting++
 	sig.Seq, sig.At = w.seq, w.now()
 	runID := w.runID
 	if sig.Step.Run != "" {
 		runID = sig.Step.Run
 	}
 	w.mu.Unlock()
+	defer func() {
+		w.mu.Lock()
+		w.accepting--
+		w.settled.Broadcast()
+		w.mu.Unlock()
+	}()
 	if reason := w.rejection(&sig, runID); reason != "" {
 		sig.Rejected, sig.RejectReason = true, reason
 	}
@@ -382,6 +400,30 @@ func (w *Watch) holdHalt(halt Signal) bool {
 	}
 	w.halt = &halt
 	return true
+}
+
+func (w *Watch) Drain() []Signal {
+	w.init()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for w.accepting > 0 {
+		w.settled.Wait()
+	}
+	var out []Signal
+	for {
+		select {
+		case sig := <-w.signals:
+			out = append(out, sig)
+		default:
+			out = append(out, w.parked...)
+			w.parked = nil
+			if w.halt != nil {
+				out = append(out, *w.halt)
+				w.halt = nil
+			}
+			return out
+		}
+	}
 }
 
 func (w *Watch) unpark() {

@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -41,11 +42,14 @@ func (h *scriptedHost) State(agent string) (AgentState, error) {
 }
 
 type stepClock struct {
+	mu   sync.Mutex
 	t    time.Time
 	step time.Duration
 }
 
 func (c *stepClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.t = c.t.Add(c.step)
 	return c.t
 }
@@ -313,12 +317,14 @@ func TestSpawnRecordsSpawnedBeforeOpenThenStartsPromptsAndRecordsRunning(t *test
 		"Store.Append run-1 event",
 		"Repo.Root",
 		"SessionHost.AgentPane rloop-2kuxv-p3-implement",
+		"Store.Load run-1",
 		"Store.Append run-1 step",
 		"SessionHost.Open /repo/.r-loop/wt/phase-3 ◆ p3 implement map[GIT_COMMITTER_NAME:r-loop rloop-2kuxv-p3-implement R_LOOP_PHASE:3 R_LOOP_RUN:run-1 R_LOOP_SENTINEL:" + sentinel + " R_LOOP_STEP:implement]",
 		"Store.Append run-1 event",
 		"SessionHost.Start pane-1 rloop-2kuxv-p3-implement codex [-c model=gpt-5.6-sol]",
 		"Prompts.Render implement",
 		`SessionHost.Prompt rloop-2kuxv-p3-implement "do phase 3" false 0s`,
+		"Store.Load run-1",
 		"Store.Append run-1 step",
 	}
 	if got := r.shared.Calls(); !reflect.DeepEqual(got, want) {
@@ -420,6 +426,75 @@ func TestAnAskingProviderGetsTheStepURLAndAnMCPConfigWrittenBeforeItStarts(t *te
 	}
 	if len(r.events("ask-none")) != 0 {
 		t.Fatal("recorded ask-none for an asking provider")
+	}
+}
+
+func TestLandStageSessionsHaveNoAskMCPConfig(t *testing.T) {
+	for _, kind := range []string{"gatefix", "gate", "milestone", "plan", "implement"} {
+		t.Run(kind, func(t *testing.T) {
+			r := newRig(t)
+			r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
+			r.sm.Resolve = claudeLikeResolve(r)
+			r.sm.Prompts = promptsFunc(func(string, map[string]any) (string, string, error) {
+				return "text", "embedded", nil
+			})
+			ref := r.ref(1)
+			ref.Key.Kind = kind
+			ref.Kind.Name = kind
+			ref.Kind.Prompt = kind
+			s, err := r.sm.Spawn(context.Background(), ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			matches, err := filepath.Glob(filepath.Join(r.runDir, "phase-3", "*.mcp.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			land := kind == "gatefix" || kind == "gate" || kind == "milestone"
+			if land {
+				if s.Ref.AskURL != "" || len(matches) != 0 || r.count("AskChannel.StepURL") != 0 {
+					t.Fatalf("ask URL = %q, configs = %v, calls = %v", s.Ref.AskURL, matches, r.shared.Calls())
+				}
+				if len(r.resolve) != 5 || r.resolve[3] != "" || r.resolve[4] != "" {
+					t.Fatalf("resolve = %q", r.resolve)
+				}
+			} else if s.Ref.AskURL == "" || len(matches) != 1 || r.count("AskChannel.StepURL") != 1 {
+				t.Fatalf("ask URL = %q, configs = %v, calls = %v", s.Ref.AskURL, matches, r.shared.Calls())
+			}
+		})
+	}
+}
+
+func TestLandStageStallNudgeDoesNotOfferAskWatchdog(t *testing.T) {
+	for _, kind := range []string{"gatefix", "gate", "milestone", "plan", "implement"} {
+		t.Run(kind, func(t *testing.T) {
+			r := newRig(t)
+			r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
+			r.sm.Prompts = promptsFunc(func(string, map[string]any) (string, string, error) {
+				return "text", "embedded", nil
+			})
+			ref := r.ref(1)
+			ref.Key.Kind = kind
+			ref.Kind.Name = kind
+			ref.Kind.Prompt = kind
+			s, err := r.sm.Spawn(context.Background(), ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.host.script = func(int) AgentState { return AgentBlocked }
+			r.sm.Wait(context.Background(), s, &recObserver{})
+			prompts := slices.DeleteFunc(r.shared.Calls(), func(c string) bool {
+				return !strings.HasPrefix(c, "SessionHost.Prompt ")
+			})
+			if len(prompts) < 2 {
+				t.Fatalf("prompts = %q", prompts)
+			}
+			got := strings.Contains(prompts[1], "ask_watchdog")
+			want := kind == "plan" || kind == "implement"
+			if got != want {
+				t.Fatalf("nudge = %q; mentions ask_watchdog = %t, want %t", prompts[1], got, want)
+			}
+		})
 	}
 }
 

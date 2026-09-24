@@ -56,7 +56,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - Production files such as `src/main/java/Contest.java` and `latest.go` are still not test paths
       - The foreign-test-edit warning uses the same widened test-path rule
 
-- [ ] [#9] A halt that arrives while a step is spawning gives `failed` → `running` → `failed`, and the agent keeps working after the halt
+- [x] [#9] A halt that arrives while a step is spawning gives `failed` → `running` → `failed`, and the agent keeps working after the halt  <!-- fixed: r-loop/phase-9 -->
       - A halt for the phase that arrives while the step is spawning leaves exactly one terminal record (`failed`, "watchdog: <reason>") and no spawned or running record after it
       - A halt before or during Spawn leaves no agent running: no workspace opens after the halt, or an agent that already started is interrupted
       - If the runner already finished ok when the halt is processed, the step's final stored state matches the outcome the loop acts on; a step never has both an ok and a failed terminal record
@@ -79,7 +79,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - An abort during a gate-fix round, gate probe, milestone report or phase-check wait takes effect within the poll interval
       - In the TUI, a second ctrl+c while the stop prompt is up (or after an abort was requested) force-quits: the run is recorded as aborted and the terminal is restored
 
-- [ ] [#12] The land-stage steps (gatefix, gate probe, milestone report) bypass the watch and question path
+- [x] [#12] The land-stage steps (gatefix, gate probe, milestone report) bypass the watch and question path  <!-- fixed: r-loop/phase-9 -->
       - When a gate-fix, gate-probe or milestone step calls `ask_watchdog`, the question is either routed to the watchdog with the answer delivered to that step, or withdrawn at once; it is never left unanswered
       - Once a land-stage step ends, no goroutine keeps polling for its question and the ask server holds no open question for it
       - A watchdog halt or warn naming a running land-stage step applies to that step or is rejected back to the caller
@@ -134,7 +134,7 @@ Verified against `r-loop` @ `main` `058c81b`.
       - Resume and preflight name a leftover `MERGE_HEAD` explicitly and say how to fix it, instead of a generic dirty-tree message
       - If aborting the merge fails during land cleanup, the phase's error says the primary tree still holds an unfinished merge
 
-- [ ] [#22] A question can be re-recorded as open after it was withdrawn
+- [x] [#22] A question can be re-recorded as open after it was withdrawn  <!-- fixed: r-loop/phase-9 -->
       - If a step ends while its question is being admitted, the question's stored state is withdrawn, not open
       - A question withdrawn before routing is never sent to the watchdog and has no open entry in the router
       - Under normal admission the question is recorded open once, then routed

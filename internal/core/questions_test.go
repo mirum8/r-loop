@@ -3,9 +3,11 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -441,4 +443,210 @@ func TestWithoutAWatchdogRouteReturnsFalseAtOnce(t *testing.T) {
 	if r.router.Route(context.Background(), routedQuestion()) {
 		t.Fatal("Route returned true with no watchdog")
 	}
+}
+
+type admitHookStore struct {
+	*loopStore
+	admitting chan struct{}
+	release   chan struct{}
+	once      sync.Once
+}
+
+func (s *admitHookStore) Append(runID string, rec Record) error {
+	if rec.Kind == RecordQuestion && rec.Question != nil && rec.Question.AnsweredBy == "" {
+		s.once.Do(func() { close(s.admitting) })
+		<-s.release
+	}
+	return s.loopStore.Append(runID, rec)
+}
+
+func TestAQuestionWithdrawnWhileItIsAdmittedIsStoredWithdrawn(t *testing.T) {
+	r := newEventsRig(t)
+	host := &fakeSessionHost{}
+	router := &QuestionRouter{Dog: newWatchdog(host, r.store, ProviderArgs{Kind: "claude"}), Deliver: r.loop.Deliver, Repo: r.repo}
+	w := &Watch{Store: r.store, Router: router}
+	r.loop.Watcher = w
+	r.loop.runDir = r.store.dir
+	hook := &admitHookStore{loopStore: r.store, admitting: make(chan struct{}), release: make(chan struct{})}
+	r.loop.Store = hook
+	s := &Session{Ref: StepRef{Key: StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}}, Agent: "rloop-p2-implement"}
+	r.host.idle[s.Agent] = true
+	w.StepStarted(s.Ref, s)
+	r.loop.setLive(s)
+	questionDone := make(chan struct{})
+	go func() {
+		r.loop.question(context.Background(), Question{ID: "q1", Step: s.Ref.Key, Text: "which db?"})
+		close(questionDone)
+	}()
+	<-hook.admitting
+	ended := make(chan struct{})
+	go func() {
+		s.end()
+		r.loop.withdrawStep(s.Ref.Key, StepFailed)
+		close(ended)
+	}()
+	select {
+	case <-ended:
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(hook.release)
+	<-ended
+	<-questionDone
+	if qs := mustQuestions(t, r.store); len(qs) != 1 || qs[0].AnsweredBy != "withdrawn" {
+		t.Errorf("questions %+v", qs)
+	}
+	if routerOpen(router, "q1") {
+		t.Error("withdrawn question remains open in router")
+	}
+}
+
+type withdrawHookStore struct {
+	*loopStore
+	withdrawing chan struct{}
+	release     chan struct{}
+	once        sync.Once
+}
+
+func (s *withdrawHookStore) Append(runID string, rec Record) error {
+	if rec.Kind == RecordQuestion && rec.Question != nil && rec.Question.AnsweredBy == "withdrawn" {
+		s.once.Do(func() { close(s.withdrawing) })
+		<-s.release
+	}
+	return s.loopStore.Append(runID, rec)
+}
+
+func TestARouteDuringTheWithdrawalRecordNeverReachesTheWatchdog(t *testing.T) {
+	r := newEventsRig(t)
+	host := &fakeSessionHost{}
+	router := &QuestionRouter{Dog: newWatchdog(host, r.store, ProviderArgs{Kind: "claude"}), Deliver: r.loop.Deliver, Repo: r.repo}
+	r.loop.Watcher = &Watch{Store: r.store, Router: router}
+	r.loop.runDir = r.store.dir
+	hook := &withdrawHookStore{loopStore: r.store, withdrawing: make(chan struct{}), release: make(chan struct{})}
+	r.loop.Store = hook
+	q := Question{ID: "q1", Step: StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}, Text: "which db?"}
+	done := make(chan struct{})
+	go func() {
+		r.loop.withdraw(q, StepFailed)
+		close(done)
+	}()
+	<-hook.withdrawing
+	if !router.Route(context.Background(), q) {
+		t.Error("Route returned false")
+	}
+	close(hook.release)
+	<-done
+	if got := host.Calls(); len(got) != 0 {
+		t.Errorf("watchdog prompts %q", got)
+	}
+	if routerOpen(router, "q1") {
+		t.Error("withdrawn question remains open in router")
+	}
+	if qs := mustQuestions(t, r.store); len(qs) != 1 || qs[0].AnsweredBy != "withdrawn" {
+		t.Errorf("questions %+v", qs)
+	}
+}
+
+func TestAQuestionWithdrawnBeforeRoutingNeverReachesTheWatchdog(t *testing.T) {
+	r := newRouterRig(t)
+	r.router.Withdraw("q1")
+	if !r.router.Route(context.Background(), routedQuestion()) {
+		t.Error("Route returned false")
+	}
+	if got := r.host.Calls(); len(got) != 0 {
+		t.Errorf("watchdog prompts %q", got)
+	}
+	if routerOpen(r.router, "q1") {
+		t.Error("withdrawn question remains open in router")
+	}
+}
+
+func TestAWithdrawalRacingRouteNeverLeavesAnOpenEntry(t *testing.T) {
+	r := newRouterRig(t)
+	for i := range 200 {
+		q := routedQuestion()
+		q.ID = fmt.Sprintf("q-%d", i)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			r.router.Route(context.Background(), q)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			r.router.Withdraw(q.ID)
+		}()
+		close(start)
+		wg.Wait()
+		if routerOpen(r.router, q.ID) {
+			t.Errorf("question %s remains open", q.ID)
+		}
+	}
+}
+
+func TestWithdrawingARoutedQuestionClosesItsRouterEntry(t *testing.T) {
+	r := newEventsRig(t)
+	host := &fakeSessionHost{}
+	writeFile(filepath.Join(r.repo.RootDir, "docs/x/spec.html"), "one\n")
+	router := &QuestionRouter{Dog: newWatchdog(host, r.store, ProviderArgs{Kind: "claude"}), Deliver: r.loop.Deliver, Repo: r.repo}
+	s, _ := loopQuestion(t, router, r)
+	s.end()
+	r.loop.withdrawStep(s.Ref.Key, StepFailed)
+	if routerOpen(router, "q1") {
+		t.Error("withdrawn question remains open in router")
+	}
+	if ok, _ := router.Answer("q1", "sqlite", "docs/x/spec.html:1"); ok {
+		t.Error("answered a withdrawn question")
+	}
+}
+
+type openQuestionHookStore struct {
+	*loopStore
+	host      *fakeSessionHost
+	mu        sync.Mutex
+	snapshots []int
+}
+
+func (s *openQuestionHookStore) Append(runID string, rec Record) error {
+	if rec.Kind == RecordQuestion && rec.Question != nil && rec.Question.AnsweredBy == "" {
+		s.mu.Lock()
+		s.snapshots = append(s.snapshots, len(s.host.Calls()))
+		s.mu.Unlock()
+	}
+	return s.loopStore.Append(runID, rec)
+}
+
+func TestAnAdmittedQuestionIsRecordedOpenOnceBeforeItIsRouted(t *testing.T) {
+	r := newEventsRig(t)
+	host := &fakeSessionHost{}
+	router := &QuestionRouter{Dog: newWatchdog(host, r.store, ProviderArgs{Kind: "claude"}), Deliver: r.loop.Deliver, Repo: r.repo}
+	hook := &openQuestionHookStore{loopStore: r.store, host: host}
+	r.loop.Store = hook
+	loopQuestion(t, router, r)
+	hook.mu.Lock()
+	snapshots := append([]int(nil), hook.snapshots...)
+	hook.mu.Unlock()
+	if !reflect.DeepEqual(snapshots, []int{0}) {
+		t.Errorf("open records at watchdog prompt counts %v", snapshots)
+	}
+	if got := host.Calls(); len(got) != 1 {
+		t.Errorf("watchdog prompts %q", got)
+	}
+}
+
+func routerOpen(r *QuestionRouter, id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.open[id]
+}
+
+func mustQuestions(t *testing.T, s *loopStore) []Question {
+	t.Helper()
+	st, err := s.Load("run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.Questions
 }

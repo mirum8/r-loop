@@ -94,6 +94,8 @@ type RunLoop struct {
 	asked      map[string]openAsk
 	warnings   map[string]string
 	halted     *Signal
+	haltLanded bool
+	nextHalt   *Signal
 	stopReason string
 	serving    bool
 	tagWarn    sync.Once
@@ -156,6 +158,10 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 	l.setRun(RunRunning, "")
 	first, firstPhase, firstStep, firstReason := 0, "", "", ""
 	for _, ph := range list {
+		l.drainSignals()
+		if l.halted != nil && (l.halted.Step.Phase == "" || l.haltLanded) {
+			break
+		}
 		if !l.pending[ph.ID] {
 			continue
 		}
@@ -175,12 +181,22 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 			return l.stopCode()
 		}
 		if out.State == StepOK {
+			if l.nextHalt != nil {
+				l.halted = l.nextHalt
+				l.nextHalt = nil
+				break
+			}
 			continue
 		}
 		code := l.block(ph, step, out)
 		if first == 0 {
 			first, firstPhase, firstStep, firstReason = code, ph.ID, step, out.Reason
 		}
+	}
+	l.drainSignals()
+	if l.nextHalt != nil {
+		l.haltEnded(*l.nextHalt)
+		l.nextHalt = nil
 	}
 	if h := l.halted; h != nil && first != 5 {
 		first, firstPhase, firstStep, firstReason = 5, h.Step.Phase, h.Step.Kind, "watchdog: "+h.Reason
@@ -285,6 +301,9 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 		if aborted || out.State != StepOK {
 			return kind.Name, out, aborted
 		}
+		if slices.Contains(l.blocked, n) {
+			return kind.Name, out, false
+		}
 		if out.Warning != "" {
 			l.emit(Event{Kind: "warning", Phase: n, Step: kind.Name, Fields: map[string]string{"reason": out.Warning}})
 			l.fire(l.Hooks.OnWarn, "warning", n, kind.Name, out.Warning)
@@ -300,6 +319,13 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 			l.closeWorkspaces(n, everyWorkspace)
 			return l.skipCleanup(n)
 		}
+	}
+	if l.nextHalt != nil {
+		sig := *l.nextHalt
+		l.nextHalt = nil
+		sig.Step.Phase, sig.Step.Kind = n, "land"
+		l.halted = &sig
+		return "land", Outcome{State: StepFailed, Reason: "watchdog: " + sig.Reason, Halted: true}, false
 	}
 	lander := l.Lander
 	if lander == nil {
@@ -617,11 +643,33 @@ func (l *RunLoop) dogGone(phase string) bool {
 	return true
 }
 
+func (l *RunLoop) drainSignals() {
+	d, ok := l.watcher().(interface{ Drain() []Signal })
+	if !ok {
+		return
+	}
+	for _, sig := range d.Drain() {
+		if sig.Kind == SignalHalt {
+			if sig.Step.Phase == "" && l.nextHalt == nil {
+				l.nextHalt = &sig
+			} else {
+				l.haltEnded(sig)
+			}
+		} else {
+			l.warn(sig)
+		}
+	}
+}
+
 func (l *RunLoop) haltEnded(sig Signal) {
 	reason := "watchdog: " + sig.Reason
 	l.emit(Event{Kind: "warning", Phase: sig.Step.Phase, Step: sig.Step.Kind, Fields: map[string]string{"reason": fmt.Sprintf("halt for phase-%s/%s after it ended: %s", sig.Step.Phase, sig.Step.Kind, sig.Reason), "source": string(sig.Source)}})
 	if l.halted == nil {
 		l.halted = &sig
+	}
+	if state, err := l.Store.Load(l.RunID); err == nil && landed(state, sig.Step.Phase) {
+		l.haltLanded = true
+		return
 	}
 	if slices.Contains(l.blocked, sig.Step.Phase) {
 		return
@@ -684,6 +732,18 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 		return Outcome{State: StepFailed, Reason: "record: " + err.Error()}, false
 	}
 	l.emitStep(ref, StepQueued, "", nil)
+	if l.nextHalt != nil {
+		sig := *l.nextHalt
+		l.nextHalt = nil
+		l.halted = &sig
+		reason := "watchdog: " + sig.Reason
+		if err := l.Sessions.record(key, StepFailed, reason); err != nil {
+			reason += "; record: " + err.Error()
+		}
+		out := Outcome{State: StepFailed, Reason: reason, Halted: true}
+		l.emitStep(ref, out.State, out.Reason, nil)
+		return l.ended(ref, out)
+	}
 	stepCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan Outcome, 1)
@@ -697,7 +757,11 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 				return l.stopStep(ctx, ref, out)
 			}
 			l.emitStep(ref, out.State, out.Reason, out.Session)
-			return l.ended(ref, out)
+			o, aborted := l.ended(ref, out)
+			if !aborted && o.State == StepOK {
+				l.drainSignals()
+			}
+			return o, aborted
 		case <-ctx.Done():
 			cancel()
 			return l.stopStep(ctx, ref, <-done)
@@ -711,18 +775,48 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 				continue
 			}
 			reason := "watchdog: " + sig.Reason
-			if s := l.liveSession(); s != nil {
-				s.end()
+			live := l.liveSession()
+			if live != nil {
+				live.end()
 			}
-			recErr := l.Store.Append(l.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepFailed, Reason: reason})
-			if s := l.liveSession(); s != nil {
-				l.Sessions.Stop(s)
+			err := l.Sessions.record(key, StepFailed, reason)
+			if errors.Is(err, errStepEnded) {
+				out := <-done
+				if out.State != StepOK {
+					out.Stalled, out.Halted = false, true
+				}
+				l.emitStep(ref, out.State, out.Reason, out.Session)
+				o, aborted := l.ended(ref, out)
+				if out.State == StepOK {
+					l.haltEnded(sig)
+				}
+				return o, aborted
+			}
+			if live != nil {
+				l.Sessions.Stop(live)
 			}
 			cancel()
 			out := <-done
+			if live == nil && out.Session != nil && out.Session.Pane != "" {
+				l.Sessions.Stop(out.Session)
+			}
+			owner := live
+			if owner == nil {
+				owner = out.Session
+			}
+			if owner != nil {
+				owner.mu.Lock()
+				rvs := slices.Clone(owner.reviewers)
+				owner.mu.Unlock()
+				for _, rv := range rvs {
+					if rv.Agent != "" {
+						l.Sessions.Stop(rv)
+					}
+				}
+			}
 			out.State, out.Reason, out.Stalled, out.Halted = StepFailed, reason, false, true
-			if recErr != nil {
-				out.Reason += "; record: " + recErr.Error()
+			if err != nil {
+				out.Reason += "; record: " + err.Error()
 			}
 			l.emitStep(ref, out.State, out.Reason, out.Session)
 			return l.ended(ref, out)
@@ -808,12 +902,19 @@ func (l *RunLoop) serveQuestions(ctx context.Context) {
 }
 
 func (l *RunLoop) question(ctx context.Context, q Question) {
+	base, _, _ := strings.Cut(q.Step.Kind, "-rv-")
+	if !slices.ContainsFunc(l.Kinds, func(k StepKind) bool { return k.Name == base }) {
+		l.recordWithdrawn(q, "land-stage step")
+		l.Ask.Answer(q.ID, fmt.Sprintf("r-loop: phase-%s/%s cannot ask the watchdog; this question is withdrawn.", q.Step.Phase, q.Step.Kind), "withdrawn", "")
+		return
+	}
 	s := l.askingSession(ctx, q.Step)
 	if s == nil {
 		return
 	}
 	agent := s.asker(q.Step.Kind)
 	admitted := agent != "" && s.live(func() {
+		l.recordQuestion(q)
 		l.track(q, s, agent)
 		if l.openQuestion(s, 1) == 1 {
 			l.stepState(s, StepWaitingInput)
@@ -823,7 +924,6 @@ func (l *RunLoop) question(ctx context.Context, q Question) {
 		l.withdraw(q, "ended")
 		return
 	}
-	l.recordQuestion(q)
 	l.emit(Event{Kind: "question", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"id": q.ID, "text": q.Text}})
 	l.watcher().Route(ctx, q)
 }
@@ -957,6 +1057,9 @@ func (l *RunLoop) withdrawStep(key StepKey, state StepState) {
 }
 
 func (l *RunLoop) withdraw(q Question, state StepState) {
+	if w, ok := l.watcher().(interface{ Withdraw(id string) }); ok {
+		w.Withdraw(q.ID)
+	}
 	l.recordWithdrawn(q, "step "+string(state))
 	l.Ask.Answer(q.ID, fmt.Sprintf("r-loop: phase-%s/%s has ended; this question is withdrawn.", q.Step.Phase, q.Step.Kind), "withdrawn", "")
 }

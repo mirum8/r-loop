@@ -23,15 +23,21 @@ type QuestionRouter struct {
 	Deliver func(id, answer, by, citation string) error
 	Repo    Repo
 
-	mu   sync.Mutex
-	open map[string]bool
+	mu        sync.Mutex
+	open      map[string]bool
+	withdrawn map[string]bool
 }
 
 func (r *QuestionRouter) Route(ctx context.Context, q Question) bool {
+	r.mu.Lock()
+	if r.withdrawn[q.ID] {
+		r.mu.Unlock()
+		return true
+	}
 	if r.Dog == nil || !r.Dog.live() {
+		r.mu.Unlock()
 		return false
 	}
-	r.mu.Lock()
 	if r.open == nil {
 		r.open = map[string]bool{}
 	}
@@ -50,6 +56,16 @@ func (r *QuestionRouter) close(id string) bool {
 	ok := r.open[id]
 	delete(r.open, id)
 	return ok
+}
+
+func (r *QuestionRouter) Withdraw(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.withdrawn == nil {
+		r.withdrawn = map[string]bool{}
+	}
+	delete(r.open, id)
+	r.withdrawn[id] = true
 }
 
 func (r *QuestionRouter) Answer(id, answer, citation string) (bool, string) {

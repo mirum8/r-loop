@@ -25,6 +25,8 @@ func timedOut(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "timed out after")
 }
 
+var errStepEnded = errors.New("step already ended")
+
 type SessionManager struct {
 	Host       SessionHost
 	Repo       Repo
@@ -37,6 +39,7 @@ type SessionManager struct {
 	StallGrace time.Duration
 	ItemGates  bool
 	Label      string
+	mu         sync.Mutex
 }
 
 type StepRef struct {
@@ -237,7 +240,15 @@ func labelPrefix(label string) string {
 
 func (m *SessionManager) start(s *Session, stepDir string) error {
 	row := s.Ref.Kind.Row
-	args, url, err := m.askArgs(s.Ref.Key, row.Provider, row.Model, row.Effort, filepath.Join(stepDir, s.Agent+".mcp.json"))
+	var args ProviderArgs
+	var url string
+	var err error
+	switch s.Ref.Key.Kind {
+	case "gatefix", "gate", "milestone":
+		args, err = m.Resolve(row.Provider, row.Model, row.Effort, "", "")
+	default:
+		args, url, err = m.askArgs(s.Ref.Key, row.Provider, row.Model, row.Effort, filepath.Join(stepDir, s.Agent+".mcp.json"))
+	}
 	if err != nil {
 		return err
 	}
@@ -563,6 +574,10 @@ func (m *SessionManager) Finish(s *Session, out Outcome) Outcome {
 		return out
 	}
 	if err := m.record(key, out.State, out.Reason); err != nil {
+		if errors.Is(err, errStepEnded) {
+			out.State, _ = m.terminal(key)
+			return out
+		}
 		out.State, out.Reason = StepFailed, "record: "+err.Error()
 	}
 	return out
@@ -631,6 +646,11 @@ func (m *SessionManager) record(key StepKey, state StepState, reason string) err
 }
 
 func (m *SessionManager) recordAt(at time.Time, key StepKey, state StepState, reason string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, done := m.terminal(key); done {
+		return errStepEnded
+	}
 	return m.Store.Append(key.Run, Record{Kind: RecordStep, At: at, Step: &key, State: state, Reason: reason})
 }
 

@@ -18,7 +18,18 @@ var names = map[string]bool{
 	"milestone": true, "watchdog": true, "gatefix": true, "gate": true, "intake": true,
 }
 
-const sentinel = `{{define "sentinel"}}
+const sentinel = `{{define "outcome"}}
+## Reporting the outcome
+
+As your last action, write ` + "`" + `{"outcome":"ok","reason":""}` + "`" + ` to ` + "`" + `{{.Sentinel}}` + "`" + `. When the work cannot be done, write ` + "`" + `{"outcome":"failed","reason":"<why>"}` + "`" + ` there instead, naming the cause. The driver reads only that file: never report completion only in the terminal. Never commit — the driver commits the step's work once its review is done.
+{{- if .Addendum}}
+
+## Note from the previous attempt:
+
+{{.Addendum}}
+{{- end}}
+{{end}}
+{{define "sentinel"}}
 ## Reporting the outcome
 
 As your last action, write ` + "`" + `{"outcome":"ok","reason":""}` + "`" + ` to ` + "`" + `{{.Sentinel}}` + "`" + `. When the work cannot be done, write ` + "`" + `{"outcome":"failed","reason":"<why>"}` + "`" + ` there instead, naming the cause. The driver reads only that file: never report completion only in the terminal. Never commit — the driver commits the step's work once its review is done.

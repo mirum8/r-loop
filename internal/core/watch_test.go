@@ -169,7 +169,7 @@ func TestAHaltHeldBetweenStepsIsDeliveredToTheNextStepWhenTheQueueIsFull(t *test
 			t.Errorf("signal %d: %+v", i, sig)
 		}
 	}
-	if sig := receive(t, w); sig.Kind != SignalHalt || sig.Step != next.Key || sig.Reason != "watchdog signal rejected: phase-2/implement is ok" {
+	if sig := receive(t, w); sig.Kind != SignalHalt || sig.Step != (StepKey{Phase: "2", Kind: "implement"}) || sig.Reason != "watchdog signal rejected: phase-2/implement is ok" {
 		t.Errorf("halt %+v", sig)
 	}
 	noSignal(t, w)
@@ -467,7 +467,7 @@ func TestARejectedWatchdogSignalBetweenStepsHaltsTheNextStep(t *testing.T) {
 	defer w.StepEnded(next, Outcome{State: StepOK})
 
 	fwd := receive(t, w)
-	if fwd.Kind != SignalHalt || fwd.Step != next.Key || fwd.Reason != "watchdog signal rejected: phase-2/implement is ok" {
+	if fwd.Kind != SignalHalt || fwd.Step != (StepKey{Phase: "2", Kind: "implement"}) || fwd.Reason != "watchdog signal rejected: phase-2/implement is ok" {
 		t.Errorf("forwarded %+v", fwd)
 	}
 }
@@ -552,4 +552,79 @@ func TestStepNoticesDoNotWaitForAWatchdogAskingTheMaintainer(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("step notices and live() waited for the maintainer to answer the watchdog")
 	}
+}
+
+func TestASignalNamingALandStageStepIsRejectedToTheCaller(t *testing.T) {
+	store := &fakeStore{}
+	w := newWatch(store)
+	ref := implementRef(2, 1)
+	w.StepStarted(ref, &Session{})
+	w.StepEnded(ref, Outcome{State: StepOK})
+	for _, kind := range []SignalKind{SignalWarn, SignalHalt} {
+		ok, reason := w.Handle(Signal{
+			Kind: kind, Source: SourceWatchdog,
+			Step:   StepKey{Run: "run-1", Phase: "2", Kind: "gatefix"},
+			Reason: "wrong turn",
+		})
+		if ok || reason != "phase-2/gatefix is not running" {
+			t.Errorf("%s: accepted %v, reason %q", kind, ok, reason)
+		}
+	}
+}
+
+func TestAHeldHaltIsNotRetargetedToAStepOfAnotherPhase(t *testing.T) {
+	w := newWatch(&fakeStore{})
+	ref := implementRef(2, 1)
+	w.StepStarted(ref, &Session{})
+	w.StepEnded(ref, Outcome{State: StepOK})
+	named := StepKey{Phase: "2", Kind: "gatefix"}
+	if _, err := w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: named, Reason: "wrong turn"}); err != nil {
+		t.Fatal(err)
+	}
+	noSignal(t, w)
+	next := StepRef{Key: StepKey{Run: "run-1", Phase: "3", Kind: "plan", Attempt: 1}}
+	w.StepStarted(next, &Session{})
+	defer w.StepEnded(next, Outcome{State: StepOK})
+	if got := receive(t, w); got.Step != named || got.Kind != SignalHalt {
+		t.Errorf("halt %+v", got)
+	}
+}
+
+func TestAHeldHaltIsDeliveredToTheNextStepOfItsPhase(t *testing.T) {
+	w := newWatch(&fakeStore{})
+	if _, err := w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: StepKey{Phase: "3", Kind: "plan"}, Reason: "wrong turn"}); err != nil {
+		t.Fatal(err)
+	}
+	noSignal(t, w)
+	next := StepRef{Key: StepKey{Run: "run-1", Phase: "3", Kind: "implement", Attempt: 1}}
+	w.StepStarted(next, &Session{})
+	defer w.StepEnded(next, Outcome{State: StepOK})
+	if got := receive(t, w); got.Step != next.Key || got.Kind != SignalHalt {
+		t.Errorf("halt %+v", got)
+	}
+}
+
+func TestDrainReturnsHeldAndQueuedSignalsOnce(t *testing.T) {
+	w := newWatch(&fakeStore{})
+	ref := implementRef(2, 1)
+	w.StepStarted(ref, &Session{})
+	if _, err := w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: ref.Key, Reason: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	w.StepEnded(ref, Outcome{State: StepOK})
+	named := StepKey{Run: "run-1", Phase: "2", Kind: "gatefix"}
+	if _, err := w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: named, Reason: "second"}); err != nil {
+		t.Fatal(err)
+	}
+	got := w.Drain()
+	if len(got) != 2 || got[0].Kind != SignalHalt || got[0].Step != ref.Key || got[1].Kind != SignalHalt || got[1].Step != named {
+		t.Fatalf("drained %+v", got)
+	}
+	if again := w.Drain(); len(again) != 0 {
+		t.Errorf("second drain %+v", again)
+	}
+	next := StepRef{Key: StepKey{Run: "run-1", Phase: "3", Kind: "plan", Attempt: 1}}
+	w.StepStarted(next, &Session{})
+	defer w.StepEnded(next, Outcome{State: StepOK})
+	noSignal(t, w)
 }
