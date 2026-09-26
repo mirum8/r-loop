@@ -250,13 +250,14 @@ The `ui` reviewer runs the project's `/test-app` skill (claude, opus, high). It 
 | `provider`, `model`, `effort` | claude, opus, high | The watchdog agent. It has no fallback: if it does not start, the run does not start. |
 | `allow` | `[]` | Remedy classes the watchdog may use without asking you. |
 | `maxRestarts` | `2` | Most restarts for one step. |
-| `remedyWindow` | `10m` | How long a failed step waits for a remedy before its phase is blocked. |
+| `blockerTimeout` | `10m` | How long a blocker (a failed step or reviewer, a land error, a failed gate fix or milestone report) waits for the watchdog before the phase is blocked. The clock stops while the watchdog is asking you. The old name `remedyWindow` still works. |
 | `checkTimeout` | `10m` | Time limit for the watchdog's check of a phase before it starts. |
 | `unblockTimeout` | `2h` | Time limit for the `## Resolve first` walk. Entries still open are deferred. |
 | `triageTimeout` | `2h` | Time limit for the triage: the watchdog's check of the run list and your answer to the table. On timeout the run stops (exit 4) and `r-loop resume` triages again. |
 | `stallGrace` | `2m` | Quiet time before a step counts as stalled and gets one nudge. If it is still quiet after one more `stallGrace`, it fails. |
 | `overtimeFactor` | `2` | Warn when a step runs longer than this many times the longest landed step of the same kind. |
 | `diffFactor` | `3` | Warn when a diff is bigger than this many times the largest landed phase. |
+| `dialogs` | `[]` | Rules for answering a step's in-pane dialog (an approval or a choice menu), one sentence each. The watchdog answers a dialog a rule covers, citing the rule. Any other dialog it declines or asks you about; with `--unattended` it declines. |
 
 Remedy classes: `deps`, `ports`, `containers`, `locks`, `restart`, `retry`, `provider`.
 
@@ -299,9 +300,12 @@ new one, put a block under `providers:` in the project config, or a file at
 | `modelFlag` | Flag template with `{model}`, for example `--model {model}`. |
 | `effortFlag` | Flag template with `{effort}`. May be empty. |
 | `askFlag` | Flag that connects the agent to r-loop's MCP server. Uses `{url}` or `{mcpConfig}`. |
+| `dirFlag` | Flag that lets the agent write its phase's run folder, `.r-loop/runs/<run>/phase-<N>/`, where it writes its sentinel. Uses `{dir}`. Given only to sessions working in a phase worktree. Built in: `--add-dir {dir}` (claude), `-c sandbox_workspace_write.writable_roots=["{dir}"]` (codex). May be empty. |
 | `doneSignal` | How the agent reports that it is done. Only `sentinel`. |
 | `ask` | `mcp` (the agent can ask the watchdog) or `none`. Step agents need `mcp`. |
-| `review` | The agent's own review command, for example `/code-review`. |
+| `review` | The agent's own review command, for example `/code-review`. Plan reviewers never run it: they review the plan by prompt alone. |
+| `reviewStart` | Screen text a review begins with, for a `review` that starts with `/`. r-loop then types `review` into the reviewer's pane itself and waits for this text, then for `reviewDone`, before it sends the prompt. Built in: `>> Code review started` (codex). Set both or neither. |
+| `reviewDone` | Screen text a review ends with. Built in: `<< Code review finished` (codex). Set both or neither. |
 
 ### Example
 

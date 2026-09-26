@@ -622,7 +622,7 @@ func TestASignalForAMalformedStepIsRejectedAndHaltsTheRun(t *testing.T) {
 	}
 }
 
-func TestAnAcceptedHaltForTheHeldStepClosesItsRemedyWindow(t *testing.T) {
+func TestAnAcceptedHaltForTheHeldStepClosesItsBlockerTimeout(t *testing.T) {
 	store := &fakeStore{}
 	w, key := failedImplement(t, store)
 	w.Poll = time.Hour
@@ -641,7 +641,7 @@ func TestAnAcceptedHaltForTheHeldStepClosesItsRemedyWindow(t *testing.T) {
 	}
 }
 
-func TestARejectedWatchdogSignalDuringTheRemedyWindowHaltsTheHeldStep(t *testing.T) {
+func TestARejectedWatchdogSignalDuringTheBlockerTimeoutHaltsTheHeldStep(t *testing.T) {
 	store := &fakeStore{}
 	w, key := failedImplement(t, store)
 	rem := newRemedies(w, store, "restart")

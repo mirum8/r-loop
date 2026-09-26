@@ -609,6 +609,9 @@ func (w *Wiring) withdrawOpenQuestions(run core.RunState) error {
 			continue
 		}
 		q.Answer, q.AnsweredBy, q.AnsweredAt = "step "+string(core.StepFailed), "withdrawn", time.Now()
+		if q.Kind == core.QuestionBlocker {
+			q.Answer = "run stopped"
+		}
 		if err := w.Store.Append(run.ID, core.Record{Kind: core.RecordQuestion, At: q.AnsweredAt, Question: &q}); err != nil {
 			return exit(2, "%v", err)
 		}

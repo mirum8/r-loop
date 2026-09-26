@@ -296,6 +296,7 @@ func TestAGoneWatchdogsHaltDoesNotBlockAPhaseCheckBehindAFullSignalQueue(t *test
 func TestWatchdogStartSplitsThenStartsThenPromptsWithoutWait(t *testing.T) {
 	host := &fakeSessionHost{}
 	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude", Args: []string{"--model", "sonnet", "--effort", "low", "--mcp-config", "/run/wd.json"}})
+	dog.Dialogs = []string{"allow go test"}
 
 	if err := dog.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -314,9 +315,21 @@ func TestWatchdogStartSplitsThenStartsThenPromptsWithoutWait(t *testing.T) {
 		t.Errorf("splits = %v, want [nil]", host.Splits)
 	}
 	p := dog.Prompts.(*varsCapture)
-	wantVars := map[string]any{"TodoPath": "docs/x/todo.md", "SpecDir": "docs/x", "RunDir": "/repo/.r-loop/runs/run-1", "Allow": []string{"deps", "ports"}, "Unattended": false}
+	wantVars := map[string]any{"TodoPath": "docs/x/todo.md", "SpecDir": "docs/x", "RunDir": "/repo/.r-loop/runs/run-1", "Allow": []string{"deps", "ports"}, "Dialogs": []string{"allow go test"}, "Unattended": false}
 	if p.name != "watchdog" || !reflect.DeepEqual(p.vars, wantVars) {
 		t.Errorf("rendered %s %v", p.name, p.vars)
+	}
+}
+
+func TestWatchdogWithNoDialogRulesStillPassesDialogs(t *testing.T) {
+	dog := newWatchdog(&fakeSessionHost{}, &fakeStore{}, ProviderArgs{Kind: "claude"})
+
+	if err := dog.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if rules, ok := dog.Prompts.(*varsCapture).vars["Dialogs"]; !ok || len(rules.([]string)) != 0 {
+		t.Errorf("Dialogs = %v, present %v", rules, ok)
 	}
 }
 

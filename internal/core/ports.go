@@ -45,6 +45,9 @@ type SessionHost interface {
 	State(agent string) (AgentState, error)
 	AgentPane(agent string) (string, error)
 	Read(agent string, lines int) (string, error)
+	Screen(agent string) (string, error)
+	SendKeys(agent string, keys ...string) error
+	SendText(agent, text string) error
 	Interrupt(agent string) error
 	Close(workspaceID string) error
 	Tag(workspaceID string, tokens map[string]string) error

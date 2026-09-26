@@ -63,6 +63,7 @@ type rig struct {
 	sm      *SessionManager
 	runDir  string
 	resolve []string
+	dirs    []string
 }
 
 func newRig(t *testing.T) *rig {
@@ -81,8 +82,9 @@ func newRig(t *testing.T) *rig {
 		Repo:    r.repo,
 		Prompts: r.prompts,
 		Store:   r.store,
-		Resolve: func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
+		Resolve: func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
 			r.resolve = []string{provider, model, effort, askURL, mcpConfigPath}
+			r.dirs = append(r.dirs, dir)
 			return ProviderArgs{Kind: "codex", Args: []string{"-c", "model=" + model}, Ask: true}, nil
 		},
 		Now:        clock.Now,
@@ -464,8 +466,8 @@ func (f promptsFunc) Render(name string, vars map[string]any) (string, string, e
 	return f(name, vars)
 }
 
-func claudeLikeResolve(r *rig) func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
-	return func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
+func claudeLikeResolve(r *rig) func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
+	return func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
 		r.resolve = []string{provider, model, effort, askURL, mcpConfigPath}
 		args := []string{"--model", model}
 		if mcpConfigPath != "" {
@@ -560,6 +562,56 @@ func TestLandStageSessionsHaveNoAskMCPConfig(t *testing.T) {
 	}
 }
 
+func TestAWorktreeStepResolvesWithItsStepDir(t *testing.T) {
+	r := newRig(t)
+	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
+
+	r.spawn(t, 1)
+
+	dir := filepath.Join(r.runDir, "phase-3")
+	if !reflect.DeepEqual(r.dirs, []string{dir, dir}) {
+		t.Fatalf("dirs = %q", r.dirs)
+	}
+}
+
+func TestAPrimaryStepResolvesWithoutADir(t *testing.T) {
+	for _, kind := range []string{"gate", "milestone"} {
+		t.Run(kind, func(t *testing.T) {
+			r := newRig(t)
+			r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
+			ref := r.ref(1)
+			ref.InPrimary = true
+			ref.Key.Kind = kind
+			ref.Kind.Name = kind
+			ref.Kind.Prompt = kind
+
+			if _, err := r.sm.Spawn(context.Background(), ref); err != nil {
+				t.Fatal(err)
+			}
+
+			if !reflect.DeepEqual(r.dirs, []string{""}) {
+				t.Fatalf("dirs = %q", r.dirs)
+			}
+		})
+	}
+}
+
+func TestTheGateFixResolvesWithItsStepDir(t *testing.T) {
+	r := newRig(t)
+	ref := r.ref(1)
+	ref.Key.Kind = "gatefix"
+	ref.Kind.Name = "gatefix"
+	ref.Kind.Prompt = "gatefix"
+
+	if _, err := r.sm.Spawn(context.Background(), ref); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{filepath.Join(r.runDir, "phase-3")}; !reflect.DeepEqual(r.dirs, want) {
+		t.Fatalf("dirs = %q, want %q", r.dirs, want)
+	}
+}
+
 func TestLandStageStallNudgeDoesNotOfferAskWatchdog(t *testing.T) {
 	for _, kind := range []string{"gatefix", "gate", "milestone", "plan", "implement"} {
 		t.Run(kind, func(t *testing.T) {
@@ -615,7 +667,7 @@ func TestAProviderTakingTheURLDirectlyGetsNoMCPConfigFile(t *testing.T) {
 func TestAnAskNoneProviderGetsNoAskFlagAndRecordsAskNoneOnce(t *testing.T) {
 	r := newRig(t)
 	r.sm.Ask = &fakeAskChannel{callLog: callLog{Shared: r.shared}, BaseURL: "http://127.0.0.1:7000/mcp/tok"}
-	r.sm.Resolve = func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
+	r.sm.Resolve = func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
 		r.resolve = []string{provider, model, effort, askURL, mcpConfigPath}
 		return ProviderArgs{Kind: "codex", Args: []string{"-c", "model=" + model}}, nil
 	}
@@ -1171,5 +1223,91 @@ func TestALabelledRetryKeepsTheAttemptSuffix(t *testing.T) {
 
 	if s.Agent != "rloop-test-2kuxv-p3-implement-a2" || r.host.Opened[0].Label != "◆ test p3 implement·a2" {
 		t.Fatalf("agent = %q, label = %q", s.Agent, r.host.Opened[0].Label)
+	}
+}
+
+type fakeDialogs struct {
+	admit              bool
+	blocked, unblocked int
+}
+
+func (d *fakeDialogs) Blocked(*Session) bool {
+	d.blocked++
+	return d.admit
+}
+
+func (d *fakeDialogs) Unblocked(*Session) { d.unblocked++ }
+
+func TestAnAdmittedDialogSuspendsTheStallClockAndTheBackstop(t *testing.T) {
+	r := newRig(t)
+	ref := r.ref(1)
+	ref.Kind.Row.Timeout = 5 * time.Minute
+	s, _ := r.sm.Spawn(context.Background(), ref)
+	dialogs := &fakeDialogs{admit: true}
+	r.sm.Dialogs = dialogs
+	r.repo.TreeChanges = []string{"a.go"}
+	r.host.script = func(n int) AgentState {
+		if n == 30 {
+			r.writeSentinel(t, s, "ok", "done")
+		}
+		return AgentBlocked
+	}
+	obs := &recObserver{}
+
+	out := r.sm.Wait(context.Background(), s, obs)
+
+	if out.State != StepOK || obs.stalled != 0 || len(r.events("nudge")) != 0 {
+		t.Fatalf("outcome = %+v, observer = %+v", out, obs)
+	}
+	if dialogs.blocked != 30 || dialogs.unblocked != 0 {
+		t.Fatalf("dialogs = %+v", dialogs)
+	}
+}
+
+func TestABlockedAgentWhoseDialogIsNotAdmittedStallsAsBefore(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.sm.Dialogs = &fakeDialogs{}
+	r.host.script = func(n int) AgentState { return AgentBlocked }
+	obs := &recObserver{}
+
+	out := r.sm.Wait(context.Background(), s, obs)
+
+	if out.State != StepFailed || out.Reason != "stalled: no response to nudge" || !out.Stalled {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if obs.stalled != 1 || len(r.events("nudge")) != 1 {
+		t.Fatalf("observer = %+v, nudges = %d", obs, len(r.events("nudge")))
+	}
+}
+
+func TestAnAgentThatLeavesBlockedTellsTheDialogs(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	dialogs := &fakeDialogs{admit: true}
+	r.sm.Dialogs = dialogs
+	r.repo.TreeChanges = []string{"a.go"}
+	r.host.script = func(n int) AgentState {
+		switch n {
+		case 1, 2:
+			return AgentBlocked
+		case 3:
+			return AgentIdle
+		case 4:
+			return AgentDone
+		case 5:
+			return AgentUnknown
+		}
+		r.writeSentinel(t, s, "ok", "done")
+		return AgentWorking
+	}
+
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if dialogs.blocked != 2 || dialogs.unblocked != 3 {
+		t.Fatalf("dialogs = %+v", dialogs)
 	}
 }

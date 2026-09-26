@@ -639,7 +639,8 @@ func TestAnAdmittedQuestionIsRecordedOpenOnceBeforeItIsRouted(t *testing.T) {
 func routerOpen(r *QuestionRouter, id string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.open[id]
+	_, ok := r.open[id]
+	return ok
 }
 
 func mustQuestions(t *testing.T, s *loopStore) []Question {

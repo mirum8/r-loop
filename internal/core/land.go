@@ -127,15 +127,34 @@ type LandGate struct {
 	FixKind         StepKind
 	Runner          StepRunner
 	Suite           Suite
+	Raise           func(context.Context, Blocker) (Resolution, bool)
+	Watcher         Watcher
 }
 
 func (g *LandGate) Land(ctx context.Context, phase Phase) (Landing, error) {
 	landing, command, output, err := g.attempt(ctx, phase)
+	kind := g.FixKind
 	for round := 1; errors.Is(err, ErrGate) && round <= g.FixRounds && g.Runner != nil; round++ {
 		g.emit(Event{Kind: "gate-fix", Phase: phase.ID, Step: "land", Fields: map[string]string{"phase": phase.ID, "round": strconv.Itoa(round)}})
-		out := g.fix(ctx, phase, command, output)
-		if out.State != StepOK {
-			return Landing{}, fmt.Errorf("%w: gate-fix round %d ended %s: %s", ErrGate, round, out.State, out.Reason)
+		out := g.fix(ctx, phase, kind, command, output, "")
+		for out.State != StepOK {
+			ferr := fmt.Errorf("%w: gate-fix round %d ended %s: %s", ErrGate, round, out.State, out.Reason)
+			var res Resolution
+			ok := false
+			if g.Raise != nil && recordFailed(g.Store) == nil {
+				res, ok = g.Raise(ctx, Blocker{Source: sourceGatefix, Phase: phase.ID, Step: kind.Name, Reason: ferr.Error(), Actions: stepActions})
+			}
+			if !ok {
+				return Landing{}, ferr
+			}
+			switch res.Action {
+			case actionRetry:
+			case actionSwitch:
+				kind.Row.Provider, kind.Row.Model, kind.Row.Effort = res.Provider, res.Model, res.Effort
+			default:
+				return Landing{}, &resolvedError{res: res, err: ferr}
+			}
+			out = g.fix(ctx, phase, kind, command, output, res.Addendum)
 		}
 		landing, command, output, err = g.attempt(ctx, phase)
 	}
@@ -164,7 +183,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 	if itemGate {
 		var err error
 		if suite, err = g.Suite.Command(ctx, phase); err != nil {
-			return Landing{}, "", "", err
+			return Landing{}, "", "", &probeError{err}
 		}
 		if err := g.guard(); err != nil {
 			return Landing{}, "", "", err
@@ -451,7 +470,7 @@ func repoRel(root, p string) string {
 	return filepath.ToSlash(rel)
 }
 
-func (g *LandGate) fix(ctx context.Context, phase Phase, command, output string) (out Outcome) {
+func (g *LandGate) fix(ctx context.Context, phase Phase, kind StepKind, command, output, addendum string) (out Outcome) {
 	n := phase.ID
 	base, err := g.Repo.HeadBranch()
 	if err != nil {
@@ -461,10 +480,10 @@ func (g *LandGate) fix(ctx context.Context, phase Phase, command, output string)
 	if err != nil {
 		return Outcome{State: StepFailed, Reason: "load run: " + err.Error()}
 	}
-	prior, _ := latestAttempt(st, g.RunID, n, g.FixKind.Name)
+	prior, _ := latestAttempt(st, g.RunID, n, kind.Name)
 	ref := StepRef{
-		Key:      StepKey{Run: g.RunID, Phase: n, Kind: g.FixKind.Name, Attempt: prior + 1},
-		Kind:     g.FixKind,
+		Key:      StepKey{Run: g.RunID, Phase: n, Kind: kind.Name, Attempt: prior + 1},
+		Kind:     kind,
 		Phase:    phase,
 		Worktree: fmt.Sprintf(".r-loop/wt/phase-%s", n),
 		Branch:   fmt.Sprintf("r-loop/phase-%s", n),
@@ -474,14 +493,20 @@ func (g *LandGate) fix(ctx context.Context, phase Phase, command, output string)
 	ref.Vars = StepVars(ref, Plan{}, g.TodoPath, ref.RunDir)
 	ref.Vars["GateCommand"] = command
 	ref.Vars["GateOutput"] = output
+	ref.Vars["Addendum"] = addendum
 	key := ref.Key
 	if err := g.Store.Append(g.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepQueued}); err != nil {
 		return Outcome{State: StepFailed, Reason: "record: " + err.Error()}
 	}
 	rec := stepRecorder{g.Store, g.Face}
+	var obs Observer = rec
+	if g.Watcher != nil {
+		obs = watchedRecorder{stepRecorder: rec, w: g.Watcher, ref: ref}
+		defer func() { g.Watcher.StepEnded(ref, out) }()
+	}
 	defer func() {
 		if r := recover(); r != nil {
-			ev, err := panicked(n, g.FixKind.Name, "gate-fix", r)
+			ev, err := panicked(n, kind.Name, "gate-fix", r)
 			quietly(func() { g.emit(ev) })
 			var st RunState
 			var loadErr error
@@ -510,9 +535,20 @@ func (g *LandGate) fix(ctx context.Context, phase Phase, command, output string)
 			quietly(func() { rec.finished(ref, out) })
 		}
 	}()
-	out = g.Runner.Run(ctx, ref, rec)
+	out = g.Runner.Run(ctx, ref, obs)
 	rec.finished(ref, out)
 	return out
+}
+
+type watchedRecorder struct {
+	stepRecorder
+	w   Watcher
+	ref StepRef
+}
+
+func (r watchedRecorder) Started(s *Session) {
+	r.stepRecorder.Started(s)
+	r.w.StepStarted(r.ref, s)
 }
 
 func (g *LandGate) emit(ev Event) {

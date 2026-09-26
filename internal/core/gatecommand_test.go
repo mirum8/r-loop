@@ -103,7 +103,7 @@ func TestGateCommandFromTheRealTodoLinesPassesOnACorrectTree(t *testing.T) {
 	for i, key := range keys {
 		env = append(env, key+"="+values[i])
 	}
-	for _, n := range []int{518, 532, 548, 561, 590} {
+	for _, n := range []int{535, 549, 565, 578, 607} {
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
 			line := lines[n-1]
 			if !strings.HasPrefix(line, "**Done when:** ") {

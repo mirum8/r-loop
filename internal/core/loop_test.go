@@ -165,7 +165,7 @@ func newLoopRig(t *testing.T) *loopRig {
 	clock := &stepClock{t: time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC), step: time.Minute}
 	sm := &SessionManager{
 		Host: r.host, Repo: r.repo, Prompts: pathPrompts{}, Store: r.store,
-		Resolve: func(provider, model, effort, askURL, mcp string) (ProviderArgs, error) {
+		Resolve: func(provider, model, effort, askURL, mcp, dir string) (ProviderArgs, error) {
 			return ProviderArgs{Kind: provider}, nil
 		},
 		Now: clock.Now, Poll: time.Millisecond, StallGrace: 2 * time.Minute,
@@ -854,7 +854,7 @@ func TestAnInterruptAsTheLastPhaseLandsDoesNotFinish(t *testing.T) {
 
 func TestAnInterruptAsTheLastStepEndsHaltsInsteadOfBlocking(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = 0
+	r.loop.BlockerTimeout = 0
 	r.host.behaviour["rloop-p1-implement"] = "fail"
 	ctx, cancel := context.WithCancelCause(context.Background())
 	r.watcher.ended = func(ref StepRef, out Outcome) {
@@ -1547,7 +1547,7 @@ func TestStepVarsFillsEveryTemplateVariable(t *testing.T) {
 		"PlanPath": ".task-plans/phase-3-runloop-phases-steps-halts-and-the-re.md",
 		"Branch":   "r-loop/phase-3", "Base": "main", "Worktree": ".r-loop/wt/phase-3", "Sentinel": "",
 		"RunDir": "/runs/run-1", "AskURL": "", "PhaseWarnings": "", "ItemGate": false, "ReviewedKind": "", "Round": 0, "Rounds": 0,
-		"ReviewCommand": "", "FindingsPath": "", "ArtifactsDir": "", "RequiredPath": "", "FindingsFiles": []FindingsFile(nil), "PriorFindings": "", "PriorVerdicts": "",
+		"ReviewCommand": "", "ReviewRan": false, "FindingsPath": "", "ArtifactsDir": "", "RequiredPath": "", "FindingsFiles": []FindingsFile(nil), "PriorFindings": "", "PriorVerdicts": "",
 		"RoundTree": "", "VerdictPath": "", "ReportPath": "", "MilestoneName": "Core", "MilestonePhases": "1, 2, 3, 4",
 		"Addendum": "", "GroupItems": "",
 	}

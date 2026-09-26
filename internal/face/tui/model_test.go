@@ -323,6 +323,77 @@ func TestAnOpenQuestionPointsAtTheWatchdogUntilItIsAnswered(t *testing.T) {
 	}
 }
 
+func TestADialogShowsAsWaitingOnTheWatchdogUntilItIsSettled(t *testing.T) {
+	events := recorded()
+	m := newModel(events[:len(events)-2])
+	m = m.Apply(core.Event{At: at(40), Kind: "dialog", Phase: "2", Step: "implement", Fields: map[string]string{"id": "d1", "agent": "rloop-p2-implement", "text": "Allow write?\n1. Yes\n2. No"}})
+	m = m.Apply(step(40, 2, "implement", "waiting-input", "codex", "gpt-5", "medium", "ws-4"))
+	m.Now = at(43)
+
+	view := m.View()
+
+	if !strings.Contains(view, "waiting    watchdog · d1 · 3m0s") || strings.Contains(view, "Allow write?") {
+		t.Fatalf("view does not show the dialog as waiting:\n%s", view)
+	}
+	if m.DogWaiting {
+		t.Fatal("a dialog marks the watchdog as waiting for the maintainer")
+	}
+	if last := m.Feed[len(m.Feed)-1]; !strings.HasSuffix(last.Text, "phase 2 implement: dialog d1") || last.Tone != toneDim {
+		t.Fatalf("feed %+v", last)
+	}
+
+	m = m.Apply(core.Event{At: at(44), Kind: "dialog-answered", Phase: "2", Step: "implement", Fields: map[string]string{"id": "d1", "keys": "1 enter", "by": "watchdog", "rule": "allow writes"}})
+
+	if strings.Contains(m.View(), "waiting    ") {
+		t.Fatalf("answered dialog still shown:\n%s", m.View())
+	}
+	if last := m.Feed[len(m.Feed)-1]; !strings.HasSuffix(last.Text, "d1 answered: 1 enter") || last.Tone != toneDim {
+		t.Fatalf("feed %+v", last)
+	}
+
+	m = m.Apply(core.Event{At: at(45), Kind: "dialog", Phase: "2", Step: "implement-rv-claude", Fields: map[string]string{"id": "d2", "agent": "rloop-p2-implement-rv-claude", "text": "Run tests?"}})
+	if !strings.Contains(m.View(), "watchdog · d2 · ") {
+		t.Fatalf("a reviewer's dialog does not show on its step:\n%s", m.View())
+	}
+	m = m.Apply(core.Event{At: at(46), Kind: "dialog-closed", Phase: "2", Step: "implement-rv-claude", Fields: map[string]string{"id": "d2", "reason": "dialog closed in the pane"}})
+
+	if strings.Contains(m.View(), "waiting    ") {
+		t.Fatalf("closed dialog still shown:\n%s", m.View())
+	}
+	if last := m.Feed[len(m.Feed)-1]; !strings.HasSuffix(last.Text, "d2 closed: dialog closed in the pane") || last.Tone != toneDim {
+		t.Fatalf("feed %+v", last)
+	}
+}
+
+func TestABlockerShowsOnItsPhaseRowUntilResolved(t *testing.T) {
+	events := recorded()
+	m := newModel(events[:len(events)-2])
+	m = m.Apply(core.Event{At: at(40), Kind: "blocked-on", Phase: "2", Step: "implement-rv-codex", Fields: map[string]string{"id": "b1", "source": "reviewer", "phase": "2", "step": "implement-rv-codex", "reason": "review in pane: review never started"}})
+	m = m.Apply(step(40, 2, "implement", "waiting-input", "codex", "gpt-5", "medium", "ws-4"))
+	m.Now = at(43)
+
+	view := m.View()
+
+	if !strings.Contains(view, "waiting    watchdog · b1 · 3m0s") {
+		t.Fatalf("view does not show the blocker as waiting:\n%s", view)
+	}
+	if m.DogWaiting {
+		t.Fatal("a blocker marks the watchdog as waiting for the maintainer")
+	}
+	if last := m.Feed[len(m.Feed)-1]; !strings.HasSuffix(last.Text, "blocker b1 (reviewer): review in pane: review never started") || last.Tone != toneDim {
+		t.Fatalf("feed %+v", last)
+	}
+
+	m = m.Apply(core.Event{At: at(44), Kind: "blocker-resolved", Phase: "2", Step: "implement-rv-codex", Fields: map[string]string{"id": "b1", "action": "retry", "by": "watchdog"}})
+
+	if strings.Contains(m.View(), "watchdog · b1") {
+		t.Fatalf("resolved blocker still shown:\n%s", m.View())
+	}
+	if last := m.Feed[len(m.Feed)-1]; !strings.HasSuffix(last.Text, "b1 → retry (watchdog)") || last.Tone != toneDim {
+		t.Fatalf("feed %+v", last)
+	}
+}
+
 func TestAGoneWatchdogIsMarkedUntilResume(t *testing.T) {
 	history := append(recorded(), core.Event{At: at(50), Kind: "watchdog-unreachable", Fields: map[string]string{"reason": "pane closed"}})
 	m := newModel(history)

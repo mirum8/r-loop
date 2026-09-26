@@ -34,13 +34,19 @@ type SessionManager struct {
 	Prompts    Prompts
 	Store      Store
 	Ask        AskChannel
-	Resolve    func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error)
+	Resolve    func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error)
 	Now        func() time.Time
 	Poll       time.Duration
 	StallGrace time.Duration
 	ItemGates  bool
 	Label      string
+	Dialogs    Dialogs
 	mu         sync.Mutex
+}
+
+type Dialogs interface {
+	Blocked(s *Session) bool
+	Unblocked(s *Session)
 }
 
 type StepRef struct {
@@ -130,6 +136,7 @@ type Outcome struct {
 	Halted  bool
 	Warning string
 	active  time.Duration
+	blocked bool
 }
 
 func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, error) {
@@ -247,11 +254,15 @@ func (m *SessionManager) start(s *Session, stepDir string) error {
 	var args ProviderArgs
 	var url string
 	var err error
+	dir := stepDir
+	if s.Ref.InPrimary {
+		dir = ""
+	}
 	switch s.Ref.Key.Kind {
 	case "gatefix", "gate", "milestone":
-		args, err = m.Resolve(row.Provider, row.Model, row.Effort, "", "")
+		args, err = m.Resolve(row.Provider, row.Model, row.Effort, "", "", dir)
 	default:
-		args, url, err = m.askArgs(s.Ref.Key, row.Provider, row.Model, row.Effort, filepath.Join(stepDir, s.Agent+".mcp.json"))
+		args, url, err = m.askArgs(s.Ref.Key, row.Provider, row.Model, row.Effort, filepath.Join(stepDir, s.Agent+".mcp.json"), dir)
 	}
 	if err != nil {
 		return err
@@ -383,6 +394,17 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 		}
 		return m.fail(s, "agent gone"), true
 	}
+	if m.Dialogs != nil {
+		switch state {
+		case AgentBlocked:
+			if m.Dialogs.Blocked(s) {
+				w.quiet, w.stalled = 0, false
+				return Outcome{}, false
+			}
+		case AgentWorking, AgentIdle, AgentDone:
+			m.Dialogs.Unblocked(s)
+		}
+	}
 	if s.OpenQuestion.Load() || s.Reviewing.Load() || (s.owner != nil && s.owner.OpenQuestion.Load()) {
 		return Outcome{}, false
 	}
@@ -435,8 +457,8 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 	return Outcome{}, false
 }
 
-func (m *SessionManager) askArgs(key StepKey, provider, model, effort, mcpPath string) (ProviderArgs, string, error) {
-	args, err := m.Resolve(provider, model, effort, "", "")
+func (m *SessionManager) askArgs(key StepKey, provider, model, effort, mcpPath, dir string) (ProviderArgs, string, error) {
+	args, err := m.Resolve(provider, model, effort, "", "", dir)
 	if err != nil {
 		return args, "", err
 	}
@@ -448,7 +470,7 @@ func (m *SessionManager) askArgs(key StepKey, provider, model, effort, mcpPath s
 		return args, "", nil
 	}
 	url := m.Ask.StepURL(key)
-	if args, err = m.Resolve(provider, model, effort, url, mcpPath); err != nil {
+	if args, err = m.Resolve(provider, model, effort, url, mcpPath, dir); err != nil {
 		return args, "", err
 	}
 	if slices.ContainsFunc(args.Args, func(a string) bool { return strings.Contains(a, mcpPath) }) {

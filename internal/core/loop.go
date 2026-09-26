@@ -81,12 +81,13 @@ type RunLoop struct {
 	Runners  map[string]StepRunner
 	RunID    string
 
-	Watcher      Watcher
-	Ask          AskChannel
-	RemedyWindow time.Duration
-	MaxRestarts  int
+	Watcher        Watcher
+	Ask            AskChannel
+	BlockerTimeout time.Duration
+	MaxRestarts    int
 
 	mu          sync.Mutex
+	signalsMu   sync.Mutex
 	cancel      context.CancelCauseFunc
 	runDir      string
 	live        *Session
@@ -95,11 +96,16 @@ type RunLoop struct {
 	restarts    map[string]int
 	open        map[*Session]int
 	asked       map[string]openAsk
+	askCtx      context.Context
+	screens     map[string]string
+	dialogSeq   int
+	blockerSeq  int
 	warnings    map[string]string
 	halted      *Signal
 	haltLanded  bool
 	nextHalt    *Signal
 	stopReason  string
+	stopped     runStop
 	serving     bool
 	tagWarn     sync.Once
 	questions   sync.WaitGroup
@@ -117,6 +123,8 @@ type openAsk struct {
 	s        *Session
 	agent    string
 	answered bool
+	b        Blocker
+	done     chan Resolution
 }
 
 func (l *RunLoop) watcher() Watcher {
@@ -183,7 +191,7 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 	first, firstPhase, firstStep, firstReason := 0, "", "", ""
 	for _, ph := range list {
 		l.drainSignals()
-		if l.halted != nil && (l.halted.Step.Phase == "" || l.haltLanded) {
+		if l.halted != nil && (l.halted.Step.Phase == "" || l.haltLanded) || l.stopping().reason != "" {
 			break
 		}
 		if !l.pending[ph.ID] {
@@ -236,10 +244,12 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 		l.haltEnded(*l.nextHalt)
 		l.nextHalt = nil
 	}
-	if h := l.halted; h != nil && first != 5 {
+	if stop := l.stopping(); stop.reason != "" {
+		first, firstPhase, firstStep, firstReason = 5, stop.phase, stop.step, stop.reason
+	} else if h := l.halted; h != nil && first != 5 {
 		first, firstPhase, firstStep, firstReason = 5, h.Step.Phase, h.Step.Kind, "watchdog: "+h.Reason
 	}
-	if len(l.blocked) == 0 && l.halted == nil {
+	if len(l.blocked) == 0 && l.halted == nil && first == 0 {
 		l.setRun(RunFinished, "")
 		if err := recordFailed(l.Store); err != nil {
 			return l.recordHalt(err, firstPhase, firstStep)
@@ -262,6 +272,7 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 
 func (l *RunLoop) recordHalt(err error, phase, step string) int {
 	reason := "record: " + err.Error()
+	l.PostHalting(reason)
 	l.Face.Emit(Event{At: time.Now(), Kind: "error", Phase: phase, Step: step, Fields: map[string]string{"reason": reason}})
 	l.setRun(RunHalted, reason)
 	l.closeReport()
@@ -393,60 +404,124 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	if err := recordFailed(l.Store); err != nil {
 		return "land", Outcome{State: StepFailed, Reason: "record: " + err.Error(), Session: last}, false
 	}
-	var landing Landing
-	var err error
-	guardedStopped, perr := l.guarded(ctx, n, "land", func(child context.Context) { landing, err = lander.Land(child, ph) })
-	if perr == nil && errors.Is(err, errPanic) {
-		perr = err
-	}
-	if perr != nil {
-		l.halt(perr)
-		l.stop(ctx, n, "land")
-		return "land", Outcome{}, true
-	}
-	if guardedStopped && err != nil {
-		l.stop(ctx, n, "land")
+	landing, landStopped, err := l.land(ctx, lander, ph)
+	if landStopped {
 		return "land", Outcome{}, true
 	}
 	for err != nil {
 		var failed *FailedStep
-		if !errors.As(err, &failed) {
-			break
-		}
-		out := failed.Outcome
-		if _, aborted := l.ended(failed.Ref, out); aborted {
-			return "land", out, true
-		}
-		_, ok, aborted := l.awaitRestart(ctx, failed.Ref, failed.Ref.Kind, &out)
-		if !ok {
-			if aborted || out.Halted {
-				out.Session = last
+		var resolved *resolvedError
+		switch {
+		case errors.As(err, &resolved):
+			out := Outcome{State: StepFailed, Reason: "land: " + err.Error(), Session: last}
+			switch {
+			case resolved.res.Action == actionStop:
+				out.Reason, out.Halted = l.stopping().reason, true
+			case resolved.res.halt != "":
+				out.Reason, out.Halted = resolved.res.halt, true
+			}
+			return "land", out, false
+		case errors.As(err, &failed):
+			out := failed.Outcome
+			if _, aborted := l.ended(failed.Ref, out); aborted {
+				return "land", out, true
+			}
+			_, ok, aborted := l.awaitRestart(ctx, failed.Ref, failed.Ref.Kind, &out)
+			if !ok {
+				if aborted || out.Halted {
+					out.Session = last
+					return "land", out, aborted
+				}
+				return "land", Outcome{State: StepFailed, Reason: "land: " + err.Error(), Session: last}, false
+			}
+		default:
+			out, retry, aborted := l.landBlocker(ctx, n, err, last)
+			if !retry {
 				return "land", out, aborted
 			}
-			break
 		}
-		guardedStopped, perr = l.guarded(ctx, n, "land", func(child context.Context) { landing, err = lander.Land(child, ph) })
-		if perr == nil && errors.Is(err, errPanic) {
-			perr = err
-		}
-		if perr != nil {
-			l.halt(perr)
-			l.stop(ctx, n, "land")
+		if landing, landStopped, err = l.land(ctx, lander, ph); landStopped {
 			return "land", Outcome{}, true
 		}
-		if guardedStopped && err != nil {
-			l.stop(ctx, n, "land")
-			return "land", Outcome{}, true
-		}
-	}
-	if err != nil {
-		return "land", Outcome{State: StepFailed, Reason: "land: " + err.Error(), Session: last}, false
 	}
 	l.emit(Event{Kind: "phase-state", Phase: n, Fields: map[string]string{"phase": n, "state": string(PhaseLanded)}})
 	l.emit(Event{Kind: "landed", Phase: n, Fields: map[string]string{"phase": n, "merge": landing.MergeSHA, "gateSkipped": strconv.FormatBool(landing.GateSkipped)}})
 	l.closeWorkspaces(n, everyWorkspace)
 	_ = l.removeWorktree(n, false)
 	return "", Outcome{State: StepOK}, false
+}
+
+func (l *RunLoop) land(ctx context.Context, lander Lander, ph Phase) (Landing, bool, error) {
+	n := ph.ID
+	var landing Landing
+	var err error
+	stopped, perr := l.guarded(ctx, n, "land", func(child context.Context) { landing, err = lander.Land(child, ph) })
+	if perr == nil && errors.Is(err, errPanic) {
+		perr = err
+	}
+	if perr != nil {
+		l.halt(perr)
+		l.stop(ctx, n, "land")
+		return Landing{}, true, nil
+	}
+	if stopped && err != nil {
+		l.stop(ctx, n, "land")
+		return Landing{}, true, nil
+	}
+	return landing, false, err
+}
+
+type resolvedError struct {
+	res Resolution
+	err error
+}
+
+func (e *resolvedError) Error() string { return e.err.Error() }
+func (e *resolvedError) Unwrap() error { return e.err }
+
+type probeError struct{ err error }
+
+func (e *probeError) Error() string { return e.err.Error() }
+func (e *probeError) Unwrap() error { return e.err }
+
+var (
+	stepActions      = []string{actionRetry, actionSwitch, actionBlock, actionStop}
+	landActions      = []string{actionRetry, actionBlock, actionStop}
+	reviewerActions  = []string{actionRetry, actionKeys, actionSwitch, actionSkip, actionBlock, actionStop}
+	milestoneActions = []string{actionRetry, actionSkip, actionStop}
+)
+
+func (l *RunLoop) landBlocker(ctx context.Context, n string, err error, last *Session) (Outcome, bool, bool) {
+	out := Outcome{State: StepFailed, Reason: "land: " + err.Error(), Session: last}
+	if !l.holds() || recordFailed(l.Store) != nil {
+		return out, false, false
+	}
+	b := Blocker{Source: sourceLand, Phase: n, Step: "land", Actions: landActions}
+	var probe *probeError
+	if errors.As(err, &probe) {
+		b.Source, b.Step = sourceGateProbe, "gate"
+	}
+	b.Reason, b.Excerpt, _ = strings.Cut(err.Error(), "\n")
+	key := StepKey{Run: l.RunID, Phase: n, Kind: b.Step}
+	res := l.raise(ctx, b, &blockerHold{key: key, out: &out})
+	if res.By == byWithdrawn && (ctx.Err() != nil || l.Store.Aborted(l.RunID)) {
+		l.stop(ctx, n, "land")
+		return Outcome{}, false, true
+	}
+	if out.Halted {
+		return out, false, false
+	}
+	switch res.Action {
+	case actionRetry:
+		return out, true, false
+	case actionStop:
+		out.Reason, out.Halted = l.stopping().reason, true
+	default:
+		if res.By == byWithdrawn {
+			l.drainHalts(key, &out)
+		}
+	}
+	return out, false, false
 }
 
 func skippedBefore(prior RunState, phase string) bool {
@@ -585,7 +660,7 @@ func (l *RunLoop) runAttempts(ctx context.Context, ref StepRef) (StepRef, Outcom
 }
 
 func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, out *Outcome) (StepRef, bool, bool) {
-	if l.RemedyWindow <= 0 || out.Halted || recordFailed(l.Store) != nil {
+	if !l.holds() || out.Halted || out.blocked || recordFailed(l.Store) != nil {
 		return StepRef{}, false, false
 	}
 	key := ref.Key
@@ -593,62 +668,60 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 	if h, ok := l.watcher().(remedyHolder); ok {
 		defer h.Release(key)
 	}
-	timer := time.NewTimer(l.RemedyWindow)
-	defer timer.Stop()
-	ticker := time.NewTicker(l.poll())
-	defer ticker.Stop()
-	for {
-		var rs Restart
-		select {
-		case <-ctx.Done():
-			l.stop(ctx, key.Phase, key.Kind)
-			return StepRef{}, false, true
-		case <-timer.C:
-			return StepRef{}, false, false
-		case <-ticker.C:
-			if l.Store.Aborted(l.RunID) {
-				l.stop(ctx, key.Phase, key.Kind)
-				return StepRef{}, false, true
-			}
-			continue
-		case sig := <-l.watcher().Signals():
-			if l.haltsWindow(sig, key, out) {
-				return StepRef{}, false, false
-			}
-			continue
-		case rs = <-l.watcher().Restarts():
-		}
-		if rs.Step != key {
-			rs.answer(fmt.Sprintf("phase-%s/%s attempt %d is not waiting for a restart", rs.Step.Phase, rs.Step.Kind, rs.Step.Attempt))
-			continue
-		}
-		if l.drainHalts(key, out) {
-			rs.answer("run halted: " + out.Reason)
-			return StepRef{}, false, false
-		}
-		if l.restarts[step] >= l.MaxRestarts {
-			reason := fmt.Sprintf("restart limit %d reached", l.MaxRestarts)
-			l.emit(Event{Kind: "restart-refused", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "reason": reason}})
-			rs.answer(reason)
-			return StepRef{}, false, false
-		}
-		l.restarts[step]++
-		if rs.Provider != "" {
-			kind.Row.Provider, kind.Row.Model, kind.Row.Effort = rs.Provider, rs.Model, rs.Effort
-			if fb := kind.Row.Fallback; fb.Provider == rs.Provider && rs.Model == "" {
-				kind.Row.Model, kind.Row.Effort = fb.Model, fb.Effort
-			}
-		}
-		next := l.ref(ref.Phase, kind, key.Attempt+1, ref.Base)
-		next.Vars["Addendum"] = rs.Addendum
-		f := map[string]string{"step": step, "attempt": strconv.Itoa(next.Key.Attempt), "addendum": rs.Addendum, "provider": rs.Provider, "remedy": rs.Remedy}
-		if rs.Provider != "" {
-			f["model"], f["effort"] = kind.Row.Model, kind.Row.Effort
-		}
-		l.emit(Event{Kind: "restart", Phase: key.Phase, Step: key.Kind, Fields: f})
-		rs.answer("")
-		return next, true, false
+	reason := out.Reason
+	if reason == "" {
+		reason = string(out.State)
 	}
+	main := &blockerHold{key: key, out: out}
+	res := l.raise(ctx, Blocker{Source: sourceStep, Phase: key.Phase, Step: key.Kind, Reason: reason, Actions: stepActions}, main)
+	answer := func(reason string) {
+		if main.restart != nil {
+			main.restart.answer(reason)
+		}
+	}
+	if res.By == byWithdrawn && (ctx.Err() != nil || l.Store.Aborted(l.RunID)) {
+		l.stop(ctx, key.Phase, key.Kind)
+		return StepRef{}, false, true
+	}
+	if out.Halted {
+		return StepRef{}, false, false
+	}
+	switch res.Action {
+	case actionRetry, actionSwitch:
+	case actionStop:
+		out.State, out.Reason, out.Stalled, out.Halted = StepFailed, l.stopping().reason, false, true
+		return StepRef{}, false, false
+	default:
+		if res.By == byWithdrawn {
+			l.drainHalts(key, out)
+		}
+		return StepRef{}, false, false
+	}
+	if l.restarts[step] >= l.MaxRestarts {
+		reason := fmt.Sprintf("restart limit %d reached", l.MaxRestarts)
+		l.emit(Event{Kind: "restart-refused", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "reason": reason}})
+		answer(reason)
+		return StepRef{}, false, false
+	}
+	l.restarts[step]++
+	if res.Provider != "" {
+		kind.Row.Provider, kind.Row.Model, kind.Row.Effort = res.Provider, res.Model, res.Effort
+		if fb := kind.Row.Fallback; fb.Provider == res.Provider && res.Model == "" {
+			kind.Row.Model, kind.Row.Effort = fb.Model, fb.Effort
+		}
+	}
+	next := l.ref(ref.Phase, kind, key.Attempt+1, ref.Base)
+	next.Vars["Addendum"] = res.Addendum
+	f := map[string]string{"step": step, "attempt": strconv.Itoa(next.Key.Attempt), "addendum": res.Addendum, "provider": res.Provider, "remedy": res.ID}
+	if res.Provider != "" {
+		f["model"], f["effort"] = kind.Row.Model, kind.Row.Effort
+	}
+	if res.Citation != "" {
+		f["citation"] = res.Citation
+	}
+	l.emit(Event{Kind: "restart", Phase: key.Phase, Step: key.Kind, Fields: f})
+	answer("")
+	return next, true, false
 }
 
 func (l *RunLoop) poll() time.Duration {
@@ -843,6 +916,8 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 		}()
 		done <- runner.Run(stepCtx, ref, &loopObserver{l: l, ref: ref})
 	}()
+	l.signalsMu.Lock()
+	defer l.signalsMu.Unlock()
 	ticker := time.NewTicker(l.poll())
 	defer ticker.Stop()
 	for {
@@ -991,7 +1066,7 @@ type remedyHolder interface {
 
 func (l *RunLoop) ended(ref StepRef, out Outcome) (Outcome, bool) {
 	h, holds := l.watcher().(remedyHolder)
-	holds = holds && out.State != StepOK && !out.Halted && l.RemedyWindow > 0
+	holds = holds && out.State != StepOK && !out.Halted && l.BlockerTimeout > 0
 	if holds {
 		h.Hold(ref.Key)
 	}
@@ -1004,6 +1079,7 @@ func (l *RunLoop) ended(ref StepRef, out Outcome) (Outcome, bool) {
 	if holds {
 		h.Release(ref.Key)
 	}
+	l.PostHalting(invariantQuestion)
 	l.setRun(RunHalted, invariantQuestion)
 	l.emit(Event{Kind: "halt", Phase: ref.Key.Phase, Step: ref.Key.Kind, Fields: map[string]string{"reason": invariantQuestion}})
 	l.closeReport()
@@ -1027,6 +1103,7 @@ func (l *RunLoop) ServeQuestions(ctx context.Context) {
 		return
 	}
 	l.serving = true
+	l.askCtx = ctx
 	if l.runDir == "" {
 		l.runDir = l.Store.Dir(l.RunID)
 	}
@@ -1275,6 +1352,10 @@ func (l *RunLoop) withdrawStep(key StepKey, state StepState) {
 	l.mu.Unlock()
 	slices.SortFunc(asks, func(a, b openAsk) int { return strings.Compare(a.q.ID, b.q.ID) })
 	for _, a := range asks {
+		if a.q.Kind == QuestionBlocker {
+			l.finish(a, Resolution{ID: a.q.ID, Action: actionBlock, By: byWithdrawn}, "step "+string(state), false, nil)
+			continue
+		}
 		if a.answered {
 			l.recordWithdrawn(a.q, "step "+string(state))
 		} else {
@@ -1287,7 +1368,12 @@ func (l *RunLoop) withdraw(q Question, state StepState) {
 	if w, ok := l.watcher().(interface{ Withdraw(id string) }); ok {
 		w.Withdraw(q.ID)
 	}
-	l.recordWithdrawn(q, "step "+string(state))
+	reason := "step " + string(state)
+	l.recordWithdrawn(q, reason)
+	if q.Kind == QuestionDialog {
+		l.emitDialogClosed(q, reason)
+		return
+	}
 	l.Ask.Answer(q.ID, fmt.Sprintf("r-loop: phase-%s/%s has ended; this question is withdrawn.", q.Step.Phase, q.Step.Kind), "withdrawn", "")
 }
 
@@ -1388,6 +1474,7 @@ func interruptReason(ctx context.Context) string {
 }
 
 func (l *RunLoop) halt(err error) {
+	l.PostHalting(err.Error())
 	l.mu.Lock()
 	cancel := l.cancel
 	l.mu.Unlock()
@@ -1536,6 +1623,14 @@ func (o *loopObserver) Fixing(s *Session, round int) {
 
 func (o *loopObserver) Show(ev Event) {
 	o.l.Face.Emit(ev)
+}
+
+func (o *loopObserver) raises() bool {
+	return o.l.holds()
+}
+
+func (o *loopObserver) raise(ctx context.Context, b Blocker) Resolution {
+	return o.l.Raise(ctx, b)
 }
 
 func (l *RunLoop) emitStep(ref StepRef, state StepState, reason string, s *Session) {
@@ -1823,6 +1918,7 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 		"Round":           0,
 		"Rounds":          0,
 		"ReviewCommand":   "",
+		"ReviewRan":       false,
 		"FindingsPath":    "",
 		"ArtifactsDir":    "",
 		"RequiredPath":    "",

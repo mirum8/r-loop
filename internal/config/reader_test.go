@@ -90,9 +90,9 @@ func TestDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Unattended, wantUnattended) {
 		t.Errorf("Unattended = %+v", cfg.Unattended)
 	}
-	wantWatchdog := Watchdog{Provider: "claude", Model: "opus", Effort: "high", Allow: []string{}, RemedyWindow: 10 * time.Minute,
+	wantWatchdog := Watchdog{Provider: "claude", Model: "opus", Effort: "high", Allow: []string{}, BlockerTimeout: 10 * time.Minute,
 		CheckTimeout: 10 * time.Minute, StallGrace: 2 * time.Minute, UnblockTimeout: 2 * time.Hour, TriageTimeout: 2 * time.Hour,
-		OvertimeFactor: 2, DiffFactor: 3, MaxRestarts: 2}
+		OvertimeFactor: 2, DiffFactor: 3, MaxRestarts: 2, Dialogs: []string{}}
 	if !reflect.DeepEqual(cfg.Watchdog, wantWatchdog) {
 		t.Errorf("Watchdog = %+v", cfg.Watchdog)
 	}
@@ -278,6 +278,7 @@ func TestZeroOrNegativeTimeoutRejectedWithFileLineAndKey(t *testing.T) {
 		{"stall negative", "watchdog:\n  stallGrace: -1s\n", `.r-loop/config.yaml:2: watchdog.stallGrace: "-1s" is not a positive duration`, false},
 		{"unblock zero", "watchdog:\n  unblockTimeout: 0s\n", `.r-loop/config.yaml:2: watchdog.unblockTimeout: "0s" is not a positive duration`, false},
 		{"remedy zero", "watchdog:\n  remedyWindow: 0s\n", `.r-loop/config.yaml:2: watchdog.remedyWindow: "0s" is not a positive duration`, false},
+		{"blocker zero", "watchdog:\n  blockerTimeout: 0s\n", `.r-loop/config.yaml:2: watchdog.blockerTimeout: "0s" is not a positive duration`, false},
 		{"triage zero", "watchdog:\n  triageTimeout: 0s\n", `.r-loop/config.yaml:2: watchdog.triageTimeout: "0s" is not a positive duration`, false},
 		{"row zero", "steps:\n  plan:\n    timeout: 0s\n", `.r-loop/config.yaml:3: steps.plan.timeout: "0s" is not a positive duration`, false},
 		{"review negative", "steps:\n  plan:\n    reviewTimeout: -20m\n", `.r-loop/config.yaml:3: steps.plan.reviewTimeout: "-20m" is not a positive duration`, false},
@@ -293,6 +294,36 @@ func TestZeroOrNegativeTimeoutRejectedWithFileLineAndKey(t *testing.T) {
 			d.loadErr(t, tt.want)
 		})
 	}
+}
+
+func TestBlockerTimeoutDefaultsToTenMinutes(t *testing.T) {
+	cfg := newDirs(t).load(t)
+
+	if cfg.Watchdog.BlockerTimeout != 10*time.Minute || cfg.Provenance["watchdog.blockerTimeout"] != "default" {
+		t.Errorf("blockerTimeout %s from %q", cfg.Watchdog.BlockerTimeout, cfg.Provenance["watchdog.blockerTimeout"])
+	}
+}
+
+func TestBlockerTimeoutIsReadAsTheBlockerTimeoutAlias(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "watchdog:\n  blockerTimeout: 20m\n")
+	d.writeProject(t, "watchdog:\n  remedyWindow: 5m\n")
+
+	cfg := d.load(t)
+
+	if cfg.Watchdog.BlockerTimeout != 5*time.Minute {
+		t.Errorf("blockerTimeout %s", cfg.Watchdog.BlockerTimeout)
+	}
+	if got := cfg.Provenance["watchdog.blockerTimeout"]; got != ".r-loop/config.yaml:watchdog.remedyWindow" {
+		t.Errorf("provenance %q", got)
+	}
+}
+
+func TestAFileSettingBothBlockerTimeoutAndBlockerTimeoutIsRejected(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "watchdog:\n  blockerTimeout: 5m\n  remedyWindow: 5m\n")
+
+	d.loadErr(t, ".r-loop/config.yaml:3: watchdog.remedyWindow is the old name of watchdog.blockerTimeout: set one of them")
 }
 
 func TestEmptyQuotedTimeoutRejectedWithFileLineAndKey(t *testing.T) {
@@ -433,6 +464,34 @@ func TestUnattendedAllowOutsideRemedyClassesRejected(t *testing.T) {
 	d.writeProject(t, "unattended:\n  allow:\n    - deps\n    - reboot\n")
 
 	d.loadErr(t, "config.yaml:4:")
+}
+
+func TestWatchdogDialogsReadAsABlockList(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "watchdog:\n  dialogs:\n    - approve writes inside the run folder\n    - allow go test\n")
+
+	cfg := d.load(t)
+
+	if want := []string{"approve writes inside the run folder", "allow go test"}; !reflect.DeepEqual(cfg.Watchdog.Dialogs, want) {
+		t.Errorf("Dialogs = %q", cfg.Watchdog.Dialogs)
+	}
+	if got := cfg.Provenance["watchdog.dialogs"]; got != ".r-loop/config.yaml:watchdog.dialogs" {
+		t.Errorf("provenance = %q", got)
+	}
+}
+
+func TestWatchdogDialogsInFlowStyleRejected(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "watchdog:\n  dialogs: [allow go test]\n")
+
+	d.loadErr(t, "config.yaml:2: flow style is not accepted, write it block style")
+}
+
+func TestAnEmptyDialogRuleRejectedWithFileLineAndKey(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "watchdog:\n  dialogs:\n    - allow go test\n    - \"  \"\n")
+
+	d.loadErr(t, ".r-loop/config.yaml:4: watchdog.dialogs: a rule is empty")
 }
 
 func TestFactorBelowOneRejected(t *testing.T) {

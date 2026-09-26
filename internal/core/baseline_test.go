@@ -80,7 +80,7 @@ func (b *baselineRig) manager() *SessionManager {
 		Repo:    b.repo,
 		Prompts: &fakePrompts{Texts: map[string]string{"plan": "plan it", "implement": "build it"}},
 		Store:   b.store,
-		Resolve: func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
+		Resolve: func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
 			return ProviderArgs{Kind: "codex"}, nil
 		},
 		Poll:       time.Millisecond,

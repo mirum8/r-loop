@@ -165,7 +165,12 @@ func StatusLines(run core.RunState, pl core.Plan, now time.Time, deadPID int) []
 		lines = append(lines, l)
 	}
 	for _, q := range run.Questions {
-		if q.AnsweredBy == "" {
+		switch {
+		case q.Kind == core.QuestionDialog:
+			lines = append(lines, core.DialogLine(q))
+		case q.Kind == core.QuestionBlocker:
+			lines = append(lines, core.BlockerLine(q))
+		case q.AnsweredBy == "":
 			lines = append(lines, fmt.Sprintf("question %s %s", q.ID, q.Text))
 		}
 	}

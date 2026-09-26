@@ -27,6 +27,15 @@ An amendment to ADR-6 added Milestone 13, Phase 37: the sentinel drops `at`, so 
 timestamp no longer fails a finished step.
 An amendment to ADR-1 added Milestone 14, Phase 38: the herdr adapter accepts claude's trust
 dialog, which herdr reports as `agent_not_ready`.
+ADR-79 added Milestone 15, Phase 39: a session in a phase worktree may write its phase's run
+folder, so codex's sandbox no longer asks to write the sentinel.
+ADR-80 added Milestone 16, Phases 40–42: a dialog in a step's or reviewer's pane goes to the
+watchdog, and the driver presses the keys a configured rule, a decline or the maintainer's quoted
+reply authorises.
+ADR-81 and ADR-82 added Milestone 17, Phases 43–46: a plan is reviewed by a prompt alone, codex
+reviews code with its own `/review` typed into its pane, and anything that goes off plan — a failed
+step or reviewer, a land error, a gate fix, the gate probe, a milestone report — becomes a blocker
+the watchdog clears within what it is authorised to do, or asks the maintainer about.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -53,6 +62,14 @@ dialog, which herdr reports as `agent_not_ready`.
 - Wave 20: Phase 36
 - Wave 21: Phase 37
 - Wave 22: Phase 38
+- Wave 23: Phase 39
+- Wave 24: Phase 40
+- Wave 25: Phase 41
+- Wave 26: Phase 42
+- Wave 27: Phase 43
+- Wave 28: Phase 44
+- Wave 29: Phase 45
+- Wave 30: Phase 46
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -341,7 +358,7 @@ Contracts: `tech-design.md#milestone-4-the-review-half`
 Contracts: `tech-design.md#milestone-5-the-ask-channel`
 
 ### Phase 20 — AskServer
-**Implements:** Ask the person a question
+**Implements:** Ask the watchdog a question
 **Depends on:** Phase 11
 **Files:** `internal/askmcp/server.go` (new) · `internal/core/session.go` (modify) · `internal/askmcp/server_test.go` (new)
 **Risk:** concurrency
@@ -354,7 +371,7 @@ Contracts: `tech-design.md#milestone-5-the-ask-channel`
 **Done when:** `go test ./internal/askmcp/... ./internal/core/...` is green.
 
 ### Phase 21 — Questions in plain mode, end to end
-**Implements:** Answer an agent's question without leaving the loop · Ask the person a question
+**Implements:** Answer an agent's question without leaving the loop · Ask the watchdog a question
 **Depends on:** Phase 17, Phase 20
 **Files:** `cmd/r-loop/main.go` (modify) · `internal/app/wire.go` (modify) · `internal/app/answer.go` (new) · `internal/core/loop.go` (modify) · `internal/face/plain/plain.go` (modify) · `internal/core/report.go` (modify) · `internal/app/ask_test.go` (new) · `internal/app/testdata/ask-agent.go` (new)
 - [x] `app.Wire` starts `askmcp.Server` for every run and hands it to the loop and the session manager; `--dry-run` starts no server
@@ -601,6 +618,145 @@ Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
 - [x] a claude trust dialog still showing after 20 s fails with `herdr: agent <name> still asks to trust its directory`; a screen that has not shown the banner 20 s after the dialog cleared fails with `herdr: agent <name> never showed claude's prompt after the trust dialog`; an agent herdr still reports `blocked` after the dialog cleared fails with `herdr: agent <name> stays blocked after the trust dialog`
 - [x] any other not-ready screen returns the original `agent_not_ready` error and presses no key; codex's trust acceptance after a successful start is unchanged
 **Done when:** `go test -race ./internal/herdr/...` is green.
+
+## Milestone 15 — The phase's run folder
+Contracts: `tech-design.md#milestone-15-the-phases-run-folder`
+
+### Phase 39 — A session may write its phase's run folder
+**Implements:** Report a step's outcome so the driver can act · Add a provider the driver has never seen
+**Depends on:** Phase 38
+**Files:** `internal/providers/registry.go` (modify) · `internal/providers/shipped/claude.yaml` (modify) · `internal/providers/shipped/codex.yaml` (modify) · `internal/core/session.go` (modify) · `internal/core/review.go` (modify) · `internal/app/wire.go` (modify) · `internal/app/intake.go` (modify) · `internal/providers/registry_test.go` (modify) · `internal/core/session_test.go` (modify) · `internal/core/review_test.go` (modify) · `internal/core/baseline_test.go` (modify) · `internal/core/gate_test.go` (modify) · `internal/core/land_test.go` (modify) · `internal/core/loop_test.go` (modify) · `internal/core/loop_events_test.go` (modify) · `internal/app/watchdog_test.go` (modify) · `internal/app/app_test.go` (modify)
+**Risk:** security
+- [x] `providers.Provider` gains `DirFlag`, decoded from the block key `dirFlag`; a `dirFlag` that is not empty and does not contain `{dir}` is refused on `Resolve` naming `dirFlag` and the source (`must contain {dir} or be empty`)
+- [x] `{dir}` joins `{model}`, `{effort}`, `{url}` and `{mcpConfig}` as a placeholder `flags` may not carry, refused naming `flags` and the source
+- [x] `Args(p, model, effort, askURL, mcpConfigPath, dir)` appends the expanded `dirFlag` last, after `askFlag`, and omits it when `dir` is empty; a `dir` containing spaces stays one argument
+- [x] `ToCore(p, model, effort, askURL, mcpConfigPath, dir)` passes `dir` to the start arguments only: `ProviderArgs.Review`'s `{args}` is built with an empty dir
+- [x] the shipped claude block sets `dirFlag: "--add-dir {dir}"` and the shipped codex block `dirFlag: '-c sandbox_workspace_write.writable_roots=["{dir}"]'`
+- [x] `SessionManager.Resolve` takes a sixth parameter, `dir`; `start` and `askArgs` pass the step's phase run folder `<root>/.r-loop/runs/<runID>/phase-<N>/` unless `StepRef.InPrimary`, so plan, implement and gatefix sessions get it and gate and milestone sessions get `""`
+- [x] `review.go` resolves each reviewer with `stepDir(worker)` unless the worker is `InPrimary`
+- [x] `app` passes `dir` through `Wiring.resolve`; the watchdog and the intake session resolve with `""`, so neither starts with a dir flag
+- [x] `registry_test.go` proves the `dirFlag` validation, `{dir}` refused in `flags`, the dir appended last only when set, the shipped claude and codex `dirFlag`, and review args with no dir; `session_test.go` and `review_test.go` prove worktree steps and their reviewers resolve with their run folder and primary-tree steps with `""`; `app/watchdog_test.go` proves the watchdog starts with no dir flag; every `Resolve` fake takes the new parameter
+**Done when:** `go test -race ./...` is green and `grep -n "dirFlag" internal/providers/shipped/claude.yaml internal/providers/shipped/codex.yaml` prints both lines.
+
+## Milestone 16 — Dialogs answered by the watchdog
+Contracts: `tech-design.md#milestone-16-dialogs-answered-by-the-watchdog`
+
+### Phase 40 — The host reads an agent's screen and presses keys
+**Implements:** Run every remaining phase of a plan
+**Depends on:** Phase 39
+**Files:** `internal/core/ports.go` (modify) · `internal/herdr/client.go` (modify) · `internal/herdr/client_test.go` (modify) · `internal/core/fakes_test.go` (modify) · `internal/core/land_test.go` (modify) · `internal/app/intake_test.go` (modify) · `internal/app/resume_test.go` (modify) · `internal/app/watchdog_test.go` (modify)
+**Risk:** none
+- [x] `core.SessionHost` gains `Screen(agent string) (string, error)` and `SendKeys(agent string, keys ...string) error`
+- [x] the herdr adapter's `Screen` runs `herdr agent read <agent> --source visible` and returns the text as herdr gives it
+- [x] the herdr adapter's `SendKeys` runs one `herdr agent send-keys <agent> <key>` per key, in order, and stops at the first error, returning it; no keys is a no-op
+- [x] `fakeSessionHost` records `Screen` and `SendKeys` calls in order and returns `Screens[agent]` from `Screen`; `reportHost`, `intakeHost`, `simHost` and `dogHost` implement both
+- [x] `client_test.go` proves keys go out in order, a failing key stops the rest, and `Screen` asks for the visible source
+**Done when:** `go test -race ./internal/herdr/... ./internal/core/... ./internal/app/...` is green.
+
+### Phase 41 — A blocked agent's dialog is routed to the watchdog and answered with keys
+**Implements:** Answer an agent's question without leaving the loop · Leave a run to finish on its own
+**Depends on:** Phase 39, Phase 40
+**Files:** `internal/core/types.go` (modify) · `internal/core/session.go` (modify) · `internal/core/dialogs.go` (new) · `internal/core/loop.go` (modify) · `internal/core/questions.go` (modify) · `internal/core/report.go` (modify) · `internal/app/status.go` (modify) · `internal/core/session_test.go` (modify) · `internal/core/dialogs_test.go` (new) · `internal/core/loop_events_test.go` (modify) · `internal/core/report_test.go` (modify) · `internal/app/status_test.go` (modify)
+**Risk:** concurrency
+- [x] `core.Question` gains `Kind` (`""` for an agent's question, `dialog` for a dialog); a dialog's `Text` is the normalised screen, `Answer` the keys joined with spaces, `Citation` the rule or `decline`
+- [x] `SessionManager.Dialogs` is an interface `{Blocked(*Session) bool; Unblocked(*Session)}`; in `tick`, after the gone check and before the pause, a `blocked` agent that `Dialogs.Blocked` admits resets the quiet time and the stall and returns, a `working`, `idle` or `done` agent calls `Dialogs.Unblocked`, and a `blocked` agent not admitted, or a nil `Dialogs`, keeps the quiet → nudge → stall path unchanged
+- [x] `RunLoop.Blocked` admits nothing for a land-stage kind (a base kind not in `RunLoop.Kinds`: `gate`, `milestone`, `gatefix`), a session that is not live, or before `ServeQuestions` holds its ctx; an open dialog for the agent returns true without a new one; otherwise it reads `Host.Screen`, keeps the last 40 lines with trailing spaces and trailing blank lines removed, at most 4096 bytes cut at a line boundary, and returns false for an empty screen or one equal to the last screen answered for that agent
+- [x] a new dialog `d<n>` — numbered on from the stored records, so ids continue after a resume — is keyed to the asking agent (`reviewerKey(key, id)` for a reviewer, counted against its owner step), recorded, tracked, moves the owner step to `waiting-input` with its stall clock and backstop paused, is emitted as `dialog{id, agent, text}` and goes to `Watch.Route`, so a gone watchdog halts the run once
+- [x] `RunLoop.Unblocked` withdraws an open dialog for that agent with `Answer: dialog closed in the pane` and emits `dialog-closed{id, reason}`; a step that ends withdraws its dialog through `withdrawStep`, and `withdraw` calls `Ask.Answer` only for a question of kind `""`
+- [x] `RunLoop.DeliverKeys(id, keys, by, rule)` checks the agent is still `blocked` on an unchanged normalised screen, else withdraws the dialog and returns an error naming why; then records the answer, emits `dialog-answered{id, keys, by, rule}` (and a `human` event when `by` is `maintainer`), and only then calls `Host.SendKeys`, remembers the answered screen and returns the step to `running`
+- [x] `QuestionRouter` stores each open id's kind; `Route` sends a dialog as `dialog <id> from phase-<N>/<kind>: answer with answer_dialog`, a blank line and the screen; `Answer` refuses a dialog id
+- [x] `QuestionRouter.AnswerDialog(id, keys, rule, maintainerSaid) (decision, reason string)` returns `refused` for empty or blank keys or an id that is not an open dialog, `authorised` for `rule == "decline"` or a rule equal to one of `QuestionRouter.Rules`, `refused` for any other non-empty rule (the dialog stays open), `refused` with `--unattended` (`decline, or answer under a rule`), `authorised` as `maintainer` for a non-empty `maintainerSaid`, and otherwise calls `Dog.AskMaintainer` and returns `ask`; an authorised answer goes to `QuestionRouter.Keys` (`RunLoop.DeliverKeys`), whose error refuses it
+- [x] the run report and `r-loop status` print one line per dialog: `<id> phase-<N>/<kind>: dialog → <keys> (<by>, <rule>)`
+- [x] `session_test.go` proves an admitted dialog pauses the stall clock and the backstop, and a blocked agent with no `Dialogs` or not admitted still stalls as before
+- [x] `dialogs_test.go` proves: one dialog per blocked agent; a reviewer's dialog is keyed to the reviewer and pauses its owner; land-stage sessions raise none; the screen cap; `decline`, a rule and the maintainer authorise and the keys go out after the answer is recorded; no rule and no reply → `ask`; an unknown rule, unattended off-rule and empty keys are refused; question and dialog ids cannot be swapped; no keys when the screen changed or the agent left `blocked`; a dialog closed in the pane is withdrawn; an answered screen is not raised again and a new one is `d2`; a step that ends withdraws its dialog with no `AskChannel.Answer`; a gone watchdog halts once; ids continue after a resume
+- [x] `loop_events_test.go` proves a blocked implement agent gets its keys and finishes, the events in the order `dialog`, `waiting-input`, `dialog-answered`, `running`, `ok`
+**Done when:** `go test -race ./internal/core/... ./internal/app/...` is green.
+
+### Phase 42 — `watchdog.dialogs`, the `answer_dialog` tool, the prompt, wiring and the TUI
+**Implements:** Answer an agent's question without leaving the loop · Pre-authorise the blockers worth fixing automatically · Leave a run to finish on its own
+**Depends on:** Phase 41
+**Files:** `internal/config/reader.go` (modify) · `internal/config/defaults.yaml` (modify) · `internal/askmcp/watchdog.go` (modify) · `internal/core/watchdog.go` (modify) · `internal/prompts/templates/watchdog.md` (modify) · `internal/app/wire.go` (modify) · `internal/face/tui/model.go` (modify) · `internal/config/reader_test.go` (modify) · `internal/askmcp/watchdog_test.go` (modify) · `internal/prompts/render_test.go` (modify) · `internal/face/tui/model_test.go` (modify) · `internal/app/watchdog_test.go` (modify) · `README.md` (modify)
+**Risk:** security
+- [x] `watchdog.dialogs` is a block list of non-empty strings, default `[]` in `defaults.yaml`; a flow-style list is rejected like every key, and an empty rule is rejected naming the file, line and key (exit 2)
+- [x] the watchdog surface gains `answer_dialog(id, keys, rule?, maintainer_said?) → {decision, reason?}`, recorded as `watchdog-call` before its handler runs, which first calls `resume()`; with no `WatchdogHandlers.AnswerDialog` it is refused; it joins `watchdogTools`, so a step's URL answers it 404
+- [x] `core.Watchdog` always passes `Dialogs` to the `watchdog` template, empty when no rule is set, since templates render with `missingkey=error`
+- [x] the watchdog prompt gains an "Answering dialogs" section: the configured rules, herdr key names (`enter`, `esc`, `down`, digits), `rule: decline` to decline, ask the maintainer off-rule and quote the reply as `maintainer_said`, and with `--unattended` decline anything no rule covers
+- [x] `app` wiring sets `SessionManager.Dialogs` to the loop, builds `QuestionRouter{Keys: Loop.DeliverKeys, Rules: cfg.Watchdog.Dialogs}`, passes the rules to the watchdog, and routes `WatchdogHandlers.AnswerDialog` to `QuestionRouter.AnswerDialog`
+- [x] the TUI shows a `dialog` as it shows a question (`watchdog · d1 · 12s`) until `dialog-answered` or `dialog-closed` settles it; nothing new is amber — amber stays the watchdog waiting for the maintainer
+- [x] `README.md` lists `dialogs` under `watchdog` and `dirFlag` under `providers.<name>`
+- [x] tests prove: the config default, a block list, flow style and an empty rule rejected; `answer_dialog` recorded before its handler, refused with no handler, unreachable from a step URL; the rendered prompt lists the rules; the TUI shows a dialog waiting until it is settled; the wired run sends a dialog through the watchdog and presses the keys it authorises
+**Done when:** `go test -race ./...` is green and `grep -n "answer_dialog" internal/askmcp/watchdog.go internal/prompts/templates/watchdog.md` prints the tool and the prompt section.
+
+## Milestone 17 — Reviews and blockers
+Contracts: `tech-design.md#milestone-17-reviews-and-blockers`
+
+### Phase 43 — Plan reviews are prompt-only
+**Implements:** Review each phase with every configured reviewer
+**Depends on:** Phase 42
+**Files:** `internal/prompts/templates/review-plan.md` (new) · `internal/prompts/render.go` (modify) · `internal/prompts/templates/review.md` (modify) · `internal/core/kinds.go` (modify) · `internal/core/review.go` (modify) · `internal/core/session.go` (modify) · `internal/app/preflight.go` (modify) · `internal/prompts/render_test.go` (modify) · `internal/core/review_test.go` (modify) · `internal/app/app_test.go` (modify)
+**Risk:** none
+- [x] a new embedded template `review-plan`, overridable as `.r-loop/prompts/review-plan.md` and added to the renderer's allow-list, holds only the plan parts of `review.md`: the plan at `PlanPath` against the phase block and the code, Missing and Excess, `ItemGate` with `## Tests` and `## Evidence`, the earlier rounds, the findings contract, "change no file" and the outcome partial; it has no native-review section
+- [x] `review.md` drops every `{{if eq .ReviewedKind "plan"}}` branch
+- [x] `core.Reviewer.Template()` becomes `TemplateFor(reviewed string)`: `Prompt` when set, else `review-plan` when `reviewed` is `plan`, else `review`; every caller in `review.go` and `session.go` passes the reviewed step's kind
+- [x] only a reviewer whose template is `review` needs `ProviderArgs.Review`: a plan-row reviewer on a provider with no `review` command starts, and its `review-find` event's `command` is `prompt review-plan`
+- [x] preflight's `native`/`checkRole` asks for a `review` command only for a reviewer whose template is `review`, so a plan row's no-review-command reviewer passes and the same reviewer on implement still exits 2
+- [x] `render_test.go` proves `review-plan` renders with the full variable set and has no native section, the plan tests now run against it, and `review.md` carries no plan text
+- [x] `review_test.go` proves a plan reviewer renders `review-plan` and needs no native output, a provider with no `review` command works on a plan row, and an explicit `prompt:` wins over both defaults
+- [x] `app_test.go` proves preflight passes a plan row with a no-review-command reviewer and exits 2 for one on an implement row
+**Done when:** `go test -race ./internal/prompts/... ./internal/core/... ./internal/app/...` is green.
+
+### Phase 44 — codex runs `/review` in the reviewer's pane
+**Implements:** Review each phase with every configured reviewer · Add a provider the driver has never seen
+**Depends on:** Phase 43
+**Files:** `internal/providers/registry.go` (modify) · `internal/providers/shipped/codex.yaml` (modify) · `internal/core/types.go` (modify) · `internal/core/ports.go` (modify) · `internal/herdr/client.go` (modify) · `internal/core/review.go` (modify) · `internal/core/loop.go` (modify) · `internal/prompts/templates/review.md` (modify) · `internal/providers/registry_test.go` (modify) · `internal/herdr/client_test.go` (modify) · `internal/core/fakes_test.go` (modify) · `internal/core/panereview_test.go` (new) · `internal/core/review_test.go` (modify) · `internal/prompts/render_test.go` (modify) · `internal/app/intake_test.go` (modify) · `internal/app/resume_test.go` (modify) · `internal/app/watchdog_test.go` (modify) · `internal/core/land_test.go` (modify) · `README.md` (modify)
+**Risk:** concurrency
+- [x] a provider block takes `reviewStart` and `reviewDone`, both or neither and only when `review` starts with `/`; anything else is refused on `Resolve` naming the key and the source; `ToCore` copies them into `core.ProviderArgs.ReviewStart` and `ReviewDone`
+- [x] the shipped codex block sets `review: "/review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings."`, `reviewStart: ">> Code review started"` and `reviewDone: "<< Code review finished"`; the shipped claude block is unchanged
+- [x] `core.SessionHost` gains `SendText(agent, text string) error`; the herdr adapter runs `herdr pane send-text` into the pane `AgentPane(agent)` names, pressing no key, and an unknown agent is an error naming it; every `SessionHost` fake implements it and the core fake records it in order with `SendKeys`
+- [x] for a reviewer whose provider has `ReviewStart`, `ReviewHalf.open` runs the pane review after `Start` and before the prompt: `SendText(agent, Review)`, then `SendKeys(agent, "enter")`; it reads `Screen(agent)` at the poll interval until it shows `ReviewStart` within 2 minutes, then until it shows `ReviewDone` within the row's `ReviewTimeout`; the agent state is read only for `gone`, since herdr shows codex's menus as idle, never blocked
+- [x] each reviewer's pane review runs in its own goroutine, so a round's reviewers review at once, and the half joins on all of them before any prompt of that round is judged
+- [x] a pane review fails the reviewer with `review in pane: <reason>` for no start marker in 2 minutes (`review never started`), `Review was interrupted` or `Reviewer failed to output a response` on screen, `ReviewTimeout` before `ReviewDone`, the agent gone, or a host error; a failed reviewer fails the step as reviewer failures do today
+- [x] `ReviewRan` joins `StepVars` (false) and is set true for a pane-reviewed reviewer's prompt; `review.md` then says the review ran in this session: save its output verbatim to `<ArtifactsDir>/native-review.txt`, then write the findings; the `native-review.txt` evidence check is unchanged
+- [x] `README.md` lists `reviewStart` and `reviewDone` under `providers.<name>`
+- [x] `registry_test.go` proves the pairing and `/` validation and the shipped codex block; `client_test.go` proves `SendText` targets the agent's pane and presses nothing
+- [x] `panereview_test.go` proves, with a scripted `Screen`, the text then `enter` before any prompt, the wait for each marker, each failure case with its reason, two reviewers reviewing at once, and a claude reviewer getting no `SendText`; `render_test.go` proves the `ReviewRan` wording
+**Done when:** `go test -race ./...` is green and `grep -n "reviewStart" internal/providers/shipped/codex.yaml` prints the line.
+
+### Phase 45 — The blocker core, the `resolve_blocker` tool and the watchdog prompt
+**Implements:** Leave a run to finish on its own · Pre-authorise the blockers worth fixing automatically · Be told when a run halts
+**Depends on:** Phase 44
+**Files:** `internal/core/types.go` (modify) · `internal/core/blockers.go` (new) · `internal/core/questions.go` (modify) · `internal/core/loop.go` (modify) · `internal/core/report.go` (modify) · `internal/config/reader.go` (modify) · `internal/config/defaults.yaml` (modify) · `internal/askmcp/watchdog.go` (modify) · `internal/prompts/templates/watchdog.md` (modify) · `internal/app/wire.go` (modify) · `internal/app/status.go` (modify) · `internal/face/tui/model.go` (modify) · `internal/face/plain/plain.go` (modify) · `internal/core/blockers_test.go` (new) · `internal/config/reader_test.go` (modify) · `internal/askmcp/watchdog_test.go` (modify) · `internal/prompts/render_test.go` (modify) · `internal/face/tui/model_test.go` (modify) · `internal/face/plain/plain_test.go` (modify) · `internal/core/report_test.go` (modify) · `internal/app/status_test.go` (modify) · `README.md` (modify)
+**Risk:** concurrency, security
+- [x] `core.Blocker{Source, Phase, Step, Reason, Excerpt string; Actions []string}` and `Resolution{ID, Action, By, Citation, Addendum string; Keys []string; Provider, Model, Effort string}`; a blocker is a `Question{Kind: "blocker"}` with id `b<n>` numbered on from the stored records, `Answer` the action, `Citation` what authorised it and `AnsweredBy ∈ {watchdog, maintainer, timeout, withdrawn}`
+- [x] `RunLoop.Raise(b Blocker) Resolution` records the question, emits `blocked-on{id, source, phase, step, reason}`, moves a live step to `waiting-input` (a reviewer's blocker pauses its owner), routes `blocker <id> from phase-<N>/<step> (<source>): <reason>`, a blank line and the excerpt through `Watch.Route`, so a gone watchdog halts the run once, and waits for its resolution
+- [x] the hold's timer is `watchdog.blockerTimeout` (default `10m` in `defaults.yaml`); `watchdog.remedyWindow` is read as its alias and a file setting both is rejected (exit 2); it counts only while the watchdog is not `watchdog-waiting`, stopping on `watchdog-waiting` and running on from where it stood on `watchdog-resumed`; on expiry the blocker resolves `block`, or `skip` for a `milestone` source, `By: timeout`
+- [x] a blocker is withdrawn on an abort, an interrupt or a halt, when a reviewer's owner step ends, and by `r-loop resume` for one a dead driver left open; a withdrawn blocker resolves `block` with `By: withdrawn`
+- [x] `QuestionRouter.ResolveBlocker(id, action, rule, addendum, keys, provider, model, effort, maintainerSaid) (decision, reason string)` refuses an id that is not an open blocker and an action the blocker's `Actions` lacks; authorises `block` and `stop` always, `retry` when `restart` is allow-listed and the target is under `watchdog.maxRestarts`, `keys` when `rule` is exactly one of `watchdog.dialogs`, and `switch` to the row's fallback; a retry at the budget is refused
+- [x] otherwise a non-empty `maintainerSaid` authorises as `maintainer` (a `switch` elsewhere than the fallback also needs `model` and `effort`); with `--unattended` an action that would ask is refused (`unattended: block or stop`); else it calls `Dog.AskMaintainer` with the blocker and its options (`retry, skip, switch provider, block this phase, stop the run`, cut to the source's actions) and returns `ask`
+- [x] an authorised resolution is recorded, emitted as `blocker-resolved{id, action, by}` (with a `human` event when `by` is `maintainer`), and only then returned to `Raise`; `restart_step` on a step's open blocker resolves it as `retry`
+- [x] the watchdog surface gains `resolve_blocker(id, action, rule?, addendum?, keys?, provider?, model?, effort?, maintainer_said?) → {decision, reason?}`, in `watchdogTools` so a step's URL answers it 404, recorded as `watchdog-call` before its handler runs, which first calls `resume()`; with no `WatchdogHandlers.ResolveBlocker` it is refused; `app` wires it to `QuestionRouter.ResolveBlocker`
+- [x] `watchdog.md` gains a "Clearing blockers" section: read the pane or output and diagnose; fix what is authorised (`propose_remedy`, then `retry`, `keys` or `switch`); otherwise `ask_maintainer` with the options and act with `maintainer_said`; unattended, `block` or `stop` when nothing authorised fixes it
+- [x] the TUI shows `watchdog · b<n>` on the phase's row from `blocked-on` until `blocker-resolved`, with a feed line for each, amber only on `watchdog-waiting`; the plain face prints both events; the run report and `r-loop status` print `b<n> phase-<N>/<step> (<source>): <reason> → <action> (<by>)`, `open` while unresolved; `README.md` lists `blockerTimeout` under `watchdog`
+- [x] `blockers_test.go` proves each action's authorisation and refusal, `ask` marking the watchdog waiting and stopping the timer, expiry giving `block`, withdrawal when a reviewer's owner ends, a gone watchdog halting once, and the unattended refusals
+- [x] tests prove the config default, the alias and both-set rejection; `resolve_blocker` recorded first, refused with no handler and 404 from a step URL; the rendered prompt section; the TUI, plain, report and status lines
+**Done when:** `go test -race ./...` is green and `grep -n "resolve_blocker" internal/askmcp/watchdog.go internal/prompts/templates/watchdog.md` prints the tool and the prompt section.
+
+### Phase 46 — Every off-plan point raises a blocker
+**Implements:** Leave a run to finish on its own · Be told when a run halts · Review each phase with every configured reviewer
+**Depends on:** Phase 45
+**Files:** `internal/core/loop.go` (modify) · `internal/core/review.go` (modify) · `internal/core/land.go` (modify) · `internal/core/gate.go` (modify) · `internal/core/milestone.go` (modify) · `internal/core/panics.go` (modify) · `internal/core/watchdog.go` (modify) · `internal/core/blockers.go` (modify) · `internal/core/blockers_test.go` (modify) · `internal/core/loop_events_test.go` (modify) · `internal/core/review_test.go` (modify) · `internal/core/land_test.go` (modify) · `internal/core/gate_test.go` (modify) · `internal/core/remedies_test.go` (modify) · `internal/core/unattended_test.go` (modify) · `internal/core/watch_test.go` (modify) · `internal/app/watchdog_test.go` (modify)
+**Risk:** concurrency
+- [x] a pipeline step that ends `failed` or `stalled` raises a `step` blocker in place of `awaitRestart`'s fixed window, with actions retry, switch, block and stop; `retry` and `switch` take the existing restart path with the addendum, provider, model and effort, and `watchdog.maxRestarts` still bounds it
+- [x] a failed reviewer — a pane-review failure, a `failed` sentinel, evidence missing, stalled or gone — raises a `reviewer` blocker instead of failing the step, with actions retry (that reviewer reopened for the round), keys (into its pane), switch, skip (`reviewer-skipped{step, reviewer, reason}` for this round) and block and stop; the fix half waits until every reviewer has reported or been skipped
+- [x] every land error — a merge conflict, an unfinished merge, a wrong branch, a dirty or changed tree, a red gate with no fix round left, an item gate green at base or with no test file, a tick or commit failure — leaves the primary tree clean and raises a `land` blocker with actions retry (run `Land` again), block and stop
+- [x] a gatefix step that does not end `ok` raises a `gatefix` blocker with actions retry (another gatefix round), switch, block and stop
+- [x] an error of `GateProbe` itself, not of its step, raises a `gate-probe` blocker with actions retry (probe again), block and stop
+- [x] a failed milestone report raises a `milestone` blocker with actions retry (the report again), skip (`report-skipped`, as before) and stop; it never blocks a phase
+- [x] a final `block` gives today's exit codes (`1`, `3` for a block that began as a stall, `5` for one that began as a watchdog halt); `stop` records the run `halted` with `stopped by the watchdog at <id>: <reason>`, runs `notify.onHalt` and exits `5`
+- [x] before the run halts on the question invariant, a panic in the land, the question server or the signal handler, or a `record:` failure, the driver posts `run halting: <reason>` through `Watchdog.Post` without waiting; failures before the watchdog starts stay process exits
+- [x] one test per source proves it raises a blocker and that each of its actions works end to end with fakes: a merge conflict retried after the fix lands, a red gate blocked, a reviewer skipped on the maintainer's reply, a gatefix switched, a milestone report retried
+- [x] the tests that pinned "block at once" or the remedy window now raise a blocker, then block on `block` or on the timeout; `app/watchdog_test.go` proves a wired run sends a land blocker to the watchdog and a `run halting:` post before a record halt
+**Done when:** `go test -race ./...` is green.
 
 ## Open questions
 

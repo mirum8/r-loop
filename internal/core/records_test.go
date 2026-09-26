@@ -398,7 +398,7 @@ func TestReviewRecordFailureStopsEveryPaneWithoutHoldingForRemedy(t *testing.T) 
 			r.loop.Store, r.loop.Sessions.Store = guard, guard
 			watcher := &recordFailureWatcher{fakeWatcher: &fakeWatcher{log: r.shared}}
 			r.loop.Watcher = watcher
-			r.loop.RemedyWindow = time.Hour
+			r.loop.BlockerTimeout = time.Hour
 			r.loop.Runners = map[string]StepRunner{"diff": stepRunnerFunc(func(ctx context.Context, ref StepRef, obs Observer) Outcome {
 				s := &Session{Ref: ref, Agent: "step-agent", Pane: "step-pane"}
 				s.setReviewers([]*Session{{Agent: "reviewer-one", Pane: "review-pane-one"}, {Agent: "reviewer-two", Pane: "review-pane-two"}})

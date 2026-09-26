@@ -256,7 +256,7 @@ func (m Model) round(r Round) string {
 func (m Model) waiting(s *Step) string {
 	var open []Question
 	for _, q := range m.Questions {
-		if q.Phase == s.Phase && q.Step == s.Kind {
+		if q.Phase == s.Phase && (q.Step == s.Kind || q.Blocker) {
 			open = append(open, q)
 		}
 	}

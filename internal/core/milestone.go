@@ -20,6 +20,7 @@ type MilestoneBoundary struct {
 	RunDir   string
 	RunID    string
 	Face     Face
+	Raise    func(context.Context, Blocker) (Resolution, bool)
 	landed   map[string]bool
 }
 
@@ -32,26 +33,49 @@ func (b *MilestoneBoundary) After(ctx context.Context, phase Phase) {
 	if !ok {
 		return
 	}
-	if err := cleanTree(b.Repo); err != nil {
-		recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "report-skipped", Phase: phase.ID, Step: b.Kind.Name, Fields: map[string]string{"milestone": strconv.Itoa(m.Number), "reason": err.Error()}})
+	addendum := ""
+	for attempt := 1; ; attempt++ {
+		reason := b.attempt(ctx, phase, m, attempt, addendum)
+		if reason == "" {
+			return
+		}
+		var res Resolution
+		raised := false
+		if b.Raise != nil && recordFailed(b.Sessions.Store) == nil {
+			res, raised = b.Raise(ctx, Blocker{Source: sourceMilestone, Phase: phase.ID, Step: b.Kind.Name, Reason: reason, Actions: milestoneActions})
+		}
+		switch {
+		case raised && res.Action == actionRetry:
+			addendum = res.Addendum
+			continue
+		case raised && res.Action == actionStop:
+			return
+		}
+		recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "report-skipped", Phase: phase.ID, Step: b.Kind.Name, Fields: map[string]string{"milestone": strconv.Itoa(m.Number), "reason": reason}})
 		return
+	}
+}
+
+func (b *MilestoneBoundary) attempt(ctx context.Context, phase Phase, m Milestone, attempt int, addendum string) string {
+	if err := cleanTree(b.Repo); err != nil {
+		return err.Error()
 	}
 	branch, err := b.Repo.HeadBranch()
 	if err != nil {
-		recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "report-skipped", Phase: phase.ID, Step: b.Kind.Name, Fields: map[string]string{"milestone": strconv.Itoa(m.Number), "reason": "head: " + err.Error()}})
-		return
+		return "head: " + err.Error()
 	}
 	base, err := b.Repo.HeadSHA("")
 	if err != nil {
-		recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "report-skipped", Phase: phase.ID, Step: b.Kind.Name, Fields: map[string]string{"milestone": strconv.Itoa(m.Number), "reason": "head: " + err.Error()}})
-		return
+		return "head: " + err.Error()
 	}
-	if reason := b.report(ctx, phase, m); reason != "" {
-		if err := b.restore(branch, base); err != nil {
-			reason += "; restore: " + err.Error()
-		}
-		recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "report-skipped", Phase: phase.ID, Step: b.Kind.Name, Fields: map[string]string{"milestone": strconv.Itoa(m.Number), "reason": reason}})
+	reason := b.report(ctx, phase, m, attempt, addendum)
+	if reason == "" {
+		return ""
 	}
+	if err := b.restore(branch, base); err != nil {
+		reason += "; restore: " + err.Error()
+	}
+	return reason
 }
 
 func (b *MilestoneBoundary) closed(phase Phase) (Milestone, bool) {
@@ -72,9 +96,9 @@ func (b *MilestoneBoundary) closed(phase Phase) (Milestone, bool) {
 	return Milestone{}, false
 }
 
-func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone) (reason string) {
+func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone, attempt int, addendum string) (reason string) {
 	ref := StepRef{
-		Key:       StepKey{Run: b.RunID, Phase: phase.ID, Kind: b.Kind.Name, Attempt: 1},
+		Key:       StepKey{Run: b.RunID, Phase: phase.ID, Kind: b.Kind.Name, Attempt: attempt},
 		Kind:      b.Kind,
 		Phase:     phase,
 		InPrimary: true,
@@ -83,6 +107,7 @@ func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone
 	ref.Vars = StepVars(ref, b.Plan, b.Plan.Path, b.RunDir)
 	report := fmt.Sprintf("docs/%s/reports/milestone-%d-%s.md", b.Topic, m.Number, kebab(m.Name))
 	ref.Vars["ReportPath"] = report
+	ref.Vars["Addendum"] = addendum
 	key := ref.Key
 	if err := b.Sessions.Store.Append(b.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepQueued}); err != nil {
 		return "record: " + err.Error()

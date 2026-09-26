@@ -3,6 +3,9 @@ flags: "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_
 modelFlag: "-c model={model}"
 effortFlag: "-c model_reasoning_effort={effort}"
 askFlag: "-c mcp_servers.r-loop.url={url}"
+dirFlag: '-c sandbox_workspace_write.writable_roots=["{dir}"]'
 doneSignal: sentinel
 ask: mcp
-review: "codex exec review --uncommitted {args} -o {output}"
+review: "/review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings."
+reviewStart: ">> Code review started"
+reviewDone: "<< Code review finished"

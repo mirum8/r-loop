@@ -112,10 +112,11 @@ type Entry struct {
 }
 
 type Question struct {
-	ID    string
-	Phase string
-	Step  string
-	At    time.Time
+	ID      string
+	Phase   string
+	Step    string
+	At      time.Time
+	Blocker bool
 }
 
 type stepID struct {
@@ -220,6 +221,22 @@ func (m Model) Apply(ev core.Event) Model {
 	case "question-answered":
 		m.settle(ev.Fields["id"])
 		m.log(ev, toneDim, ev.Fields["id"]+" answered by "+ev.Fields["by"])
+	case "dialog":
+		kind, _, _ := strings.Cut(ev.Step, "-rv-")
+		m.Questions = append(append([]Question(nil), m.Questions...), Question{ID: ev.Fields["id"], Phase: ev.Phase, Step: kind, At: ev.At})
+		m.log(ev, toneDim, "dialog "+ev.Fields["id"])
+	case "dialog-answered":
+		m.settle(ev.Fields["id"])
+		m.log(ev, toneDim, ev.Fields["id"]+" answered: "+ev.Fields["keys"])
+	case "dialog-closed":
+		m.settle(ev.Fields["id"])
+		m.log(ev, toneDim, ev.Fields["id"]+" closed: "+ev.Fields["reason"])
+	case "blocked-on":
+		m.Questions = append(append([]Question(nil), m.Questions...), Question{ID: ev.Fields["id"], Phase: ev.Phase, Step: ev.Step, At: ev.At, Blocker: true})
+		m.log(ev, toneDim, fmt.Sprintf("blocker %s (%s): %s", ev.Fields["id"], ev.Fields["source"], ev.Fields["reason"]))
+	case "blocker-resolved":
+		m.settle(ev.Fields["id"])
+		m.log(ev, toneDim, fmt.Sprintf("%s → %s (%s)", ev.Fields["id"], ev.Fields["action"], ev.Fields["by"]))
 	case "human":
 		if ev.Fields["what"] == "resume" {
 			m.log(ev, toneDim, "resumed")

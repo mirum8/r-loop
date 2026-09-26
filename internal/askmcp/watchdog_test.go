@@ -285,6 +285,80 @@ func TestANilHandlerAnswersNotAvailable(t *testing.T) {
 	if out := call(t, cs, "propose_remedy", map[string]any{"class": "deps", "command": "c", "why": "w"}); out["decision"] != "refused" {
 		t.Fatalf("propose = %+v", out)
 	}
+	if out := call(t, cs, "answer_dialog", map[string]any{"id": "d1", "keys": []string{"1"}, "rule": "decline"}); out["decision"] != "refused" || out["reason"] != "not available" {
+		t.Fatalf("answer_dialog = %+v", out)
+	}
+	if out := call(t, cs, "resolve_blocker", map[string]any{"id": "b1", "action": "block"}); out["decision"] != "refused" || out["reason"] != "not available" {
+		t.Fatalf("resolve_blocker = %+v", out)
+	}
+}
+
+func TestResolveBlockerIsRecordedThenResumesThenReachesItsHandler(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	var calls []string
+	var seen []core.Record
+	s.Handle(WatchdogHandlers{
+		Resume: func() error {
+			calls = append(calls, "resume")
+			return nil
+		},
+		ResolveBlocker: func(id, action, rule, addendum string, keys []string, provider, model, effort, maintainerSaid string) (string, string) {
+			seen = st.records()
+			calls = append(calls, strings.Join([]string{"resolve " + id, action, rule, addendum, strings.Join(keys, " "), provider, model, effort, maintainerSaid}, "|"))
+			return "ask", "ask the maintainer"
+		},
+	})
+
+	out := call(t, connect(t, s.WatchdogURL()), "resolve_blocker", map[string]any{"id": "b2", "action": "keys", "rule": "allow go test", "addendum": "try again", "keys": []string{"down", "enter"}, "provider": "claude", "model": "opus", "effort": "high", "maintainer_said": "yes"})
+
+	if out["decision"] != "ask" || out["reason"] != "ask the maintainer" {
+		t.Fatalf("out = %+v", out)
+	}
+	if want := "resume,resolve b2|keys|allow go test|try again|down enter|claude|opus|high|yes"; strings.Join(calls, ",") != want {
+		t.Fatalf("calls = %v", calls)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("records seen by the handler = %+v", seen)
+	}
+	want := map[string]string{"tool": "resolve_blocker", "id": "b2", "action": "keys", "rule": "allow go test", "addendum": "try again", "keys": "down enter", "provider": "claude", "model": "opus", "effort": "high", "maintainer_said": "yes"}
+	if ev := seen[0].Event; ev == nil || ev.Kind != "watchdog-call" || !reflect.DeepEqual(ev.Fields, want) {
+		t.Fatalf("record = %+v", seen[0])
+	}
+}
+
+func TestAnswerDialogIsRecordedThenResumesThenReachesItsHandler(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	var calls []string
+	var seen []core.Record
+	s.Handle(WatchdogHandlers{
+		Resume: func() error {
+			calls = append(calls, "resume")
+			return nil
+		},
+		AnswerDialog: func(id string, keys []string, rule, maintainerSaid string) (string, string) {
+			seen = st.records()
+			calls = append(calls, "answer "+id+"|"+strings.Join(keys, " ")+"|"+rule+"|"+maintainerSaid)
+			return "ask", "ask the maintainer"
+		},
+	})
+
+	out := call(t, connect(t, s.WatchdogURL()), "answer_dialog", map[string]any{"id": "d2", "keys": []string{"down", "enter"}, "rule": "allow go test", "maintainer_said": "yes"})
+
+	if out["decision"] != "ask" || out["reason"] != "ask the maintainer" {
+		t.Fatalf("out = %+v", out)
+	}
+	if want := "resume,answer d2|down enter|allow go test|yes"; strings.Join(calls, ",") != want {
+		t.Fatalf("calls = %v", calls)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("records seen by the handler = %+v", seen)
+	}
+	ev := seen[0].Event
+	if ev == nil || ev.Kind != "watchdog-call" || ev.Fields["tool"] != "answer_dialog" || ev.Fields["id"] != "d2" || ev.Fields["keys"] != "down enter" || ev.Fields["rule"] != "allow go test" || ev.Fields["maintainer_said"] != "yes" {
+		t.Fatalf("record = %+v", seen[0])
+	}
 }
 
 func TestEveryCallIsRecordedBeforeItsHandlerRuns(t *testing.T) {
@@ -326,7 +400,7 @@ func TestWatchdogPathListsNoAskTool(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	if want := []string{"answer_question", "ask_maintainer", "propose_remedy", "restart_step", "signal", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
+	if want := []string{"answer_dialog", "answer_question", "ask_maintainer", "propose_remedy", "resolve_blocker", "restart_step", "signal", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
 		t.Fatalf("watchdog tools = %v, want %v", names, want)
 	}
 }
@@ -376,7 +450,7 @@ func TestWatchdogToolsOnAStepPathAre404(t *testing.T) {
 	if len(tools.Tools) != 1 || tools.Tools[0].Name != "ask_watchdog" {
 		t.Fatalf("step tools = %+v", tools.Tools)
 	}
-	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "ask_maintainer", "submit_triage", "submit_gate"} {
+	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "ask_maintainer", "submit_triage", "submit_gate"} {
 		_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{"kind": "halt", "step": "phase-3/implement"}})
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not found") {
 			t.Fatalf("%s on a step path: err = %v", name, err)

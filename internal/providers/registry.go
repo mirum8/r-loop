@@ -21,7 +21,7 @@ var shipped embed.FS
 const shippedSource = "shipped"
 
 type Provider struct {
-	Name, Kind, Flags, ModelFlag, EffortFlag, AskFlag, DoneSignal, Ask, Review, Source string
+	Name, Kind, Flags, ModelFlag, EffortFlag, AskFlag, DirFlag, DoneSignal, Ask, Review, ReviewStart, ReviewDone, Source string
 }
 
 type Registry struct {
@@ -77,7 +77,7 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 	p := Provider{Name: name, Source: source}
 	fields := map[string]*string{
 		"kind": &p.Kind, "flags": &p.Flags, "modelFlag": &p.ModelFlag, "effortFlag": &p.EffortFlag, "askFlag": &p.AskFlag,
-		"doneSignal": &p.DoneSignal, "ask": &p.Ask, "review": &p.Review,
+		"dirFlag": &p.DirFlag, "doneSignal": &p.DoneSignal, "ask": &p.Ask, "review": &p.Review, "reviewStart": &p.ReviewStart, "reviewDone": &p.ReviewDone,
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, val := n.Content[i].Value, n.Content[i+1]
@@ -101,10 +101,18 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 		return fail("effortFlag", "must contain {effort} or be empty")
 	case p.AskFlag != "" && !strings.Contains(p.AskFlag, "{url}") && !strings.Contains(p.AskFlag, "{mcpConfig}"):
 		return fail("askFlag", "must contain {url} or {mcpConfig} or be empty")
+	case p.DirFlag != "" && !strings.Contains(p.DirFlag, "{dir}"):
+		return fail("dirFlag", "must contain {dir} or be empty")
 	case p.DoneSignal != "sentinel":
 		return fail("doneSignal", "must be sentinel, got %q", p.DoneSignal)
 	case p.Ask != "" && p.Ask != "mcp" && p.Ask != "none":
 		return fail("ask", "must be mcp or none, got %q", p.Ask)
+	case p.ReviewStart != "" && p.ReviewDone == "":
+		return fail("reviewDone", "is required with reviewStart")
+	case p.ReviewDone != "" && p.ReviewStart == "":
+		return fail("reviewStart", "is required with reviewDone")
+	case p.ReviewStart != "" && !strings.HasPrefix(p.Review, "/"):
+		return fail("reviewStart", "and reviewDone need a review that starts with /, got %q", p.Review)
 	}
 	if p.Ask == "" {
 		p.Ask = "none"
@@ -112,7 +120,7 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 	return p, nil
 }
 
-var placeholders = []string{"{model}", "{effort}", "{url}", "{mcpConfig}"}
+var placeholders = []string{"{model}", "{effort}", "{url}", "{mcpConfig}", "{dir}"}
 
 func hasPlaceholder(s string) bool {
 	for _, ph := range placeholders {
@@ -123,10 +131,10 @@ func hasPlaceholder(s string) bool {
 	return false
 }
 
-func Args(p Provider, model, effort, askURL, mcpConfigPath string) []string {
-	values := map[string]string{"{model}": model, "{effort}": effort, "{url}": askURL, "{mcpConfig}": mcpConfigPath}
+func Args(p Provider, model, effort, askURL, mcpConfigPath, dir string) []string {
+	values := map[string]string{"{model}": model, "{effort}": effort, "{url}": askURL, "{mcpConfig}": mcpConfigPath, "{dir}": dir}
 	args := strings.Fields(p.Flags)
-	for _, tmpl := range []string{p.ModelFlag, p.EffortFlag, p.AskFlag} {
+	for _, tmpl := range []string{p.ModelFlag, p.EffortFlag, p.AskFlag, p.DirFlag} {
 		if words, ok := expand(tmpl, values); ok {
 			args = append(args, words...)
 		}
@@ -163,12 +171,13 @@ func WriteMCPConfig(path, url string) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-func ToCore(p Provider, model, effort, askURL, mcpConfigPath string) core.ProviderArgs {
-	reviewArgs := Args(p, model, effort, "", "")
+func ToCore(p Provider, model, effort, askURL, mcpConfigPath, dir string) core.ProviderArgs {
+	reviewArgs := Args(p, model, effort, "", "", "")
 	for i, arg := range reviewArgs {
 		reviewArgs[i] = shellWord(arg)
 	}
-	return core.ProviderArgs{Kind: p.Kind, Args: Args(p, model, effort, askURL, mcpConfigPath), Ask: p.Ask == "mcp", Review: strings.ReplaceAll(p.Review, "{args}", strings.Join(reviewArgs, " "))}
+	return core.ProviderArgs{Kind: p.Kind, Args: Args(p, model, effort, askURL, mcpConfigPath, dir), Ask: p.Ask == "mcp", Review: strings.ReplaceAll(p.Review, "{args}", strings.Join(reviewArgs, " ")),
+		ReviewStart: p.ReviewStart, ReviewDone: p.ReviewDone}
 }
 
 func shellWord(arg string) string {

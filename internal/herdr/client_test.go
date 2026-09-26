@@ -388,6 +388,71 @@ func TestInterruptSendsEscThenCtrlC(t *testing.T) {
 	}
 }
 
+func keyLog(t *testing.T, failKey string) (Client, func() string) {
+	t.Helper()
+	bin, err := filepath.Abs("testdata/herdr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	wrapper := filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\nfor a in \"$@\"; do last=\"$a\"; done\n" +
+		"if [ \"$last\" = \"" + failKey + "\" ]; then echo boom >&2; exit 1; fi\n" +
+		"\"" + bin + "\" \"$@\" || exit $?\ncat \"$HERDR_ARGV\" >> \"" + log + "\"\nprintf '\\n' >> \"" + log + "\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake(t, `{"id":"cli:agent:send-keys","result":{"type":"ok"}}`)
+	return Client{Bin: wrapper}, func() string {
+		data, err := os.ReadFile(log)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+}
+
+func TestSendKeysSendsEachKeyInOrder(t *testing.T) {
+	c, calls := keyLog(t, "")
+
+	if err := c.SendKeys("a1", "down", "down", "enter"); err != nil {
+		t.Fatalf("SendKeys: %v", err)
+	}
+
+	want := "agent\x00send-keys\x00a1\x00down\x00\n" +
+		"agent\x00send-keys\x00a1\x00down\x00\n" +
+		"agent\x00send-keys\x00a1\x00enter\x00\n"
+	if got := calls(); got != want {
+		t.Fatalf("calls\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestSendKeysStopsAtTheFirstError(t *testing.T) {
+	c, calls := keyLog(t, "boom")
+
+	err := c.SendKeys("a1", "down", "boom", "enter")
+
+	var herr Error
+	if !errors.As(err, &herr) || herr.Message != "boom" {
+		t.Fatalf("got %#v", err)
+	}
+	if got, want := calls(), "agent\x00send-keys\x00a1\x00down\x00\n"; got != want {
+		t.Fatalf("calls\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestScreenReadsTheVisibleSource(t *testing.T) {
+	c, argv := fake(t, "Do you trust this folder?\n> Yes\n")
+
+	out, err := c.Screen("a1")
+
+	if err != nil || out != "Do you trust this folder?\n> Yes\n" {
+		t.Fatalf("got %q, %v", out, err)
+	}
+	assertArgv(t, argv(), []string{"agent", "read", "a1", "--source", "visible"})
+}
+
 func TestCloseRunsWorkspaceCloseWithoutGroup(t *testing.T) {
 	c, argv := fake(t, `{"id":"cli:workspace:close","result":{"type":"ok"}}`)
 
@@ -912,4 +977,44 @@ func TestStartFailsWhenClaudeNeverShowsItsBannerAfterItsTrustDialog(t *testing.T
 	if err == nil || err.Error() != "herdr: agent a1 never showed claude's prompt after the trust dialog" {
 		t.Fatalf("got %v", err)
 	}
+}
+
+func TestSendTextTypesIntoTheAgentsPane(t *testing.T) {
+	bin, err := filepath.Abs("testdata/herdr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	wrapper := filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\n\"" + bin + "\" \"$@\" || exit $?\ncat \"$HERDR_ARGV\" >> \"" + log + "\"\nprintf '\\n' >> \"" + log + "\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake(t, `{"id":"cli:agent:get","result":{"agent":{"agent":"codex","agent_status":"done","name":"a1","pane_id":"w2X:p3"},"type":"agent_info"}}`)
+	c := Client{Bin: wrapper}
+
+	if err := c.SendText("a1", "/review all of it"); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "agent\x00get\x00a1\x00\n" + "pane\x00send-text\x00w2X:p3\x00/review all of it\x00\n"
+	if string(data) != want {
+		t.Fatalf("calls\n got %q\nwant %q", data, want)
+	}
+}
+
+func TestSendTextToAnAgentWithoutAPaneFails(t *testing.T) {
+	c, argv := fakeExit(t, "", `{"error":{"code":"agent_not_found","message":"agent target a1 not found"},"id":"cli:agent:get"}`, 1)
+
+	err := c.SendText("a1", "/review")
+
+	if err == nil || !strings.Contains(err.Error(), "a1") {
+		t.Fatalf("got %v", err)
+	}
+	assertArgv(t, argv(), []string{"agent", "get", "a1"})
 }

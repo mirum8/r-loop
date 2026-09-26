@@ -317,7 +317,9 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				cancel(fmt.Errorf("panic in signal handler: %v", r))
+				err := fmt.Errorf("panic in signal handler: %v", r)
+				w.Loop.PostHalting(err.Error())
+				cancel(err)
 			}
 		}()
 		for {
@@ -552,6 +554,10 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	}
 	w.Watch = &core.Watch{Store: w.records, Face: w.Face, Checks: core.ShippedChecks(cfg.Watchdog.OvertimeFactor, cfg.Watchdog.DiffFactor), Repo: repo, Plan: pl}
 	w.Loop.Watcher = w.Watch
+	w.Gate.Watcher = w.Watch
+	w.Gate.Raise = w.Loop.TryRaise
+	w.Gate.Boundary.Raise = w.Loop.TryRaise
+	sm.Dialogs = w.Loop
 	allow := cfg.Watchdog.Allow
 	if opts.Unattended {
 		allow = append(slices.Clone(allow), addedClasses(cfg)...)
@@ -561,10 +567,11 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		fallbacks[k.Name] = k.Row.Fallback
 	}
 	w.Remedies = &core.Remedies{Allow: allow, Store: w.records, Face: w.Face, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks, Asks: w.asks}
-	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.records, Face: w.Face, Root: root, Pane: env.Pane, Label: cfg.Label, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow, Unattended: opts.Unattended}
+	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.records, Face: w.Face, Root: root, Pane: env.Pane, Label: cfg.Label, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow, Dialogs: cfg.Watchdog.Dialogs, Unattended: opts.Unattended}
 	w.Remedies.Dog = w.Dog
-	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Repo: repo}
-	w.Loop.RemedyWindow = cfg.Watchdog.RemedyWindow
+	w.Remedies.Blockers = w.Loop
+	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Keys: w.Loop.DeliverKeys, Rules: cfg.Watchdog.Dialogs, Repo: repo, Remedies: w.Remedies, Blocker: w.Loop.OpenBlocker, Settle: w.Loop.SettleBlocker}
+	w.Loop.BlockerTimeout = cfg.Watchdog.BlockerTimeout
 	return w, nil
 }
 
@@ -588,7 +595,7 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	w.Watch.PhaseCheck = &core.PhaseCheck{Dog: w.Dog, Repo: w.Loop.Sessions.Repo, Timeout: wd.CheckTimeout, Backlog: w.Plan.Backlog}
 	w.Router.Dog = w.Dog
 	w.Watch.Router = w.Router
-	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate})
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate})
 	return nil
 }
 
@@ -613,7 +620,7 @@ func (w *Wiring) startDog(ctx context.Context, provider, model, effort string) e
 	w.dogDir = dir
 	url := w.Ask.WatchdogURL()
 	mcpPath := filepath.Join(dir, "watchdog.mcp.json")
-	args, err := w.resolve(provider, model, effort, url, mcpPath)
+	args, err := w.resolve(provider, model, effort, url, mcpPath, "")
 	if err != nil {
 		return exit(2, "watchdog.provider: %v", err)
 	}
@@ -742,12 +749,12 @@ func terminal(v any) bool {
 	return ok && term.IsTerminal(f.Fd())
 }
 
-func (w *Wiring) resolve(provider, model, effort, askURL, mcpConfigPath string) (core.ProviderArgs, error) {
+func (w *Wiring) resolve(provider, model, effort, askURL, mcpConfigPath, dir string) (core.ProviderArgs, error) {
 	p, err := w.Registry.Resolve(provider)
 	if err != nil {
 		return core.ProviderArgs{}, err
 	}
-	return providers.ToCore(p, model, effort, askURL, mcpConfigPath), nil
+	return providers.ToCore(p, model, effort, askURL, mcpConfigPath, dir), nil
 }
 
 func coreRow(r config.StepRow) core.StepRow {

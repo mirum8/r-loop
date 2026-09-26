@@ -98,8 +98,26 @@ type Signal struct {
 	RejectReason     string
 }
 
+const (
+	QuestionDialog  = "dialog"
+	QuestionBlocker = "blocker"
+)
+
+type Blocker struct {
+	Source, Phase, Step, Reason, Excerpt string
+	Actions                              []string
+}
+
+type Resolution struct {
+	ID, Action, By, Citation, Addendum string
+	Keys                               []string
+	Provider, Model, Effort            string
+	halt                               string
+}
+
 type Question struct {
 	ID                           string
+	Kind                         string
 	Step                         StepKey
 	Text                         string
 	Options                      []string
@@ -323,8 +341,10 @@ func meets(a, b []string) bool {
 }
 
 type ProviderArgs struct {
-	Kind   string
-	Args   []string
-	Ask    bool
-	Review string
+	Kind        string
+	Args        []string
+	Ask         bool
+	Review      string
+	ReviewStart string
+	ReviewDone  string
 }

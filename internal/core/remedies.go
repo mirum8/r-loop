@@ -32,6 +32,10 @@ type Remedies struct {
 	Fallbacks   map[string]Fallback
 	Asks        func(provider string) bool
 	Dog         *Watchdog
+	Blockers    interface {
+		StepBlocker(phase, kind string) (string, bool)
+		SettleBlocker(Resolution) error
+	}
 
 	mu sync.Mutex
 }
@@ -135,6 +139,7 @@ func (r *Remedies) Restart(step, addendum, provider, model, effort, maintainerSa
 			restarts++
 		}
 		spent[ev.Fields["remedy"]] = true
+		spent[ev.Fields["citation"]] = true
 	}
 	if restarts >= r.MaxRestarts {
 		return false, fmt.Sprintf("restart limit %d reached", r.MaxRestarts)
@@ -185,6 +190,14 @@ func (r *Remedies) Restart(step, addendum, provider, model, effort, maintainerSa
 	}
 	if remedy == "" {
 		return false, "no authorised remedy"
+	}
+	if r.Blockers != nil {
+		if id, ok := r.Blockers.StepBlocker(phase, kind); ok {
+			if err := r.Blockers.SettleBlocker(Resolution{ID: id, Action: actionRetry, By: answeredByWatchdog, Citation: remedy, Addendum: addendum, Provider: provider, Model: model, Effort: effort}); err != nil {
+				return false, err.Error()
+			}
+			return true, ""
+		}
 	}
 	r.Watch.init()
 	reply := make(chan string, 1)

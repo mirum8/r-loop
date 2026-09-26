@@ -31,9 +31,12 @@ func (r Reviewer) ID() string {
 	return r.Provider
 }
 
-func (r Reviewer) Template() string {
+func (r Reviewer) TemplateFor(reviewed string) string {
 	if r.Prompt != "" {
 		return r.Prompt
+	}
+	if reviewed == "plan" {
+		return "review-plan"
 	}
 	return "review"
 }

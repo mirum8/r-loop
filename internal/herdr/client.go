@@ -236,16 +236,14 @@ func (c Client) awaitCodexPrompt(agent string) error {
 	trusted := false
 	deadline := time.Now().Add(paneBusyBudget)
 	for {
-		raw, err := c.exec("agent", "read", agent, "--source", "visible")
+		screen, err := c.Screen(agent)
 		if err != nil {
 			return err
 		}
-		screen := string(raw)
 		asks := strings.Contains(screen, codexTrustQuestion) || strings.Contains(screen, codexTrustFolder)
 		switch {
 		case asks && !trusted:
-			var out struct{}
-			if err := c.call(&out, "agent", "send-keys", agent, "enter"); err != nil {
+			if err := c.SendKeys(agent, "enter"); err != nil {
 				return err
 			}
 			trusted = true
@@ -280,18 +278,15 @@ func (c Client) awaitSettled(agent string) error {
 
 func (c Client) acceptTrust(agent, marker string, keys ...string) (bool, error) {
 	asks := func() (bool, error) {
-		screen, err := c.exec("agent", "read", agent, "--source", "visible")
-		return strings.Contains(string(screen), marker), err
+		screen, err := c.Screen(agent)
+		return strings.Contains(screen, marker), err
 	}
 	ask, err := asks()
 	if err != nil || !ask {
 		return false, err
 	}
-	var out struct{}
-	for _, key := range keys {
-		if err := c.call(&out, "agent", "send-keys", agent, key); err != nil {
-			return true, err
-		}
+	if err := c.SendKeys(agent, keys...); err != nil {
+		return true, err
 	}
 	deadline := time.Now().Add(paneBusyBudget)
 	for {
@@ -308,8 +303,8 @@ func (c Client) acceptTrust(agent, marker string, keys ...string) (bool, error) 
 func (c Client) awaitClaudeBanner(agent string) error {
 	deadline := time.Now().Add(paneBusyBudget)
 	for {
-		screen, err := c.exec("agent", "read", agent, "--source", "visible")
-		if err != nil || strings.Contains(string(screen), claudeBanner) {
+		screen, err := c.Screen(agent)
+		if err != nil || strings.Contains(screen, claudeBanner) {
 			return err
 		}
 		if time.Now().After(deadline) {
@@ -397,6 +392,33 @@ func (c Client) AgentPane(agent string) (string, error) {
 func (c Client) Read(agent string, lines int) (string, error) {
 	data, err := c.exec("agent", "read", agent, "--source", "recent-unwrapped", "--lines", strconv.Itoa(lines))
 	return string(data), err
+}
+
+func (c Client) Screen(agent string) (string, error) {
+	data, err := c.exec("agent", "read", agent, "--source", "visible")
+	return string(data), err
+}
+
+func (c Client) SendKeys(agent string, keys ...string) error {
+	var out struct{}
+	for _, key := range keys {
+		if err := c.call(&out, "agent", "send-keys", agent, key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c Client) SendText(agent, text string) error {
+	pane, err := c.AgentPane(agent)
+	if err != nil {
+		return err
+	}
+	if pane == "" {
+		return fmt.Errorf("agent %s has no pane", agent)
+	}
+	_, err = c.exec("pane", "send-text", pane, text)
+	return err
 }
 
 func (c Client) Interrupt(agent string) error {

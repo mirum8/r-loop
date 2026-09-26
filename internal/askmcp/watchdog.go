@@ -23,6 +23,9 @@ type WatchdogHandlers struct {
 	Restart func(step, addendum, provider, model, effort, maintainerSaid string) (bool, string)
 	Answer  func(id, answer, citation string) (bool, string)
 
+	AnswerDialog   func(id string, keys []string, rule, maintainerSaid string) (string, string)
+	ResolveBlocker func(id, action, rule, addendum string, keys []string, provider, model, effort, maintainerSaid string) (string, string)
+
 	AskMaintainer func(question string, options []string, recommended string) error
 	Resume        func() error
 
@@ -65,6 +68,25 @@ type answerInput struct {
 	Citation string `json:"citation"`
 }
 
+type answerDialogInput struct {
+	ID             string   `json:"id"`
+	Keys           []string `json:"keys"`
+	Rule           string   `json:"rule,omitempty"`
+	MaintainerSaid string   `json:"maintainer_said,omitempty"`
+}
+
+type resolveBlockerInput struct {
+	ID             string   `json:"id"`
+	Action         string   `json:"action"`
+	Rule           string   `json:"rule,omitempty"`
+	Addendum       string   `json:"addendum,omitempty"`
+	Keys           []string `json:"keys,omitempty"`
+	Provider       string   `json:"provider,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	Effort         string   `json:"effort,omitempty"`
+	MaintainerSaid string   `json:"maintainer_said,omitempty"`
+}
+
 type acceptedOutput struct {
 	Accepted bool   `json:"accepted"`
 	Reason   string `json:"reason,omitempty"`
@@ -89,7 +111,7 @@ type decisionOutput struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
-var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true}
+var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true}
 
 func (s *Server) Handle(h WatchdogHandlers) {
 	s.mu.Lock()
@@ -179,6 +201,40 @@ func (s *Server) watchdogServer() *mcp.Server {
 		}
 		ok, reason := h(in.ID, in.Answer, in.Citation)
 		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "answer_dialog",
+		Description: "Answer an open dialog in a step's pane with the herdr keys that select your choice, in order: enter, esc, up, down, tab, or a single digit or letter. Give rule: the text of one configured dialog rule, exactly; decline, with keys [\"esc\"] only; or no rule and maintainer_said: the maintainer's reply, quoted, after you asked them in your own session. The driver presses the keys only when the decision is authorised.",
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in answerDialogInput) (*mcp.CallToolResult, decisionOutput, error) {
+		if err := s.record("answer_dialog", "", map[string]string{"id": in.ID, "keys": strings.Join(in.Keys, " "), "rule": in.Rule, "maintainer_said": in.MaintainerSaid}); err != nil {
+			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
+		}
+		if err := s.resume(); err != nil {
+			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
+		}
+		h := s.handlersNow().AnswerDialog
+		if h == nil {
+			return nil, decisionOutput{Decision: "refused", Reason: notAvailable}, nil
+		}
+		decision, reason := h(in.ID, in.Keys, in.Rule, in.MaintainerSaid)
+		return nil, decisionOutput{Decision: decision, Reason: reason}, nil
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "resolve_blocker",
+		Description: "Clear an open blocker the driver holds the run on, with one of its actions: retry, keys, switch, skip, block or stop. retry takes an addendum for the next attempt; keys takes the herdr keys to press in its pane and rule: the text of one configured dialog rule, exactly; switch takes provider, and model and effort for a provider that is not the row's fallback. Anything not authorised on its own comes back ask: ask the maintainer in your own session, then call again with maintainer_said: their reply, quoted. block and stop are always authorised.",
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in resolveBlockerInput) (*mcp.CallToolResult, decisionOutput, error) {
+		if err := s.record("resolve_blocker", "", map[string]string{"id": in.ID, "action": in.Action, "rule": in.Rule, "addendum": in.Addendum, "keys": strings.Join(in.Keys, " "), "provider": in.Provider, "model": in.Model, "effort": in.Effort, "maintainer_said": in.MaintainerSaid}); err != nil {
+			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
+		}
+		if err := s.resume(); err != nil {
+			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
+		}
+		h := s.handlersNow().ResolveBlocker
+		if h == nil {
+			return nil, decisionOutput{Decision: "refused", Reason: notAvailable}, nil
+		}
+		decision, reason := h(in.ID, in.Action, in.Rule, in.Addendum, in.Keys, in.Provider, in.Model, in.Effort, in.MaintainerSaid)
+		return nil, decisionOutput{Decision: decision, Reason: reason}, nil
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "ask_maintainer",

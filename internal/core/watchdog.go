@@ -24,7 +24,7 @@ type Watchdog struct {
 	Provider                               ProviderArgs
 	RunID, Root, TodoPath, SpecDir, RunDir string
 	Pane, Label                            string
-	Allow                                  []string
+	Allow, Dialogs                         []string
 	Unattended                             bool
 	Sleep                                  func(time.Duration)
 	OnGone                                 func()
@@ -94,7 +94,7 @@ func (d *Watchdog) Start(ctx context.Context) error {
 	if _, err := d.Host.Start(pane, name, d.Provider.Kind, d.Provider.Args); err != nil {
 		return fmt.Errorf("start %s: %w", name, err)
 	}
-	text, _, err := d.Prompts.Render("watchdog", map[string]any{"TodoPath": d.TodoPath, "SpecDir": d.SpecDir, "RunDir": d.RunDir, "Allow": d.Allow, "Unattended": d.Unattended})
+	text, _, err := d.Prompts.Render("watchdog", map[string]any{"TodoPath": d.TodoPath, "SpecDir": d.SpecDir, "RunDir": d.RunDir, "Allow": d.Allow, "Dialogs": d.Dialogs, "Unattended": d.Unattended})
 	if err != nil {
 		return fmt.Errorf("render watchdog: %w", err)
 	}
@@ -448,6 +448,12 @@ func (d *Watchdog) lazy() {
 		d.cond = sync.NewCond(&d.mu)
 		d.quit = make(chan struct{})
 	}
+}
+
+func (d *Watchdog) Waiting() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.asking
 }
 
 func (d *Watchdog) Gone() bool {

@@ -338,15 +338,31 @@ func TestProviderBlockMissingKindIsRefusedInPreflight(t *testing.T) {
 	}
 }
 
-func TestReviewerWithoutReviewCommandIsRefusedWithExit2(t *testing.T) {
+func TestImplementReviewerWithoutReviewCommandIsRefusedWithExit2(t *testing.T) {
 	f := newFixture(t)
-	f.write(".r-loop/config.yaml", "providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n")
+	f.write(".r-loop/config.yaml", "providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\nsteps:\n  implement:\n    reviewers:\n      - provider: codex\n        model: gpt-5.6-sol\n        effort: medium\n")
 	f.commit()
 
 	_, err := f.preflight(f.todo, "--plain")
 
-	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), "steps.plan.reviewers: provider codex has no review command") {
+	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), "steps.implement.reviewers: provider codex has no review command") {
 		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestPlanReviewerNeedsNoReviewCommand(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n")
+	f.commit()
+	f.fakeHerdr(1)
+
+	code := f.main(f.todo, "--dry-run", "--plain")
+
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, f.err.String())
+	}
+	if want := "prompt review-plan: embedded\n"; !strings.Contains(f.out.String(), want) {
+		t.Fatalf("%q missing from:\n%s", want, f.out.String())
 	}
 }
 
@@ -429,7 +445,7 @@ func TestWireBuildsTheGateFixKindAndTheMilestoneBoundary(t *testing.T) {
 	if len(w.Loop.Kinds) != 2 || w.Loop.Kinds[1].Row.Model != "gpt-x" || w.Loop.Lander != g {
 		t.Fatalf("loop kinds=%+v", w.Loop.Kinds)
 	}
-	args, err := w.Loop.Sessions.Resolve("codex", "gpt-x", "high", "", "")
+	args, err := w.Loop.Sessions.Resolve("codex", "gpt-x", "high", "", "", "")
 	if err != nil || args.Kind != "codex" || strings.Join(args.Args, " ") != "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -c model=gpt-x -c model_reasoning_effort=high" {
 		t.Fatalf("args=%+v err=%v", args, err)
 	}

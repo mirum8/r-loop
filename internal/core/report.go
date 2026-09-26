@@ -75,7 +75,11 @@ func decisions(st RunState) []string {
 			if f["addendum"] != "" {
 				line += " — " + f["addendum"]
 			}
-			if remedy := f["remedy"]; remedy != "" {
+			remedy := f["remedy"]
+			if f["citation"] != "" {
+				remedy = f["citation"]
+			}
+			if remedy != "" {
 				if cmd, ok := commands[remedy]; ok {
 					remedy = cmd
 				}
@@ -219,6 +223,14 @@ func questionLines(st RunState) []string {
 		}
 	}
 	for _, q := range st.Questions {
+		switch q.Kind {
+		case QuestionDialog:
+			out = append(out, DialogLine(q))
+			continue
+		case QuestionBlocker:
+			out = append(out, BlockerLine(q))
+			continue
+		}
 		line := fmt.Sprintf("%s %s: %s", q.ID, where(q.Step.Phase, q.Step.Kind), q.Text)
 		if q.AnsweredBy == "" {
 			line += " (open)"
@@ -265,6 +277,7 @@ func remedyLines(st RunState) []string {
 	for _, ev := range st.Events {
 		if ev.Kind == "restart" {
 			restarted[ev.Fields["remedy"]] = true
+			restarted[ev.Fields["citation"]] = true
 		}
 	}
 	for _, r := range st.Remedies {

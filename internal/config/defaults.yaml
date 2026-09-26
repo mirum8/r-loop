@@ -68,7 +68,8 @@ watchdog:
   effort: high
   maxRestarts: 2
   allow:
-  remedyWindow: 10m
+  dialogs:
+  blockerTimeout: 10m
   checkTimeout: 10m
   unblockTimeout: 2h
   triageTimeout: 2h

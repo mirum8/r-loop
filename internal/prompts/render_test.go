@@ -11,7 +11,7 @@ import (
 
 var _ core.Prompts = (*Renderer)(nil)
 
-var stepTemplates = []string{"plan", "implement", "review", "review-ui", "fix", "milestone", "gatefix", "gate"}
+var stepTemplates = []string{"plan", "implement", "review", "review-plan", "review-ui", "fix", "milestone", "gatefix", "gate"}
 
 func TestEveryStepPromptTellsTheAgentToWriteTheSentinelAtomically(t *testing.T) {
 	r := New(t.TempDir())
@@ -58,6 +58,7 @@ func fullVars() map[string]any {
 		"Sentinel":      "/runs/r1/phase-7/plan-a1.sentinel",
 		"RunDir":        "/runs/r1",
 		"Allow":         []string{},
+		"Dialogs":       []string{},
 		"Unattended":    false,
 		"AskURL":        "",
 		"PhaseWarnings": "",
@@ -66,6 +67,7 @@ func fullVars() map[string]any {
 		"Round":         1,
 		"Rounds":        2,
 		"ReviewCommand": "/review",
+		"ReviewRan":     false,
 		"FindingsPath":  "/runs/r1/phase-7/implement-findings-codex-r1.json",
 		"FindingsFiles": []core.FindingsFile{
 			{Reviewer: "claude", Path: "/runs/r1/phase-7/implement-findings-claude-r1.json"},
@@ -103,6 +105,30 @@ func TestReviewRunsTheNativeCommandFirstAndKeepsItsOutput(t *testing.T) {
 				t.Fatalf("command is prose:\n%s", got)
 			}
 		})
+	}
+}
+
+func TestReviewThatAlreadyRanAsksToSaveItsOutput(t *testing.T) {
+	vars := fullVars()
+	vars["ReviewCommand"] = "/review Review the current code changes"
+	vars["ReviewRan"] = true
+
+	got := render(t, New(t.TempDir()), "review", vars)
+
+	want := "The native review `/review Review the current code changes` already ran in this session; its results are the review output above in your conversation. Save that output verbatim to `/runs/r1/phase-7/implement-rv-ui-r1/native-review.txt`, then base your findings on it."
+	if !strings.Contains(got, want) {
+		t.Errorf("prompt lacks %q:\n%s", want, got)
+	}
+	if strings.Contains(got, "Your first action is to run this command") {
+		t.Errorf("prompt asks to run the review again:\n%s", got)
+	}
+}
+
+func TestReviewNotRunYetKeepsTheRunInstruction(t *testing.T) {
+	got := render(t, New(t.TempDir()), "review", fullVars())
+
+	if !strings.Contains(got, "Your first action is to run this command") || strings.Contains(got, "already ran in this session") {
+		t.Errorf("prompt:\n%s", got)
 	}
 }
 
@@ -250,7 +276,7 @@ func TestGatefixReviewAndFixPromptsDoNotOfferAskWatchdog(t *testing.T) {
 	}
 }
 
-func TestAllSevenTemplatesRenderWithFullVariableSet(t *testing.T) {
+func TestAllTemplatesRenderWithFullVariableSet(t *testing.T) {
 	r := New(t.TempDir())
 	for _, name := range append(stepTemplates, "watchdog") {
 		text, source, err := r.Render(name, fullVars())
@@ -359,6 +385,77 @@ func TestWatchdogCarriesTheAnsweringRule(t *testing.T) {
 	}
 }
 
+func TestWatchdogAnswersDialogsUnderTheConfiguredRules(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", with("Dialogs", []string{"approve writes inside the run folder", "allow go test"}))
+
+	for _, want := range []string{
+		"## Answering dialogs",
+		"dialog <id> from phase-<N>/<kind>: answer with answer_dialog",
+		"`answer_dialog(id, keys, rule?, maintainer_said?)`",
+		"- `approve writes inside the run folder`\n- `allow go test`\n",
+		"`enter`, `esc`, `up`, `down`, `tab`",
+		"`rule: \"decline\"` with `keys: [\"esc\"]`",
+		"`maintainer_said`",
+		"Never press a key you cannot see on the screen",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "decline every dialog no rule covers") {
+		t.Errorf("attended watchdog told to decline off-rule dialogs:\n%s", text)
+	}
+}
+
+func TestWatchdogClearsBlockers(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"- `resolve_blocker(id, action, rule?, addendum?, keys?, provider?, model?, effort?, maintainer_said?)`",
+		"## Clearing blockers",
+		"blocker <id> from phase-<N>/<step> (<source>): <reason>",
+		"`propose_remedy`, then `retry`",
+		"`keys` with `rule`",
+		"`switch` to the row's fallback",
+		"`ask_maintainer` with the options: retry, skip, switch provider, block this phase, stop the run",
+		"Then call `resolve_blocker` again with their reply, quoted, as `maintainer_said`",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "nothing authorised fixes it, call `resolve_blocker` with `block` or `stop`") {
+		t.Errorf("attended watchdog told to block without asking:\n%s", text)
+	}
+}
+
+func TestAnUnattendedWatchdogBlocksOrStopsWhenNothingAuthorisedClearsABlocker(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", with("Unattended", true))
+
+	if !strings.Contains(text, "nothing authorised fixes it, call `resolve_blocker` with `block` or `stop`") {
+		t.Errorf("unattended watchdog not told to block or stop:\n%s", text)
+	}
+	if strings.Contains(text, "`ask_maintainer` with the options: retry") {
+		t.Errorf("unattended watchdog told to ask about a blocker:\n%s", text)
+	}
+}
+
+func TestWatchdogWithNoDialogRulesSaysNone(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	if !strings.Contains(text, "The rules in `watchdog.dialogs`:\n- none\n") {
+		t.Errorf("watchdog does not say there are no rules:\n%s", text)
+	}
+}
+
+func TestAnUnattendedWatchdogDeclinesDialogsNoRuleCovers(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", with("Unattended", true))
+
+	if !strings.Contains(text, "decline every dialog no rule covers") {
+		t.Errorf("unattended watchdog lacks the decline rule:\n%s", text)
+	}
+}
+
 func TestWatchdogCarriesThePhaseCheck(t *testing.T) {
 	text := render(t, New(t.TempDir()), "watchdog", fullVars())
 
@@ -379,7 +476,7 @@ func TestWatchdogCarriesThePhaseCheck(t *testing.T) {
 
 func TestStepTemplatesSendRealChoicesToTheWatchdog(t *testing.T) {
 	r := New(t.TempDir())
-	for _, name := range []string{"plan", "implement", "review", "review-ui", "fix"} {
+	for _, name := range []string{"plan", "implement", "review", "review-plan", "review-ui", "fix"} {
 		text := render(t, r, name, fullVars())
 		if !strings.Contains(text, "call the `ask_watchdog` tool") || !strings.Contains(text, "Never ask the user in this pane") {
 			t.Errorf("%s does not send real choices to the watchdog:\n%s", name, text)
@@ -444,7 +541,7 @@ func TestPlanTracesEveryElementToAnObligation(t *testing.T) {
 func TestPlanReviewJudgesProportionBothWays(t *testing.T) {
 	r := New(t.TempDir())
 
-	planReview := render(t, r, "review", with("ReviewedKind", "plan"))
+	planReview := render(t, r, "review-plan", with("ReviewedKind", "plan"))
 	for _, want := range []string{
 		"**Missing**",
 		"**Excess**",
@@ -456,8 +553,43 @@ func TestPlanReviewJudgesProportionBothWays(t *testing.T) {
 			t.Errorf("plan review missing %q", want)
 		}
 	}
-	if strings.Contains(render(t, r, "review", fullVars()), "**Excess**") {
-		t.Error("implement review carries the plan proportion check")
+	for _, kind := range []string{"implement", "plan"} {
+		if strings.Contains(render(t, r, "review", with("ReviewedKind", kind)), "**Excess**") {
+			t.Errorf("review for %s carries the plan proportion check", kind)
+		}
+	}
+}
+
+func TestPlanReviewRunsNoNativeReview(t *testing.T) {
+	vars := with("ReviewedKind", "plan")
+	vars["ReviewCommand"] = "codex exec review --uncommitted"
+
+	got := render(t, New(t.TempDir()), "review-plan", vars)
+
+	for _, unwanted := range []string{"Native review", "native-review.txt", "codex exec review"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("plan review carries %q:\n%s", unwanted, got)
+		}
+	}
+	for _, want := range []string{"Change no file in `/wt/phase-7`", "/runs/r1/phase-7/implement-findings-codex-r1.json", "call the `ask_watchdog` tool"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan review missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestReviewCarriesNoPlanText(t *testing.T) {
+	got := render(t, New(t.TempDir()), "review", with("ItemGate", true))
+	vars := with("ReviewedKind", "plan")
+	vars["ItemGate"] = true
+	planKind := render(t, New(t.TempDir()), "review", vars)
+
+	for _, text := range []string{got, planKind} {
+		for _, unwanted := range []string{".task-plans/phase-7.md", "## Tests", "## Evidence", "**Missing**"} {
+			if strings.Contains(text, unwanted) {
+				t.Errorf("review carries plan text %q:\n%s", unwanted, text)
+			}
+		}
 	}
 }
 
@@ -474,8 +606,8 @@ func TestImplementReadsThePlanAndProtectsTodo(t *testing.T) {
 func TestReviewTargetsPlanOrWorktree(t *testing.T) {
 	r := New(t.TempDir())
 
-	planReview := render(t, r, "review", with("ReviewedKind", "plan"))
-	if !strings.Contains(planReview, ".task-plans/phase-7.md") {
+	planReview := render(t, r, "review-plan", with("ReviewedKind", "plan"))
+	if !strings.Contains(planReview, "the plan at `.task-plans/phase-7.md`, read against the phase block below and the code in `/wt/phase-7`") {
 		t.Errorf("plan review does not name the plan:\n%s", planReview)
 	}
 	codeReview := render(t, r, "review", fullVars())
@@ -607,7 +739,10 @@ func TestReviewAsksForATestPerCriterionOnlyForAnItem(t *testing.T) {
 	plan := render(t, r, "review", with("ItemGate", true))
 	vars := fullVars()
 	vars["ItemGate"], vars["ReviewedKind"] = true, "plan"
-	planReview := render(t, r, "review", vars)
+	planReview := render(t, r, "review-plan", vars)
+	if strings.Contains(render(t, r, "review-plan", with("ReviewedKind", "plan")), "name the test that proves it") {
+		t.Error("plan criterion rule without ItemGate")
+	}
 	if !strings.Contains(plan, "- [ ] render prompts") || !strings.Contains(plan, "report every criterion no test proves as a finding") || strings.Contains(plan, "## Evidence") {
 		t.Errorf("implement review:\n%s", plan)
 	}
@@ -739,7 +874,7 @@ func TestPlanImplementAndReviewNameTheGroupOnlyWhenSet(t *testing.T) {
 	r := New(t.TempDir())
 	const want = "This phase fixes backlog items 3, 5, 7 with one change. Every member's criteria are obligations, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done."
 
-	for _, name := range []string{"plan", "implement", "review"} {
+	for _, name := range []string{"plan", "implement", "review", "review-plan"} {
 		if strings.Contains(render(t, r, name, fullVars()), "backlog items") {
 			t.Errorf("%s: group paragraph without GroupItems", name)
 		}

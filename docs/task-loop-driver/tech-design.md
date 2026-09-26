@@ -32,6 +32,14 @@ Step agents ask the watchdog, and only the watchdog asks the maintainer, in its 
 the driver starts — a step, a reviewer, a fallback, the gate fix, the watchdog — names its own
 provider, model and effort, and `--model` and `--effort` override one row for one run (ADR-68).
 
+ADR-81 and ADR-82 (2026-09-25) change two things the earlier milestones carry: a plan reviewer runs
+the `review-plan` prompt alone, and a codex reviewer of code gets `/review` typed into its pane by the
+driver before its prompt; and every point where the flow goes off plan — a failed step or reviewer,
+a land error, a gate fix, the gate probe, a milestone report — raises a blocker the watchdog clears
+or asks the maintainer about, held by `watchdog.blockerTimeout` (which replaces
+`watchdog.remedyWindow`). Milestone 17 holds both contracts; the bullets below that they change say
+so.
+
 ## Milestone 1 — Core, plan file, config and state
 
 - **Layout** — `cmd/r-loop` (main) · `internal/core` (loop, state machines, step kinds, evidence
@@ -69,9 +77,11 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   string; Phases []string}` · `Entry{Name, Body string; Ticked, HasBox bool; Owner, Blocks, Timebox,
   Output, Resolved string; BlocksAll bool; BlocksPhases []string; Malformed []string}` ·
   `Signal{Seq int; Kind SignalKind; Source SignalSource; Step StepKey; Reason, Evidence string; At
-  time.Time; Rejected bool; RejectReason string}` · `Question{ID string; Step StepKey; Text
+  time.Time; Rejected bool; RejectReason string}` · `Question{ID string; Kind string; Step StepKey; Text
   string; Options []string; Recommended string; AskedAt time.Time; Answer, AnsweredBy, Citation string; AnsweredAt
-  time.Time}` · `Remedy{ID string; Step StepKey; Class, Command, Why, Consent string; ProposedAt,
+  time.Time}` — `Kind` is `""` for an agent's question and `dialog` for a dialog (ADR-80), whose
+  `Text` is the normalised screen, `Answer` the keys joined with spaces, and `Citation` the rule or
+  `decline` · `Remedy{ID string; Step StepKey; Class, Command, Why, Consent string; ProposedAt,
   DecidedAt time.Time}` · `Landing{Phase string; MergeSHA string; GateSkipped bool; GateOutput
   string; Added, Deleted int}` — the merge's diff size, measured by the land gate before the gate
   runs; a failed measurement aborts the merge · `Event{At time.Time; Kind string; Phase string; Step string; Fields
@@ -106,6 +116,10 @@ provider, model and effort, and `--model` and `--effort` override one row for on
     {idle, working, blocked, done, unknown, gone}` · `Read(agent string, lines int) (string,
     error)` · `Interrupt(agent) error` · `Close(workspaceID) error` · `Split(pane, direction,
     cwd string, env map[string]string) (pane string, error)` (an empty `pane` splits the pane herdr calls current; `env` becomes `--env K=V` on the split pane's shell, `nil` for none) ·
+    `Screen(agent) (string, error)` (herdr `agent read --source visible`, unnormalised) ·
+    `SendKeys(agent string, keys ...string) error` (one `agent send-keys` per key, in order,
+    stopping at the first error) · `SendText(agent, text string) error` (herdr `pane send-text` on
+    the agent's `AgentPane`, no `enter`; Milestone 17) ·
     `AgentPane(agent) (string, error)` (the pane the named agent runs in, `""` when herdr knows no
     such agent) · `ClosePane(pane) error` (closes one pane; used only for the watchdog's own — a
     stale one of the same run at its start, and its own at the run's end) · `Tag(workspaceID,
@@ -200,9 +214,11 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `unattended.allow [deps, ports, locks, restart, retry, provider]`, applied only with
   `--unattended`;
   `watchdog.maxRestarts 2`; `watchdog.provider claude`, `watchdog.model opus`,
-  `watchdog.effort high`, `watchdog.unblockTimeout 2h`, `watchdog.triageTimeout 2h`, `watchdog.allow []`, `watchdog.remedyWindow 10m`,
+  `watchdog.effort high`, `watchdog.unblockTimeout 2h`, `watchdog.triageTimeout 2h`, `watchdog.allow []`, `watchdog.blockerTimeout 10m` (Milestone 17;
+  `watchdog.remedyWindow` is read as its alias),
   `watchdog.checkTimeout 10m`, `watchdog.stallGrace 2m`,
-  `watchdog.overtimeFactor 2`, `watchdog.diffFactor 3`; `notify.onHalt/onWarn/onDone ""`. A
+  `watchdog.overtimeFactor 2`, `watchdog.diffFactor 3`, `watchdog.dialogs []` (a block list of
+  non-empty strings, ADR-80); `notify.onHalt/onWarn/onDone ""`. A
   flow-style YAML node is rejected naming the line; an unknown key is rejected naming the key and
   file; a negative `rounds` is rejected. A written duration that is empty, zero or negative is
   rejected naming the file, line and key. A row whose `timeout` no layer sets is rejected, and so
@@ -217,17 +233,26 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Provider block** — `providers.<name>`: `kind` (required), `flags` (fixed, no
   placeholder, passed first on every start), `modelFlag` (`{model}`),
   `effortFlag` (`{effort}`, may be empty → banner `effort n/a`), `askFlag` (`{url}` or
-  `{mcpConfig}`), `doneSignal ∈ {sentinel}`, `ask ∈ {mcp, none}`, `review` (may be empty; `{args}` is replaced with `Args(p, model, effort, "", "")`, and `{output}` with the shell-quoted `<ArtifactsDir>/native-review.txt`).
+  `{mcpConfig}`), `dirFlag` (`{dir}` or empty, ADR-79), `doneSignal ∈ {sentinel}`, `ask ∈ {mcp, none}`, `review` (may be empty; `{args}` is replaced with `Args(p, model, effort, "", "", "")`, and `{output}` with the shell-quoted `<ArtifactsDir>/native-review.txt`), `reviewStart` and `reviewDone` (the screen texts a pane review begins and ends with; both or neither, and only with a `review` that starts with `/`, else refused on `Resolve` naming the key and the source; Milestone 17).
+  `flags` may carry none of `{model}`, `{effort}`, `{url}`, `{mcpConfig}`, `{dir}`.
   **Precedence is whole-block**: the project config's block, else
   `~/.config/r-loop/providers/<name>.yaml`, else the shipped block. `Args(p, model, effort, askURL,
-  mcpConfigPath)` expands the templates and omits a flag whose template or value is empty.
-  Shipped: `claude` (`--model {model}`, `--effort {effort}`, `--mcp-config {mcpConfig}`, `review: /code-review`) and
+  mcpConfigPath, dir)` expands the templates in the order `flags`, `modelFlag`, `effortFlag`,
+  `askFlag`, `dirFlag`, and omits a flag whose template or value is empty; a placeholder is
+  replaced inside one word, so a `dir` with spaces stays one argument.
+  `ToCore(p, model, effort, askURL, mcpConfigPath, dir)` builds `ProviderArgs`; its `Review` never
+  carries the dir. The session manager's `Resolve(provider, model, effort, askURL, mcpConfigPath,
+  dir)` passes the phase run folder `<root>/.r-loop/runs/<runID>/phase-<N>/` for every session in a
+  phase worktree — plan, implement, gatefix and their reviewers — and `""` for the primary-tree
+  sessions: gate, milestone, watchdog, intake.
+  Shipped: `claude` (`--model {model}`, `--effort {effort}`, `--mcp-config {mcpConfig}`, `dirFlag: --add-dir {dir}`, `review: /code-review`) and
   `codex` (`flags: -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true`, `-c model={model}`, `-c model_reasoning_effort={effort}`, `-c
-  mcp_servers.r-loop.url={url}`, `review: codex exec review --uncommitted {args} -o {output}`).
+  mcp_servers.r-loop.url={url}`, `dirFlag: -c sandbox_workspace_write.writable_roots=["{dir}"]`, `review: /review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.`, `reviewStart: >> Code review started`, `reviewDone: << Code review finished` — ADR-81, replacing `codex exec review --uncommitted {args} -o {output}`).
   `{mcpConfig}` is a per-agent file
   `{"mcpServers":{"r-loop":{"type":"http","url":"<url>"}}}`. Neither sets an MCP tool timeout:
   every call returns at once (ADR-76), so the clients' defaults are enough. The core sees a provider only as
-  `ProviderArgs{Kind string; Args []string; Ask bool; Review string}`.
+  `ProviderArgs{Kind string; Args []string; Ask bool; Review, ReviewStart, ReviewDone string}`
+  (`ToCore` copies `reviewStart` and `reviewDone`; Milestone 17).
 - **Step kind** — `StepKind{Name, Prompt, Check string; Row StepRow}`; `StepRow{Provider, Model, Effort string; Fallback Fallback; Timeout time.Duration; Reviewers []Reviewer; Rounds int; ReviewTimeout time.Duration}`; `Reviewer{Provider, Model, Effort string}`, `Fallback{Provider, Model, Effort string}` and `GateFix{Provider, Model, Effort string}` — one type per role, the same three fields; an empty `Model` or `Effort` is the provider's default. A row's `check ∈ {plan-file,
   diff, report}` or one added with `RegisterCheck`; `findings` and `verdict` are the review
   half's own checks and are never named on a row. Evidence predicates take
@@ -267,7 +292,7 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   is `failed(step committed before review)`; in the primary checkout with no such commit it is
   `failed(HEAD moved from outside the step: <sha> <subject>, …)`, or
   `failed(HEAD moved from outside the step: HEAD is now <sha>)` when the range is empty; a failed
-  gate step is held for the remedy window and can be restarted before its phase is blocked);
+  gate step raises a gate-probe blocker and can be retried before its phase is blocked, Milestone 17);
   sentinel `failed` → `failed(<reason>)`; ok with
   evidence missing → `failed(evidence missing: <what>)`; `blocked`/`idle`/`done` (herdr's `done`
   is idle with output nobody has looked at, reported until a client focuses the pane, which r-loop
@@ -336,10 +361,12 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Prompt variables** — `PhaseNumber, PhaseTitle, PhaseBlock, Criteria, TodoPath, SpecDir,
   PlanPath, Branch, Base, Worktree, Sentinel, RunDir, AskURL, PhaseWarnings, ReviewedKind, Round,
   Rounds, ReviewCommand, FindingsPath, FindingsFiles, PriorFindings, PriorVerdicts, RoundTree,
-  VerdictPath, ReportPath, MilestoneName, MilestonePhases, Addendum`; override
-  `.r-loop/prompts/<name>.md`, else embedded. Templates: `plan`, `implement`, `review`, `fix`,
+  VerdictPath, ReportPath, MilestoneName, MilestonePhases, Addendum, ReviewRan` (`ReviewRan`: the
+  pane review ran in this session, Milestone 17); override
+  `.r-loop/prompts/<name>.md`, else embedded. Templates: `plan`, `implement`, `review`, `review-plan`, `fix`,
   `milestone`, `watchdog`, `gatefix`; `gatefix` adds `GateCommand` and `GateOutput`; `watchdog`
-  receives only `TodoPath`, `SpecDir`, `RunDir` and `Allow` (the allow-listed remedy classes).
+  receives only `TodoPath`, `SpecDir`, `RunDir`, `Allow` (the allow-listed remedy classes),
+  `Unattended` and `Dialogs` (the `watchdog.dialogs` rules, always passed, possibly empty).
 
 ## Milestone 3 — The serial loop, landing and the plain face
 
@@ -353,8 +380,9 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   phase after it) or `--phases n,n`, both taking labels such as `10a`; a
   listed phase ticked or absent is exit `2`. Phase state advances `planned → implemented →
   landed`.
-- **Outcomes** — `failed` → wait `watchdog.remedyWindow` for a `Restart` (skipped with no
-  watchdog; at most `watchdog.maxRestarts` restarts per step), then the phase is **blocked**:
+- **Outcomes** — `failed` → raise a blocker and hold it (Milestone 17: `retry` is a `Restart`, at
+  most `watchdog.maxRestarts` per step; the hold is `watchdog.blockerTimeout`, formerly the remedy
+  window); on `block` or expiry the phase is **blocked**:
   `Event{Kind: "phase-blocked", Fields{phase, reason}}` and `notify.onWarn` with
   `R_LOOP_STATUS=blocked`; every phase that depends on it, directly or through others, is
   `blocked` with `Event{Kind: "phase-skipped", Fields{phase, because}}`; the loop continues with
@@ -399,7 +427,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   unless `land.fix` names its own), with `GateCommand` and `GateOutput`, `check: diff`, the
   implement row's timeout and its reviewers for one round; the gate command itself runs under
   `land.gateTimeout` (default 30m); its `ok` commits `r-loop: phase <N> gatefix`, and the
-  landing starts again from the merge. A red gate with no fix round left blocks the phase.
+  landing starts again from the merge. A red gate with no fix round left, or a gatefix step that
+  does not end `ok`, raises a blocker (Milestone 17) before the phase is blocked.
 - **Land** — in the primary tree: append `merge-intent{phase, branch, base, message}` →
   `MergeNoFF(r-loop/phase-<N>, <todo>)` (`--no-commit`) → the merged tree
   keeps main's copy of the todo, including when the branch deleted it or a conflict is confined
@@ -411,13 +440,17 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   intended index tree equals the merged and ticked working tree → `Commit("phase <N>: <title>")`
   → `CommitTouches` must include the todo and one other path, else
   `ResetHard("HEAD~1")` and halt. A conflict aborts before the gate. The gate therefore proves the
-  phase's code, and no merge commit exists unless it passed.
+  phase's code, and no merge commit exists unless it passed. Every land error — a conflict, an
+  unfinished merge, a wrong branch, a dirty or changed tree, a red gate with no fix round left, an
+  item gate green at base or with no test file, a tick or commit failure — leaves the primary tree
+  clean and raises a land blocker (Milestone 17) rather than blocking the phase at once.
 - **Milestone boundary** — `LandGate` calls its `Boundary` after a landing; when phase N closed
   `## Milestone M`, one `InPrimary` session on the `milestone` row writes the report. A diff beyond
   the report is `report-skipped` and discarded. On `ok`, the commit is staged by the report path
   and must touch exactly that path. Any failure resets the primary tree to the HEAD recorded before
   the step, unless the step left its starting branch; then the other branch is left alone.
-  Anything else is `report-skipped`, never a halt.
+  Anything else raises a milestone blocker (Milestone 17); its `skip` is `report-skipped`, as
+  before, and it never blocks a phase.
 - **Report** — `report.md` opens with `human touches: <n>` (every answer a person gave, every
   consent, every resume, every Resolve-first answer) and an **Automatic decisions** section: restarts with their remedy,
   fallback restarts with the provider, model and effort used, gate-fix rounds,
@@ -459,10 +492,14 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   `<RunDir>/phase-<N>/<kind>-rv-<name>-a<attempt>.mcp.json`. Preflight refuses a provider with
   `ask: none` in any session role (ADR-73), so every reviewer has the channel.
 - **A round** — (1) `RoundTree = Snapshot(worktree)`, appended as `Event{Kind: "review-round",
-  Fields{step, round, tree}}` before any reviewer starts; (2) resolve every reviewer (one with no
-  `review` command fails the step before any pane opens); start every reviewer agent, then prompt
-  each with the `review` template; (3) join on every reviewer sentinel; any `failed` or `stalled`
-  reviewer fails the step naming it; every findings file must pass the `findings` check; a native reviewer's `<ArtifactsDir>/native-review.txt` must exist and be non-empty, else ``evidence missing: native review `<cmd>` produced no output``; then
+  Fields{step, round, tree}}` before any reviewer starts; (2) resolve every reviewer (on a row
+  other than `plan`, one whose template is `review` and whose provider has no `review` command
+  fails the step before any pane opens); start every reviewer agent; run the pane review for each
+  reviewer whose provider has `ReviewStart` (Milestone 17), all at once; then prompt each with its
+  template — `TemplateFor(reviewed kind)`: `plan` reviewers get `review-plan`, which runs no native
+  command; (3) join on every reviewer sentinel; a `failed` or `stalled` reviewer, a failed pane
+  review, or a reviewer whose evidence below is missing raises a reviewer blocker naming it
+  (Milestone 17; before it, the step failed); every findings file must pass the `findings` check; a native reviewer's `<ArtifactsDir>/native-review.txt` must exist and be non-empty, else ``evidence missing: native review `<cmd>` produced no output``; then
   `TreeDiff(RoundTree, Snapshot(worktree))` must be empty, else `failed(reviewer modified the
   tree: <paths>)`; (4) no findings in any file → the review half ends clean; (5) prompt the author
   with the `fix` template; join on its sentinel; run the `verdict` check against `RoundTree`, then
@@ -475,7 +512,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
 - **Round limit** — reaching `Row.Rounds` after a round that fixed something ends the review half
   `ok` with a `warn` Signal from the driver: `review round limit reached; round <n> fixes
   unreviewed`. It is never a halt.
-- **What a reviewer sees** — for `plan`: the plan file against the phase block and the code; for
+- **What a reviewer sees** — for `plan`: the plan file against the phase block and the code,
+  through `review-plan` alone (ADR-81); for
   `implement` and any other kind: the uncommitted changes in the worktree. Round 1 reviews all of
   it; later rounds review all of it with the delta since `RoundTree` of the previous round named,
   and receive every earlier round's findings and verdicts — a finding dismissed with evidence is
@@ -583,6 +621,10 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   {decision: authorised|refused|ask, reason?}` ·
   `restart_step(step, addendum?, provider?, model?, effort?, maintainer_said?) → {accepted, reason?}` ·
   `answer_question(id, answer, citation) → {accepted, reason?}` ·
+  `answer_dialog(id, keys, rule?, maintainer_said?) → {decision: authorised|refused|ask, reason?}`
+  (Milestone 16) ·
+  `resolve_blocker(id, action, rule?, addendum?, keys?, provider?, model?, effort?, maintainer_said?)
+  → {decision: authorised|refused|ask, reason?}` (Milestone 17) ·
   `ask_maintainer(question, options?, recommended?) → {accepted, reason?}`; `step` is `phase-<N>/<kind>`,
   resolved to the latest attempt. None of these is reachable from a step path, and this path
   serves no `ask_watchdog`. Every call is recorded as `watchdog-call` before its handler runs.
@@ -615,7 +657,8 @@ provider, model and effort, and `--model` and `--effort` override one row for on
   is authorised with `Consent: maintainer` (the `watchdog-call` event keeps the quote); the record
   is the command as proposed with `Consent ∈ {allow-list, maintainer, refused}`; the driver never
   runs it.
-  `restart_step` is accepted only for a `failed` or `stalled` step inside its remedy window, after
+  `restart_step` is accepted only for a `failed` or `stalled` step while its blocker is held
+  (Milestone 17; on a step's blocker it is `resolve_blocker`'s `retry`), after
   an authorised remedy for it (or an allow-listed restart class), and while the step has had fewer
   than `watchdog.maxRestarts` restarts; it queues a new attempt. With `--unattended`,
   `unattended.allow` is added to `watchdog.allow`, and an allow-listed `provider` restart may name
@@ -640,14 +683,15 @@ reviewer.
 
 - **Reviewer block** — `{provider, model, effort, name, prompt, requires}`, all but `provider`
   optional. `core.Reviewer{Provider, Model, Effort, Name, Prompt, Requires}`; `ID()` is `Name` or
-  else `Provider`, `Template()` is `Prompt` or else `review`. `name` matches `[a-z0-9][a-z0-9-]*`;
+  else `Provider`, `Template()` is `Prompt` or else `review` (Milestone 17 replaces it with
+  `TemplateFor(reviewed string)`: `Prompt`, else `review-plan` for `plan`, else `review`). `name` matches `[a-z0-9][a-z0-9-]*`;
   two reviewers of one row with the same `ID()` are a config error (exit 2); `requires` is a local
   path (`filepath.IsLocal`). A `fallback` or `land.fix` block rejects the three new keys.
 - **Identity** — `ID()` keys the reviewer's `StepKey.Kind` suffix `-rv-<name>`, agent, sentinel,
   MCP config, ask URL path, `FindingsPath`, the findings file's `reviewer` and id prefix, and the
   `review-find` (including its `command` field) and `finding` events. `Provider` alone picks the CLI, model and effort.
-- **Native command** — only a reviewer whose `Template()` is `review` needs `ProviderArgs.Review`,
-  in `ReviewHalf.Run` and in preflight.
+- **Native command** — only a reviewer whose template is `review` needs `ProviderArgs.Review`,
+  in `ReviewHalf.Run` and in preflight; a `plan` row's reviewer never does (Milestone 17).
 - **Requirement** — once, before the first round (or the resumed round), each reviewer with
   `requires` is looked up in the worker's worktree, then in `Repo.Root()`. Absent from both, it is
   left out of every round and `Event{Kind: "reviewer-skipped", Fields{step, reviewer, reason:
@@ -860,3 +904,228 @@ and the driver validates that argv before anything of a run exists.
   and `review.md`: every member's criteria are obligations, `## Gate` runs every member's tests,
   `status: already-done` holds only when every member is done. The phase check sends a
   `Backlog group: items <ids> fixed by one change` line in place of `Backlog item`.
+
+## Milestone 10 — Ask, then end the turn
+
+ADR-76. The contracts are Milestone 5's Server, waiting-input, Routing, Delivery and Withdrawal
+bullets and Milestone 2's provider block (`{mcpConfig}` with no MCP tool timeout).
+
+## Milestone 11 — Fixed start flags
+
+An amendment to ADR-6. The contract is Milestone 2's provider block: `flags` is split on
+whitespace, passed first on every start, and may carry no placeholder.
+
+## Milestone 12 — Waiting for the maintainer
+
+An amendment to ADR-73. The contract is Milestone 7's "Waiting for the maintainer" bullet and the
+`ask_maintainer` tool on the watchdog surface.
+
+## Milestone 13 — A sentinel without a timestamp
+
+An amendment to ADR-6. The sentinel is `{"outcome":"ok"|"failed","reason":"<text>"}`; a sentinel
+that still carries `at` is read with it ignored. Milestone 2's two-signal rule is unchanged.
+
+## Milestone 14 — Claude's trust dialog
+
+An amendment to ADR-1. The contract is Milestone 1's `SessionHost.Start`: the herdr adapter
+accepts codex's and claude's trust dialogs, and waits for claude's banner and for the agent to
+leave `blocked` before it returns.
+
+## Milestone 15 — The phase's run folder
+
+ADR-79. The contract is Milestone 2's provider block: `dirFlag` (`{dir}` or empty, passed last),
+`{dir}` refused in `flags`, `Args(p, model, effort, askURL, mcpConfigPath, dir)`,
+`ToCore(p, model, effort, askURL, mcpConfigPath, dir)` with a `Review` that never carries the dir,
+and `Resolve(provider, model, effort, askURL, mcpConfigPath, dir)` given the phase run folder
+`<root>/.r-loop/runs/<runID>/phase-<N>/` for every session in a phase worktree (plan, implement,
+gatefix and their reviewers; the fix turn runs in the step's own session) and `""` for the gate,
+the milestone report, the watchdog and the intake.
+
+## Milestone 16 — Dialogs answered by the watchdog
+
+ADR-80.
+
+- **Host** — `SessionHost.Screen(agent) (string, error)` (herdr `agent read --source visible`)
+  and `SendKeys(agent string, keys ...string) error` (one `agent send-keys` per key, in order,
+  stopping at the first error). Every `SessionHost` fake implements both; the core fake records
+  the calls and returns `Screens[agent]` from `Screen`.
+- **Screen normalisation** — trailing spaces trimmed from every line, trailing blank lines
+  dropped, the last 40 lines kept, then at most 4096 bytes, cut at a line boundary from the top.
+  An empty result raises nothing.
+- **A dialog is a question** — `Question{Kind: "dialog"}`, id `d<n>` (seeded from the stored
+  records, so numbering continues after a resume), `Text` the normalised screen, `Answer` the keys
+  joined with spaces,
+  `Citation` the rule or `decline`, `AnsweredBy ∈ {watchdog, maintainer, withdrawn}`. It reuses the
+  question path: admitted with `recordQuestion`/`track`/`openQuestion`, which moves the step to
+  `waiting-input` and pauses its stall clock and backstop; withdrawn with `withdrawStep` when the
+  step ends and by `r-loop resume` as a question is; routed with `Watch.Route`, so a gone watchdog
+  halts the run once. A withdrawn dialog never calls `AskChannel.Answer`: it has no server-side
+  question.
+- **Session manager** — `SessionManager.Dialogs` is an interface
+  `{Blocked(*Session) bool; Unblocked(*Session)}` (`RunLoop` implements it; it cannot be an
+  `Observer`, because reviewers are waited with `nopObserver`). In `tick`, after the gone check and
+  before the pause: `blocked` and `Dialogs.Blocked(s)` true → the quiet time and the stall reset,
+  and the tick returns; `working`, `idle` or `done` → `Dialogs.Unblocked(s)`; `blocked` and not
+  admitted, or `Dialogs` nil → the quiet → nudge → stall path of ADR-62, unchanged.
+- **`RunLoop.Blocked`** — false for a land-stage kind (a base kind, the part before `-rv-`, that
+  is not in `RunLoop.Kinds`: `gate`, `milestone`, `gatefix`), a session that is not live, or no
+  ask context yet (`ServeQuestions` keeps its ctx). An open dialog for the agent returns true with
+  no re-raise. Otherwise it reads `Screen` and normalises it; an empty screen, or one equal to the
+  last screen answered for that agent, returns false, so the stall path applies. A new dialog is keyed to the asking
+  agent's `StepKey` — `reviewerKey(key, id)` for a reviewer, counted against its owner step — and
+  is recorded, emitted and routed.
+- **`RunLoop.Unblocked`** — an open dialog for that agent is withdrawn with `Answer: dialog closed
+  in the pane` and `dialog-closed{id, reason}`.
+- **`RunLoop.DeliverKeys(id, keys, by, rule)`** — the agent must still be `blocked` with an
+  unchanged normalised screen, else the dialog is withdrawn and the call refused naming why; then
+  the answer is recorded, `dialog-answered{id, keys, by, rule}` emitted (and a `human` touch when
+  `by` is `maintainer`), and only then `SendKeys`, the answered screen remembered, and the step
+  released to `running`.
+- **Routing text** — `QuestionRouter.Route` stores each id's kind; a dialog goes to the watchdog as
+  `dialog <id> from phase-<N>/<kind>: answer with answer_dialog`, a blank line, then the screen.
+  `QuestionRouter.Answer` refuses a dialog id, and `AnswerDialog` refuses a question id.
+- **`answer_dialog(id, keys, rule?, maintainer_said?) → {decision: authorised|refused|ask,
+  reason?}`** — on the watchdog surface only, recorded as `watchdog-call` before its handler, which
+  first calls `Resume`. `QuestionRouter.AnswerDialog` decides, in order: empty or blank keys →
+  refused; not an open dialog → refused; `rule == "decline"` with keys other than exactly `["esc"]`
+  → refused (`decline presses esc only`), the dialog stays open; `rule == "decline"` → authorised; `rule` exactly one of
+  `watchdog.dialogs` → authorised; any other non-empty `rule` → refused, the dialog stays open;
+  `--unattended` → refused (`decline, or answer under a rule`); `maintainer_said` non-empty →
+  authorised as `maintainer`; otherwise `Dog.AskMaintainer` and `ask`. An authorised answer goes to
+  `DeliverKeys`; its refusal is the call's. `DeliverKeys` presses the keys one at a time and, before
+  each key after the first, checks the agent is still `blocked`; if not, it stops, warns with the
+  dialog and the keys not pressed, and refuses; the answer stays recorded.
+- **Events** — `dialog{id, agent}` (with `text`), `dialog-answered{id, keys, by, rule}`,
+  `dialog-closed{id, reason}`. The report and `r-loop status` list one line per dialog:
+  `<id> phase-<N>/<kind>: dialog → <keys> (<by>, <rule>)`.
+- **Config** — `watchdog.dialogs`, a block list of non-empty strings, default `[]`; flow style is
+  rejected like every key. The watchdog prompt gets `Dialogs` and an "Answering dialogs" section:
+  the rules, herdr key names (`enter`, `esc`, `down`, digits), `decline`, ask the maintainer
+  off-rule, decline when unattended.
+- **Faces** — the TUI shows a `dialog` as it shows a question (`watchdog · d1 · 12s`) until
+  `dialog-answered` or `dialog-closed` settles it; nothing new is amber — amber stays the
+  watchdog waiting for the maintainer.
+
+## Milestone 17 — Reviews and blockers
+
+ADR-81 and ADR-82. A plan review is a prompt; codex reviews code with `/review` in its own pane;
+and anything off plan becomes a blocker the watchdog clears or asks the maintainer about.
+
+- **Plan reviews (ADR-81)** — embedded template `review-plan`, overridable as
+  `.r-loop/prompts/review-plan.md`, allowed by the renderer beside `review`: the plan at `PlanPath`
+  against the phase block and the code, Missing and Excess, `ItemGate` with `## Tests` and
+  `## Evidence`, the earlier rounds, the findings contract, "change no file" and the outcome
+  partial; no native section, and it renders with the full `StepVars` set. `review.md` keeps no
+  `{{if eq .ReviewedKind "plan"}}` branch. `core.Reviewer.TemplateFor(reviewed string)` replaces
+  `Template()`: `Prompt` when set, else `review-plan` when `reviewed` is `plan`, else `review`.
+  Only a reviewer whose template is `review` needs `ProviderArgs.Review` — in `ReviewHalf`, in
+  `SessionManager` and in preflight's `native`/`checkRole` — so a plan row's reviewer on a provider
+  with no `review` command passes, and the same reviewer on implement still exits 2. The
+  `review-find` event's `command` field is `prompt <template>` for a reviewer that runs none.
+- **Provider keys (ADR-81)** — `reviewStart` and `reviewDone` in a provider block: both or neither,
+  and only when `review` starts with `/`; otherwise `Resolve` refuses the block naming the key and
+  its source (`reviewStart and reviewDone come together, with a /review command`). `ToCore` copies
+  them into `ProviderArgs{…; ReviewStart, ReviewDone string}`. Shipped codex: `review: "/review
+  Review the current code changes (staged, unstaged, and untracked files) and provide prioritized
+  findings."`, `reviewStart: ">> Code review started"`, `reviewDone: "<< Code review finished"`.
+  claude's block is unchanged.
+- **`SessionHost.SendText(agent, text string) error`** — herdr `pane send-text` into the pane
+  `AgentPane(agent)` names, no `enter`; an agent herdr does not know is an error naming it. Every
+  `SessionHost` fake implements it; the core fake records the calls in order with `SendKeys`.
+- **The pane review** — `ReviewHalf.open`, for a reviewer whose provider has `ReviewStart`, after
+  `Start` and before the prompt, one goroutine per reviewer, all reviewers of the round at once:
+  1. `SendText(agent, Review)`; read `Screen(agent)` until the composer shows the text (whitespace
+     ignored, within 5s), then `SendKeys(agent, "enter")`. codex swallows an Enter that lands right
+     after fast typed input, so while the text is still in the composer and `ReviewStart` is not on
+     the screen 3s after a press, press `enter` again — at most 5 presses in all; `review-ran` records them as `presses`.
+  2. Read `Screen(agent)` at the session poll interval until it shows `ReviewStart`, within
+     2 minutes (codex starts its MCP servers first). herdr reports codex's menus and dialogs as
+     `idle` or `done`, never `blocked`, so the screen's text is the only detector; the agent state
+     is read only for `gone`.
+  3. Read it the same way until it shows `ReviewDone`, within the row's `ReviewTimeout`.
+  4. Render the reviewer's template with `ReviewRan: true`: the review ran in this session; save its
+     output verbatim to `<ArtifactsDir>/native-review.txt`, then write the findings.
+  Failures, each a reviewer failure named `review in pane: <reason>`: no `ReviewStart` within
+  2 minutes (`review never started`); `Review was interrupted` or `Reviewer failed to output a
+  response` on the screen (the text itself); the text not in the composer within 5s (`review text
+  did not reach the composer within <d>`); `ReviewTimeout` before `ReviewDone` (`review did not
+  finish within <d>`); the agent `gone`; a `SendText`, `SendKeys` or `Screen` error. The
+  `native-review.txt` evidence check is unchanged. A reviewer without `ReviewStart` is untouched.
+- **`ReviewRan`** — a bool in `StepVars` and `fullVars`, `false` everywhere but a pane-reviewed
+  reviewer's prompt; `review.md` words its native section by it.
+- **A blocker (ADR-82)** — `Question{Kind: "blocker"}`, id `b<n>` numbered on from the stored
+  records, `Text` the routed text, `Answer` the action, `Citation` what authorised it
+  (`allow-list`, a `watchdog.dialogs` rule, `fallback`, `maintainer`, `always` for `block` and
+  `stop`, `timeout`), `AnsweredBy ∈ {watchdog, maintainer, timeout, withdrawn}`. `core.Blocker{Source,
+  Phase, Step, Reason, Excerpt string; Actions []string}`; `Step` is the `phase-<N>/<step>` name
+  (`<kind>`, `<kind>-rv-<name>`, `land`, `gatefix`, `gate`, `milestone`); `Excerpt` is the pane's
+  normalised screen (Milestone 16's rule) or the command's output, at most 4096 bytes.
+  `RunLoop.Raise(b Blocker) Resolution` — `Resolution{ID, Action, By, Citation, Addendum string;
+  Keys []string; Provider, Model, Effort string}` — records the question, emits
+  `blocked-on{id, source, phase, step, reason}`, moves a live step to `waiting-input` (a reviewer's
+  blocker pauses its owner), routes `blocker <id> from phase-<N>/<step> (<source>): <reason>` with
+  `resolve_blocker`, a blank line and the excerpt through `Watch.Route` — so a gone watchdog halts
+  the run once — and waits. It is withdrawn (`Answer: step <state>` or `run stopped`) when a
+  reviewer's owner step ends, on an abort, an interrupt or a halt, and by `r-loop resume` for one a
+  dead driver left open; a withdrawn blocker returns `block` with `By: withdrawn`. An accepted halt
+  closes any open blocker for its phase at once, whatever its source and even while the watchdog
+  waits: the phase blocks with exit `5`, and a milestone's, whose phase has landed, stops the run.
+- **Sources** — each raises through `Raise` with its own actions; `block` and `stop` are listed
+  where the source supports them:
+
+  | source | raised when | `retry` means | actions |
+  |---|---|---|---|
+  | `step` | a pipeline step ends `failed` or `stalled` (`loop.go` `ended`/`awaitRestart`) | a new attempt: the restart path, with the addendum and provider | retry, switch, block, stop |
+  | `reviewer` | a reviewer fails: a pane review failure, a `failed` sentinel, evidence missing, stalled, gone | that reviewer reopened for this round | retry, keys, switch, skip, block, stop |
+  | `land` | a merge conflict, an unfinished merge, a wrong branch, a dirty or changed tree, a red gate with no fix round left, an item gate green at base or with no test file, a tick or commit failure | `Land` again, after a remedy or the maintainer's own fix | retry, block, stop |
+  | `gatefix` | a gatefix step that does not end `ok` | another gatefix round | retry, switch, block, stop |
+  | `gate-probe` | an error of `GateProbe` itself, not of its step | the probe again | retry, block, stop |
+  | `milestone` | a milestone report that fails | the report again | retry, skip, stop |
+
+  `skip` on a reviewer appends `reviewer-skipped{step, reviewer, reason}` and leaves it out of
+  this round only; on a milestone it is `report-skipped`, as before.
+- **Authorisation** — `QuestionRouter.ResolveBlocker(id, action, rule, addendum, keys, provider,
+  model, effort, maintainerSaid) (decision, reason)` decides, in order: not an open blocker →
+  refused; an action the source does not list → refused; then
+
+  | action | authorised when | otherwise |
+  |---|---|---|
+  | `retry` | `restart` is allow-listed and the target has had fewer than `watchdog.maxRestarts` retries | `maintainer_said` → authorised; else `ask`; at the budget → refused |
+  | `keys` | `rule` is exactly one of `watchdog.dialogs`, the rule the keys answer under (keys as in `answer_dialog`, pressed only while the reviewer's screen is unchanged) | `maintainer_said` → authorised; else `ask` |
+  | `switch` | the provider is the row's fallback (`remedies.go`'s rule; model and effort default to the fallback's) and the target is within `retry`'s budget, which counts its switches too | `maintainer_said` with `model` and `effort` → authorised; else `ask`; at the budget → refused |
+  | `skip` | `maintainer_said` | `ask`; unattended → refused |
+  | `block` | always | |
+  | `stop` | always | |
+
+  With `--unattended` nothing returns `ask`: an action that would is refused (`unattended: block
+  or stop`). `ask` calls `Dog.AskMaintainer` with the blocker and its options (`retry, skip, switch
+  provider, block this phase, stop the run`, cut to the source's actions) and records nothing
+  else. `propose_remedy` stays the way to run a fix before a `retry`; `restart_step` on a step's
+  open blocker resolves it as `retry`.
+- **The hold** — `watchdog.blockerTimeout` (duration, default `10m`); `watchdog.remedyWindow` is
+  read as its alias, and a file setting both is rejected (exit 2). The timer counts only while the
+  watchdog is not in its `watchdog-waiting` state: it stops on `watchdog-waiting` and runs again
+  from where it stood on `watchdog-resumed`. On expiry the blocker resolves `block`, `By:
+  timeout` — for `milestone`, which has no `block`, `skip` — today's outcome for each source.
+- **Outcomes** — a final `block` blocks the phase as before and exits with today's codes (`1`, `3`
+  for a block that began as a stall, `5` for one that began as a watchdog halt). `stop` records the
+  run `halted` with `stopped by the watchdog at <id>: <reason>`, runs `notify.onHalt` and exits `5`.
+- **Notify-only halts** — before the run halts on the question invariant, a panic in the land, the
+  question server or the signal handler, or a `record:` failure, the driver posts `run halting:
+  <reason>` through `Watchdog.Post` (best effort, never waited on); the watchdog cannot act on it.
+  Failures before the watchdog starts — `Wire`, `Preflight`, resume's reconcile and claim, exits
+  `2`, `4`, `127` — stay process exits.
+- **`resolve_blocker(id, action, rule?, addendum?, keys?, provider?, model?, effort?,
+  maintainer_said?) → {decision: authorised|refused|ask, reason?}`** — on the watchdog surface only, in
+  `watchdogTools` (a step's URL answers it 404), recorded as `watchdog-call` before its handler,
+  which first calls `Resume`; with no `WatchdogHandlers.ResolveBlocker` it is refused. An
+  authorised resolution is recorded, emitted as `blocker-resolved{id, action, by}` (and a `human`
+  event when `by` is `maintainer`), and only then acted on.
+- **Prompt** — `watchdog.md` gains "Clearing blockers": read the pane or the output and diagnose;
+  fix what is authorised (`propose_remedy`, then `retry`, `keys` or `switch`); otherwise call
+  `ask_maintainer` with the options and act with `maintainer_said`; unattended, `block` or `stop`
+  when nothing authorised fixes it.
+- **Faces** — the TUI shows `watchdog · b<n>` on the phase's row from `blocked-on` until
+  `blocker-resolved`, with a feed line for each; amber stays only on `watchdog-waiting`. The plain
+  face prints both events as lines. The run report and `r-loop status` list one line per blocker:
+  `b<n> phase-<N>/<step> (<source>): <reason> → <action> (<by>)`, `open` while unresolved.

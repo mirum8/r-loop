@@ -2,6 +2,7 @@ kind: claude
 modelFlag: "--model {model}"
 effortFlag: "--effort {effort}"
 askFlag: "--mcp-config {mcpConfig}"
+dirFlag: "--add-dir {dir}"
 doneSignal: sentinel
 ask: mcp
 review: "/code-review"

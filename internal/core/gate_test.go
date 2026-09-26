@@ -234,7 +234,7 @@ func (e *landEnv) probe(outcome, command string) (*core.GateProbe, *probeHost) {
 		Repo:    e.repo,
 		Prompts: &reportPrompts{},
 		Store:   e.store,
-		Resolve: func(provider, model, effort, askURL, mcp string) (core.ProviderArgs, error) {
+		Resolve: func(provider, model, effort, askURL, mcp, dir string) (core.ProviderArgs, error) {
 			return core.ProviderArgs{Kind: provider}, nil
 		},
 		Poll: 5 * time.Millisecond,
@@ -407,7 +407,7 @@ func TestGateProbeRestartRunsTheNextAttemptWithTheAddendumAndProvider(t *testing
 	e.store.Append("run1", core.Record{Kind: core.RecordStep, Step: &key, State: core.StepFailed})
 	e.store.Append("run1", core.Record{Kind: core.RecordEvent, Event: &core.Event{Kind: "restart", Fields: map[string]string{"step": "phase-1/gate", "attempt": "2", "addendum": "ignore the stale lock", "provider": "codex", "model": "gpt-5", "effort": "high"}}})
 	var resolved []string
-	p.Sessions.Resolve = func(provider, model, effort, askURL, mcp string) (core.ProviderArgs, error) {
+	p.Sessions.Resolve = func(provider, model, effort, askURL, mcp, dir string) (core.ProviderArgs, error) {
 		resolved = []string{provider, model, effort}
 		return core.ProviderArgs{Kind: provider}, nil
 	}

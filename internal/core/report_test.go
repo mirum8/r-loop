@@ -72,3 +72,49 @@ func TestReportCountsAndListsAResolveFirstAnswer(t *testing.T) {
 		}
 	}
 }
+
+func TestReportListsEachDialogWithItsKeysAndWhoAuthorisedThem(t *testing.T) {
+	key := StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}
+	st := RunState{ID: "run-1", Questions: []Question{
+		{ID: "d1", Kind: QuestionDialog, Step: key, Text: "Allow write?\n1. Yes", Answer: "1 enter", AnsweredBy: "watchdog", Citation: "approve writes under the run folder"},
+		{ID: "d2", Kind: QuestionDialog, Step: StepKey{Phase: "2", Kind: "implement-rv-codex"}, Text: "Run tests?", Answer: "2", AnsweredBy: "maintainer"},
+		{ID: "d3", Kind: QuestionDialog, Step: key, Text: "Allow network?", Answer: "dialog closed in the pane", AnsweredBy: "withdrawn"},
+		{ID: "d4", Kind: QuestionDialog, Step: key, Text: "Allow network?"},
+	}}
+
+	rep := Report(st, threePhasePlan())
+
+	want := "## Questions\n\n" +
+		"- d1 phase-2/implement: dialog → 1 enter (watchdog, approve writes under the run folder)\n" +
+		"- d2 phase-2/implement-rv-codex: dialog → 2 (maintainer)\n" +
+		"- d3 phase-2/implement: dialog → dialog closed in the pane (withdrawn)\n" +
+		"- d4 phase-2/implement: dialog (open)\n"
+	if !strings.Contains(rep, want) {
+		t.Errorf("report lacks %q:\n%s", want, rep)
+	}
+	if strings.Contains(rep, "Allow write?") {
+		t.Errorf("report prints the screen:\n%s", rep)
+	}
+}
+
+func TestReportListsEachBlockerWithItsActionAndWhoChoseIt(t *testing.T) {
+	key := StepKey{Run: "run-1", Phase: "2", Kind: "implement-rv-codex", Attempt: 1}
+	text := "blocker b1 from phase-2/implement-rv-codex (reviewer): review in pane: review never started\nactions: retry, keys, skip, block, stop; resolve it with resolve_blocker\n\nscreen text"
+	st := RunState{ID: "run-1", Questions: []Question{
+		{ID: "b1", Kind: QuestionBlocker, Step: key, Text: text, Answer: "retry", AnsweredBy: "watchdog", Citation: "allow-list"},
+		{ID: "b2", Kind: QuestionBlocker, Step: StepKey{Run: "run-1", Phase: "3", Kind: "land"}, Text: "blocker b2 from phase-3/land (land): merge conflict\nactions: retry, block, stop; resolve it with resolve_blocker", Answer: "block", AnsweredBy: "timeout", Citation: "timeout"},
+		{ID: "b3", Kind: QuestionBlocker, Step: StepKey{Run: "run-1", Phase: "3", Kind: "land"}, Text: "blocker b3 from phase-3/land (land): dirty tree\nactions: retry, block, stop; resolve it with resolve_blocker"},
+	}}
+
+	rep := Report(st, threePhasePlan())
+
+	want := "- b1 phase-2/implement-rv-codex (reviewer): review in pane: review never started → retry (watchdog)\n" +
+		"- b2 phase-3/land (land): merge conflict → block (timeout)\n" +
+		"- b3 phase-3/land (land): dirty tree (open)\n"
+	if !strings.Contains(rep, want) {
+		t.Errorf("report lacks %q:\n%s", want, rep)
+	}
+	if strings.Contains(rep, "screen text") || strings.Contains(rep, "resolve_blocker") {
+		t.Errorf("report prints more than the first line:\n%s", rep)
+	}
+}

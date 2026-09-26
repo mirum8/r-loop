@@ -222,7 +222,7 @@ func TestAnUnattendedFourPhaseRunFinishesWithNoHumanTouch(t *testing.T) {
 	host := &unattendedHost{simHost: sim, t: t, idle: map[string]bool{"rloop-p1-implement": true}, asking: "rloop-p4-implement"}
 	lander := f.sim(w, sim)
 	w.Loop.Sessions.Host = host
-	w.Loop.RemedyWindow = w.Config.Watchdog.RemedyWindow
+	w.Loop.BlockerTimeout = w.Config.Watchdog.BlockerTimeout
 	dog := &restartingDog{dogHost: *answeringDog(w, "sqlite", "docs/topic/todo.md:1"), remedies: w.Remedies}
 	w.Dog.Host = dog
 

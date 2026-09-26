@@ -52,11 +52,16 @@ type configAtStart struct {
 	core.SessionHost
 	mu      sync.Mutex
 	mcp     map[string]string
+	args    map[string][]string
 	missing []string
 }
 
 func (h *configAtStart) Start(pane, name, kind string, args []string) (core.Agent, error) {
 	h.mu.Lock()
+	if h.args == nil {
+		h.args = map[string][]string{}
+	}
+	h.args[agentRole(name)] = args
 	for i, arg := range args {
 		if arg == "--mcp-config" && i+1 < len(args) {
 			role := agentRole(name)
@@ -144,6 +149,12 @@ func TestAWatchdogAndAStepSessionWriteTheirMCPConfigUnderARepoRootWithASpace(t *
 	}
 	if data, err := os.ReadFile(stepPath); err != nil || !strings.Contains(string(data), "/mcp/") {
 		t.Errorf("step config %q: %v", data, err)
+	}
+	if plan := steps.args["rloop-p1-plan"]; !slices.Contains(plan, "--add-dir") || plan[len(plan)-1] != filepath.Dir(stepPath) {
+		t.Errorf("plan args %q lack --add-dir %s", plan, filepath.Dir(stepPath))
+	}
+	if slices.Contains(w.Dog.Provider.Args, "--add-dir") {
+		t.Errorf("watchdog args %q carry a dir flag", w.Dog.Provider.Args)
 	}
 }
 
@@ -355,6 +366,9 @@ func (h *dogHost) State(agent string) (core.AgentState, error) {
 }
 func (h *dogHost) AgentPane(agent string) (string, error)                 { return h.stale[agent], nil }
 func (h *dogHost) Read(agent string, lines int) (string, error)           { return "", nil }
+func (h *dogHost) Screen(agent string) (string, error)                    { return "", nil }
+func (h *dogHost) SendKeys(agent string, keys ...string) error            { return nil }
+func (h *dogHost) SendText(agent, text string) error                      { return nil }
 func (h *dogHost) Interrupt(agent string) error                           { return nil }
 func (h *dogHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
 func (h *dogHost) Close(workspaceID string) error                         { return nil }
@@ -377,7 +391,7 @@ func (h *dogHost) prompted(prefix string) bool {
 	return false
 }
 
-func TestWireHandsTheLoopAWatchWithTheShippedChecksAndTheRemedyWindow(t *testing.T) {
+func TestWireHandsTheLoopAWatchWithTheShippedChecksAndTheBlockerTimeout(t *testing.T) {
 	f := newResumeFixture(t, noReviewConfig)
 
 	w, err := f.preflight(f.todo, "--plain")
@@ -388,8 +402,8 @@ func TestWireHandsTheLoopAWatchWithTheShippedChecksAndTheRemedyWindow(t *testing
 	if w.Loop.Watcher != w.Watch || len(w.Watch.Checks) != 5 {
 		t.Fatalf("watcher %v, checks %d", w.Loop.Watcher, len(w.Watch.Checks))
 	}
-	if w.Loop.RemedyWindow != 10*time.Minute {
-		t.Errorf("remedy window %s", w.Loop.RemedyWindow)
+	if w.Loop.BlockerTimeout != 10*time.Minute {
+		t.Errorf("remedy window %s", w.Loop.BlockerTimeout)
 	}
 }
 
@@ -874,5 +888,190 @@ func TestAWatchdogFoundGoneHaltsTheRunWithoutWaitingForAQuestion(t *testing.T) {
 	st := f.load(w.Loop.RunID)
 	if len(st.Signals) != 1 || st.Signals[0].Source != core.SourceDriver || st.Signals[0].Kind != core.SignalHalt || st.Signals[0].Reason != "the watchdog is gone" {
 		t.Errorf("signals %+v", st.Signals)
+	}
+}
+
+type dialogSim struct {
+	*simHost
+	mu       sync.Mutex
+	pressed  []string
+	answered bool
+}
+
+const dialogScreen = "Allow codex to write outside the sandbox?\n› 1. Yes\n  2. No"
+
+func (h *dialogSim) asking(agent string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return agentRole(agent) == "rloop-p1-implement" && !h.answered && h.text("rloop-p1-implement") != ""
+}
+
+func (h *dialogSim) State(agent string) (core.AgentState, error) {
+	if h.asking(agent) {
+		return core.AgentBlocked, nil
+	}
+	return core.AgentWorking, nil
+}
+
+func (h *dialogSim) Screen(agent string) (string, error) {
+	if h.asking(agent) {
+		return dialogScreen, nil
+	}
+	return "", nil
+}
+
+func (h *dialogSim) SendKeys(agent string, keys ...string) error {
+	h.mu.Lock()
+	h.pressed = append(h.pressed, keys...)
+	h.answered = true
+	h.mu.Unlock()
+	h.simHost.mu.Lock()
+	h.simHost.hang["rloop-p1-implement"] = false
+	h.simHost.mu.Unlock()
+	return h.simHost.Prompt(agent, h.text("rloop-p1-implement"), false, 0)
+}
+
+func TestADialogGoesThroughTheWatchdogWhichAnswersItUnderARuleAndTheDriverPressesTheKeys(t *testing.T) {
+	rule := "approve writes inside the run folder"
+	f := newResumeFixture(t, noReviewConfig+"watchdog:\n  dialogs:\n    - "+rule+"\n")
+	sim := &dialogSim{simHost: newSim()}
+	sim.hang["rloop-p1-implement"] = true
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, sim.simHost)
+	w.Loop.Sessions.Host = sim
+	answers := make(chan map[string]any, 1)
+	dog := &dogHost{}
+	dog.onPrompt = func(text string) {
+		rest, ok := strings.CutPrefix(text, "dialog ")
+		if !ok {
+			return
+		}
+		id, _, _ := strings.Cut(rest, " ")
+		go func() {
+			client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: w.Ask.WatchdogURL(), MaxRetries: -1}, nil)
+			if err != nil {
+				answers <- map[string]any{"error": err.Error()}
+				return
+			}
+			defer cs.Close()
+			res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "answer_dialog", Arguments: map[string]any{"id": id, "keys": []string{"1"}, "rule": rule}})
+			if err != nil {
+				answers <- map[string]any{"error": err.Error()}
+				return
+			}
+			out, _ := res.StructuredContent.(map[string]any)
+			answers <- out
+		}()
+	}
+	w.Dog.Host = dog
+
+	code := w.Execute(core.RunOptions{Phases: []string{"1"}})
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, f.out)
+	}
+	select {
+	case out := <-answers:
+		if out["decision"] != "authorised" {
+			t.Fatalf("answer_dialog %v", out)
+		}
+	default:
+		t.Fatal("the watchdog never answered a dialog")
+	}
+	sim.mu.Lock()
+	pressed := slices.Clone(sim.pressed)
+	sim.mu.Unlock()
+	if !slices.Equal(pressed, []string{"1"}) {
+		t.Errorf("pressed %q", pressed)
+	}
+	if !dog.prompted("dialog d1 from phase-1/implement: answer with answer_dialog\n\n" + dialogScreen) {
+		t.Errorf("the watchdog never got the dialog: %q", dog.Calls())
+	}
+	if !slices.ContainsFunc(dog.Calls(), func(c string) bool { return strings.Contains(c, "- `"+rule+"`") }) {
+		t.Errorf("the watchdog prompt does not list the rule: %q", dog.Calls())
+	}
+	st := f.load(w.Loop.RunID)
+	if len(st.Questions) != 1 || st.Questions[0].Kind != core.QuestionDialog || st.Questions[0].Answer != "1" || st.Questions[0].AnsweredBy != "watchdog" || st.Questions[0].Citation != rule {
+		t.Errorf("questions %+v", st.Questions)
+	}
+	states := implementStates(st)
+	at := slices.Index(states, "waiting-input")
+	if at < 0 || !slices.Equal(states[at:], []string{"waiting-input", "running", "ok"}) {
+		t.Errorf("implement states %v", states)
+	}
+	if got := stepEvents(st, "dialog-answered"); len(got) != 1 || got[0].Fields["keys"] != "1" || got[0].Fields["rule"] != rule {
+		t.Errorf("dialog-answered %+v", got)
+	}
+}
+
+type conflictLander struct{}
+
+func (conflictLander) Land(context.Context, core.Phase) (core.Landing, error) {
+	return core.Landing{}, fmt.Errorf("%w: a.go", core.ErrMergeConflict)
+}
+
+func TestAWiredRunSendsALandBlockerToTheWatchdogWhichBlocksThePhase(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, newSim())
+	w.Loop.BlockerTimeout = time.Minute
+	w.Loop.Lander = conflictLander{}
+	dog := answeringDog(w, "sqlite", "docs/topic/todo.md:1")
+	decided := make(chan string, 1)
+	dog.onPrompt = func(text string) {
+		if strings.HasPrefix(text, "blocker b1 from phase-1/land (land): ") {
+			go func() {
+				d, reason := w.Router.ResolveBlocker("b1", "block", "", "", nil, "", "", "", "")
+				decided <- d + " " + reason
+			}()
+		}
+	}
+	w.Dog.Host = dog
+
+	code := w.Execute(core.RunOptions{Phases: []string{"1"}})
+
+	if code != 1 {
+		t.Fatalf("exit %d, want 1\n%s", code, f.out)
+	}
+	if !dog.prompted("blocker b1 from phase-1/land (land): merge conflict: a.go\nactions: retry, block, stop; resolve it with resolve_blocker") {
+		t.Fatalf("the watchdog never heard of the blocker: %q", dog.Calls())
+	}
+	if got := <-decided; got != "authorised " {
+		t.Errorf("resolve_blocker %q", got)
+	}
+	st := f.load(w.Loop.RunID)
+	if len(st.Questions) != 1 || st.Questions[0].ID != "b1" || st.Questions[0].Answer != "block" || st.Questions[0].AnsweredBy != "watchdog" {
+		t.Errorf("questions %+v", st.Questions)
+	}
+}
+
+func TestAWiredRunPostsRunHaltingToTheWatchdogBeforeARecordHalt(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	w, err := f.preflight(f.todo, "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, newSim())
+	dog := &dogHost{}
+	w.Dog.Host = dog
+	w.records = &core.RecordGuard{Store: failingStore{Store: w.Store, fail: func(rec core.Record) bool { return rec.Kind == core.RecordRun }}}
+	w.Loop.Store = w.records
+	w.Loop.Sessions.Store = w.records
+	w.Gate.Store = w.records
+
+	code := w.Execute(core.RunOptions{Phases: []string{"1"}})
+
+	if code != 2 {
+		t.Fatalf("exit %d", code)
+	}
+	if !dog.prompted("run halting: record: disk full") {
+		t.Errorf("no run halting post: %q", dog.Calls())
 	}
 }

@@ -145,6 +145,50 @@ func TestStatusPlainPrintsRunPhasesLiveStepQuestionAndWarning(t *testing.T) {
 	}
 }
 
+func TestStatusPrintsOneLinePerBlocker(t *testing.T) {
+	f := newFixture(t)
+	f.seedRun(
+		core.Record{Kind: core.RecordRun, Run: core.RunRunning},
+		core.Record{Kind: core.RecordQuestion, Question: &core.Question{ID: "b1", Kind: core.QuestionBlocker, Step: core.StepKey{Phase: "4", Kind: "land"}, Text: "blocker b1 from phase-4/land (land): merge conflict\nactions: retry, block, stop; resolve it with resolve_blocker\n\nCONFLICT a.go", Answer: "block", AnsweredBy: "watchdog", Citation: "always"}},
+		core.Record{Kind: core.RecordQuestion, Question: &core.Question{ID: "b2", Kind: core.QuestionBlocker, Step: core.StepKey{Phase: "5", Kind: "implement"}, Text: "blocker b2 from phase-5/implement (step): stalled\nactions: retry, switch, block, stop; resolve it with resolve_blocker"}},
+	)
+
+	code := f.main("status", "--plain")
+
+	out := f.out.String()
+	for _, want := range []string{"\nb1 phase-4/land (land): merge conflict → block (watchdog)\n", "\nb2 phase-5/implement (step): stalled (open)\n"} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Errorf("code=%d, output lacks %q:\n%s", code, want, out)
+		}
+	}
+	if strings.Contains(out, "CONFLICT") || strings.Contains(out, "question b") {
+		t.Errorf("a blocker printed as a question or with its excerpt:\n%s", out)
+	}
+}
+
+func TestStatusPrintsOneLinePerDialog(t *testing.T) {
+	f := newFixture(t)
+	key := core.StepKey{Phase: "4", Kind: "implement"}
+	f.seedRun(
+		core.Record{Kind: core.RecordRun, Run: core.RunRunning},
+		core.Record{Kind: core.RecordQuestion, Question: &core.Question{ID: "q1", Step: key, Text: "which db?"}},
+		core.Record{Kind: core.RecordQuestion, Question: &core.Question{ID: "d1", Kind: core.QuestionDialog, Step: key, Text: "Allow write?", Answer: "1 enter", AnsweredBy: "watchdog", Citation: "decline"}},
+		core.Record{Kind: core.RecordQuestion, Question: &core.Question{ID: "d2", Kind: core.QuestionDialog, Step: key, Text: "Allow network?"}},
+	)
+
+	code := f.main("status", "--plain")
+
+	out := f.out.String()
+	for _, want := range []string{"\nquestion q1 which db?\n", "\nd1 phase-4/implement: dialog → 1 enter (watchdog, decline)\n", "\nd2 phase-4/implement: dialog (open)\n"} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Errorf("code=%d, output lacks %q:\n%s", code, want, out)
+		}
+	}
+	if strings.Contains(out, "Allow") || strings.Contains(out, "question d") {
+		t.Errorf("a dialog printed as a question or with its screen:\n%s", out)
+	}
+}
+
 func TestStatusReadsTheCurrentRunOverTheNewest(t *testing.T) {
 	f := newFixture(t)
 	older := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})

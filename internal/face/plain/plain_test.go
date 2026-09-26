@@ -95,6 +95,19 @@ func TestAWatchdogAskingTheMaintainerShowsTheQuestion(t *testing.T) {
 	}
 }
 
+func TestBlockerLinesNameTheBlockerAndItsResolution(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	f.Emit(core.Event{At: at, Kind: "blocked-on", Phase: "4", Step: "land", Fields: map[string]string{"id": "b1", "source": "land", "phase": "4", "step": "land", "reason": "merge conflict"}})
+	f.Emit(core.Event{At: at, Kind: "blocker-resolved", Phase: "4", Step: "land", Fields: map[string]string{"id": "b1", "action": "block", "by": "timeout"}})
+
+	want := "14:03:09  phase 4  land  blocker b1 (land): merge conflict\n14:03:09  phase 4  land  blocker b1 → block (timeout)\n"
+	if out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
 func TestNudgeLineNamesTheStep(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}

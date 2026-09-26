@@ -222,6 +222,16 @@ func (w *Watch) WatchdogGone() {
 	}
 }
 
+func (w *Watch) Post(text string) {
+	if w.Dog != nil {
+		w.Dog.Post(text)
+	}
+}
+
+func (w *Watch) Waiting() bool {
+	return w.Dog != nil && w.Dog.Waiting()
+}
+
 func (w *Watch) Gone() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()

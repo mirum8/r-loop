@@ -26,6 +26,10 @@ func failedImplement(t *testing.T, store Store) (*Watch, StepKey) {
 	return w, key
 }
 
+func routedWatch(store Store) *Watch {
+	return &Watch{Store: store, Router: &QuestionRouter{Dog: newWatchdog(&fakeSessionHost{}, store, ProviderArgs{Kind: "claude"})}}
+}
+
 func takeRestart(w *Watch) <-chan Restart {
 	got := make(chan Restart, 1)
 	go func() {
@@ -155,10 +159,10 @@ func TestARestartTheLoopRefusesIsNotAcceptedWithTheLoopsReason(t *testing.T) {
 
 func TestARestartTheLoopRefusesAtItsRestartLimitIsNotAccepted(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Minute
+	r.loop.BlockerTimeout = time.Minute
 	r.loop.MaxRestarts = 0
 	r.host.behaviour["rloop-p2-implement"] = "fail"
-	w := &Watch{Store: r.store}
+	w := routedWatch(r.store)
 	r.loop.Watcher = w
 	rem := newRemedies(w, r.store, "restart")
 	decided := make(chan struct {
@@ -229,11 +233,11 @@ func (h *probeHost) Prompt(agent, text string, wait bool, timeout time.Duration)
 	return nil
 }
 
-func TestTheRemedyWindowIsOpenWhenTheWatchdogHearsStepEnded(t *testing.T) {
+func TestTheBlockerTimeoutIsOpenWhenTheWatchdogHearsStepEnded(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = 20 * time.Millisecond
+	r.loop.BlockerTimeout = 20 * time.Millisecond
 	r.host.behaviour["rloop-p2-implement"] = "fail"
-	w := &Watch{Store: r.store}
+	w := routedWatch(r.store)
 	host := &probeHost{watch: w, held: make(chan bool, 4)}
 	w.Dog = &Watchdog{Host: host, Store: r.store, RunID: "run-1"}
 	r.loop.Watcher = w
@@ -285,7 +289,7 @@ func TestARestartOfAnOkStepIsRefused(t *testing.T) {
 	}
 }
 
-func TestARestartWithNoOpenRemedyWindowIsRefusedAsRunHalted(t *testing.T) {
+func TestARestartWithNoOpenBlockerTimeoutIsRefusedAsRunHalted(t *testing.T) {
 	store := &fakeStore{}
 	w, key := failedImplement(t, store)
 	w.Release(key)
@@ -345,9 +349,9 @@ func TestAnAuthorisedRemedyIsSpentByOneRestart(t *testing.T) {
 
 func TestAnAuthorisedRestartRerunsTheStepAsANewAttemptWithTheAddendum(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Minute
+	r.loop.BlockerTimeout = time.Minute
 	r.host.behaviour["rloop-p2-implement"] = "fail"
-	w := &Watch{Store: r.store}
+	w := routedWatch(r.store)
 	r.loop.Watcher = w
 	rem := newRemedies(w, r.store)
 	decided := make(chan string, 2)
@@ -379,7 +383,7 @@ func TestAnAuthorisedRestartRerunsTheStepAsANewAttemptWithTheAddendum(t *testing
 		t.Errorf("attempt 2 addendum %q", got)
 	}
 	restarts := r.events("restart")
-	wantFields := map[string]string{"step": "phase-2/implement", "attempt": "2", "addendum": "use the fake", "provider": "", "remedy": "remedy-1"}
+	wantFields := map[string]string{"step": "phase-2/implement", "attempt": "2", "addendum": "use the fake", "provider": "", "remedy": "b1", "citation": "remedy-1"}
 	if len(restarts) != 1 || !reflect.DeepEqual(restarts[0].Fields, wantFields) {
 		t.Errorf("restart events %+v", restarts)
 	}
@@ -413,10 +417,10 @@ func (g *gateLander) Land(ctx context.Context, ph Phase) (Landing, error) {
 	return landing, nil
 }
 
-func TestAFailedGateStepIsRestartedInTheRemedyWindowWithoutBlockingThePhase(t *testing.T) {
+func TestAFailedGateStepIsRestartedInTheBlockerTimeoutWithoutBlockingThePhase(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Minute
-	w := &Watch{Store: r.store}
+	r.loop.BlockerTimeout = time.Minute
+	w := routedWatch(r.store)
 	r.loop.Watcher = w
 	rem := newRemedies(w, r.store, "restart")
 	g := &gateLander{store: r.store}
@@ -445,8 +449,8 @@ func TestAFailedGateStepIsRestartedInTheRemedyWindowWithoutBlockingThePhase(t *t
 
 func TestAFailedGateStepWithNoRestartBlocksThePhaseAfterTheWindow(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = 20 * time.Millisecond
-	r.loop.Watcher = &Watch{Store: r.store}
+	r.loop.BlockerTimeout = 20 * time.Millisecond
+	r.loop.Watcher = routedWatch(r.store)
 	r.loop.Lander = &gateLander{store: r.store, always: true}
 	code := r.run(RunOptions{Phases: []string{"2"}})
 	blocked := r.events("phase-blocked")
@@ -455,10 +459,10 @@ func TestAFailedGateStepWithNoRestartBlocksThePhaseAfterTheWindow(t *testing.T) 
 	}
 }
 
-func TestAHaltInTheGateRemedyWindowBlocksThePhaseWithExit5(t *testing.T) {
+func TestAHaltInTheGateBlockerTimeoutBlocksThePhaseWithExit5(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Minute
-	w := &Watch{Store: r.store}
+	r.loop.BlockerTimeout = time.Minute
+	w := routedWatch(r.store)
 	r.loop.Watcher = w
 	r.loop.Lander = &gateLander{store: r.store, always: true}
 	go func() {

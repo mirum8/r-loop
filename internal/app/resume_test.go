@@ -132,6 +132,9 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 func (h *simHost) State(agent string) (core.AgentState, error)            { return core.AgentWorking, nil }
 func (h *simHost) AgentPane(agent string) (string, error)                 { return "", nil }
 func (h *simHost) Read(agent string, lines int) (string, error)           { return "", nil }
+func (h *simHost) Screen(agent string) (string, error)                    { return "", nil }
+func (h *simHost) SendKeys(agent string, keys ...string) error            { return nil }
+func (h *simHost) SendText(agent, text string) error                      { return nil }
 func (h *simHost) Interrupt(agent string) error                           { return nil }
 func (h *simHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
 func (h *simHost) Close(workspaceID string) error                         { return nil }
@@ -195,7 +198,7 @@ func (f *fixture) sim(w *Wiring, sim *simHost) *landRecorder {
 	w.Dog.Host = answeringDog(w, "sqlite", "docs/topic/todo.md:1")
 	triagers.Store(core.WatchdogName(w.Loop.RunID), w)
 	w.Config.Watchdog.TriageTimeout = 10 * time.Second
-	w.Loop.RemedyWindow = 0
+	w.Loop.BlockerTimeout = 0
 	lander := &landRecorder{st: w.Store}
 	w.Loop.Lander = lander
 	return lander
@@ -1812,6 +1815,7 @@ func TestResumeWithdrawsAQuestionTheKilledDriverLeftOpen(t *testing.T) {
 	for _, r := range []core.Record{
 		{Kind: core.RecordStep, Step: &impl, State: core.StepWaitingInput},
 		{Kind: core.RecordQuestion, Question: &core.Question{ID: "q1", Step: impl, Text: "Which database?", AskedAt: t0}},
+		{Kind: core.RecordQuestion, Question: &core.Question{ID: "b1", Kind: core.QuestionBlocker, Step: core.StepKey{Run: id, Phase: "1", Kind: "land"}, Text: "blocker b1 from phase-1/land (land): dirty tree", AskedAt: t0}},
 	} {
 		if err := st.Append(id, r); err != nil {
 			t.Fatal(err)
@@ -1824,7 +1828,10 @@ func TestResumeWithdrawsAQuestionTheKilledDriverLeftOpen(t *testing.T) {
 		t.Fatalf("code=%d err=%v\n%s", code, err, f.out)
 	}
 	qs := f.load(id).Questions
-	if len(qs) != 1 || qs[0].ID != "q1" || qs[0].AnsweredBy != "withdrawn" || qs[0].Answer != "step failed" {
+	if len(qs) != 2 || qs[0].ID != "q1" || qs[0].AnsweredBy != "withdrawn" || qs[0].Answer != "step failed" {
 		t.Fatalf("questions %+v", qs)
+	}
+	if qs[1].ID != "b1" || qs[1].AnsweredBy != "withdrawn" || qs[1].Answer != "run stopped" {
+		t.Fatalf("blocker %+v", qs[1])
 	}
 }

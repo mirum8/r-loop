@@ -36,7 +36,7 @@ func TestArgsKeepAPlaceholderValueWithSpacesAsOneArgument(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := "/x/repo with space/.r-loop/runs/r1/watchdog.mcp.json"
-	if got, want := Args(claude, "opus", "", "", path), []string{"--model", "opus", "--mcp-config", path}; !reflect.DeepEqual(got, want) {
+	if got, want := Args(claude, "opus", "", "", path, ""), []string{"--model", "opus", "--mcp-config", path}; !reflect.DeepEqual(got, want) {
 		t.Errorf("args %q, want %q", got, want)
 	}
 	blocks := projectBlocks(t, "mine:\n  kind: claude\n  askFlag: \"--cfg={mcpConfig}\"\n  doneSignal: sentinel\n  ask: mcp\n")
@@ -44,7 +44,7 @@ func TestArgsKeepAPlaceholderValueWithSpacesAsOneArgument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := Args(mine, "", "", "", "/x/a b/c.json"), []string{"--cfg=/x/a b/c.json"}; !reflect.DeepEqual(got, want) {
+	if got, want := Args(mine, "", "", "", "/x/a b/c.json", ""), []string{"--cfg=/x/a b/c.json"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("args %q, want %q", got, want)
 	}
 }
@@ -55,7 +55,7 @@ func TestArgsSplitTemplatesWithoutPlaceholdersOnWhitespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := Args(mine, "gpt-5", "", "", ""), []string{"-c", "a=1", "--no-alt-screen", "-x", "-c", "model=gpt-5"}; !reflect.DeepEqual(got, want) {
+	if got, want := Args(mine, "gpt-5", "", "", "", ""), []string{"-c", "a=1", "--no-alt-screen", "-x", "-c", "model=gpt-5"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("args %q, want %q", got, want)
 	}
 }
@@ -69,7 +69,7 @@ func TestShippedClaudeBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Provider{Name: "claude", Kind: "claude", ModelFlag: "--model {model}", EffortFlag: "--effort {effort}",
-		AskFlag: "--mcp-config {mcpConfig}", DoneSignal: "sentinel", Ask: "mcp", Review: "/code-review", Source: "shipped"}
+		AskFlag: "--mcp-config {mcpConfig}", DirFlag: "--add-dir {dir}", DoneSignal: "sentinel", Ask: "mcp", Review: "/code-review", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
 	}
@@ -84,7 +84,9 @@ func TestShippedCodexBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Provider{Name: "codex", Kind: "codex", Flags: "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
-		AskFlag: "-c mcp_servers.r-loop.url={url}", DoneSignal: "sentinel", Ask: "mcp", Review: "codex exec review --uncommitted {args} -o {output}", Source: "shipped"}
+		AskFlag: "-c mcp_servers.r-loop.url={url}", DirFlag: `-c sandbox_workspace_write.writable_roots=["{dir}"]`, DoneSignal: "sentinel", Ask: "mcp",
+		Review:      "/review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.",
+		ReviewStart: ">> Code review started", ReviewDone: "<< Code review finished", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
 	}
@@ -96,7 +98,7 @@ func TestShippedCodexFlagsLetTheSandboxOpenLocalListeners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := Args(codex, "", "", "http://127.0.0.1:9/ask", "")
+	args := Args(codex, "", "", "http://127.0.0.1:9/ask", "", "")
 	found := false
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-c" && args[i+1] == "sandbox_workspace_write.network_access=true" {
@@ -105,9 +107,6 @@ func TestShippedCodexFlagsLetTheSandboxOpenLocalListeners(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("step args %q lack the network access flag", args)
-	}
-	if review := ToCore(codex, "", "", "http://x", "").Review; !strings.Contains(review, " -c sandbox_workspace_write.network_access=true ") {
-		t.Errorf("review command %q lacks the network access flag", review)
 	}
 }
 
@@ -191,7 +190,7 @@ func TestMachineFileAddsProviderWithOnlyKindAndDoneSignal(t *testing.T) {
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
 	}
-	if got := Args(p, "opus", "high", "http://x", "/tmp/m.json"); len(got) != 0 {
+	if got := Args(p, "opus", "high", "http://x", "/tmp/m.json", ""); len(got) != 0 {
 		t.Errorf("args %q, want none", got)
 	}
 }
@@ -230,6 +229,7 @@ func TestValidationErrorsNameFieldAndSource(t *testing.T) {
 		{"modelFlag without placeholder", "kind: x\ndoneSignal: sentinel\nmodelFlag: --model\n", "modelFlag"},
 		{"effortFlag without placeholder", "kind: x\ndoneSignal: sentinel\neffortFlag: --effort\n", "effortFlag"},
 		{"askFlag without placeholder", "kind: x\ndoneSignal: sentinel\naskFlag: --mcp\n", "askFlag"},
+		{"dirFlag without placeholder", "kind: x\ndoneSignal: sentinel\ndirFlag: --add-dir\n", "dirFlag"},
 		{"doneSignal missing", "kind: x\n", "doneSignal"},
 		{"doneSignal other", "kind: x\ndoneSignal: exit\n", "doneSignal"},
 		{"ask other", "kind: x\ndoneSignal: sentinel\nask: stdin\n", "ask"},
@@ -298,7 +298,7 @@ func TestArgsOfShippedBlocks(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := Args(c.p, c.model, c.effort, "http://127.0.0.1:9/ask", "/run/mcp.json")
+			got := Args(c.p, c.model, c.effort, "http://127.0.0.1:9/ask", "/run/mcp.json", "")
 
 			if !reflect.DeepEqual(got, c.want) {
 				t.Errorf("got %q\nwant %q", got, c.want)
@@ -312,10 +312,10 @@ func TestArgsOmitAskFlagWithoutItsValue(t *testing.T) {
 	claude, _ := r.Resolve("claude")
 	codex, _ := r.Resolve("codex")
 
-	if got := Args(claude, "opus", "", "http://x", ""); !reflect.DeepEqual(got, []string{"--model", "opus"}) {
+	if got := Args(claude, "opus", "", "http://x", "", ""); !reflect.DeepEqual(got, []string{"--model", "opus"}) {
 		t.Errorf("claude: %q", got)
 	}
-	if got := Args(codex, "", "low", "", "/run/mcp.json"); !reflect.DeepEqual(got, []string{"-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "model_reasoning_effort=low"}) {
+	if got := Args(codex, "", "low", "", "/run/mcp.json", ""); !reflect.DeepEqual(got, []string{"-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "model_reasoning_effort=low"}) {
 		t.Errorf("codex: %q", got)
 	}
 }
@@ -343,8 +343,8 @@ func TestToCore(t *testing.T) {
 	claude, _ := r.Resolve("claude")
 	pdev := Provider{Name: "pdev", Kind: "pdev", DoneSignal: "sentinel", Ask: "none"}
 
-	got := ToCore(claude, "opus", "", "http://x", "/run/mcp.json")
-	plain := ToCore(pdev, "m", "e", "http://x", "/run/mcp.json")
+	got := ToCore(claude, "opus", "", "http://x", "/run/mcp.json", "")
+	plain := ToCore(pdev, "m", "e", "http://x", "/run/mcp.json", "")
 
 	want := core.ProviderArgs{Kind: "claude", Args: []string{"--model", "opus", "--mcp-config", "/run/mcp.json"}, Ask: true, Review: "/code-review"}
 	if !reflect.DeepEqual(got, want) {
@@ -361,11 +361,12 @@ func TestToCoreFillsTheReviewArgsWithFlagsModelAndEffort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	codex.Review, codex.ReviewStart, codex.ReviewDone = "codex exec review --uncommitted {args} -o {output}", "", ""
 	for _, tc := range []struct{ model, effort, want string }{
 		{"gpt-x", "high", "codex exec review --uncommitted -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -c model=gpt-x -c model_reasoning_effort=high -o {output}"},
 		{"", "", "codex exec review --uncommitted -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -o {output}"},
 	} {
-		got := ToCore(codex, tc.model, tc.effort, "http://x", "").Review
+		got := ToCore(codex, tc.model, tc.effort, "http://x", "", "").Review
 		if got != tc.want {
 			t.Errorf("review = %q, want %q", got, tc.want)
 		}
@@ -377,14 +378,14 @@ func TestToCoreFillsTheReviewArgsWithFlagsModelAndEffort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ToCore(claude, "", "", "http://x", "").Review; got != "/code-review" {
+	if got := ToCore(claude, "", "", "http://x", "", "").Review; got != "/code-review" {
 		t.Fatalf("claude review = %q", got)
 	}
 }
 
 func TestToCoreKeepsReviewConfigAsOneShellArgument(t *testing.T) {
 	p := Provider{Kind: "codex", Flags: `-c sandbox_permissions=["disk-full-read-access"]`, Review: "codex exec review --uncommitted {args} -o {output}"}
-	got := ToCore(p, "", "", "", "").Review
+	got := ToCore(p, "", "", "", "", "").Review
 	cmd := strings.ReplaceAll(got, "codex exec review --uncommitted ", "set -- ")
 	cmd = strings.ReplaceAll(cmd, " -o {output}", `; printf '%s\n' "$@"`)
 	out, err := exec.Command("sh", "-c", cmd).Output()
@@ -424,7 +425,7 @@ func TestArgsDoNotReExpandPlaceholdersInValues(t *testing.T) {
 	claude, _ := r.Resolve("claude")
 
 	for i := 0; i < 50; i++ {
-		got := Args(claude, "{effort}", "", "", "/tmp/{model}/mcp.json")
+		got := Args(claude, "{effort}", "", "", "/tmp/{model}/mcp.json", "")
 
 		want := []string{"--model", "{effort}", "--mcp-config", "/tmp/{model}/mcp.json"}
 		if !reflect.DeepEqual(got, want) {
@@ -442,10 +443,10 @@ func TestProjectBlockFlagsArePassedFirstOnEveryStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"-c", "check_for_update_on_startup=false", "--no-alt-screen", "-c", "model=gpt-5"}
-	if got := Args(p, "gpt-5", "", "", ""); !reflect.DeepEqual(got, want) {
+	if got := Args(p, "gpt-5", "", "", "", ""); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q\nwant %q", got, want)
 	}
-	if got := Args(p, "", "", "", ""); !reflect.DeepEqual(got, want[:3]) {
+	if got := Args(p, "", "", "", "", ""); !reflect.DeepEqual(got, want[:3]) {
 		t.Errorf("without model: %q", got)
 	}
 }
@@ -457,5 +458,151 @@ func TestFlagsWithAPlaceholderAreRefused(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "flags") {
 		t.Fatalf("err %v", err)
+	}
+}
+
+func TestDirFlagMustContainDir(t *testing.T) {
+	blocks := projectBlocks(t, "mine:\n  kind: claude\n  dirFlag: \"--add-dir {model}\"\n  doneSignal: sentinel\n")
+	r := NewRegistry(blocks, map[string]string{"providers.mine": ".r-loop/config.yaml:providers.mine"}, t.TempDir())
+
+	_, err := r.Resolve("mine")
+
+	if err == nil || !strings.Contains(err.Error(), "dirFlag") || !strings.Contains(err.Error(), ".r-loop/config.yaml:providers.mine") {
+		t.Fatalf("err %v", err)
+	}
+	for _, flag := range []string{"--add-dir {dir}", ""} {
+		blocks := projectBlocks(t, "x:\n  kind: x\n  doneSignal: sentinel\n  dirFlag: \""+flag+"\"\n")
+		if _, err := NewRegistry(blocks, nil, t.TempDir()).Resolve("x"); err != nil {
+			t.Errorf("dirFlag %q: %v", flag, err)
+		}
+	}
+}
+
+func TestFlagsMustNotContainDir(t *testing.T) {
+	r := NewRegistry(projectBlocks(t, "mine:\n  kind: claude\n  flags: \"--add-dir {dir}\"\n  doneSignal: sentinel\n"), nil, t.TempDir())
+
+	_, err := r.Resolve("mine")
+
+	if err == nil || !strings.Contains(err.Error(), "flags") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestArgsAppendDirFlagOnlyWithADir(t *testing.T) {
+	claude, err := NewRegistry(nil, nil, t.TempDir()).Resolve("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := "/x/repo with space/.r-loop/runs/r1/phase-3"
+
+	withDir := Args(claude, "opus", "high", "", "/run/mcp.json", dir)
+	withoutDir := Args(claude, "opus", "high", "", "/run/mcp.json", "")
+
+	if want := []string{"--model", "opus", "--effort", "high", "--mcp-config", "/run/mcp.json", "--add-dir", dir}; !reflect.DeepEqual(withDir, want) {
+		t.Errorf("with a dir %q\nwant %q", withDir, want)
+	}
+	if want := []string{"--model", "opus", "--effort", "high", "--mcp-config", "/run/mcp.json"}; !reflect.DeepEqual(withoutDir, want) {
+		t.Errorf("without a dir %q\nwant %q", withoutDir, want)
+	}
+}
+
+func TestShippedClaudeDirFlagAddsTheDir(t *testing.T) {
+	claude, err := NewRegistry(nil, nil, t.TempDir()).Resolve("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := Args(claude, "", "", "", "", "/run/r1/phase-3")
+
+	if want := []string{"--add-dir", "/run/r1/phase-3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestShippedCodexDirFlagNamesTheWritableRoot(t *testing.T) {
+	codex, err := NewRegistry(nil, nil, t.TempDir()).Resolve("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := Args(codex, "gpt-5", "", "http://127.0.0.1:9/ask", "", "/run/r1/phase-3")
+
+	want := []string{"-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "model=gpt-5",
+		"-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask", "-c", `sandbox_workspace_write.writable_roots=["/run/r1/phase-3"]`}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
+func TestToCoreReviewArgsCarryNoDir(t *testing.T) {
+	r := NewRegistry(nil, nil, t.TempDir())
+	codex, err := r.Resolve("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	codex.Review, codex.ReviewStart, codex.ReviewDone = "codex exec review --uncommitted {args} -o {output}", "", ""
+
+	got := ToCore(codex, "", "", "http://x", "", "/run/r1/phase-3")
+
+	if last := got.Args[len(got.Args)-1]; last != `sandbox_workspace_write.writable_roots=["/run/r1/phase-3"]` {
+		t.Errorf("step args %q lack the dir", got.Args)
+	}
+	if want := "codex exec review --uncommitted -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -o {output}"; got.Review != want {
+		t.Errorf("review = %q, want %q", got.Review, want)
+	}
+}
+
+func TestShippedCodexRunsReviewInItsPane(t *testing.T) {
+	codex, err := NewRegistry(nil, nil, t.TempDir()).Resolve("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := ToCore(codex, "gpt-x", "high", "http://x", "", "")
+
+	if got.Review != "/review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings." ||
+		got.ReviewStart != ">> Code review started" || got.ReviewDone != "<< Code review finished" {
+		t.Errorf("got review %q, start %q, done %q", got.Review, got.ReviewStart, got.ReviewDone)
+	}
+}
+
+func TestReviewMarkersDecodeFromAProjectBlock(t *testing.T) {
+	blocks := projectBlocks(t, "pdev:\n  kind: pdev\n  doneSignal: sentinel\n  review: /review all\n  reviewStart: \">> go\"\n  reviewDone: \"<< done\"\n")
+	r := NewRegistry(blocks, nil, t.TempDir())
+
+	p, err := r.Resolve("pdev")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ReviewStart != ">> go" || p.ReviewDone != "<< done" {
+		t.Errorf("got %+v", p)
+	}
+	if got := ToCore(p, "", "", "", "", ""); got.Review != "/review all" || got.ReviewStart != ">> go" || got.ReviewDone != "<< done" {
+		t.Errorf("core args %+v", got)
+	}
+}
+
+func TestReviewMarkersComeInPairsAfterASlashReview(t *testing.T) {
+	cases := []struct {
+		name, block, field string
+	}{
+		{"start without done", "kind: x\ndoneSignal: sentinel\nreview: /review\nreviewStart: go\n", "reviewDone"},
+		{"done without start", "kind: x\ndoneSignal: sentinel\nreview: /review\nreviewDone: done\n", "reviewStart"},
+		{"shell review", "kind: x\ndoneSignal: sentinel\nreview: x review\nreviewStart: go\nreviewDone: done\n", "reviewStart"},
+		{"no review", "kind: x\ndoneSignal: sentinel\nreviewStart: go\nreviewDone: done\n", "reviewStart"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "pdev.yaml")
+			os.WriteFile(path, []byte(c.block), 0o644)
+
+			_, err := NewRegistry(nil, nil, dir).Resolve("pdev")
+
+			if err == nil || !strings.Contains(err.Error(), c.field) || !strings.Contains(err.Error(), path) {
+				t.Errorf("error %v should name field %q and source %q", err, c.field, path)
+			}
+		})
 	}
 }

@@ -61,12 +61,19 @@ func (w *fakeWatcher) StepEnded(ref StepRef, out Outcome) {
 	}
 }
 
+func (w *fakeWatcher) Post(text string) {
+	w.log.record("Watcher.Post %s", text)
+}
+
 func (w *fakeWatcher) Signals() <-chan Signal   { return w.signals }
 func (w *fakeWatcher) Restarts() <-chan Restart { return w.restarts }
 
 func (w *fakeWatcher) Route(ctx context.Context, q Question) bool {
 	w.log.record("Watcher.Route %s", q.ID)
-	return w.route != nil && w.route(ctx, q)
+	if w.route == nil {
+		return q.Kind == QuestionBlocker
+	}
+	return w.route(ctx, q)
 }
 
 type eventsHost struct {
@@ -418,7 +425,7 @@ func newEventsRig(t *testing.T) *eventsRig {
 	sm.Host = r.ehost
 	sm.Prompts = r.prompts
 	var mu sync.Mutex
-	sm.Resolve = func(provider, model, effort, askURL, mcp string) (ProviderArgs, error) {
+	sm.Resolve = func(provider, model, effort, askURL, mcp, dir string) (ProviderArgs, error) {
 		mu.Lock()
 		r.resolved = append(r.resolved, provider+"/"+model+"/"+effort)
 		mu.Unlock()
@@ -616,7 +623,7 @@ func TestHaltSignalStopsTheSessionAndExits5(t *testing.T) {
 
 func TestRestartInsideTheWindowRerunsAsAttempt2WithTheAddendum(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Minute
+	r.loop.BlockerTimeout = time.Minute
 	r.host.behaviour["rloop-p2-implement"] = "fail"
 	r.restartOnFailure()
 
@@ -659,7 +666,7 @@ func TestRestartOnAProviderUsesTheFallbackModelAndEffortOrTheGivenOnes(t *testin
 	for _, c := range cases {
 		t.Run(c.provider, func(t *testing.T) {
 			r := newEventsRig(t)
-			r.loop.RemedyWindow = time.Minute
+			r.loop.BlockerTimeout = time.Minute
 			kind := r.loop.Kinds[1]
 			kind.Row.Model, kind.Row.Effort = "gpt", "high"
 			kind.Row.Fallback = Fallback{Provider: "claude", Model: "sonnet", Effort: "low"}
@@ -699,7 +706,7 @@ func (r *eventsRig) stepEvents(kind, field string) []string {
 
 func TestAThirdRestartIsRefusedAtMaxRestarts2(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Minute
+	r.loop.BlockerTimeout = time.Minute
 	for _, a := range []string{"rloop-p2-implement", "rloop-p2-implement-a2", "rloop-p2-implement-a3", "rloop-p2-implement-a4"} {
 		r.host.behaviour[a] = "fail"
 	}
@@ -733,9 +740,9 @@ func TestAThirdRestartIsRefusedAtMaxRestarts2(t *testing.T) {
 	}
 }
 
-func TestTheRemedyWindowExpiringBlocksThePhase(t *testing.T) {
+func TestTheBlockerTimeoutExpiringBlocksThePhase(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = 30 * time.Millisecond
+	r.loop.BlockerTimeout = 30 * time.Millisecond
 	r.host.behaviour["rloop-p1-implement"] = "fail"
 
 	start := time.Now()
@@ -859,7 +866,7 @@ func (backstopRunner) Run(ctx context.Context, ref StepRef, obs Observer) Outcom
 
 func TestABackstopInWaitingInputHaltsTheRunOnTheInvariant(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Minute
+	r.loop.BlockerTimeout = time.Minute
 	r.loop.Runners = map[string]StepRunner{"plan-file": backstopRunner{}}
 
 	code := r.run(RunOptions{})
@@ -937,7 +944,7 @@ func TestAHaltForAnEndedStepOfTheLivePhaseHaltsTheLiveStep(t *testing.T) {
 
 func TestAStaleRestartForAnEarlierAttemptIsIgnored(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = 30 * time.Millisecond
+	r.loop.BlockerTimeout = 30 * time.Millisecond
 	r.host.behaviour["rloop-p2-implement"] = "fail"
 	r.host.behaviour["rloop-p2-implement-a2"] = "fail"
 	r.watcher.ended = func(ref StepRef, out Outcome) {
@@ -960,7 +967,7 @@ func TestAStaleRestartForAnEarlierAttemptIsIgnored(t *testing.T) {
 
 func TestARestartTheLoopTakesWhileAHaltIsPendingIsAnsweredWithTheHalt(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Minute
+	r.loop.BlockerTimeout = time.Minute
 	r.loop.Sessions.Poll = time.Hour
 	r.loop.runDir = r.store.Dir("run-1")
 	r.loop.restarts = map[string]int{}
@@ -994,7 +1001,7 @@ func TestARestartTheLoopTakesWhileAHaltIsPendingIsAnsweredWithTheHalt(t *testing
 
 func TestAStaleRestartIsAnsweredAsNotWaiting(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = 30 * time.Millisecond
+	r.loop.BlockerTimeout = 30 * time.Millisecond
 	r.host.behaviour["rloop-p2-implement"] = "fail"
 	r.host.behaviour["rloop-p2-implement-a2"] = "fail"
 	first, stale := make(chan string, 1), make(chan string, 1)
@@ -1031,7 +1038,7 @@ func TestAStaleRestartIsAnsweredAsNotWaiting(t *testing.T) {
 
 func TestAProviderOverrideLastsOneAttempt(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Minute
+	r.loop.BlockerTimeout = time.Minute
 	kind := r.loop.Kinds[1]
 	kind.Row.Model, kind.Row.Effort = "gpt", "high"
 	r.loop.Kinds[1] = kind
@@ -1058,7 +1065,7 @@ func TestAProviderOverrideLastsOneAttempt(t *testing.T) {
 
 func TestResumeKeepsTheRestartsAlreadySpent(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Minute
+	r.loop.BlockerTimeout = time.Minute
 	for a := 1; a <= 3; a++ {
 		r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: "2", Kind: "plan", Attempt: a}, State: StepOK})
 		r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: a}, State: StepFailed})
@@ -1266,7 +1273,7 @@ func TestAHaltAfterTheRunnerRecordedOkLeavesOnlyTheOkRecord(t *testing.T) {
 
 func TestAHaltAfterTheRunnerRecordedFailedKeepsItsRecordAndHalts(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Hour
+	r.loop.BlockerTimeout = time.Hour
 	key := StepKey{Run: "run-1", Phase: "1", Kind: "implement", Attempt: 1}
 	r.watcher.signals = make(chan Signal, 1)
 	runner := stepRunnerFunc(func(ctx context.Context, ref StepRef, obs Observer) Outcome {
@@ -1484,9 +1491,9 @@ func TestAnsweringAQuestionThatIsNotOpenIsAnError(t *testing.T) {
 	}
 }
 
-func TestAHaltInTheRemedyWindowBlocksThePhaseWithExit5AndRefusesThePendingRestart(t *testing.T) {
+func TestAHaltInTheBlockerTimeoutBlocksThePhaseWithExit5AndRefusesThePendingRestart(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Minute
+	r.loop.BlockerTimeout = time.Minute
 	r.watcher.signals = make(chan Signal, 1)
 	r.host.behaviour["rloop-p2-implement"] = "fail"
 	r.watcher.ended = func(ref StepRef, out Outcome) {
@@ -1635,9 +1642,9 @@ func TestAnAbortMidStepRecordsTheHaltedRunBeforeCancellingTheStep(t *testing.T) 
 	}
 }
 
-func TestAnAbortDuringTheRemedyWindowStopsTheRunAtOnce(t *testing.T) {
+func TestAnAbortDuringTheBlockerTimeoutStopsTheRunAtOnce(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = 2 * time.Second
+	r.loop.BlockerTimeout = 2 * time.Second
 	r.host.behaviour["rloop-p1-implement"] = "fail"
 	r.watcher.ended = func(ref StepRef, out Outcome) {
 		if out.State == StepFailed {
@@ -1669,9 +1676,9 @@ func TestAnAbortDuringTheRemedyWindowStopsTheRunAtOnce(t *testing.T) {
 	}
 }
 
-func TestAnInterruptDuringTheRemedyWindowHaltsAtOnce(t *testing.T) {
+func TestAnInterruptDuringTheBlockerTimeoutHaltsAtOnce(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = 2 * time.Second
+	r.loop.BlockerTimeout = 2 * time.Second
 	r.host.behaviour["rloop-p1-implement"] = "fail"
 	ctx, cancel := context.WithCancelCause(context.Background())
 	r.watcher.ended = func(ref StepRef, out Outcome) {
@@ -1683,5 +1690,84 @@ func TestAnInterruptDuringTheRemedyWindowHaltsAtOnce(t *testing.T) {
 	code := r.loop.Run(ctx, RunOptions{Phases: []string{"1"}})
 	if code != 4 || time.Since(start) >= time.Second || len(r.events("phase-blocked")) != 0 {
 		t.Fatalf("exit %d, elapsed %s, blocked %+v", code, time.Since(start), r.events("phase-blocked"))
+	}
+}
+
+type dialogAgentHost struct {
+	*eventsHost
+	mu       sync.Mutex
+	pressed  bool
+	finished bool
+}
+
+func (h *dialogAgentHost) State(agent string) (AgentState, error) {
+	if role(agent) != "rloop-p2-implement" {
+		return h.eventsHost.State(agent)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.pressed {
+		return AgentBlocked, nil
+	}
+	if !h.finished {
+		h.finished = true
+		h.finish(agent)
+	}
+	return AgentWorking, nil
+}
+
+func (h *dialogAgentHost) Screen(agent string) (string, error) {
+	h.record("SessionHost.Screen %s", agent)
+	return dialogScreen + "\n\n", nil
+}
+
+func (h *dialogAgentHost) SendKeys(agent string, keys ...string) error {
+	err := h.eventsHost.SendKeys(agent, keys...)
+	h.mu.Lock()
+	h.pressed = h.pressed || slices.Contains(keys, "enter")
+	h.mu.Unlock()
+	return err
+}
+
+func TestABlockedImplementAgentGetsItsKeysAndFinishes(t *testing.T) {
+	r := newEventsRig(t)
+	r.host.behaviour["rloop-p2-implement"] = "hold"
+	host := &dialogAgentHost{eventsHost: r.ehost}
+	r.loop.Sessions.Host = host
+	r.loop.Sessions.Dialogs = r.loop
+	r.watcher.route = func(ctx context.Context, q Question) bool {
+		if q.Kind == QuestionDialog {
+			if err := r.loop.DeliverKeys(q.ID, []string{"1", "enter"}, "watchdog", dialogRule); err != nil {
+				t.Errorf("deliver keys: %v", err)
+			}
+		}
+		return true
+	}
+
+	if code := r.run(RunOptions{Phases: []string{"2"}}); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+
+	var order []string
+	for _, ev := range r.face.events() {
+		switch {
+		case ev.Kind == "dialog" || ev.Kind == "dialog-answered":
+			order = append(order, ev.Kind)
+		case ev.Kind == "step" && ev.Step == "implement" && len(order) > 0:
+			order = append(order, ev.Fields["state"])
+		}
+	}
+	if want := []string{"dialog", "waiting-input", "dialog-answered", "running", "ok"}; !reflect.DeepEqual(order, want) {
+		t.Errorf("order %v, want %v", order, want)
+	}
+	if got := r.calls("SessionHost.SendKeys "); !reflect.DeepEqual(got, []string{"rloop-p2-implement 1", "rloop-p2-implement enter"}) {
+		t.Errorf("keys %q", got)
+	}
+	st, _ := r.store.Load("run-1")
+	if len(st.Questions) != 1 || st.Questions[0].ID != "d1" || st.Questions[0].Answer != "1 enter" || st.Questions[0].Citation != dialogRule {
+		t.Errorf("questions %+v", st.Questions)
+	}
+	if got := r.calls("AskChannel.Answer "); len(got) != 0 {
+		t.Errorf("answered the ask channel %q", got)
 	}
 }

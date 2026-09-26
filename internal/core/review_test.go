@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,7 +31,7 @@ type reviewRig struct {
 func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
 	r := &reviewRig{rig: newRig(t), noReview: map[string]bool{}, reviewCmd: map[string]string{}}
 	r.sm.Prompts = promptsFunc(func(name string, vars map[string]any) (string, string, error) {
-		if name != "review" && name != "review-ui" && name != "fix" {
+		if name != "review" && name != "review-plan" && name != "review-ui" && name != "fix" {
 			return "do phase 3", "embedded", nil
 		}
 		copied := make(map[string]any, len(vars)+1)
@@ -50,8 +52,9 @@ func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
 		}
 		return fmt.Sprintf("review r%d", vars["Round"]), "embedded", nil
 	})
-	r.sm.Resolve = func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
+	r.sm.Resolve = func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
 		r.resolved = append(r.resolved, []string{provider, model, effort})
+		r.dirs = append(r.dirs, dir)
 		review := "/" + provider + "-review"
 		if r.noReview[provider] {
 			review = ""
@@ -79,6 +82,7 @@ func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
 	}
 	r.worker = s
 	r.resolved = nil
+	r.dirs = nil
 	r.host.script = func(int) AgentState { return AgentWorking }
 	return r
 }
@@ -111,6 +115,28 @@ func TestReviewersOfOneRoundGetDistinctNamesWithinTheLimit(t *testing.T) {
 		if len(name) != 32 || len(r.callsFrom("SessionHost.Start pane-2 "+name, "SessionHost.Start pane-3 "+name)) != 1 {
 			t.Fatalf("name %q; calls %v", name, r.shared.Calls())
 		}
+	}
+}
+
+func TestReviewersResolveWithTheirStepDir(t *testing.T) {
+	for _, primary := range []bool{false, true} {
+		t.Run(fmt.Sprint("primary=", primary), func(t *testing.T) {
+			r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
+			r.worker.Ref.InPrimary = primary
+			r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+			if out := r.run(); out.State != StepOK {
+				t.Fatalf("outcome %+v", out)
+			}
+
+			dir := filepath.Join(r.runDir, "phase-3")
+			if primary {
+				dir = ""
+			}
+			if !reflect.DeepEqual(r.dirs, []string{dir, dir}) {
+				t.Fatalf("dirs = %q", r.dirs)
+			}
+		})
 	}
 }
 
@@ -513,6 +539,58 @@ func TestReviewerWithNoReviewCommandFailsBeforeAnySplit(t *testing.T) {
 	}
 }
 
+func (r *reviewRig) reviewPlan() {
+	r.worker.Ref.Key.Kind = "plan"
+	r.worker.Ref.Kind.Name = "plan"
+}
+
+func TestAPlanReviewerRendersReviewPlanWithoutANativeReview(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"}, Reviewer{Provider: "aider"})
+	r.noReview["aider"] = true
+	r.reviewPlan()
+	r.behave = func(vars map[string]any) { writeFindings(t, vars, "ok", 0) }
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if len(r.reviews) != 2 || r.reviews[0]["prompt"] != "review-plan" || r.reviews[1]["prompt"] != "review-plan" {
+		t.Fatalf("reviews = %+v", r.reviews)
+	}
+	f := r.events("review-find")
+	if len(f) != 2 || f[0].Fields["command"] != "prompt review-plan" || f[1].Fields["command"] != "prompt review-plan" || len(r.events("review-clean")) != 1 {
+		t.Fatalf("finds = %+v", f)
+	}
+}
+
+func TestAnExplicitPromptWinsOnAPlanRow(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude", Prompt: "review"})
+	r.reviewPlan()
+	r.behave = func(vars map[string]any) { writeFindings(t, vars, "ok", 0) }
+
+	out := r.run()
+
+	if len(r.reviews) != 1 || r.reviews[0]["prompt"] != "review" {
+		t.Fatalf("reviews = %+v", r.reviews)
+	}
+	if out.State != StepFailed || out.Reason != "reviewer claude: evidence missing: native review `/claude-review` produced no output" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestAnExplicitReviewPromptOnAPlanRowStillNeedsAReviewCommand(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "aider", Prompt: "review"})
+	r.noReview["aider"] = true
+	r.reviewPlan()
+
+	out := r.run()
+
+	if out.State != StepFailed || out.Reason != "reviewer aider declares no native reviewer" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
 func TestBlockReviewerPassesModelAndEffortScalarReviewerNone(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "codex", Model: "gpt-5.6-sol", Effort: "high"}, Reviewer{Provider: "claude"})
 	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
@@ -785,8 +863,8 @@ func TestReviewFindPersistenceFailureFailsTheStep(t *testing.T) {
 	}
 }
 
-func askingReviewResolve(r *reviewRig) func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
-	return func(provider, model, effort, askURL, mcpConfigPath string) (ProviderArgs, error) {
+func askingReviewResolve(r *reviewRig) func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
+	return func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
 		r.resolved = append(r.resolved, []string{provider, askURL, mcpConfigPath})
 		var args []string
 		if mcpConfigPath != "" {
@@ -1254,4 +1332,210 @@ func TestALabelledRunNamesTheReviewerWithTheLabel(t *testing.T) {
 	if n := len(r.callsFrom("SessionHost.Start pane-2 rloop-test-2kuxv-p3-imp-v9mk8-r1 codex")); n != 1 {
 		t.Fatalf("starts = %q", r.callsFrom("SessionHost.Start"))
 	}
+}
+
+type raisingObserver struct {
+	recObserver
+	mu       sync.Mutex
+	blockers []Blocker
+	resolve  func(n int, b Blocker) Resolution
+}
+
+func (o *raisingObserver) raises() bool { return true }
+
+func (o *raisingObserver) raise(ctx context.Context, b Blocker) Resolution {
+	o.mu.Lock()
+	o.blockers = append(o.blockers, b)
+	n := len(o.blockers)
+	o.mu.Unlock()
+	res := o.resolve(n, b)
+	res.ID = fmt.Sprintf("b%d", n)
+	return res
+}
+
+func (r *reviewRig) runRaising(resolve func(n int, b Blocker) Resolution) (Outcome, *raisingObserver) {
+	obs := &raisingObserver{resolve: resolve}
+	h := ReviewHalf{Sessions: r.sm, Store: r.store}
+	return h.Run(context.Background(), r.worker.Ref, r.worker, obs), obs
+}
+
+func failCodexOnce(t *testing.T, r *reviewRig) *int {
+	codex := 0
+	r.behave = func(vars map[string]any) {
+		if strings.Contains(vars["FindingsPath"].(string), "codex") {
+			codex++
+			if codex == 1 {
+				writeFindings(t, vars, "failed", 0)
+				if err := os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"failed","reason":"/review is not available in this session"}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+		}
+		writeReview(t, vars, "ok", 0)
+	}
+	return &codex
+}
+
+func then(actions ...Resolution) func(n int, b Blocker) Resolution {
+	return func(n int, b Blocker) Resolution { return actions[min(n, len(actions))-1] }
+}
+
+func TestAFailedReviewerRaisesAReviewerBlockerAndSkipLetsTheRoundGoOn(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
+	failCodexOnce(t, r)
+
+	out, obs := r.runRaising(then(Resolution{Action: "skip", By: "maintainer", Citation: "maintainer"}))
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	want := Blocker{Source: "reviewer", Phase: "3", Step: "implement-rv-codex", Reason: "reviewer codex: /review is not available in this session", Actions: []string{"retry", "switch", "skip", "block", "stop"}}
+	if len(obs.blockers) != 1 || !reflect.DeepEqual(obs.blockers[0], want) {
+		t.Fatalf("blockers = %+v", obs.blockers)
+	}
+	skipped := r.events("reviewer-skipped")
+	if len(skipped) != 1 || !reflect.DeepEqual(skipped[0].Fields, map[string]string{"step": "implement", "reviewer": "codex", "reason": want.Reason}) {
+		t.Fatalf("reviewer-skipped = %+v", skipped)
+	}
+	if len(r.callsFrom("SessionHost.ClosePane pane-3")) != 1 {
+		t.Errorf("the skipped reviewer's pane stayed open: %q", r.shared.Calls())
+	}
+	if len(r.events("review-clean")) != 1 {
+		t.Errorf("the round did not go on to clean")
+	}
+	if got := r.worker.asker("implement-rv-codex"); got != "" {
+		t.Errorf("the skipped reviewer still asks as %q", got)
+	}
+}
+
+func TestSkipLeavesTheSkippedReviewerOutOfTheFixHalf(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
+	r.worker.Ref.Kind.Row.Rounds = 1
+	r.behave = func(vars map[string]any) {
+		if strings.Contains(vars["FindingsPath"].(string), "codex") {
+			writeFindings(t, vars, "failed", 0)
+			return
+		}
+		writeReview(t, vars, "ok", 1)
+	}
+	r.repo.TreeChanges = nil
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("claude-r1-1", "out-of-scope", "P3", false, ""))
+	}
+
+	out, _ := r.runRaising(then(Resolution{Action: "skip", By: "maintainer"}))
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	want := []FindingsFile{{Reviewer: "claude", Path: filepath.Join(r.runDir, "phase-3", "implement-findings-claude-r1.json")}}
+	if len(r.fixes) != 1 || !reflect.DeepEqual(r.fixes[0]["FindingsFiles"], want) {
+		t.Fatalf("fixes = %+v", r.fixes)
+	}
+}
+
+func TestRetryReopensTheFailedReviewerForTheRound(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	codex := failCodexOnce(t, r)
+
+	out, obs := r.runRaising(then(Resolution{Action: "retry", By: "watchdog", Citation: "allow-list"}))
+
+	if out.State != StepOK || *codex != 2 || len(obs.blockers) != 1 {
+		t.Fatalf("outcome = %+v, codex prompted %d, blockers %+v", out, *codex, obs.blockers)
+	}
+	if len(r.host.Splits) != 2 || len(r.callsFrom("SessionHost.ClosePane pane-2")) != 1 {
+		t.Fatalf("splits = %d, calls = %q", len(r.host.Splits), r.shared.Calls())
+	}
+	if starts := r.callsFrom("SessionHost.Start pane-3 rloop-2kuxv-p3-implemen-8lgad-r1"); len(starts) != 1 {
+		t.Fatalf("reopened reviewer never started: %q", r.shared.Calls())
+	}
+	finds := r.events("review-find")
+	if len(finds) != 2 || finds[0].Fields["state"] != "failed" || finds[1].Fields["state"] != "ok" {
+		t.Fatalf("review-find = %+v", finds)
+	}
+	if got := r.worker.asker("implement-rv-codex"); got != "rloop-2kuxv-p3-implemen-8lgad-r1" {
+		t.Errorf("the reopened reviewer asks as %q", got)
+	}
+}
+
+func TestSwitchReopensTheReviewerOnTheGivenProvider(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	failCodexOnce(t, r)
+
+	out, _ := r.runRaising(then(Resolution{Action: "switch", By: "maintainer", Provider: "gemini", Model: "pro", Effort: "high"}))
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if want := [][]string{{"codex", "", ""}, {"gemini", "pro", "high"}}; !reflect.DeepEqual(r.resolved, want) {
+		t.Fatalf("resolved = %v", r.resolved)
+	}
+	if starts := r.callsFrom("SessionHost.Start pane-3 "); len(starts) != 1 || !strings.Contains(starts[0], "gemini [--model pro --effort high]") {
+		t.Fatalf("starts = %q", starts)
+	}
+}
+
+func TestBlockFailsTheStepWithTheReviewersReason(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	failCodexOnce(t, r)
+
+	out, _ := r.runRaising(then(Resolution{Action: "block", By: "timeout"}))
+
+	if out.State != StepFailed || out.Reason != "reviewer codex: /review is not available in this session" || out.Halted {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestStopFailsTheStepAsAHalt(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	failCodexOnce(t, r)
+
+	out, _ := r.runRaising(then(Resolution{Action: "stop", By: "watchdog"}))
+
+	if out.State != StepFailed || !out.Halted || out.Reason != "stopped by the watchdog at b1: reviewer codex: /review is not available in this session" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestAReviewerThatFailsAgainAfterARetryRaisesAgain(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.behave = func(vars map[string]any) { writeFindings(t, vars, "failed", 0) }
+
+	out, obs := r.runRaising(then(Resolution{Action: "retry", By: "watchdog"}, Resolution{Action: "block", By: "watchdog"}))
+
+	if out.State != StepFailed || len(obs.blockers) != 2 || len(r.reviews) != 2 {
+		t.Fatalf("outcome = %+v, blockers %+v, reviews %d", out, obs.blockers, len(r.reviews))
+	}
+}
+
+func TestAReviewerThatCannotOpenRaisesABlockerAfterTheOthersReport(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+	r.sm.Host = startFailHost{scriptedHost: r.host, agent: "rloop-2kuxv-p3-implemen-8lgad-r1"}
+	var claudeDone bool
+	out, obs := r.runRaising(func(n int, b Blocker) Resolution {
+		claudeDone = len(r.events("review-find")) == 2
+		return Resolution{Action: "skip", By: "maintainer"}
+	})
+
+	if out.State != StepOK || len(obs.blockers) != 1 || obs.blockers[0].Reason != "reviewer codex: no such binary" {
+		t.Fatalf("outcome = %+v, blockers %+v", out, obs.blockers)
+	}
+	if !claudeDone {
+		t.Error("the blocker was raised before every reviewer reported")
+	}
+}
+
+type startFailHost struct {
+	*scriptedHost
+	agent string
+}
+
+func (h startFailHost) Start(pane, name, kind string, args []string) (Agent, error) {
+	if name == h.agent {
+		return Agent{}, errors.New("no such binary")
+	}
+	return h.scriptedHost.Start(pane, name, kind, args)
 }

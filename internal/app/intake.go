@@ -98,7 +98,7 @@ func (in *intake) run(ctx context.Context) (Options, error) {
 		return Options{}, exit(2, "intake server: %v", err)
 	}
 	mcpPath := filepath.Join(dir, "intake.mcp.json")
-	args := providers.ToCore(in.provider, in.cfg.Model, in.cfg.Effort, url, mcpPath)
+	args := providers.ToCore(in.provider, in.cfg.Model, in.cfg.Effort, url, mcpPath, "")
 	if slices.ContainsFunc(args.Args, func(a string) bool { return strings.Contains(a, mcpPath) }) {
 		if err := providers.WriteMCPConfig(mcpPath, url); err != nil {
 			return Options{}, exit(2, "%v", err)

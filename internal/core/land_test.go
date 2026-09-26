@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -1129,6 +1130,9 @@ func (h *reportHost) Prompt(agent, text string, wait bool, timeout time.Duration
 func (h *reportHost) State(agent string) (core.AgentState, error)  { return core.AgentWorking, nil }
 func (h *reportHost) AgentPane(agent string) (string, error)       { return "", nil }
 func (h *reportHost) Read(agent string, lines int) (string, error) { return "", nil }
+func (h *reportHost) Screen(agent string) (string, error)          { return "", nil }
+func (h *reportHost) SendKeys(agent string, keys ...string) error  { return nil }
+func (h *reportHost) SendText(agent, text string) error            { return nil }
 func (h *reportHost) Interrupt(agent string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1162,7 +1166,7 @@ func (e *landEnv) boundaryGate(outcome string) (*core.LandGate, *reportHost, *re
 		Repo:    e.repo,
 		Prompts: prompts,
 		Store:   e.store,
-		Resolve: func(provider, model, effort, askURL, mcp string) (core.ProviderArgs, error) {
+		Resolve: func(provider, model, effort, askURL, mcp, dir string) (core.ProviderArgs, error) {
 			return core.ProviderArgs{Kind: provider}, nil
 		},
 		Poll: 5 * time.Millisecond,
@@ -1847,5 +1851,228 @@ func TestMilestoneReportRecoverySurvivesStoreLoadPanic(t *testing.T) {
 	host.mu.Unlock()
 	if len(stopped) != 1 {
 		t.Fatalf("stopped sessions = %v, want milestone session", stopped)
+	}
+}
+
+type blockerScript struct {
+	mu       sync.Mutex
+	blockers []core.Blocker
+	answers  []core.Resolution
+	before   func(n int)
+}
+
+func (s *blockerScript) raise(ctx context.Context, b core.Blocker) (core.Resolution, bool) {
+	s.mu.Lock()
+	s.blockers = append(s.blockers, b)
+	n := len(s.blockers)
+	s.mu.Unlock()
+	if s.before != nil {
+		s.before(n)
+	}
+	res := s.answers[min(n, len(s.answers))-1]
+	res.ID = fmt.Sprintf("b%d", n)
+	return res, true
+}
+
+func failingFixThen(e *landEnv, refs *[]core.StepRef) runnerFunc {
+	fixing := fixingRunner(e, refs)
+	return func(ctx context.Context, ref core.StepRef, obs core.Observer) core.Outcome {
+		if len(*refs) == 0 {
+			*refs = append(*refs, ref)
+			return core.Outcome{State: core.StepFailed, Reason: "could not fix"}
+		}
+		return fixing(ctx, ref, obs)
+	}
+}
+
+func TestAGatefixThatDoesNotEndOKRaisesAGatefixBlockerAndSwitchRunsAnotherRoundOnTheProvider(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	var refs []core.StepRef
+	g := e.gate()
+	g.FixRounds = 1
+	g.FixKind.Row.Provider = "codex"
+	g.Runner = failingFixThen(e, &refs)
+	script := &blockerScript{answers: []core.Resolution{{Action: "switch", By: "maintainer", Provider: "gemini", Model: "pro", Effort: "high"}}}
+	g.Raise = script.raise
+
+	landing, err := g.Land(context.Background(), phaseOne("test -f fix2.txt"))
+
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	want := core.Blocker{Source: "gatefix", Phase: "1", Step: "gatefix", Reason: "gate failed: gate-fix round 1 ended failed: could not fix", Actions: []string{"retry", "switch", "block", "stop"}}
+	if len(script.blockers) != 1 || !reflect.DeepEqual(script.blockers[0], want) {
+		t.Fatalf("blockers = %+v", script.blockers)
+	}
+	if len(refs) != 2 || refs[1].Key.Attempt != 2 || refs[1].Kind.Row.Provider != "gemini" || refs[1].Kind.Row.Model != "pro" || refs[1].Kind.Row.Effort != "high" {
+		t.Fatalf("gate-fix runs = %+v", refs)
+	}
+	if landing.MergeSHA != e.head() {
+		t.Errorf("landing = %+v", landing)
+	}
+}
+
+func TestAGatefixBlockerRetryRunsAnotherRoundWithTheAddendum(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	var refs []core.StepRef
+	g := e.gate()
+	g.FixRounds = 1
+	g.Runner = failingFixThen(e, &refs)
+	script := &blockerScript{answers: []core.Resolution{{Action: "retry", By: "watchdog", Addendum: "the lint step needs gofmt"}}}
+	g.Raise = script.raise
+
+	if _, err := g.Land(context.Background(), phaseOne("test -f fix2.txt")); err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if len(refs) != 2 || refs[1].Vars["Addendum"] != "the lint step needs gofmt" || refs[1].Kind.Row.Provider != g.FixKind.Row.Provider {
+		t.Fatalf("gate-fix runs = %+v", refs)
+	}
+}
+
+func TestAGatefixBlockerResolvedBlockLeavesTheTreeUntouched(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	head := e.head()
+	var refs []core.StepRef
+	g := e.gate()
+	g.FixRounds = 1
+	g.Runner = failingFixThen(e, &refs)
+	g.Raise = (&blockerScript{answers: []core.Resolution{{Action: "block", By: "timeout"}}}).raise
+
+	_, err := g.Land(context.Background(), phaseOne("test -f fix2.txt"))
+
+	if !errors.Is(err, core.ErrGate) || !strings.Contains(err.Error(), "could not fix") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(refs) != 1 {
+		t.Errorf("gate-fix runs = %d", len(refs))
+	}
+	e.assertUntouched(head)
+}
+
+type stepWatcher struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (w *stepWatcher) BeforePhase(context.Context, core.Phase, string) core.CheckOutcome {
+	return core.CheckOutcome{}
+}
+func (w *stepWatcher) StepStarted(ref core.StepRef, s *core.Session) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.events = append(w.events, fmt.Sprintf("started %s %d", ref.Key.Kind, ref.Key.Attempt))
+}
+func (w *stepWatcher) StepEnded(ref core.StepRef, out core.Outcome) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.events = append(w.events, fmt.Sprintf("ended %s %d %s", ref.Key.Kind, ref.Key.Attempt, out.State))
+}
+func (w *stepWatcher) Signals() <-chan core.Signal                     { return nil }
+func (w *stepWatcher) Restarts() <-chan core.Restart                   { return nil }
+func (w *stepWatcher) Route(ctx context.Context, q core.Question) bool { return false }
+
+func TestAGatefixStepIsPostedToTheWatcherAsItStartsAndEnds(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	var refs []core.StepRef
+	fixing := fixingRunner(e, &refs)
+	g := e.gate()
+	g.FixRounds = 1
+	g.Runner = runnerFunc(func(ctx context.Context, ref core.StepRef, obs core.Observer) core.Outcome {
+		obs.Started(&core.Session{Ref: ref})
+		return fixing(ctx, ref, obs)
+	})
+	w := &stepWatcher{}
+	g.Watcher = w
+
+	if _, err := g.Land(context.Background(), phaseOne("test -f fix1.txt")); err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if want := []string{"started gatefix 1", "ended gatefix 1 ok"}; !reflect.DeepEqual(w.events, want) {
+		t.Errorf("watcher = %v, want %v", w.events, want)
+	}
+}
+
+func TestAFailedMilestoneReportRaisesAMilestoneBlockerAndRetryRunsTheReportAgain(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, host, prompts := e.boundaryGate("failed")
+	script := &blockerScript{answers: []core.Resolution{{Action: "retry", By: "watchdog", Addendum: "write the report only"}}, before: func(int) {
+		host.mu.Lock()
+		host.outcome = "ok"
+		host.mu.Unlock()
+	}}
+	g.Boundary.Raise = script.raise
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := g.Land(context.Background(), phaseTwo("")); err != nil {
+		t.Fatalf("Land 2: %v", err)
+	}
+
+	want := core.Blocker{Source: "milestone", Phase: "2", Step: "milestone", Reason: "failed: report failed", Actions: []string{"retry", "skip", "stop"}}
+	if len(script.blockers) != 1 || !reflect.DeepEqual(script.blockers[0], want) {
+		t.Fatalf("blockers = %+v", script.blockers)
+	}
+	if len(host.opened) != 2 || len(prompts.vars) != 2 || prompts.vars[1]["Addendum"] != "write the report only" {
+		t.Fatalf("opened %d, vars %+v", len(host.opened), prompts.vars)
+	}
+	if !strings.HasSuffix(prompts.vars[1]["Sentinel"].(string), "-a2.sentinel") {
+		t.Errorf("second report sentinel %v", prompts.vars[1]["Sentinel"])
+	}
+	if msg := gitCmd(t, e.root, "log", "-1", "--format=%s"); msg != "docs(report): milestone 1" {
+		t.Errorf("head commit = %q", msg)
+	}
+	if skips := e.store.events("report-skipped"); len(skips) != 0 {
+		t.Errorf("report-skipped = %+v", skips)
+	}
+}
+
+func TestAMilestoneBlockerResolvedSkipRecordsTheSkipAsBefore(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, host, _ := e.boundaryGate("failed")
+	g.Boundary.Raise = (&blockerScript{answers: []core.Resolution{{Action: "skip", By: "timeout"}}}).raise
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatal(err)
+	}
+
+	landing, err := g.Land(context.Background(), phaseTwo(""))
+
+	if err != nil || landing.MergeSHA != e.head() {
+		t.Fatalf("Land 2: %v %+v", err, landing)
+	}
+	if len(host.opened) != 1 {
+		t.Errorf("opened = %d", len(host.opened))
+	}
+	if skips := e.store.events("report-skipped"); len(skips) != 1 || !strings.Contains(skips[0].Fields["reason"], "report failed") {
+		t.Errorf("report-skipped = %+v", skips)
+	}
+}
+
+func TestAMilestoneBlockerResolvedStopRecordsNoSkip(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, _, _ := e.boundaryGate("failed")
+	g.Boundary.Raise = (&blockerScript{answers: []core.Resolution{{Action: "stop", By: "watchdog"}}}).raise
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := g.Land(context.Background(), phaseTwo("")); err != nil {
+		t.Fatalf("Land 2: %v", err)
+	}
+	if skips := e.store.events("report-skipped"); len(skips) != 0 {
+		t.Errorf("report-skipped = %+v", skips)
+	}
+	if st := gitCmd(t, e.root, "status", "--porcelain"); st != "" {
+		t.Errorf("primary tree not clean:\n%s", st)
 	}
 }

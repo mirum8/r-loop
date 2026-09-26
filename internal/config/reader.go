@@ -55,12 +55,12 @@ type StepRow struct {
 }
 
 type Watchdog struct {
-	Provider, Model, Effort                string
-	Allow                                  []string
-	RemedyWindow, CheckTimeout, StallGrace time.Duration
-	UnblockTimeout, TriageTimeout          time.Duration
-	OvertimeFactor, DiffFactor             float64
-	MaxRestarts                            int
+	Provider, Model, Effort                  string
+	Allow, Dialogs                           []string
+	BlockerTimeout, CheckTimeout, StallGrace time.Duration
+	UnblockTimeout, TriageTimeout            time.Duration
+	OvertimeFactor, DiffFactor               float64
+	MaxRestarts                              int
 }
 
 type Intake struct {
@@ -131,8 +131,8 @@ var topSchema = schema{
 	"unattended": schema{"allow": nil},
 	"notify":     schema{"onHalt": nil, "onWarn": nil, "onDone": nil},
 	"watchdog": schema{
-		"provider": nil, "model": nil, "effort": nil, "allow": nil, "maxRestarts": nil,
-		"remedyWindow": nil, "checkTimeout": nil, "stallGrace": nil, "unblockTimeout": nil, "triageTimeout": nil,
+		"provider": nil, "model": nil, "effort": nil, "allow": nil, "dialogs": nil, "maxRestarts": nil,
+		"blockerTimeout": nil, "remedyWindow": nil, "checkTimeout": nil, "stallGrace": nil, "unblockTimeout": nil, "triageTimeout": nil,
 		"overtimeFactor": nil, "diffFactor": nil,
 	},
 }
@@ -281,6 +281,26 @@ func (r *resolver) duration(path string) (time.Duration, error) {
 	return d, nil
 }
 
+func (r *resolver) aliased(path, old string) (time.Duration, error) {
+	for _, l := range r.layers {
+		n, o := l.nodes[path], l.nodes[old]
+		if n != nil && !isNull(n) && o != nil && !isNull(o) {
+			return 0, errAt(l.file, o, "%s is the old name of %s: set one of them", old, path)
+		}
+		if n == nil || isNull(n) {
+			if o == nil || isNull(o) {
+				continue
+			}
+			d, err := r.duration(old)
+			r.prov[path] = r.prov[old]
+			delete(r.prov, old)
+			return d, err
+		}
+		break
+	}
+	return r.duration(path)
+}
+
 func (r *resolver) count(path string) (int, error) {
 	v, n, l, err := r.numeric(path)
 	if err != nil || n == nil {
@@ -333,6 +353,24 @@ func (r *resolver) names(path string) ([]string, error) {
 	for _, it := range items {
 		if it.Kind != yaml.ScalarNode {
 			return nil, errAt(l.file, it, "%s: each entry must be a single value", path)
+		}
+		out = append(out, it.Value)
+	}
+	return out, nil
+}
+
+func (r *resolver) rules(path string) ([]string, error) {
+	items, l, err := r.list(path)
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, it := range items {
+		if it.Kind != yaml.ScalarNode {
+			return nil, errAt(l.file, it, "%s: each entry must be a single value", path)
+		}
+		if strings.TrimSpace(it.Value) == "" {
+			return nil, errAt(l.file, it, "%s: a rule is empty", path)
 		}
 		out = append(out, it.Value)
 	}
@@ -594,7 +632,6 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 		path string
 		dst  *time.Duration
 	}{
-		{"watchdog.remedyWindow", &w.RemedyWindow},
 		{"watchdog.checkTimeout", &w.CheckTimeout}, {"watchdog.stallGrace", &w.StallGrace},
 		{"watchdog.unblockTimeout", &w.UnblockTimeout}, {"watchdog.triageTimeout", &w.TriageTimeout},
 		{"land.gateTimeout", &cfg.Land.GateTimeout},
@@ -602,6 +639,9 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 		if *f.dst, err = r.duration(f.path); err != nil {
 			return err
 		}
+	}
+	if w.BlockerTimeout, err = r.aliased("watchdog.blockerTimeout", "watchdog.remedyWindow"); err != nil {
+		return err
 	}
 	if w.MaxRestarts, err = r.count("watchdog.maxRestarts"); err != nil {
 		return err
@@ -616,6 +656,9 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 		return err
 	}
 	if w.Allow, err = r.classes("watchdog.allow"); err != nil {
+		return err
+	}
+	if w.Dialogs, err = r.rules("watchdog.dialogs"); err != nil {
 		return err
 	}
 	cfg.Unattended.Allow, err = r.classes("unattended.allow")

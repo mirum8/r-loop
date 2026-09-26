@@ -71,13 +71,13 @@ func TestAProviderRestartWithOnlyTheAllowListAndNoRemedyAcceptsOnlyTheFallback(t
 
 func TestAFallbackRestartRunsOnTheFallbacksModelAndEffortAndTheReportNamesAllThree(t *testing.T) {
 	r := newEventsRig(t)
-	r.loop.RemedyWindow = time.Minute
+	r.loop.BlockerTimeout = time.Minute
 	kind := r.loop.Kinds[1]
 	kind.Row.Model, kind.Row.Effort = "gpt", "high"
 	kind.Row.Fallback = Fallback{Provider: "claude", Model: "sonnet"}
 	r.loop.Kinds[1] = kind
 	r.host.behaviour["rloop-p2-implement"] = "fail"
-	w := &Watch{Store: r.store}
+	w := routedWatch(r.store)
 	r.loop.Watcher = w
 	rem := newRemedies(w, r.store, "provider")
 	rem.Fallbacks = map[string]Fallback{"implement": kind.Row.Fallback}
