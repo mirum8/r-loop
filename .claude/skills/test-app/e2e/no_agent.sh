@@ -103,6 +103,42 @@ run docs/plan/todo-tiny.md --dry-run --plain
 [ "$rc" = 2 ] && grep -q 'unknown key "bogusKey"' "$T/err" && ok "unknown config key exits 2" || fail "unknown key rc=$rc"
 git checkout -q .r-loop/config.yaml
 
+watchdog_keys() {
+  perl -0pi -e "s/  unblockTimeout: 15m\n/  unblockTimeout: 15m\n$1/" .r-loop/config.yaml
+  run docs/plan/todo-tiny.md --dry-run --plain
+  git checkout -q .r-loop/config.yaml
+}
+watchdog_keys '  blockerTimeout: 5m\n'
+[ "$rc" = 0 ] && ok "watchdog.blockerTimeout: 5m accepted" || fail "blockerTimeout 5m rc=$rc: $(head -2 "$T/err")"
+watchdog_keys '  remedyWindow: 5m\n'
+[ "$rc" = 0 ] && ok "watchdog.remedyWindow alone accepted as alias" || fail "remedyWindow alone rc=$rc: $(head -2 "$T/err")"
+watchdog_keys '  blockerTimeout: 5m\n  remedyWindow: 5m\n'
+[ "$rc" = 2 ] && ok "blockerTimeout and remedyWindow together exit 2: $(head -1 "$T/err")" || fail "both keys rc=$rc"
+watchdog_keys '  blockerTimeout: 0s\n'
+[ "$rc" = 2 ] && ok "blockerTimeout: 0s exits 2: $(head -1 "$T/err")" || fail "blockerTimeout 0s rc=$rc"
+
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 0 ] && grep -q '^  reviewer codex ' "$T/out" && grep -qx 'prompt review-plan: embedded' "$T/out" \
+  && ok "dry-run with a codex plan reviewer lists 'prompt review-plan: embedded'" \
+  || fail "dry-run banner: no codex plan reviewer or no 'prompt review-plan' line rc=$rc"
+
+CODEX_NOREVIEW='providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n    askFlag: "-c mcp_servers.r-loop.url={url}"\n'
+printf "$CODEX_NOREVIEW" >> .r-loop/config.yaml
+perl -0pi -e 's/(  implement:\n(?:    [^\n]*\n)*?    reviewers:\n)      - provider: codex\n/$1      - provider: claude\n/' .r-loop/config.yaml
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 0 ] && ok "a codex with no review command passes as a plan-only reviewer" || fail "plan-only codex without review rc=$rc: $(head -2 "$T/err")"
+git checkout -q .r-loop/config.yaml
+printf "$CODEX_NOREVIEW" >> .r-loop/config.yaml
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 2 ] && grep -q 'steps.implement.reviewers: provider codex has no review command' "$T/err" \
+  && ok "the same codex as an implement reviewer exits 2" || fail "implement codex without review rc=$rc: $(head -2 "$T/err")"
+git checkout -q .r-loop/config.yaml
+
+printf 'providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n    review: "/review x"\n    reviewStart: ">> s"\n' >> .r-loop/config.yaml
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 2 ] && grep -q 'reviewDone is required with reviewStart' "$T/err" && ok "reviewStart without reviewDone exits 2" || fail "reviewStart alone rc=$rc: $(head -2 "$T/err")"
+git checkout -q .r-loop/config.yaml
+
 echo "// dirty" >> calc.go
 run docs/plan/todo-tiny.md --plain
 if [ "$rc" = 4 ] && { grep -q 'calc.go' "$T/err" || grep -q 'herdr server unreachable' "$T/err"; } && [ ! -d .r-loop/runs ]; then
