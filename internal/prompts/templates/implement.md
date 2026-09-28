@@ -11,9 +11,10 @@ This phase fixes backlog items {{.GroupItems}} with one change. Every member's c
 {{- end}}
 
 1. Read the plan at `{{.PlanPath}}` first. It is the contract for this step.
-2. Write the tests from its `## Tests` section before any production code, and see them fail for the right reason.
+2. Write the tests from its `## Tests` section before any production code, and see them fail for the right reason. Write them by the rules under `## Writing tests` below.
 3. Implement until those tests pass and the build is green.{{if .ItemGate}} The command under the plan's `## Gate` must pass.{{end}}
 4. Never edit `{{.TodoPath}}` or `{{.PlanPath}}`.
 
 When the plan is wrong — it names a file that cannot work, a test that cannot pass, or contradicts the code — do not deviate from it: write a `failed` sentinel whose reason names what is wrong with the plan.
+{{template "tests" .}}
 {{template "sentinel" .}}

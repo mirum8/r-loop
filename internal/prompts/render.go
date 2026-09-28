@@ -45,6 +45,24 @@ When you need a decision you cannot take from the repository, call the ` + "`" +
 
 {{.Addendum}}
 {{- end}}
+{{end}}
+{{define "tests"}}
+## Writing tests
+
+Use the project's existing test framework, assertion helpers and fixtures; add no test dependency.
+
+- Test behaviour through the real code path. Fake or mock only true I/O boundaries — third-party services, model calls, the clock, the network — never the project's own collaborators. A fake standing in for something that writes state writes that state, so the test asserts on it.
+- Each test has given, when and then blocks separated by blank lines, marked ` + "`" + `// given` + "`" + `, ` + "`" + `// when` + "`" + `, ` + "`" + `// then` + "`" + ` in the language's comment syntax.
+- One test, one behaviour, named for that behaviour. Add a test rather than extend an existing one; group related tests the way the language does (subtests, nested classes) and use a table or parameterised test for variations of one behaviour.
+- Assert only what the test is named for, against hard-coded expected values; never compute the expected value with production code. Name the compared values ` + "`" + `actual…` + "`" + ` and ` + "`" + `expected…` + "`" + `.
+- Fixed data only: no random IDs, current time or random amounts.
+- Keep a test's data in the test: no shared setup hook for it. Descriptively named helpers that take the values the test depends on as parameters, with defaults for the rest, keep each block to a few lines.
+- Inline a value used once or twice rather than name it.
+- No loops or conditionals in a test body; use the assertion helpers.
+- Never sleep a fixed time to wait: poll for the condition with a deadline.
+- A test that checks a call was made also checks what it was called with and the outcome. A test that checks nothing happened checks every side effect that could have.
+- No tests for trivial accessors, pure delegation, or framework and library internals; no reflection into private fields.
+- Write no test beyond what the obligations need.
 {{end}}`
 
 type Renderer struct {

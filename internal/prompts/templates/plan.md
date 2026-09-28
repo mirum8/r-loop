@@ -58,7 +58,7 @@ A fact the repository can answer is looked up, never asked. A choice the reposit
 
 - `## Summary` — what the phase builds and the approach, in a few sentences; for each choice from step 2, the option taken and in one line why it beat the other.
 - `## Changes` — per file, in build order: create or modify, the types, functions and signatures that change, the existing code (`path:line`) it reuses or follows, and the obligations each change serves.
-- `## Tests` — the tests to write first, each by name with the behaviour it pins and the obligations it covers. Every obligation from step 2 is covered, each edge case and error path included.
+- `## Tests` — the tests to write first, each by name with the behaviour it pins and the obligations it covers, designed by the rules under `## Writing tests`. Every obligation from step 2 is covered, each edge case and error path included.
 - `## Left out` — each element you considered and cut, with one line on why no obligation needs it, or `none`.
 - `## Assumptions` — each default taken, or `none`.
 {{- if .ItemGate}}
@@ -73,4 +73,5 @@ When the code already does what every open item asks, or the item is not code wo
 ## 5. Self-check
 
 Re-read the plan as the implementer would, then fix it until all of this holds: every obligation has a change in `## Changes` and a test in `## Tests`; every change serves an obligation; only the phase's files are named; every `path:line` cited exists; no line leaves a choice open — no "consider", "if needed", "TBD", "or" between options, or deferred decision.{{if .ItemGate}} `## Gate` runs exactly those tests and nothing else.{{end}}
+{{template "tests" .}}
 {{template "sentinel" .}}

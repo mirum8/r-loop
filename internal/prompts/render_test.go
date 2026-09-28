@@ -910,3 +910,71 @@ func TestWatchdogTriagesTheRunListAndAsksAtTheGate(t *testing.T) {
 		t.Errorf("unattended triage:\n%s", unattended)
 	}
 }
+
+func TestPromptsThatWriteTestsCarryTheTestRules(t *testing.T) {
+	r := New(t.TempDir())
+	for _, name := range []string{"plan", "implement", "fix", "review", "review-plan"} {
+		t.Run(name, func(t *testing.T) {
+			actual := render(t, r, name, fullVars())
+
+			for _, want := range []string{"## Writing tests", "`// given`", "hard-coded expected values", "true I/O boundaries", "poll for the condition with a deadline"} {
+				if !strings.Contains(actual, want) {
+					t.Errorf("%s prompt missing %q", name, want)
+				}
+			}
+		})
+	}
+}
+
+func TestPromptsThatWriteNoTestsCarryNoTestRules(t *testing.T) {
+	r := New(t.TempDir())
+	for _, name := range []string{"review-ui", "gate", "gatefix", "milestone", "watchdog", "intake"} {
+		t.Run(name, func(t *testing.T) {
+			vars := fullVars()
+			vars["Text"], vars["Dir"], vars["Root"], vars["Usage"] = "phase 3", "/repo", "/repo", ""
+			actual := render(t, r, name, vars)
+
+			if strings.Contains(actual, "## Writing tests") {
+				t.Errorf("%s prompt carries the test rules", name)
+			}
+		})
+	}
+}
+
+func TestOverrideCanUseTheTestsPartial(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".r-loop", "prompts", "implement.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`custom implement{{template "tests" .}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	actual := render(t, New(dir), "implement", fullVars())
+
+	if !strings.Contains(actual, "## Writing tests") {
+		t.Errorf("override did not render the test rules:\n%s", actual)
+	}
+}
+
+func TestReviewersReportTestsThatBreakTheRules(t *testing.T) {
+	r := New(t.TempDir())
+	for _, name := range []string{"review", "review-plan"} {
+		t.Run(name, func(t *testing.T) {
+			actual := render(t, r, name, fullVars())
+
+			if !strings.Contains(actual, "breaks a rule under `## Writing tests` below as a finding, naming the rule") {
+				t.Errorf("%s prompt does not ask to report rule-breaking tests:\n%s", name, actual)
+			}
+		})
+	}
+}
+
+func TestFixRanksAWeakRuleBreakingTestAsP2(t *testing.T) {
+	actual := render(t, New(t.TempDir()), "fix", fullVars())
+
+	if !strings.Contains(actual, "is `P2` when it would still pass with the behaviour it names broken, and `P3` otherwise") {
+		t.Errorf("fix prompt does not rank rule-breaking tests:\n%s", actual)
+	}
+}

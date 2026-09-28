@@ -43,6 +43,8 @@ and the earlier verdict files:
 A finding dismissed with evidence is not raised again without new evidence.
 {{- end}}
 
+Report each new or changed test that breaks a rule under `## Writing tests` below as a finding, naming the rule.
+{{template "tests" .}}
 ## Findings
 
 Convert what you report into `{{.FindingsPath}}` as:
