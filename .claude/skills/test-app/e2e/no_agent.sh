@@ -141,7 +141,8 @@ git checkout -q .r-loop/config.yaml
 
 echo "// dirty" >> calc.go
 run docs/plan/todo-tiny.md --plain
-if [ "$rc" = 4 ] && { grep -q 'calc.go' "$T/err" || grep -q 'herdr server unreachable' "$T/err"; } && [ ! -d .r-loop/runs ]; then
+if [ "$rc" = 4 ] && { grep -q 'calc.go' "$T/err" || grep -q 'herdr server unreachable' "$T/err"; } \
+  && [ -z "$(ls .r-loop/runs 2>/dev/null | grep -vx -e gate -e lock)" ]; then
   ok "dirty tree refused before any run ($(head -c 60 "$T/err"))"
 else fail "dirty tree rc=$rc"; fi
 git checkout -q calc.go
