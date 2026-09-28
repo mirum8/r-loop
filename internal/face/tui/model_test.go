@@ -584,10 +584,13 @@ func TestARunningGateFixRetryStartsFresh(t *testing.T) {
 	next, _ := m.Update(tickMsg(at(30)))
 	m = next.(Model)
 	view := m.View()
-	for _, want := range []string{"PHASE 2 · gatefix a2", "state      running", "elapsed 13m0s", "backstop   3h47m0s left"} {
+	for _, want := range []string{"PHASE 2 · gatefix a2", "elapsed 13m0s", "backstop   3h47m0s left", "├─ ✓ gatefix", "└─ ● gatefix a2"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("retry view lacks %q:\n%s", want, view)
 		}
+	}
+	if row := lineWith(view, "● gatefix a2"); !strings.HasSuffix(row, "running") {
+		t.Errorf("retry row %q", row)
 	}
 	if m.Live == nil || !m.Live.Started.Equal(at(17)) || !m.Live.Ended.IsZero() {
 		t.Errorf("retry step has stale timing: %+v", m.Live)
@@ -611,11 +614,13 @@ func TestAnEndedStepShowsNoBackstopCountdown(t *testing.T) {
 				step(4, 3, tc.kind, tc.state, "claude", "opus", "high", "ws-9"),
 			})
 			next, _ := m.Update(tickMsg(at(30)))
-			view := next.(Model).View()
-			for _, want := range []string{"PHASE 3 · " + tc.kind, "state      " + tc.state} {
-				if !strings.Contains(view, want) {
-					t.Errorf("view lacks %q:\n%s", want, view)
-				}
+			view := ansiStrip(next.(Model).View())
+			glyph := map[string]string{"ok": "✓", "failed": "×"}[tc.state]
+			if !strings.Contains(view, "PHASE 3 · "+tc.kind) {
+				t.Errorf("view lacks the title:\n%s", view)
+			}
+			if row := lineWith(view, "└─ "+glyph+" "+tc.kind); !strings.Contains(row, tc.state) {
+				t.Errorf("step row %q:\n%s", row, view)
 			}
 			for _, unwanted := range []string{"backstop", " left"} {
 				if strings.Contains(view, unwanted) {

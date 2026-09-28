@@ -129,12 +129,14 @@ type Model struct {
 	Phases     []Row
 	Current    string
 	Live       *Step
+	past       []Step
 	done       map[stepID]string
 	checking   string
 	checkFrom  time.Time
 	Questions  []Question
 	DogGone    bool
 	DogWaiting bool
+	dogSince   time.Time
 	Feed       []Entry
 	Status     string
 	Blocked    string
@@ -185,6 +187,7 @@ func (m Model) Apply(ev core.Event) Model {
 	case "review-round", "agent-named", "review-find", "finding", "review-clean":
 		m.review(ev)
 	case "phase-check-start":
+		m.retire(ev.Phase, "", 0)
 		m.checking, m.checkFrom, m.Live = ev.Phase, ev.At, nil
 	case "phase-check", "phase-check-timeout", "phase-check-skipped":
 		m.checking = ""
@@ -194,6 +197,9 @@ func (m Model) Apply(ev core.Event) Model {
 	case "error", "restart-refused":
 		m.log(ev, toneError, ev.Fields["reason"])
 	case "watchdog-waiting":
+		if !m.DogWaiting {
+			m.dogSince = ev.At
+		}
 		m.DogWaiting = true
 		if q := ev.Fields["question"]; q != "" {
 			m.log(ev, toneWarn, "watchdog asks you: "+strings.Join(strings.Fields(q), " "))
@@ -275,7 +281,7 @@ func replay(m Model, history []core.Event) Model {
 	for _, ev := range history {
 		m = m.Apply(ev)
 	}
-	m.Status, m.Blocked, m.Resume, m.Current, m.Live = "", "", "", "", nil
+	m.Status, m.Blocked, m.Resume, m.Current, m.Live, m.past = "", "", "", "", nil, nil
 	m.ended = time.Time{}
 	m.checking = ""
 	m.Questions, m.DogGone, m.DogWaiting = nil, false, false
@@ -320,6 +326,7 @@ func (m *Model) step(ev core.Event) {
 		s = *m.Live
 	} else {
 		s = Step{Phase: ev.Phase, Kind: ev.Step, Started: ev.At}
+		m.retire(ev.Phase, ev.Step, attempt)
 	}
 	if f["state"] == string(core.StepRunning) && (s.State == string(core.StepQueued) || s.State == string(core.StepSpawned)) {
 		s.Started = ev.At
@@ -354,6 +361,15 @@ func (m *Model) step(ev core.Event) {
 		m.done[stepID{s.Phase, s.Kind}] = s.State
 	}
 	m.Live = &s
+}
+
+func (m *Model) retire(phase, kind string, attempt int) {
+	if len(m.past) > 0 && m.past[0].Phase != phase {
+		m.past = nil
+	}
+	if live := m.Live; live != nil && live.Phase == phase && (live.Kind != kind || live.Attempt != attempt) {
+		m.past = append(slices.Clone(m.past), *live)
+	}
 }
 
 func (m *Model) review(ev core.Event) {

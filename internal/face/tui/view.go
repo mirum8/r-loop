@@ -31,14 +31,15 @@ func (m Model) View() string {
 	w := m.Width - 2*margin
 	lines := []string{m.header(w), ""}
 	rail := m.rail()
+	footer := m.footer(w)
 	if m.Width < stackBelow {
 		lines = append(lines, rail...)
 		lines = append(lines, "")
-		lines = append(lines, m.panel(w)...)
+		lines = append(lines, m.panel(w, m.Height-4-len(rail)-len(footer))...)
 	} else {
 		sep := "  " + th.Border.Render("│") + "  "
 		pw := w - railWidth - lipgloss.Width(sep)
-		panel := m.panel(pw)
+		panel := m.panel(pw, m.Height-3-len(footer))
 		for i := range max(len(rail), len(panel)) {
 			left, right := strings.Repeat(" ", railWidth), ""
 			if i < len(rail) {
@@ -51,7 +52,7 @@ func (m Model) View() string {
 		}
 	}
 	lines = append(lines, "")
-	lines = append(lines, m.footer(w)...)
+	lines = append(lines, footer...)
 	pad := strings.Repeat(" ", margin)
 	for i, l := range lines {
 		if l != "" {
@@ -116,7 +117,7 @@ func (m Model) rail() []string {
 	return lines
 }
 
-func (m Model) panel(w int) []string {
+func (m Model) panel(w, room int) []string {
 	th := m.theme
 	var lines []string
 	add := func(style lipgloss.Style, s string) { lines = append(lines, style.Render(ansi.Truncate(s, w, "…"))) }
@@ -126,23 +127,11 @@ func (m Model) panel(w int) []string {
 		add(th.Text, fmt.Sprintf("PHASE %s · %s", s.Phase, s.Label()))
 		label := th.Text.Render(fmt.Sprintf("%-10s ", "steps"))
 		lines = append(lines, ansi.Truncate(label+m.pipeline(s, w-lipgloss.Width(label)), w, "…"))
-		provider := s.Provider
-		for _, part := range []string{s.Model, s.Effort} {
-			if part != "" {
-				provider += " · " + part
-			}
-		}
-		add(th.Text, field("provider", provider))
-		add(th.Text, field("session", s.Workspace))
-		add(th.Text, field("state", s.State))
 		if q := m.waiting(s); q != "" {
 			add(th.Text, field("waiting", q))
 		}
 		if s.Round > 0 || len(s.Reviews) > 0 {
 			add(th.Text, field("review", m.reviewLine(s)))
-			for _, r := range s.Reviews {
-				lines = append(lines, ansi.Truncate(th.Text.Render(field(fmt.Sprintf("  r%d", r.N), ""))+m.round(r), w, "…"))
-			}
 		}
 		add(th.Text, field("started", s.Started.Format("15:04:05")+"   elapsed "+s.Elapsed(m.clock()).String()))
 		if s.Ended.IsZero() {
@@ -156,12 +145,25 @@ func (m Model) panel(w int) []string {
 	} else {
 		add(th.Label, "no step running")
 	}
+	if m.Live != nil || m.checking != "" {
+		lines = append(lines, "")
+		add(th.Label, "AGENTS")
+		agents := m.agents(w, 0)
+		if over := len(lines) + len(agents) + 3 - room; over > 0 && len(m.past) > 0 {
+			agents = m.agents(w, min(len(m.past), over+1))
+		}
+		lines = append(lines, agents...)
+	}
 	lines = append(lines, "")
 	add(th.Label, "EVENTS")
 	if len(m.Feed) == 0 {
 		add(th.Idle, "none")
 	}
-	for _, e := range m.Feed {
+	feed := m.Feed
+	if keep := max(1, room-len(lines)); len(feed) > keep {
+		feed = feed[len(feed)-keep:]
+	}
+	for _, e := range feed {
 		switch e.Tone {
 		case toneError:
 			add(th.Failed, "!  "+e.Text)
@@ -169,6 +171,158 @@ func (m Model) panel(w int) []string {
 			add(th.Warn, "!  "+e.Text)
 		default:
 			add(th.Idle, "   "+e.Text)
+		}
+	}
+	return lines
+}
+
+const (
+	nameWidth = 22
+	metaWidth = 26
+	metaBelow = 72
+)
+
+func (m Model) agents(w, fold int) []string {
+	th := m.theme
+	dog, dogState, dogText := th.Text, th.Idle, "live"
+	switch {
+	case m.DogGone:
+		dog, dogState, dogText = th.Failed, th.Failed, "gone"
+	case m.DogWaiting:
+		dog, dogState, dogText = th.Asking, th.Asking, "asking you "+m.clock().Sub(m.dogSince).Truncate(time.Second).String()
+	case m.checking != "":
+		dogState, dogText = th.Current, "checking phase "+m.checking
+	}
+	steps := slices.Clone(m.past)
+	if m.Live != nil {
+		steps = append(steps, *m.Live)
+	}
+	lines := []string{m.node(w, branch(len(steps) == 0), dog, dog, dogState, "◆", "watchdog", "", dogText)}
+	if fold > 0 {
+		lines = append(lines, ansi.Truncate(th.Idle.Render(branch(false)+"… "+core.Plural(fold, "earlier step")), w, "…"))
+	}
+	for i := fold; i < len(steps); i++ {
+		s := &steps[i]
+		glyph, name, state, text := m.stepNode(s)
+		lines = append(lines, m.node(w, branch(i == len(steps)-1), glyph, name, state, glyphFor(s), stepName(s), stepMeta(s), text))
+	}
+	if m.Live != nil {
+		lines = append(lines, m.reviewNodes(&steps[len(steps)-1], w)...)
+	}
+	return lines
+}
+
+func (m Model) node(w int, prefix string, glyph, name, state lipgloss.Style, g, n, meta, text string) string {
+	th := m.theme
+	head := th.Idle.Render(prefix) + glyph.Render(g) + " " + name.Render(n)
+	line := head + strings.Repeat(" ", max(1, nameWidth-lipgloss.Width(head)))
+	if w >= metaBelow {
+		meta = ansi.Truncate(meta, metaWidth-1, "…")
+		line += th.Idle.Render(meta) + strings.Repeat(" ", metaWidth-lipgloss.Width(meta))
+	}
+	return ansi.Truncate(line+state.Render(text), w, "…")
+}
+
+func branch(last bool) string {
+	if last {
+		return "└─ "
+	}
+	return "├─ "
+}
+
+func glyphFor(s *Step) string {
+	switch s.State {
+	case string(core.StepOK):
+		return "✓"
+	case string(core.StepFailed):
+		return "×"
+	}
+	return "●"
+}
+
+func stepName(s *Step) string {
+	if s.Attempt > 1 {
+		return fmt.Sprintf("%s a%d", s.Kind, s.Attempt)
+	}
+	return s.Kind
+}
+
+func stepMeta(s *Step) string {
+	var parts []string
+	for _, p := range []string{s.Provider, s.Model, s.Workspace} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
+func (m Model) stepNode(s *Step) (glyph, name, state lipgloss.Style, text string) {
+	th := m.theme
+	switch s.State {
+	case string(core.StepOK):
+		return th.Landed, th.Idle, th.Idle, "ok " + s.Elapsed(m.clock()).String()
+	case string(core.StepFailed):
+		return th.Failed, th.Idle, th.Failed, "failed"
+	case string(core.StepStalled):
+		return th.Failed, th.Current, th.Failed, "stalled"
+	}
+	if q := m.waiting(s); q != "" {
+		return th.Current, th.Current, th.Text, "waiting ⇢ " + strings.ReplaceAll(strings.TrimPrefix(q, "watchdog · "), " · ", " ")
+	}
+	switch {
+	case s.Round > 0 && s.timedHalf == "fix":
+		return th.Current, th.Current, th.Text, fmt.Sprintf("fixing r%d", s.Round)
+	case s.Round > 0:
+		return th.Current, th.Current, th.Idle, fmt.Sprintf("awaits r%d", s.Round)
+	}
+	return th.Current, th.Current, th.Text, s.State
+}
+
+func reported(r Round) bool {
+	return len(r.Reviewers) > 0 && !slices.ContainsFunc(r.Reviewers, func(rv Reviewer) bool { return rv.State == "" })
+}
+
+func (m Model) reviewNodes(s *Step, w int) []string {
+	th := m.theme
+	var lines []string
+	open := len(s.Reviews) - 1
+	if open >= 0 && (s.Reviews[open].Clean || !s.Ended.IsZero() || reported(s.Reviews[open])) {
+		open = -1
+	}
+	count := len(s.Reviews)
+	if open >= 0 {
+		count += len(s.Reviews[open].Reviewers) - 1
+	}
+	n := 0
+	prefix := func() string {
+		n++
+		return "   " + branch(n == count)
+	}
+	for i, r := range s.Reviews {
+		if i == open {
+			break
+		}
+		glyph, style := "✓", th.Landed
+		if slices.ContainsFunc(r.Reviewers, func(rv Reviewer) bool { return rv.State != "" && rv.State != string(core.StepOK) }) {
+			glyph, style = "×", th.Failed
+		}
+		head := th.Idle.Render(prefix()) + style.Render(glyph) + th.Text.Render(fmt.Sprintf(" r%d  ", r.N))
+		lines = append(lines, ansi.Truncate(head+m.round(r), w, "…"))
+	}
+	if open < 0 {
+		return lines
+	}
+	r := s.Reviews[open]
+	for _, rv := range r.Reviewers {
+		name := fmt.Sprintf("r%d %s", r.N, rv.ID)
+		switch rv.State {
+		case "":
+			lines = append(lines, m.node(w, prefix(), th.Current, th.Current, th.Current, "●", name, rv.Agent, "reviewing"))
+		case string(core.StepOK):
+			lines = append(lines, m.node(w, prefix(), th.Landed, th.Text, th.Text, "✓", name, rv.Agent, core.Plural(rv.Findings, "finding")))
+		default:
+			lines = append(lines, m.node(w, prefix(), th.Failed, th.Text, th.Failed, "×", name, rv.Agent, "failed"))
 		}
 	}
 	return lines

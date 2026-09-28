@@ -15,14 +15,14 @@ const (
 )
 
 type Theme struct {
-	Header, HeaderFailed, HeaderWaiting, Label, Idle, Text, Live, Current, Landed, Failed, Warn, Halt, Status, Border lipgloss.Style
+	Header, HeaderFailed, HeaderWaiting, Asking, Label, Idle, Text, Live, Current, Landed, Failed, Warn, Halt, Status, Border lipgloss.Style
 }
 
 func NewTheme(r *lipgloss.Renderer, noColor bool) Theme {
 	s := r.NewStyle
 	if noColor {
 		return Theme{
-			Header: s(), HeaderFailed: s().Reverse(true), HeaderWaiting: s(), Label: s().Faint(true), Idle: s().Faint(true), Text: s(),
+			Header: s(), HeaderFailed: s().Reverse(true), HeaderWaiting: s(), Asking: s(), Label: s().Faint(true), Idle: s().Faint(true), Text: s(),
 			Live: s().Bold(true), Current: s(), Landed: s().Faint(true), Failed: s().Reverse(true),
 			Warn: s(), Halt: s().Reverse(true), Status: s(), Border: s().Faint(true),
 		}
@@ -32,6 +32,7 @@ func NewTheme(r *lipgloss.Renderer, noColor bool) Theme {
 		Header:        fg(Dim).Background(lipgloss.Color(Raised)),
 		HeaderFailed:  fg(Error).Background(lipgloss.Color(Raised)),
 		HeaderWaiting: fg(Secondary).Background(lipgloss.Color(Raised)),
+		Asking:        fg(Secondary),
 		Label:         fg(Dim),
 		Idle:          fg(Dim),
 		Text:          fg(Text),

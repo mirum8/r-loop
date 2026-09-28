@@ -104,11 +104,19 @@ run. The rail lists only the phases (or, for an issues file, the items) chosen f
 launch selection, or the recorded run list on resume — under a `PHASES <landed>/<total>` (`ITEMS …`)
 header. The panel names the step, a `steps` line with the phase's step kinds (done `✓` in `tertiary`,
 failed `×` in `error`, the live kind in `primary` without bold, pending dim); once the review half
-starts, a `review  r<n>/<rounds> · finding|fixing <half timer>` line (`· clean` when done) and one
-line per round naming each reviewer — its herdr agent and `…` while it runs, its finding count once
-it reports, `×` in `error` if it failed — followed by `→ fixed <n> (<severities>) · <n> dismissed`
-after the fix half; a paused backstop reads `paused (<left> left)`. Below it an
-`EVENTS` feed of the last six things the run did — warnings and the watchdog's question to you
+starts, a `review  r<n>/<rounds> · finding|fixing <half timer>` line (`· clean` when done); a paused
+backstop reads `paused (<left> left)`. Below it an `AGENTS` tree, one line per agent, columns
+name · provider · model · workspace · state (the provider column drops below 72 panel columns): `◆
+watchdog` (`live` dim, `checking phase <n>` in `primary`, `asking you <age>` in `secondary` — the
+only amber row — or `gone` in `error`), then the phase's steps and attempts in order (`✓ <kind>`
+`ok <elapsed>` dim, `× <kind>` `failed` in `error`, the live `● <kind>` in `primary` with its state:
+`waiting ⇢ <id> <age>`, `awaits r<n>`, `fixing r<n>` or the raw state), and under the live step its
+reviewers: each finished round folded into one `✓ r<n>  <reviewer> <findings> · … → fixed <n>
+(<severities>) · <n> dismissed` line (`×` if a reviewer failed) — a round folds once every reviewer
+has reported — and the open round one `● r<n> <id>` line per reviewer with its herdr agent and
+`reviewing`, `<n> findings` or `failed`. When the tree would push the frame past the terminal's
+height, the oldest steps fold into one dim `… <n> earlier steps` line. Below that an
+`EVENTS` feed of the last six things the run did (the oldest dropped when the frame would be taller than the terminal) — warnings and the watchdog's question to you
 (`watchdog asks you: <question>`, on one line) amber, errors, stalls and a gone
 watchdog red, everything else (landings, restarts, nudges, questions asked and answered) dim. Not
 implemented: the bordered frame, the raised panel (modal), the question banner and the key bar drawn

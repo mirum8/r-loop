@@ -2,12 +2,14 @@
 
   PHASES 1/4                │  PHASE 2 · implement
   ✓  1 scaffold             │  steps      plan ✓ › implement
-  p  2 config reader        │  provider   codex · gpt-5 · medium
-  ·  3 state store          │  session    ws-4
-  ·  4 session manager      │  state      waiting-input
-                            │  waiting    watchdog · q2 · 3m0s
-                            │  started    14:31:00   elapsed 12m0s
-                            │  backstop   paused (3h51m0s left)
+  p  2 config reader        │  waiting    watchdog · q2 · 3m0s
+  ·  3 state store          │  started    14:31:00   elapsed 12m0s
+  ·  4 session manager      │  backstop   paused (3h51m0s left)
+                            │
+                            │  AGENTS
+                            │  ├─ ◆ watchdog                                   live
+                            │  ├─ ✓ plan             claude · opus · ws-3      ok 8m0s
+                            │  └─ ● implement        codex · gpt-5 · ws-4      waiting ⇢ q2 3m0s
                             │
                             │  EVENTS
                             │     14:21  phase 1: landed abc

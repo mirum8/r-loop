@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -123,8 +124,8 @@ func TestTheStepsLineStaysOneRowWithNoAmberOrBold(t *testing.T) {
 					t.Fatalf("steps label has no style: %q", line)
 				}
 				stepsLine := line[start:]
-				if i+1 >= len(lines) || !strings.Contains(ansiStrip(lines[i+1]), "provider") {
-					t.Fatalf("steps line is not followed by provider:\n%s", view)
+				if i+1 >= len(lines) || !strings.Contains(ansiStrip(lines[i+1]), "started") {
+					t.Fatalf("steps line is not followed by started:\n%s", view)
 				}
 				if got := strings.TrimSpace(ansiStrip(stepsLine)); got != tc.want {
 					t.Errorf("steps line %q, want %q", got, tc.want)
@@ -337,17 +338,23 @@ func TestTheReviewBlockShowsEachRoundOnOneLine(t *testing.T) {
 		fits(t, m.View(), w, 40)
 		for _, want := range []string{
 			"review     r2/2 · finding 2m0s",
-			"  r1       claude 2 · codex 1 → fixed 2 (P1 P2) · 1 dismissed",
-			"  r2       claude p2-impl-rv-claude-r2 …",
+			"└─ ● implement",
+			"   ├─ ✓ r1  claude 2 · codex 1 → fixed 2 (P1 P2) · 1 dismissed",
+			"   ├─ ● r2 claude",
+			"   └─ ● r2 codex",
 			"backstop   paused (",
 		} {
-			if w == 70 && strings.HasPrefix(want, "  r1") {
-				want = "  r1       claude 2 · codex 1 → fixed 2"
-			}
 			if !strings.Contains(view, want) {
 				t.Errorf("width %d: missing %q in\n%s", w, want, view)
 			}
 		}
+		if row := lineWith(view, "● implement"); !strings.HasSuffix(row, "awaits r2") {
+			t.Errorf("width %d: step row %q", w, row)
+		}
+	}
+	m.Width = 120
+	if row := lineWith(ansi.Strip(m.View()), "● r2 claude"); !strings.Contains(row, "p2-impl-rv-claude-r2") || !strings.HasSuffix(row, "reviewing") {
+		t.Errorf("reviewer row %q", row)
 	}
 }
 
@@ -356,8 +363,8 @@ func TestAFailedReviewerIsInTheErrorColour(t *testing.T) {
 	m := newModel(events)
 	m.Now, m.Width = at(50), 120
 
-	if !strings.Contains(m.View(), m.theme.Failed.Render("codex ×")) {
-		t.Fatalf("no failed reviewer in\n%s", m.View())
+	if row := lineWith(m.View(), "r2 codex"); !strings.Contains(row, m.theme.Failed.Render("×")) || !strings.Contains(row, m.theme.Failed.Render("failed")) {
+		t.Fatalf("failed reviewer row %q", row)
 	}
 }
 
@@ -371,7 +378,7 @@ func TestACleanRoundSaysClean(t *testing.T) {
 	m.Now, m.Width = at(51), 120
 	view := ansi.Strip(m.View())
 
-	for _, want := range []string{"review     r2/2 · clean", "  r2       claude 0 · codex 0 → clean"} {
+	for _, want := range []string{"review     r2/2 · clean", "   └─ ✓ r2  claude 0 · codex 0 → clean"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("missing %q in\n%s", want, view)
 		}
@@ -421,4 +428,152 @@ func lineWith(view, prefix string) string {
 		}
 	}
 	return ""
+}
+
+func TestTheWatchdogRowIsAmberOnlyWhileItAsksYou(t *testing.T) {
+	amber := regexp.MustCompile(`\x1b\[38;2;224;16[34];88m`)
+	m := coloured(false)
+	m.Width = 120
+	m = m.Apply(core.Event{At: at(1), Kind: "phase-start", Phase: "2"})
+	m = m.Apply(step(1, 2, "implement", "running", "codex", "gpt-5", "medium", "ws-4"))
+	m.Now = at(2)
+	if row := lineWith(m.View(), "◆"); !strings.HasSuffix(ansiStrip(row), "live") || amber.MatchString(row) {
+		t.Fatalf("watchdog row %q", row)
+	}
+
+	m = m.Apply(core.Event{At: at(2), Kind: "watchdog-waiting"})
+	m.Now = at(5)
+	agents := m.agents(87, 0)
+	if !strings.HasSuffix(ansiStrip(agents[0]), "asking you 3m0s") || !amber.MatchString(agents[0]) {
+		t.Fatalf("asking row %q", agents[0])
+	}
+	for _, row := range agents[1:] {
+		if amber.MatchString(row) {
+			t.Errorf("amber outside the watchdog row: %q", row)
+		}
+	}
+
+	m = m.Apply(core.Event{At: at(6), Kind: "watchdog-unreachable", Fields: map[string]string{"reason": "pane closed"}})
+	if row := m.agents(87, 0)[0]; !strings.Contains(row, m.theme.Failed.Render("gone")) {
+		t.Fatalf("gone row %q", row)
+	}
+}
+
+func TestAPhaseCheckKeepsTheFinishedStepInTheTree(t *testing.T) {
+	m := newModel([]core.Event{
+		{At: at(0), Kind: "phase-start", Phase: "2"},
+		step(0, 2, "plan", "running", "claude", "opus", "high", "ws-3"),
+		step(8, 2, "plan", "ok", "claude", "opus", "high", "ws-3"),
+		{At: at(8), Kind: "phase-check-start", Phase: "2"},
+	})
+	m.Now, m.Width = at(9), 120
+	view := ansiStrip(m.View())
+
+	if row := lineWith(view, "◆ watchdog"); !strings.HasSuffix(row, "checking phase 2") {
+		t.Errorf("watchdog row %q", row)
+	}
+	if row := lineWith(view, "└─ ✓ plan"); !strings.Contains(row, "claude · opus · ws-3") || !strings.HasSuffix(row, "ok 8m0s") {
+		t.Errorf("plan row %q\n%s", row, view)
+	}
+
+	m = m.Apply(step(10, 2, "implement", "running", "codex", "gpt-5", "medium", "ws-4"))
+	view = ansiStrip(m.View())
+	for _, want := range []string{"├─ ✓ plan", "└─ ● implement"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("missing %q in\n%s", want, view)
+		}
+	}
+}
+
+func TestTheTreeForgetsTheStepsOfAnEarlierPhase(t *testing.T) {
+	m := newModel(recorded())
+	m = m.Apply(core.Event{At: at(44), Kind: "phase-start", Phase: "3"})
+	m = m.Apply(step(44, 3, "plan", "running", "claude", "opus", "high", "ws-7"))
+	m.Width = 120
+
+	agents := ansiStrip(strings.Join(m.agents(87, 0), "\n"))
+	if strings.Contains(agents, "implement") || !strings.Contains(agents, "└─ ● plan") {
+		t.Fatalf("agents\n%s", agents)
+	}
+}
+
+func TestANarrowPanelDropsTheProviderColumn(t *testing.T) {
+	m := newModel(reviewed())
+	m.Now = at(50)
+
+	for _, w := range []int{80, 50} {
+		m.Width, m.Height = w, 40
+		view := m.View()
+		fits(t, view, w, 40)
+		if strings.Contains(ansiStrip(view), "codex · gpt-5") {
+			t.Errorf("width %d keeps the provider column:\n%s", w, ansiStrip(view))
+		}
+	}
+}
+
+func TestEventsAreTrimmedToFitTheHeight(t *testing.T) {
+	m := newModel(reviewed())
+	m.Now = at(50)
+
+	for _, size := range [][2]int{{120, 24}, {80, 24}, {70, 30}} {
+		m.Width, m.Height = size[0], size[1]
+		view := m.View()
+		fits(t, view, size[0], size[1])
+		if !strings.Contains(view, "diff is large") {
+			t.Errorf("%v dropped the newest event:\n%s", size, ansiStrip(view))
+		}
+	}
+}
+
+func TestTheFixHalfFoldsItsRoundWithTheOutcome(t *testing.T) {
+	events := reviewed()
+	next := slices.IndexFunc(events, func(ev core.Event) bool { return ev.Kind == "review-round" && ev.Fields["round"] == "2" })
+	m := newModel(events[:next])
+	m.Now, m.Width = at(49), 120
+	view := ansiStrip(m.View())
+
+	if row := lineWith(view, "r1  "); !strings.Contains(row, "└─ ✓ r1  claude 2 · codex 1 → fixed 2 (P1 P2) · 1 dismissed") {
+		t.Fatalf("fix-half round row %q\n%s", row, view)
+	}
+	if row := lineWith(view, "● implement"); !strings.HasSuffix(row, "fixing r1") {
+		t.Errorf("step row %q", row)
+	}
+}
+
+func TestALongTreeFoldsItsEarlierStepsToFitTheHeight(t *testing.T) {
+	events := []core.Event{{At: at(0), Kind: "phase-start", Phase: "2"}}
+	for a := 1; a <= 14; a++ {
+		ev := step(a, 2, "implement", "failed", "codex", "gpt-5", "medium", "ws-4")
+		if a == 14 {
+			ev.Fields["state"] = "running"
+		}
+		ev.Fields["attempt"] = strconv.Itoa(a)
+		events = append(events, ev)
+	}
+	m := newModel(events)
+	m.Now = at(15)
+
+	for _, size := range [][2]int{{120, 24}, {70, 30}} {
+		m.Width, m.Height = size[0], size[1]
+		view := m.View()
+		fits(t, view, size[0], size[1])
+		plain := ansiStrip(view)
+		for _, want := range []string{"◆ watchdog", "earlier", "└─ ● implement a14", "EVENTS"} {
+			if !strings.Contains(plain, want) {
+				t.Errorf("%v: missing %q in\n%s", size, want, plain)
+			}
+		}
+	}
+}
+
+func TestALongAgentNameKeepsTheStateColumnAligned(t *testing.T) {
+	events := append(reviewed(), reviewEvent(50, "agent-named", map[string]string{"round": "2", "reviewer": "codex", "agent": "rloop-test-luk3r-p1-pla-ibg6f-r2", "attempt": "1"}))
+	m := newModel(events)
+	m.Now, m.Width = at(50), 120
+	view := ansiStrip(m.View())
+
+	codex, claude := lineWith(view, "● r2 codex"), lineWith(view, "● r2 claude")
+	if !strings.Contains(codex, "rloop-test-luk3r-p1-pla-… reviewing") || lipgloss.Width(codex[:strings.Index(codex, "reviewing")]) != lipgloss.Width(claude[:strings.Index(claude, "reviewing")]) {
+		t.Fatalf("rows not aligned:\n%s\n%s", claude, codex)
+	}
 }
