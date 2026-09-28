@@ -577,3 +577,18 @@ func TestALongAgentNameKeepsTheStateColumnAligned(t *testing.T) {
 		t.Fatalf("rows not aligned:\n%s\n%s", claude, codex)
 	}
 }
+
+func TestTheHeadingNamesTheStepAndLeavesTheRoundToTheReviewLine(t *testing.T) {
+	events := append(reviewed(), roundStep(50, 2, "fix"))
+	events[len(events)-1].Fields["attempt"] = "1"
+	m := newModel(events)
+	m.Now, m.Width = at(51), 120
+	view := ansiStrip(m.View())
+
+	if row := strings.TrimSpace(lineWith(view, "PHASE 2")); !strings.HasSuffix(row, "│  PHASE 2 · implement") {
+		t.Errorf("heading %q", row)
+	}
+	if row := lineWith(view, "review     "); !strings.Contains(row, "review     r2/2 · fixing") {
+		t.Errorf("review line %q", row)
+	}
+}

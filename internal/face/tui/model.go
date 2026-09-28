@@ -60,20 +60,6 @@ type Reviewer struct {
 	Findings         int
 }
 
-func (s Step) Label() string {
-	label := s.Kind
-	if s.Attempt > 1 {
-		label += fmt.Sprintf(" a%d", s.Attempt)
-	}
-	if s.Round > 0 {
-		label += fmt.Sprintf(" · review r%d/%d", s.Round, s.Rounds)
-		if s.Half != "" {
-			label += " " + s.Half
-		}
-	}
-	return label
-}
-
 func (s Step) Elapsed(now time.Time) time.Duration {
 	if !s.Ended.IsZero() {
 		now = s.Ended

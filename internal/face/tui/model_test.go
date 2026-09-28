@@ -238,8 +238,8 @@ func TestAReviewRoundNamesTheRoundAndPausesTheBackstop(t *testing.T) {
 
 	m = m.Apply(ev)
 
-	if got := m.Live.Label(); got != "implement · review r1/2" {
-		t.Fatalf("label %q", got)
+	if m.Live.Round != 1 || m.Live.Rounds != 2 {
+		t.Fatalf("round %d/%d", m.Live.Round, m.Live.Rounds)
 	}
 	if _, paused := m.Live.Remaining(at(70)); !paused {
 		t.Fatal("backstop runs during review")
@@ -461,8 +461,8 @@ func TestTheStepsLineTracksDoneFailedLiveAndPendingKinds(t *testing.T) {
 	if got := ansiStrip(m.pipeline(m.Live, 200)); got != "plan ✓ › implement" {
 		t.Fatalf("after retry %q", got)
 	}
-	if got := m.Live.Label(); got != "implement a2 · review r1/2 fix" {
-		t.Fatalf("label %q", got)
+	if got := stepName(m.Live); got != "implement a2" || m.Live.Round != 1 || m.Live.Half != "fix" {
+		t.Fatalf("step %q r%d %s", got, m.Live.Round, m.Live.Half)
 	}
 }
 

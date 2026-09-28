@@ -124,7 +124,7 @@ func (m Model) panel(w, room int) []string {
 	if m.checking != "" {
 		add(th.Label, fmt.Sprintf("phase %s · watchdog checking the plan · %s", m.checking, m.clock().Sub(m.checkFrom).Truncate(time.Second)))
 	} else if s := m.Live; s != nil {
-		add(th.Text, fmt.Sprintf("PHASE %s · %s", s.Phase, s.Label()))
+		add(th.Text, fmt.Sprintf("PHASE %s · %s", s.Phase, stepName(s)))
 		label := th.Text.Render(fmt.Sprintf("%-10s ", "steps"))
 		lines = append(lines, ansi.Truncate(label+m.pipeline(s, w-lipgloss.Width(label)), w, "…"))
 		if q := m.waiting(s); q != "" {
