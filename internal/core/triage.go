@@ -703,28 +703,33 @@ func renderBacklog(v TriageView, t *Triage) (string, string) {
 	for _, it := range t.Items {
 		verdicts[it.ID] = it
 	}
-	var rows [][]string
+	titles := map[string]string{}
+	for _, ph := range v.List {
+		titles[ph.ID] = ph.Title
+	}
 	for _, g := range groups {
 		ids := slices.Clone(g.Items)
 		slices.SortFunc(ids, ComparePhaseIDs)
-		var items, kinds []string
-		for _, id := range ids {
-			items = append(items, "#"+id)
-			if c := verdicts[id].Category; !slices.Contains(kinds, c) {
-				kinds = append(kinds, c)
-			}
+		fmt.Fprintf(&b, "%s → phase %s · %s · %s risk · %s confidence\n", g.ID, ids[0], g.Subsystem, g.Risk, g.Confidence)
+		if g.Rationale != "" {
+			fmt.Fprintf(&b, "Why together: %s\n", g.Rationale)
 		}
-		rows = append(rows, []string{g.ID, ids[0], strings.Join(items, " "), g.Subsystem, strings.Join(kinds, "/"), g.Risk, g.Confidence})
+		b.WriteString("\n")
+		var rows [][]string
+		for _, id := range ids {
+			it := verdicts[id]
+			rows = append(rows, []string{"#" + id, titles[id], it.Category, it.Risk, it.Confidence, it.RootCause, filesCell(it.Touches)})
+		}
+		writeTable(&b, []string{"Item", "Title", "Kind", "Risk", "Conf", "Fix", "Files"}, rows)
+		b.WriteString("\n")
 	}
-	writeTable(&b, []string{"Group", "Phase", "Items", "Subsystem", "Kind", "Risk", "Conf"}, rows)
-	b.WriteString("\n")
 	if len(skipped) == 0 {
 		b.WriteString("Skipped (verification): none\n")
 	} else {
 		b.WriteString("Skipped (verification):\n")
 		for _, ev := range skipped {
 			reason := strings.TrimPrefix(ev.Fields["reason"], ev.Fields["status"]+": ")
-			fmt.Fprintf(&b, "- #%s %s — %s\n", ev.Phase, ev.Fields["status"], reason)
+			fmt.Fprintf(&b, "- #%s %s: %s — %s\n", ev.Phase, Printable(titles[ev.Phase]), ev.Fields["status"], reason)
 		}
 	}
 	fmt.Fprintf(&b, "%s: %s, up to %s\n", Plural(len(groups), "group"), Plural(len(kept), "phase"), Plural(len(kept)*rounds, "review round"))

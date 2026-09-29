@@ -453,13 +453,22 @@ verification: not run (--dry-run starts no sessions)
 
 	wantBacklog := `Backlog: issues.md (4 items)
 
-| Group | Phase | Items | Subsystem | Kind | Risk | Conf |
+G1 → phase 1 · store · deep risk · medium confidence
+Why together: same writer
+
+| Item | Title | Kind | Risk | Conf | Fix | Files |
 |---|---|---|---|---|---|---|
-| G1 | 1 | #1 #2 | store | bug/feature | deep | medium |
-| G2 | 4 | #4 | face | bug | cosmetic | high |
+| #1 | one | bug | local | high | cause | x.go |
+| #2 | two | feature | deep | medium | cause | x.go |
+
+G2 → phase 4 · face · cosmetic risk · high confidence
+
+| Item | Title | Kind | Risk | Conf | Fix | Files |
+|---|---|---|---|---|---|---|
+| #4 | four | bug | cosmetic | high | cause | x.go |
 
 Skipped (verification):
-- #3 stale — fixed at a.go:12
+- #3 three: stale — fixed at a.go:12
 2 groups: 2 phases, up to 6 review rounds
 `
 	if table != wantBacklog {
