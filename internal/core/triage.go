@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -710,18 +711,19 @@ func renderBacklog(v TriageView, t *Triage) (string, string) {
 	for _, g := range groups {
 		ids := slices.Clone(g.Items)
 		slices.SortFunc(ids, ComparePhaseIDs)
-		fmt.Fprintf(&b, "%s → phase %s · %s · %s risk · %s confidence\n", g.ID, ids[0], g.Subsystem, g.Risk, g.Confidence)
+		writeWrapped(&b, Printable(g.ID)+" → ", fmt.Sprintf("phase %s · %s · %s risk · %s confidence", ids[0], g.Subsystem, g.Risk, g.Confidence))
 		if g.Rationale != "" {
-			fmt.Fprintf(&b, "Why together: %s\n", g.Rationale)
+			writeWrapped(&b, "Why together: ", g.Rationale)
 		}
 		b.WriteString("\n")
-		var rows [][]string
 		for _, id := range ids {
 			it := verdicts[id]
-			rows = append(rows, []string{"#" + id, titles[id], it.Category, it.Risk, it.Confidence, it.RootCause, filesCell(it.Touches)})
+			writeWrapped(&b, "  #"+Printable(id)+"  ", itemTitle(id, titles[id]))
+			writeWrapped(&b, "      ", fmt.Sprintf("%s · %s risk · %s confidence", it.Category, it.Risk, it.Confidence))
+			writeWrapped(&b, "      Fix:   ", orDash(it.RootCause))
+			writeWrapped(&b, "      Files: ", filesCell(it.Touches))
+			b.WriteString("\n")
 		}
-		writeTable(&b, []string{"Item", "Title", "Kind", "Risk", "Conf", "Fix", "Files"}, rows)
-		b.WriteString("\n")
 	}
 	if len(skipped) == 0 {
 		b.WriteString("Skipped (verification): none\n")
@@ -729,11 +731,34 @@ func renderBacklog(v TriageView, t *Triage) (string, string) {
 		b.WriteString("Skipped (verification):\n")
 		for _, ev := range skipped {
 			reason := strings.TrimPrefix(ev.Fields["reason"], ev.Fields["status"]+": ")
-			fmt.Fprintf(&b, "- #%s %s: %s — %s\n", ev.Phase, Printable(titles[ev.Phase]), ev.Fields["status"], reason)
+			fmt.Fprintf(&b, "- #%s %s: %s — %s\n", ev.Phase, Printable(itemTitle(ev.Phase, titles[ev.Phase])), ev.Fields["status"], reason)
 		}
 	}
 	fmt.Fprintf(&b, "%s: %s, up to %s\n", Plural(len(groups), "group"), Plural(len(kept), "phase"), Plural(len(kept)*rounds, "review round"))
 	return fmt.Sprintf("%s from %s, %d skipped", Plural(len(groups), "group"), Plural(len(v.List), "item"), len(skipped)), b.String()
+}
+
+func itemTitle(id, title string) string {
+	return strings.TrimPrefix(title, "[#"+id+"] ")
+}
+
+func writeWrapped(b *strings.Builder, prefix, text string) {
+	indent := strings.Repeat(" ", utf8.RuneCountInString(prefix))
+	line, width, empty := prefix, len(indent), true
+	for _, word := range strings.Fields(Printable(text)) {
+		n := utf8.RuneCountInString(word)
+		switch {
+		case empty:
+			line, width = line+word, width+n
+		case width+1+n > 100:
+			b.WriteString(line + "\n")
+			line, width = indent+word, len(indent)+n
+		default:
+			line, width = line+" "+word, width+1+n
+		}
+		empty = false
+	}
+	b.WriteString(line + "\n")
 }
 
 func writeTable(b *strings.Builder, cols []string, rows [][]string) {

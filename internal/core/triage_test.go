@@ -456,16 +456,22 @@ verification: not run (--dry-run starts no sessions)
 G1 → phase 1 · store · deep risk · medium confidence
 Why together: same writer
 
-| Item | Title | Kind | Risk | Conf | Fix | Files |
-|---|---|---|---|---|---|---|
-| #1 | one | bug | local | high | cause | x.go |
-| #2 | two | feature | deep | medium | cause | x.go |
+  #1  one
+      bug · local risk · high confidence
+      Fix:   cause
+      Files: x.go
+
+  #2  two
+      feature · deep risk · medium confidence
+      Fix:   cause
+      Files: x.go
 
 G2 → phase 4 · face · cosmetic risk · high confidence
 
-| Item | Title | Kind | Risk | Conf | Fix | Files |
-|---|---|---|---|---|---|---|
-| #4 | four | bug | cosmetic | high | cause | x.go |
+  #4  four
+      bug · cosmetic risk · high confidence
+      Fix:   cause
+      Files: x.go
 
 Skipped (verification):
 - #3 three: stale — fixed at a.go:12
@@ -540,5 +546,28 @@ func TestCheckCitationRefusesMaintainerButTheRouterAcceptsIt(t *testing.T) {
 	r := &QuestionRouter{Repo: &fakeRepo{RootDir: root}}
 	if got := r.rejectCitation("maintainer"); got != "" {
 		t.Errorf("router maintainer = %q", got)
+	}
+}
+
+func TestBacklogTriageWrapsLongTextAndDropsTheLabelThatRepeatsTheID(t *testing.T) {
+	backlog := Plan{Path: "issues.md", Backlog: true, Phases: []Phase{backlogItem("3", "[#3] Partial index for the batch-claim query", "a")}}
+	fix := ItemVerdict{ID: "3", Verdict: VerdictFix, Category: "feature", Confidence: "high", Risk: RiskLocal, Touches: []string{"V015.sql"},
+		RootCause: "lockBatch orders by mass_mailing_id with no matching index; a new migration adds a partial expression index WHERE status IN ('NEW', 'FAILED') on message"}
+	tr := Triage{Items: []ItemVerdict{fix}, Groups: []Group{{ID: "g-indexes", Items: []string{"3"}, Subsystem: "migrations"}}}
+	tr, err := ValidateTriage(backlog, backlog.Phases, tr, citeAGo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, table := RenderTriage(triageView(backlog, backlog.Phases), &tr)
+
+	want := `  #3  Partial index for the batch-claim query
+      feature · local risk · high confidence
+      Fix:   lockBatch orders by mass_mailing_id with no matching index; a new migration adds a
+             partial expression index WHERE status IN ('NEW', 'FAILED') on message
+      Files: V015.sql
+`
+	if !strings.Contains(table, want) {
+		t.Errorf("table =\n%s\nwant it to contain\n%s", table, want)
 	}
 }
