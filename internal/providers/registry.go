@@ -21,7 +21,8 @@ var shipped embed.FS
 const shippedSource = "shipped"
 
 type Provider struct {
-	Name, Kind, Flags, ModelFlag, EffortFlag, AskFlag, DirFlag, DoneSignal, Ask, Review, ReviewStart, ReviewDone, Source string
+	Name, Kind, Flags, ModelFlag, EffortFlag, AskFlag, DirFlag, SettingsFlag, DoneSignal, Ask, Review, ReviewStart, ReviewDone, Source string
+	Settings                                                                                                                           string
 }
 
 type Registry struct {
@@ -77,7 +78,7 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 	p := Provider{Name: name, Source: source}
 	fields := map[string]*string{
 		"kind": &p.Kind, "flags": &p.Flags, "modelFlag": &p.ModelFlag, "effortFlag": &p.EffortFlag, "askFlag": &p.AskFlag,
-		"dirFlag": &p.DirFlag, "doneSignal": &p.DoneSignal, "ask": &p.Ask, "review": &p.Review, "reviewStart": &p.ReviewStart, "reviewDone": &p.ReviewDone,
+		"dirFlag": &p.DirFlag, "settingsFlag": &p.SettingsFlag, "doneSignal": &p.DoneSignal, "ask": &p.Ask, "review": &p.Review, "reviewStart": &p.ReviewStart, "reviewDone": &p.ReviewDone,
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, val := n.Content[i].Value, n.Content[i+1]
@@ -103,6 +104,8 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 		return fail("askFlag", "must contain {url} or {mcpConfig} or be empty")
 	case p.DirFlag != "" && !strings.Contains(p.DirFlag, "{dir}"):
 		return fail("dirFlag", "must contain {dir} or be empty")
+	case p.SettingsFlag != "" && !strings.Contains(p.SettingsFlag, "{settings}"):
+		return fail("settingsFlag", "must contain {settings} or be empty")
 	case p.DoneSignal != "sentinel":
 		return fail("doneSignal", "must be sentinel, got %q", p.DoneSignal)
 	case p.Ask != "" && p.Ask != "mcp" && p.Ask != "none":
@@ -120,7 +123,7 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 	return p, nil
 }
 
-var placeholders = []string{"{model}", "{effort}", "{url}", "{mcpConfig}", "{dir}"}
+var placeholders = []string{"{model}", "{effort}", "{url}", "{mcpConfig}", "{dir}", "{settings}"}
 
 func hasPlaceholder(s string) bool {
 	for _, ph := range placeholders {
@@ -132,9 +135,9 @@ func hasPlaceholder(s string) bool {
 }
 
 func Args(p Provider, model, effort, askURL, mcpConfigPath, dir string) []string {
-	values := map[string]string{"{model}": model, "{effort}": effort, "{url}": askURL, "{mcpConfig}": mcpConfigPath, "{dir}": dir}
+	values := map[string]string{"{model}": model, "{effort}": effort, "{url}": askURL, "{mcpConfig}": mcpConfigPath, "{dir}": dir, "{settings}": p.Settings}
 	args := strings.Fields(p.Flags)
-	for _, tmpl := range []string{p.ModelFlag, p.EffortFlag, p.AskFlag, p.DirFlag} {
+	for _, tmpl := range []string{p.ModelFlag, p.EffortFlag, p.AskFlag, p.DirFlag, p.SettingsFlag} {
 		if words, ok := expand(tmpl, values); ok {
 			args = append(args, words...)
 		}
@@ -164,6 +167,16 @@ func expand(tmpl string, values map[string]string) ([]string, bool) {
 func WriteMCPConfig(path, url string) error {
 	data, err := json.Marshal(map[string]any{
 		"mcpServers": map[string]any{"r-loop": map[string]any{"type": "http", "url": url}},
+	})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+func WriteStatusSettings(path, exe, tapFile string) error {
+	data, err := json.Marshal(map[string]any{
+		"statusLine": map[string]any{"type": "command", "command": shellWord(exe) + " statusline-tap " + shellWord(tapFile)},
 	})
 	if err != nil {
 		return err

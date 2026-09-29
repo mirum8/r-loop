@@ -15,6 +15,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"r-loop/internal/core"
+	"r-loop/internal/quota"
 )
 
 const keptFeed = 6
@@ -131,6 +132,7 @@ type Model struct {
 	stopping   bool
 	aborting   bool
 	abort      func() error
+	Limits     []quota.Limits
 	Now        time.Time
 	ended      time.Time
 	Width      int
@@ -488,6 +490,8 @@ type eventMsg core.Event
 
 type closedMsg struct{}
 
+type usageMsg []quota.Limits
+
 func tick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
@@ -501,6 +505,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 	case eventMsg:
 		return m.Apply(core.Event(msg)), nil
+	case usageMsg:
+		m.Limits = msg
 	case closedMsg:
 		if m.Status == "" {
 			m.end("ended", m.Now)
@@ -594,6 +600,14 @@ func (f *Face) Emit(ev core.Event) {
 		return
 	}
 	f.prog.Send(eventMsg(ev))
+}
+
+func (f *Face) Usage(l []quota.Limits) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.prog != nil {
+		f.prog.Send(usageMsg(l))
+	}
 }
 
 func (f *Face) Stop() {

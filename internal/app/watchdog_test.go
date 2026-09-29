@@ -151,7 +151,7 @@ func TestAWatchdogAndAStepSessionWriteTheirMCPConfigUnderARepoRootWithASpace(t *
 	if data, err := os.ReadFile(stepPath); err != nil || !strings.Contains(string(data), "/mcp/") {
 		t.Errorf("step config %q: %v", data, err)
 	}
-	if plan := steps.args["rloop-p1-plan"]; !slices.Contains(plan, "--add-dir") || plan[len(plan)-1] != filepath.Dir(stepPath) {
+	if plan := steps.args["rloop-p1-plan"]; !slices.Contains(plan, "--add-dir") || plan[slices.Index(plan, "--add-dir")+1] != filepath.Dir(stepPath) {
 		t.Errorf("plan args %q lack --add-dir %s", plan, filepath.Dir(stepPath))
 	}
 	if slices.Contains(w.Dog.Provider.Args, "--add-dir") {
@@ -453,8 +453,11 @@ func TestExecuteStartsTheWatchdogAndAHaltThroughItsMCPSurfaceExits5(t *testing.T
 	runDir := w.Store.Dir(w.Loop.RunID)
 	mcpPath, data, perm := dog.startConfig()
 	calls := dog.Calls()
-	if len(calls) < 3 || calls[0] != `Split "driver-pane" right `+f.root || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model opus --effort medium --mcp-config "+mcpPath || !strings.Contains(calls[2], runDir) {
+	if len(calls) < 3 || calls[0] != `Split "driver-pane" right `+f.root || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model opus --effort medium --mcp-config "+mcpPath+" --settings "+filepath.Join(runDir, "claude.settings.json") || !strings.Contains(calls[2], runDir) {
 		t.Errorf("watchdog calls %q", calls)
+	}
+	if settings, err := os.ReadFile(filepath.Join(runDir, "claude.settings.json")); err != nil || !strings.Contains(string(settings), "statusline-tap "+filepath.Join(runDir, "usage", "claude.json")) {
+		t.Errorf("status settings %s: %v", settings, err)
 	}
 	if !strings.Contains(data, w.Ask.WatchdogURL()) {
 		t.Errorf("mcp config %s", data)

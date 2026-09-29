@@ -98,7 +98,9 @@ arrangement this identity's glance-first premise depends on.
 authoritative where this document or `docs/design/variants/layouts/rail.txt` differ: a header line
 carrying the watchdog's health (`watchdog live` dim, `watchdog waiting for you` in `secondary`
 while it asks you in its own pane — from its `ask_maintainer` call, a remedy that needs your word,
-or herdr reporting it blocked — until its next call, `watchdog gone` in `error`), the phase rail
+or herdr reporting it blocked — until its next call, `watchdog gone` in `error`), preceded by the
+usage limits of the providers the run uses (`claude 5h 12% 7d 49% · codex 7d 3%`, dim, a window at
+90% or more in `error`, never `secondary`; dropped a provider at a time, before anything else, when the line is short), the phase rail
 beside the live-step panel (stacked below 80 columns), and a status line for a notice or a finished
 run. The rail lists only the phases (or, for an issues file, the items) chosen for this run — the
 launch selection, or the recorded run list on resume — under a `PHASES <landed>/<total>` (`ITEMS …`)

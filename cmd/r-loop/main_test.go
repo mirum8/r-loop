@@ -17,7 +17,7 @@ func TestVersionPrintsVersion(t *testing.T) {
 }
 
 func TestBadUsageExitsTwoWithOneLine(t *testing.T) {
-	for _, args := range [][]string{nil, {"--help"}, {"--version", "x"}, {"no-such-todo.md", "--dry-run"}} {
+	for _, args := range [][]string{nil, {"--help"}, {"--version", "x"}, {"no-such-todo.md", "--dry-run"}, {"statusline-tap"}, {"statusline-tap", "a", "b"}} {
 		var out, errOut bytes.Buffer
 
 		code := run(args, &out, &errOut)

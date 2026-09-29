@@ -29,6 +29,8 @@ func frame(t *testing.T, width, height int) string {
 	m.Report = "/repo/.r-loop/runs/20260918-140000/report.md"
 	next, _ := m.Update(tickMsg(at(43)))
 	m = next.(Model)
+	next, _ = m.Update(usageMsg(limits(42, 3)))
+	m = next.(Model)
 	next, _ = m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	return next.(Model).View()
 }

@@ -69,7 +69,7 @@ func TestShippedClaudeBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Provider{Name: "claude", Kind: "claude", ModelFlag: "--model {model}", EffortFlag: "--effort {effort}",
-		AskFlag: "--mcp-config {mcpConfig}", DirFlag: "--add-dir {dir}", DoneSignal: "sentinel", Ask: "mcp", Review: "/code-review", Source: "shipped"}
+		AskFlag: "--mcp-config {mcpConfig}", DirFlag: "--add-dir {dir}", SettingsFlag: "--settings {settings}", DoneSignal: "sentinel", Ask: "mcp", Review: "/code-review", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
 	}

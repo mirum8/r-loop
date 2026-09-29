@@ -31,6 +31,7 @@ import (
 	"r-loop/internal/plan"
 	"r-loop/internal/prompts"
 	"r-loop/internal/providers"
+	"r-loop/internal/quota"
 	"r-loop/internal/store"
 )
 
@@ -96,6 +97,7 @@ type Wiring struct {
 	triaging *triageRun
 	lock     *store.Lock
 	dogDir   string
+	settings string
 }
 
 type overrides struct {
@@ -375,10 +377,12 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 	code = 2
 	if _, err := w.Ask.Serve(ctx); err != nil {
 		fmt.Fprintf(w.Env.Stderr, "r-loop: ask server: %v\n", err)
+	} else if err := w.writeStatusSettings(); err != nil {
+		code = fail(w.Env, err)
 	} else if err := w.startWatchdog(ctx); err != nil {
 		code = fail(w.Env, err)
 	} else {
-		w.startTUI()
+		w.startTUI(ctx)
 		code = w.run(ctx, opts)
 	}
 	return code
@@ -702,7 +706,75 @@ func under(root, dir string) (bool, error) {
 	}
 }
 
-func (w *Wiring) startTUI() {
+func (w *Wiring) writeStatusSettings() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return exit(2, "status settings: %v", err)
+	}
+	dir := w.Store.Dir(w.Loop.RunID)
+	path := filepath.Join(dir, "claude.settings.json")
+	if err := providers.WriteStatusSettings(path, exe, filepath.Join(dir, "usage", "claude.json")); err != nil {
+		return exit(2, "status settings: %v", err)
+	}
+	w.settings = path
+	return nil
+}
+
+const usagePoll = 30 * time.Second
+
+func (w *Wiring) pollUsage(ctx context.Context) {
+	kinds := w.providerKinds()
+	codexHome := os.Getenv("CODEX_HOME")
+	if codexHome == "" {
+		codexHome = filepath.Join(w.Env.Home, ".codex")
+	}
+	claudeFile := filepath.Join(w.Store.Dir(w.Loop.RunID), "usage", "claude.json")
+	ticker := time.NewTicker(usagePoll)
+	defer ticker.Stop()
+	for {
+		var limits []quota.Limits
+		now := time.Now()
+		if kinds["claude"] {
+			if l, ok := quota.Claude(claudeFile, now); ok {
+				limits = append(limits, l)
+			}
+		}
+		if kinds["codex"] {
+			if l, ok := quota.Codex(codexHome, now); ok {
+				limits = append(limits, l)
+			}
+		}
+		w.TUI.Usage(limits)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (w *Wiring) providerKinds() map[string]bool {
+	cfg := w.Config
+	names := []string{cfg.Watchdog.Provider, cfg.Land.Fix.Provider}
+	for _, row := range cfg.Steps {
+		names = append(names, row.Provider, row.Fallback.Provider)
+		for _, rv := range row.Reviewers {
+			names = append(names, rv.Provider)
+		}
+	}
+	kinds := map[string]bool{}
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if p, err := w.Registry.Resolve(name); err == nil {
+			kinds[p.Kind] = true
+		}
+	}
+	return kinds
+}
+
+func (w *Wiring) startTUI(ctx context.Context) {
 	if w.TUI == nil {
 		return
 	}
@@ -723,6 +795,7 @@ func (w *Wiring) startTUI() {
 		Steps:   steps,
 		Backlog: w.Plan.Backlog,
 	}, selectedPhases(w.Plan, w.Todo, w.Opts, run), run.Events)
+	go w.pollUsage(ctx)
 }
 
 func selectedPhases(pl core.Plan, todo string, opts Options, run core.RunState) []core.Phase {
@@ -793,6 +866,7 @@ func (w *Wiring) resolve(provider, model, effort, askURL, mcpConfigPath, dir str
 	if err != nil {
 		return core.ProviderArgs{}, err
 	}
+	p.Settings = w.settings
 	return providers.ToCore(p, model, effort, askURL, mcpConfigPath, dir), nil
 }
 

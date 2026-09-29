@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	limitHot   = 90
 	margin     = 2
 	railWidth  = 24
 	stackBelow = 80
@@ -85,7 +86,42 @@ func (m Model) header(w int) string {
 	if gap < 2 {
 		return fill(th.Header, left, w)
 	}
-	return th.Header.Render(left+strings.Repeat(" ", gap)) + dogStyle.Render(dog) + th.Header.Render(right)
+	limits, width := "", 0
+	if right != "" {
+		limits, width = m.limits(gap - 2)
+	}
+	return th.Header.Render(left+strings.Repeat(" ", gap-width)) + limits + dogStyle.Render(dog) + th.Header.Render(right)
+}
+
+func (m Model) limits(room int) (string, int) {
+	th := m.theme
+	var out strings.Builder
+	width := 0
+	for _, l := range m.Limits {
+		if len(l.Windows) == 0 {
+			continue
+		}
+		var b strings.Builder
+		b.WriteString(th.Header.Render(l.Provider))
+		plain := len(l.Provider)
+		for _, win := range l.Windows {
+			style := th.Header
+			if win.Percent >= limitHot {
+				style = th.HeaderFailed
+			}
+			text := fmt.Sprintf("%s %.0f%%", win.Label, win.Percent)
+			b.WriteString(th.Header.Render(" ") + style.Render(text))
+			plain += 1 + lipgloss.Width(text)
+		}
+		b.WriteString(th.Header.Render(" · "))
+		plain += lipgloss.Width(" · ")
+		if width+plain > room {
+			break
+		}
+		out.WriteString(b.String())
+		width += plain
+	}
+	return out.String(), width
 }
 
 func (m Model) rail() []string {
