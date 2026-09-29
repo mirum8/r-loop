@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -1073,5 +1074,64 @@ func TestAWiredRunPostsRunHaltingToTheWatchdogBeforeARecordHalt(t *testing.T) {
 	}
 	if !dog.prompted("run halting: record: disk full") {
 		t.Errorf("no run halting post: %q", dog.Calls())
+	}
+}
+
+func TestTheWatchdogReadsTheRunAndTheLiveStepThroughRunStatusAndStepInfo(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	sim := newSim()
+	sim.hang["rloop-p1-implement"] = true
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, sim)
+	dog := &dogHost{}
+	w.Dog.Host = dog
+	done := make(chan int, 1)
+	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
+	for deadline := time.Now().Add(10 * time.Second); !dog.prompted("step started phase-1/implement"); {
+		if time.Now().After(deadline) {
+			t.Fatalf("implement never reported to the watchdog: %q", dog.Calls())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: w.Ask.WatchdogURL(), MaxRetries: -1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	call := func(name string, args map[string]any) map[string]any {
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, _ := res.StructuredContent.(map[string]any)
+		return out
+	}
+
+	status := call("run_status", nil)
+	info := call("step_info", map[string]any{"step": "phase-1/implement"})
+	call("signal", map[string]any{"kind": "halt", "step": "phase-1/implement", "reason": "done here", "evidence": "docs/topic/todo.md:1"})
+
+	if status["run"] != w.Loop.RunID || status["live"] != "phase-1/implement" {
+		t.Errorf("run_status %v", status)
+	}
+	steps, _ := status["steps"].([]any)
+	implement := map[string]any{"step": "phase-1/implement", "attempt": float64(1), "state": "running", "retries_left": float64(2)}
+	if !slices.ContainsFunc(steps, func(s any) bool { return reflect.DeepEqual(s, implement) }) {
+		t.Errorf("steps %v", steps)
+	}
+	if agent, _ := info["agent"].(string); info["found"] != true || !strings.HasSuffix(agent, "-p1-implement") || info["attempt"] != float64(1) || info["base"] == "" || info["start_sha"] == "" {
+		t.Errorf("step_info %v", info)
+	}
+	if wt, _ := info["worktree"].(string); !strings.HasSuffix(wt, filepath.Join(".r-loop", "wt", "phase-1")) {
+		t.Errorf("worktree %v", info["worktree"])
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("run never halted")
 	}
 }

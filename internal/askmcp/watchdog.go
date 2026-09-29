@@ -31,6 +31,9 @@ type WatchdogHandlers struct {
 
 	SubmitTriage func(core.Triage) (bool, string, string)
 	SubmitGate   func(core.GateDecision) (bool, string, string)
+
+	RunStatus func() (core.RunStatusView, error)
+	StepInfo  func(step string) (core.StepInfo, bool)
 }
 
 type askMaintainerInput struct {
@@ -106,12 +109,60 @@ type tableOutput struct {
 
 const noTriage = "no triage is open"
 
+type stepStatusOutput struct {
+	Step        string `json:"step"`
+	Attempt     int    `json:"attempt"`
+	State       string `json:"state"`
+	RetriesLeft int    `json:"retries_left"`
+}
+
+type openOutput struct {
+	ID          string   `json:"id"`
+	Kind        string   `json:"kind"`
+	Step        string   `json:"step"`
+	Text        string   `json:"text"`
+	Options     []string `json:"options,omitempty"`
+	Recommended string   `json:"recommended,omitempty"`
+}
+
+type fallbackOutput struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
+}
+
+type runStatusOutput struct {
+	Reason    string                    `json:"reason,omitempty"`
+	Run       string                    `json:"run,omitempty"`
+	Status    string                    `json:"status,omitempty"`
+	Live      string                    `json:"live,omitempty"`
+	Steps     []stepStatusOutput        `json:"steps,omitempty"`
+	Landed    []string                  `json:"landed,omitempty"`
+	Open      []openOutput              `json:"open,omitempty"`
+	Fallbacks map[string]fallbackOutput `json:"fallbacks,omitempty"`
+}
+
+type stepInfoInput struct {
+	Step string `json:"step"`
+}
+
+type stepInfoOutput struct {
+	Found    bool   `json:"found"`
+	Reason   string `json:"reason,omitempty"`
+	Step     string `json:"step,omitempty"`
+	Attempt  int    `json:"attempt,omitempty"`
+	Agent    string `json:"agent,omitempty"`
+	Worktree string `json:"worktree,omitempty"`
+	Base     string `json:"base,omitempty"`
+	StartSHA string `json:"start_sha,omitempty"`
+}
+
 type decisionOutput struct {
 	Decision string `json:"decision"`
 	Reason   string `json:"reason,omitempty"`
 }
 
-var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true}
+var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true}
 
 func (s *Server) Handle(h WatchdogHandlers) {
 	s.mu.Lock()
@@ -238,7 +289,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "ask_maintainer",
-		Description: "Call this first whenever you need the maintainer: it shows them that you are waiting for them, with the question, and returns at once. Then ask them in your own session and wait for the reply. Your next call of any other tool marks the wait over.",
+		Description: "Call this first whenever you need the maintainer: it shows them that you are waiting for them, with the question, and returns at once. Then ask them in your own session and wait for the reply. Your next call of any other tool except run_status and step_info marks the wait over.",
 	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in askMaintainerInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("ask_maintainer", "", map[string]string{"question": in.Question, "options": strings.Join(in.Options, "; "), "recommended": in.Recommended}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
@@ -289,7 +340,69 @@ func (s *Server) watchdogServer() *mcp.Server {
 		ok, reason, table := h(in)
 		return nil, tableOutput{Accepted: ok, Reason: reason, Table: table}, nil
 	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "run_status",
+		Description: "Read the run as the driver holds it now: the live step, each step's latest attempt with its state and retries left, the landed phases, every open question, dialog and blocker with its id, and each step kind's fallback. Use it to catch up after you lost track. It changes nothing.",
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, runStatusOutput, error) {
+		h := s.handlersNow().RunStatus
+		if h == nil {
+			return nil, runStatusOutput{Reason: notAvailable}, nil
+		}
+		view, err := h()
+		if err != nil {
+			return nil, runStatusOutput{Reason: err.Error()}, nil
+		}
+		return nil, statusOutput(view), nil
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "step_info",
+		Description: "Read a started step phase-<N>/<kind>: its latest attempt, the herdr agent that runs it, its worktree, the base branch and the commit it started from. It changes nothing.",
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in stepInfoInput) (*mcp.CallToolResult, stepInfoOutput, error) {
+		if _, _, ok := core.ParseStepName(in.Step); !ok {
+			return nil, stepInfoOutput{Reason: fmt.Sprintf("step %q: %v", in.Step, errMalformedStep)}, nil
+		}
+		h := s.handlersNow().StepInfo
+		if h == nil {
+			return nil, stepInfoOutput{Reason: notAvailable}, nil
+		}
+		info, ok := h(in.Step)
+		if !ok {
+			return nil, stepInfoOutput{Reason: in.Step + " has not started"}, nil
+		}
+		return nil, stepInfoOutput{Found: true, Step: info.Step, Attempt: info.Attempt, Agent: info.Agent, Worktree: info.Worktree, Base: info.Base, StartSHA: info.StartSHA}, nil
+	}))
 	return srv
+}
+
+func statusOutput(v core.RunStatusView) runStatusOutput {
+	out := runStatusOutput{Run: v.Run, Status: string(v.Status), Live: v.Live, Landed: v.Landed}
+	for _, st := range v.Steps {
+		out.Steps = append(out.Steps, stepStatusOutput{Step: st.Step, Attempt: st.Attempt, State: string(st.State), RetriesLeft: st.RetriesLeft})
+	}
+	for _, q := range v.Open {
+		kind := q.Kind
+		if kind == "" {
+			kind = "question"
+		}
+		out.Open = append(out.Open, openOutput{ID: q.ID, Kind: kind, Step: stepName(q.Step), Text: q.Text, Options: q.Options, Recommended: q.Recommended})
+	}
+	if len(v.Fallbacks) > 0 {
+		out.Fallbacks = map[string]fallbackOutput{}
+		for kind, fb := range v.Fallbacks {
+			if fb.Provider == "" {
+				continue
+			}
+			out.Fallbacks[kind] = fallbackOutput{Provider: fb.Provider, Model: fb.Model, Effort: fb.Effort}
+		}
+	}
+	return out
+}
+
+func stepName(key core.StepKey) string {
+	if key.Phase == "" {
+		return key.Kind
+	}
+	return fmt.Sprintf("phase-%s/%s", key.Phase, key.Kind)
 }
 
 func marshal(v any) string {

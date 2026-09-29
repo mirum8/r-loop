@@ -48,6 +48,7 @@ type Watch struct {
 	live      *StepKey
 	ended     map[StepKey]endedStep
 	tickers   map[StepKey]*ticking
+	started   map[string]StepInfo
 	seq       int
 	halt      *Signal
 	accepting int
@@ -74,6 +75,7 @@ func (w *Watch) init() {
 		w.restarts = make(chan Restart)
 		w.ended = map[StepKey]endedStep{}
 		w.tickers = map[StepKey]*ticking{}
+		w.started = map[string]StepInfo{}
 		w.settled = sync.NewCond(&w.mu)
 	})
 }
@@ -253,11 +255,20 @@ func (w *Watch) StepStarted(ref StepRef, s *Session) {
 	w.init()
 	started := w.now()
 	t := &ticking{stop: make(chan struct{}), done: make(chan struct{})}
-	w.mu.Lock()
 	key := ref.Key
+	step := fmt.Sprintf("phase-%s/%s", key.Phase, key.Kind)
+	info := StepInfo{Step: step, Attempt: key.Attempt, Worktree: ref.Worktree, Base: ref.Base}
+	if s != nil {
+		info.Agent, info.StartSHA = s.Agent, s.StartSHA
+		if s.Dir != "" {
+			info.Worktree = s.Dir
+		}
+	}
+	w.mu.Lock()
 	w.live, w.runID = &key, key.Run
 	delete(w.ended, key)
 	w.tickers[key] = t
+	w.started[step] = info
 	if w.halt != nil {
 		if w.halt.Step.Phase == "" || w.halt.Step.Phase == key.Phase {
 			w.halt.Step = key
@@ -273,16 +284,25 @@ func (w *Watch) StepStarted(ref StepRef, s *Session) {
 		w.haltGone(key)
 	}
 	if w.Dog != nil {
-		dir := ref.Worktree
-		agent := ""
-		if s != nil {
-			agent = s.Agent
-			if s.Dir != "" {
-				dir = s.Dir
-			}
-		}
-		w.Dog.Post(fmt.Sprintf("step started phase-%s/%s agent %s worktree %s base %s", key.Phase, key.Kind, agent, dir, ref.Base))
+		w.Dog.Post(fmt.Sprintf("step started %s agent %s worktree %s base %s", step, info.Agent, info.Worktree, info.Base))
 	}
+}
+
+func (w *Watch) StepInfo(step string) (StepInfo, bool) {
+	w.init()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	info, ok := w.started[step]
+	return info, ok
+}
+
+func (w *Watch) LiveStep() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.live == nil {
+		return ""
+	}
+	return fmt.Sprintf("phase-%s/%s", w.live.Phase, w.live.Kind)
 }
 
 func (w *Watch) StepEnded(ref StepRef, out Outcome) {

@@ -519,8 +519,12 @@ func (r *QuestionRouter) retries(target string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	return retriesUsed(st.Events, target), nil
+}
+
+func retriesUsed(events []Event, target string) int {
 	n := 0
-	for _, ev := range st.Events {
+	for _, ev := range events {
 		f := ev.Fields
 		switch {
 		case ev.Kind == "blocker-resolved" && (f["action"] == actionRetry || f["action"] == actionSwitch) && f["step"] == target:
@@ -529,7 +533,7 @@ func (r *QuestionRouter) retries(target string) (int, error) {
 			n++
 		}
 	}
-	return n, nil
+	return n
 }
 
 func blockerChoices(actions []string) []string {

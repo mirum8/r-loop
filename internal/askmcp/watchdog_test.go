@@ -291,6 +291,12 @@ func TestANilHandlerAnswersNotAvailable(t *testing.T) {
 	if out := call(t, cs, "resolve_blocker", map[string]any{"id": "b1", "action": "block"}); out["decision"] != "refused" || out["reason"] != "not available" {
 		t.Fatalf("resolve_blocker = %+v", out)
 	}
+	if out := call(t, cs, "run_status", nil); out["reason"] != "not available" {
+		t.Fatalf("run_status = %+v", out)
+	}
+	if out := call(t, cs, "step_info", map[string]any{"step": "phase-3/implement"}); out["found"] != false || out["reason"] != "not available" {
+		t.Fatalf("step_info = %+v", out)
+	}
 }
 
 func TestResolveBlockerIsRecordedThenResumesThenReachesItsHandler(t *testing.T) {
@@ -400,7 +406,7 @@ func TestWatchdogPathListsNoAskTool(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	if want := []string{"answer_dialog", "answer_question", "ask_maintainer", "propose_remedy", "resolve_blocker", "restart_step", "signal", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
+	if want := []string{"answer_dialog", "answer_question", "ask_maintainer", "propose_remedy", "resolve_blocker", "restart_step", "run_status", "signal", "step_info", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
 		t.Fatalf("watchdog tools = %v, want %v", names, want)
 	}
 }
@@ -450,7 +456,7 @@ func TestWatchdogToolsOnAStepPathAre404(t *testing.T) {
 	if len(tools.Tools) != 1 || tools.Tools[0].Name != "ask_watchdog" {
 		t.Fatalf("step tools = %+v", tools.Tools)
 	}
-	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "ask_maintainer", "submit_triage", "submit_gate"} {
+	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info"} {
 		_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{"kind": "halt", "step": "phase-3/implement"}})
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not found") {
 			t.Fatalf("%s on a step path: err = %v", name, err)
@@ -732,5 +738,105 @@ func TestTriageToolsWithoutAHandlerSayNoTriageIsOpen(t *testing.T) {
 		if out := call(t, cs, c.tool, c.args); out["accepted"] != false || out["reason"] != "no triage is open" {
 			t.Fatalf("%s = %+v", c.tool, out)
 		}
+	}
+}
+
+func TestRunStatusReturnsTheSnapshotWithoutRecordingOrResuming(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	resumed := false
+	s.Handle(WatchdogHandlers{
+		Resume: func() error {
+			resumed = true
+			return nil
+		},
+		RunStatus: func() (core.RunStatusView, error) {
+			return core.RunStatusView{
+				Run:    "run-7",
+				Status: core.RunRunning,
+				Live:   "phase-3/implement",
+				Steps:  []core.StepStatus{{Step: "phase-3/implement", Attempt: 2, State: core.StepRunning, RetriesLeft: 1}},
+				Landed: []string{"1", "2"},
+				Open: []core.Question{
+					{ID: "b1", Kind: core.QuestionBlocker, Step: core.StepKey{Phase: "3", Kind: "implement"}, Text: "gate red", Options: []string{"retry", "block"}},
+					{ID: "q4", Step: core.StepKey{Phase: "3", Kind: "implement"}, Text: "which db?", Options: []string{"pg", "sqlite"}, Recommended: "pg"},
+				},
+				Fallbacks: map[string]core.Fallback{"implement": {Provider: "codex", Model: "gpt-5", Effort: "high"}, "plan": {}},
+			}, nil
+		},
+	})
+
+	out := call(t, connect(t, s.WatchdogURL()), "run_status", nil)
+
+	want := map[string]any{
+		"run":    "run-7",
+		"status": "running",
+		"live":   "phase-3/implement",
+		"steps":  []any{map[string]any{"step": "phase-3/implement", "attempt": float64(2), "state": "running", "retries_left": float64(1)}},
+		"landed": []any{"1", "2"},
+		"open": []any{
+			map[string]any{"id": "b1", "kind": "blocker", "step": "phase-3/implement", "text": "gate red", "options": []any{"retry", "block"}},
+			map[string]any{"id": "q4", "kind": "question", "step": "phase-3/implement", "text": "which db?", "options": []any{"pg", "sqlite"}, "recommended": "pg"},
+		},
+		"fallbacks": map[string]any{"implement": map[string]any{"provider": "codex", "model": "gpt-5", "effort": "high"}},
+	}
+	if !reflect.DeepEqual(out, want) {
+		t.Fatalf("run_status\n got %+v\nwant %+v", out, want)
+	}
+	if resumed || len(st.records()) != 0 {
+		t.Fatalf("resumed %v, records %+v", resumed, st.records())
+	}
+}
+
+func TestRunStatusCarriesTheHandlersError(t *testing.T) {
+	s := serveWatchdog(t, &memStore{})
+	s.Handle(WatchdogHandlers{RunStatus: func() (core.RunStatusView, error) {
+		return core.RunStatusView{}, errors.New("load run-7: gone")
+	}})
+
+	out := call(t, connect(t, s.WatchdogURL()), "run_status", nil)
+
+	if out["reason"] != "load run-7: gone" {
+		t.Fatalf("run_status = %+v", out)
+	}
+}
+
+func TestStepInfoReturnsTheStepsAgentWorktreeAndBaseWithoutRecordingOrResuming(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	resumed := false
+	var asked []string
+	s.Handle(WatchdogHandlers{
+		Resume: func() error {
+			resumed = true
+			return nil
+		},
+		StepInfo: func(step string) (core.StepInfo, bool) {
+			asked = append(asked, step)
+			if step != "phase-3/implement" {
+				return core.StepInfo{}, false
+			}
+			return core.StepInfo{Step: step, Attempt: 2, Agent: "rl-3-implement", Worktree: "/repo/.r-loop/wt/phase-3", Base: "main", StartSHA: "abc123"}, true
+		},
+	})
+	cs := connect(t, s.WatchdogURL())
+
+	out := call(t, cs, "step_info", map[string]any{"step": "phase-3/implement"})
+
+	want := map[string]any{"found": true, "step": "phase-3/implement", "attempt": float64(2), "agent": "rl-3-implement", "worktree": "/repo/.r-loop/wt/phase-3", "base": "main", "start_sha": "abc123"}
+	if !reflect.DeepEqual(out, want) {
+		t.Fatalf("step_info\n got %+v\nwant %+v", out, want)
+	}
+	if out := call(t, cs, "step_info", map[string]any{"step": "phase-4/plan"}); out["found"] != false || out["reason"] != "phase-4/plan has not started" {
+		t.Fatalf("unknown step = %+v", out)
+	}
+	if out := call(t, cs, "step_info", map[string]any{"step": "implement"}); out["found"] != false || !strings.Contains(out["reason"].(string), "not phase-<N>/<kind>") {
+		t.Fatalf("malformed step = %+v", out)
+	}
+	if !slices.Equal(asked, []string{"phase-3/implement", "phase-4/plan"}) {
+		t.Fatalf("handler asked for %v", asked)
+	}
+	if resumed || len(st.records()) != 0 {
+		t.Fatalf("resumed %v, records %+v", resumed, st.records())
 	}
 }

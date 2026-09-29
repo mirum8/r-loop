@@ -271,7 +271,7 @@ func (m *SessionManager) start(s *Session, stepDir string) error {
 	ref := s.Ref
 	key := ref.Key
 	at := m.now()
-	ev := Event{At: at, Kind: "agent-named", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"attempt": strconv.Itoa(key.Attempt), "agent": s.Agent}}
+	ev := Event{At: at, Kind: "agent-named", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"attempt": strconv.Itoa(key.Attempt), "agent": s.Agent, "worktree": s.Dir, "base": ref.Base, "start_sha": s.StartSHA}}
 	if err := m.Store.Append(key.Run, Record{Kind: RecordEvent, At: at, Event: &ev}); err != nil {
 		return err
 	}

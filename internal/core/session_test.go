@@ -349,7 +349,10 @@ func TestSpawnRecordsTheAgentNameBeforeStartingIt(t *testing.T) {
 	r := newRig(t)
 	r.spawn(t, 1)
 	events := r.events("agent-named")
-	want := map[string]string{"attempt": "1", "agent": "rloop-2kuxv-p3-implement"}
+	want := map[string]string{"attempt": "1", "agent": "rloop-2kuxv-p3-implement", "worktree": events[0].Fields["worktree"], "base": events[0].Fields["base"], "start_sha": events[0].Fields["start_sha"]}
+	if events[0].Fields["worktree"] == "" || events[0].Fields["start_sha"] == "" {
+		t.Fatalf("agent-named lacks where the step runs: %+v", events[0].Fields)
+	}
 	if len(events) != 1 || events[0].Phase != "3" || events[0].Step != "implement" || !reflect.DeepEqual(events[0].Fields, want) {
 		t.Fatalf("events %+v", events)
 	}

@@ -595,8 +595,34 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	w.Watch.PhaseCheck = &core.PhaseCheck{Dog: w.Dog, Repo: w.Loop.Sessions.Repo, Timeout: wd.CheckTimeout, Backlog: w.Plan.Backlog}
 	w.Router.Dog = w.Dog
 	w.Watch.Router = w.Router
-	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate})
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, RunStatus: w.runStatus, StepInfo: w.stepInfo})
 	return nil
+}
+
+func (w *Wiring) runState() (core.RunState, error) {
+	if st, ok := w.records.Snapshot(); ok {
+		return st, nil
+	}
+	return w.Store.Load(w.Loop.RunID)
+}
+
+func (w *Wiring) runStatus() (core.RunStatusView, error) {
+	st, err := w.runState()
+	if err != nil {
+		return core.RunStatusView{}, err
+	}
+	return core.BuildStatus(st, w.Loop.OpenAsks(), w.Watch.LiveStep(), w.Remedies.Fallbacks, w.Remedies.MaxRestarts), nil
+}
+
+func (w *Wiring) stepInfo(step string) (core.StepInfo, bool) {
+	if info, ok := w.Watch.StepInfo(step); ok {
+		return info, true
+	}
+	st, err := w.runState()
+	if err != nil {
+		return core.StepInfo{}, false
+	}
+	return core.StepInfoFromEvents(st.Events, step)
 }
 
 func (w *Wiring) startDog(ctx context.Context, provider, model, effort string) error {

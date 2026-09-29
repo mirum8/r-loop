@@ -1391,6 +1391,19 @@ func (l *RunLoop) track(q Question, s *Session, agent string) {
 	l.asked[q.ID] = openAsk{q: q, s: s, agent: agent}
 }
 
+func (l *RunLoop) OpenAsks() []Question {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]Question, 0, len(l.asked))
+	for _, open := range l.asked {
+		q := open.q
+		q.Options = slices.Clone(q.Options)
+		out = append(out, q)
+	}
+	slices.SortFunc(out, func(a, b Question) int { return strings.Compare(a.ID, b.ID) })
+	return out
+}
+
 func (l *RunLoop) claim(id string) (openAsk, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

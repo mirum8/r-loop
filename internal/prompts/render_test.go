@@ -978,3 +978,18 @@ func TestFixRanksAWeakRuleBreakingTestAsP2(t *testing.T) {
 		t.Errorf("fix prompt does not rank rule-breaking tests:\n%s", actual)
 	}
 }
+
+func TestWatchdogCatchesUpWithRunStatusAndStepInfo(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"`run_status()` — read the run as the driver holds it now",
+		"`step_info(step)` — read a started step",
+		"your next call of any other tool except `run_status` and `step_info` marks the wait over",
+		"When you have lost track of a step or an open id",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q", want)
+		}
+	}
+}
