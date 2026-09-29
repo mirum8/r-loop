@@ -896,7 +896,8 @@ func TestWatchdogTriagesTheRunListAndAsksAtTheGate(t *testing.T) {
 		"Put every fix item in exactly one group",
 		"submit_triage(phases?, items?, groups?)",
 		"submit_gate(decision, drop?, split?, merge?, maintainer_said)",
-		"Print the table `submit_triage` returns, exactly as it is",
+		"Print the table `submit_triage` returns, exactly as it is. Never summarise it: the maintainer sees only what you print, not the tool result.",
+		"In the question, name `/runs/r1/triage.md`, where the table is saved.",
 		"go, drop, split, merge and abort",
 		"print it and ask again",
 	} {

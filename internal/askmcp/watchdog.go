@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -105,6 +106,17 @@ type tableOutput struct {
 	Accepted bool   `json:"accepted"`
 	Reason   string `json:"reason,omitempty"`
 	Table    string `json:"table,omitempty"`
+}
+
+func (s *Server) tableResult(out tableOutput) (*mcp.CallToolResult, tableOutput, error) {
+	text := "Refused: " + out.Reason
+	switch {
+	case out.Accepted && out.Table != "":
+		text = out.Table + "\n\nPrint this table to the maintainer verbatim, exactly as it is above; never summarise it. When you ask them about it, name " + filepath.Join(s.RunDir, "triage.md") + ", where the table is saved."
+	case out.Accepted:
+		text = "Accepted."
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, out, nil
 }
 
 const noTriage = "no triage is open"
@@ -311,34 +323,34 @@ func (s *Server) watchdogServer() *mcp.Server {
 		Description: "Submit your triage before the run starts: one verdict per phase for a plan, or one per item plus the groups for a backlog. A refusal carries the reason; fix it and submit again. An accepted call returns the table the driver built.",
 	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in triageInput) (*mcp.CallToolResult, tableOutput, error) {
 		if err := s.record("submit_triage", "", map[string]string{"triage": marshal(in)}); err != nil {
-			return nil, tableOutput{Reason: err.Error()}, nil
+			return s.tableResult(tableOutput{Reason: err.Error()})
 		}
 		if err := s.resume(); err != nil {
-			return nil, tableOutput{Reason: err.Error()}, nil
+			return s.tableResult(tableOutput{Reason: err.Error()})
 		}
 		h := s.handlersNow().SubmitTriage
 		if h == nil {
-			return nil, tableOutput{Reason: noTriage}, nil
+			return s.tableResult(tableOutput{Reason: noTriage})
 		}
 		ok, reason, table := h(core.Triage{Phases: in.Phases, Items: in.Items, Groups: in.Groups})
-		return nil, tableOutput{Accepted: ok, Reason: reason, Table: table}, nil
+		return s.tableResult(tableOutput{Accepted: ok, Reason: reason, Table: table})
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "submit_gate",
 		Description: "Submit the maintainer's decision on the table: go, revise (drop, split, merge; returns the new table) or abort, with maintainer_said quoted.",
 	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in core.GateDecision) (*mcp.CallToolResult, tableOutput, error) {
 		if err := s.record("submit_gate", "", map[string]string{"gate": marshal(in), "decision": in.Decision, "maintainer_said": in.MaintainerSaid}); err != nil {
-			return nil, tableOutput{Reason: err.Error()}, nil
+			return s.tableResult(tableOutput{Reason: err.Error()})
 		}
 		if err := s.resume(); err != nil {
-			return nil, tableOutput{Reason: err.Error()}, nil
+			return s.tableResult(tableOutput{Reason: err.Error()})
 		}
 		h := s.handlersNow().SubmitGate
 		if h == nil {
-			return nil, tableOutput{Reason: noTriage}, nil
+			return s.tableResult(tableOutput{Reason: noTriage})
 		}
 		ok, reason, table := h(in)
-		return nil, tableOutput{Accepted: ok, Reason: reason, Table: table}, nil
+		return s.tableResult(tableOutput{Accepted: ok, Reason: reason, Table: table})
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "run_status",

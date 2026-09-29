@@ -724,6 +724,52 @@ func TestSubmitGateHandsTheDecisionToItsHandler(t *testing.T) {
 	}
 }
 
+func TestTriageToolsReturnTheTableAsTextWithTheOrderToPrintIt(t *testing.T) {
+	s := serveWatchdog(t, &memStore{})
+	s.Handle(WatchdogHandlers{
+		SubmitTriage: func(core.Triage) (bool, string, string) { return true, "", "| Group | Items |\n| G1 | 3 |" },
+		SubmitGate: func(g core.GateDecision) (bool, string, string) {
+			if g.Decision == "abort" {
+				return true, "", ""
+			}
+			return false, "group G9 is not in the table", ""
+		},
+	})
+	cs := connect(t, s.WatchdogURL())
+
+	accepted := callText(t, cs, "submit_triage", map[string]any{"phases": []any{map[string]any{"phase": "3", "status": "build"}}})
+	refused := callText(t, cs, "submit_gate", map[string]any{"decision": "revise", "drop": []any{"G9"}, "maintainer_said": "drop G9"})
+	aborted := callText(t, cs, "submit_gate", map[string]any{"decision": "abort", "maintainer_said": "abort"})
+
+	want := "| Group | Items |\n| G1 | 3 |\n\n" +
+		"Print this table to the maintainer verbatim, exactly as it is above; never summarise it. When you ask them about it, name " + filepath.Join(s.RunDir, "triage.md") + ", where the table is saved."
+	if accepted != want {
+		t.Errorf("accepted text =\n%s", accepted)
+	}
+	if refused != "Refused: group G9 is not in the table" {
+		t.Errorf("refused text = %q", refused)
+	}
+	if aborted != "Accepted." {
+		t.Errorf("aborted text = %q", aborted)
+	}
+}
+
+func callText(t *testing.T, cs *mcp.ClientSession, name string, args map[string]any) string {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Content) != 1 {
+		t.Fatalf("content = %+v", res.Content)
+	}
+	text, ok := res.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("content = %T", res.Content[0])
+	}
+	return text.Text
+}
+
 func TestTriageToolsWithoutAHandlerSayNoTriageIsOpen(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
 	cs := connect(t, s.WatchdogURL())

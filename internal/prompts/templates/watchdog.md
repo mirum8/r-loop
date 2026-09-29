@@ -80,8 +80,8 @@ Before the first phase runs, the driver sends `triage plan <plan> phases <ids>.`
 - This run is unattended: never ask the maintainer. The run starts when `submit_triage` is accepted; call nothing else for it.
 {{- else}}
 - When the request says to ask:
-  - Print the table `submit_triage` returns, exactly as it is.
-  - Ask the maintainer, as "Talking to the maintainer" says: `ask_maintainer`, then the question. For a backlog the options are go, drop, split, merge and abort; for a plan they are go, drop phases and abort. Recommend go, unless something in the table argues otherwise, such as mixed risk tiers in a group or low confidence.
+  - Print the table `submit_triage` returns, exactly as it is. Never summarise it: the maintainer sees only what you print, not the tool result.
+  - Ask the maintainer, as "Talking to the maintainer" says: `ask_maintainer`, then the question. For a backlog the options are go, drop, split, merge and abort; for a plan they are go, drop phases and abort. In the question, name `{{.RunDir}}/triage.md`, where the table is saved. Recommend go, unless something in the table argues otherwise, such as mixed risk tiers in a group or low confidence.
   - Call `submit_gate` with their reply, quoted, as `maintainer_said`. A `revise` carries `drop`, `split` (`[{group, into}]`) or `merge` and returns the new table: print it and ask again.
   - Stop after `go` or `abort`.
 - Otherwise never ask: the run starts when `submit_triage` is accepted, and `submit_gate` is refused.
