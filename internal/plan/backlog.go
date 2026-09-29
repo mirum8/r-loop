@@ -17,6 +17,7 @@ var (
 	fixedRe      = regexp.MustCompile(`<!--\s*fixed:.*?-->`)
 	doneHeadRe   = regexp.MustCompile(`(?i)^(done|completed|fixed|shipped|archive)\b`)
 	indentListRe = regexp.MustCompile(`^[ \t]+(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]?)?(.*)$`)
+	itemLabelRe  = regexp.MustCompile(`^\[#([0-9]+[a-zA-Z]?)\]`)
 )
 
 type backlogItem struct {
@@ -50,8 +51,9 @@ func readBacklog(path string, lines []string) (core.Plan, error) {
 	}
 	topic := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	p := core.Plan{Path: path, Topic: topic, Backlog: true}
+	ids := backlogIDs(items)
 	for i, it := range items {
-		ph := core.Phase{ID: strconv.Itoa(i + 1), Title: it.title, Block: it.block}
+		ph := core.Phase{ID: ids[i], Title: it.title, Block: it.block}
 		for _, b := range it.body {
 			if m := indentListRe.FindStringSubmatch(b); m != nil {
 				ph.Items = append(ph.Items, core.Item{Text: strings.TrimSpace(m[1]), Done: it.done})
@@ -152,6 +154,32 @@ func newItem(line int, text string, hasBox, done bool) *backlogItem {
 	return &backlogItem{line: line, title: text, hasBox: hasBox, done: done}
 }
 
+func backlogIDs(items []backlogItem) []string {
+	ids := make([]string, len(items))
+	seen := map[string]bool{}
+	labelled := true
+	for i, it := range items {
+		m := itemLabelRe.FindStringSubmatch(it.title)
+		if m == nil {
+			labelled = false
+			break
+		}
+		id := label(m[1])
+		if !core.ValidPhaseID(id) || seen[id] {
+			labelled = false
+			break
+		}
+		seen[id] = true
+		ids[i] = id
+	}
+	if !labelled {
+		for i := range items {
+			ids[i] = strconv.Itoa(i + 1)
+		}
+	}
+	return ids
+}
+
 func proseFollows(lines []string, from int) bool {
 	for _, l := range lines[from:] {
 		l = strings.TrimRight(l, "\r\n")
@@ -165,16 +193,20 @@ func proseFollows(lines []string, from int) bool {
 
 func tickBacklog(path string, lines []string, ph core.Phase) error {
 	items := parseBacklog(lines)
+	byID := map[string]backlogItem{}
+	for i, id := range backlogIDs(items) {
+		byID[id] = items[i]
+	}
 	var picked []backlogItem
 	for _, id := range ph.TickIDs() {
-		n, err := strconv.Atoi(id)
-		if err != nil || n < 1 || n > len(items) || strconv.Itoa(n) != id {
+		it, ok := byID[id]
+		if !ok {
 			return fmt.Errorf("%s: no item %s", path, id)
 		}
-		if items[n-1].done {
+		if it.done {
 			return fmt.Errorf("%s item %s: %w", path, id, ErrNothingToTick)
 		}
-		picked = append(picked, items[n-1])
+		picked = append(picked, it)
 	}
 	for _, it := range picked {
 		raw := lines[it.line]

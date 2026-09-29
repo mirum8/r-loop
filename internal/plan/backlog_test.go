@@ -212,3 +212,48 @@ func TestTickBacklogRefusesAnAlreadyDoneMember(t *testing.T) {
 		t.Errorf("file changed: %q", got)
 	}
 }
+
+func TestBacklogItemsTakeTheirOwnLabelsAsIDs(t *testing.T) {
+	path := writeBacklog(t, "- [ ] [#2] a\n- [ ] [#4] b\n- [ ] [#5a] c\n- [ ] [#5B] d\n- [ ] [#07] e\n")
+
+	p, err := Reader{}.Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Unticked(); !reflect.DeepEqual(got, []string{"2", "4", "5a", "5b", "7"}) {
+		t.Fatalf("Unticked = %v, want [2 4 5a 5b 7]", got)
+	}
+	if err := (Reader{}).Tick(path, core.Phase{ID: "4"}); err != nil {
+		t.Fatalf("Tick 4: %v", err)
+	}
+	if err := (Reader{}).Tick(path, core.Phase{ID: "2", Members: []string{"2", "5a"}}); err != nil {
+		t.Fatalf("Tick 2+5a: %v", err)
+	}
+	if err := (Reader{}).Tick(path, core.Phase{ID: "3"}); err == nil || !strings.Contains(err.Error(), "no item 3") {
+		t.Errorf("Tick 3 err = %v, want no item 3", err)
+	}
+
+	want := "- [x] [#2] a  <!-- fixed: r-loop/phase-2 -->\n- [x] [#4] b  <!-- fixed: r-loop/phase-4 -->\n- [x] [#5a] c  <!-- fixed: r-loop/phase-2 -->\n- [ ] [#5B] d\n- [ ] [#07] e\n"
+	if got := strings.Join(fileLines(t, path), ""); got != want {
+		t.Fatalf("file =\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestBacklogItemsAreNumberedByPositionUnlessEveryLabelIsAUniqueID(t *testing.T) {
+	for name, content := range map[string]string{
+		"an unlabelled item":        "- [ ] [#2] a\n- [ ] b\n- [ ] [#4] c\n",
+		"a repeated label":          "- [ ] [#2] a\n- [ ] [#2] b\n- [ ] [#4] c\n",
+		"a label that is not an id": "- [ ] [#2] a\n- [ ] [#2/2] b\n- [ ] [#4] c\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, err := Reader{}.Read(writeBacklog(t, content))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got := p.Unticked(); !reflect.DeepEqual(got, []string{"1", "2", "3"}) {
+				t.Errorf("Unticked = %v, want [1 2 3]", got)
+			}
+		})
+	}
+}
