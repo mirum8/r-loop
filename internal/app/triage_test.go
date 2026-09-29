@@ -504,3 +504,49 @@ func TestStatusShowsAGroupAsOneRow(t *testing.T) {
 		t.Errorf("status:\n%s", out)
 	}
 }
+
+func TestTheDriverTypesEachTriageTableIntoTheWatchdogPaneBeforeTheGate(t *testing.T) {
+	var first, revised string
+	k := startTriage(t, func(w *Wiring, text string) {
+		first = submit(t, w, allBuild(text))
+		revised = gate(t, w, core.GateDecision{Decision: core.GateRevise, Drop: []string{"3"}, MaintainerSaid: "drop 3"})
+		gate(t, w, core.GateDecision{Decision: core.GateGo, MaintainerSaid: "go"})
+	})
+
+	code := k.run()
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, k.f.out, k.f.err)
+	}
+	path := filepath.Join(k.w.Store.Dir(k.w.Loop.RunID), "triage.md")
+	var shown []string
+	for _, c := range k.dog.Calls() {
+		if _, text, ok := strings.Cut(c, " Triage table"); ok {
+			shown = append(shown, "Triage table"+text)
+		}
+	}
+	want := []string{
+		"Triage table, saved at " + path + ":\n\n" + first + "\n\nThis is the table the maintainer decides on. Ask them now, then call submit_gate.",
+		"Triage table, saved at " + path + ":\n\n" + revised + "\n\nThis is the table the maintainer decides on. Ask them now, then call submit_gate.",
+	}
+	if !slices.Equal(shown, want) {
+		t.Errorf("tables typed into the watchdog pane:\n%q\nwant\n%q", shown, want)
+	}
+}
+
+func TestNoTriageTableIsTypedIntoTheWatchdogPaneWithoutAGate(t *testing.T) {
+	for _, flag := range []string{"--unattended", "--yes"} {
+		t.Run(flag, func(t *testing.T) {
+			k := startTriage(t, func(w *Wiring, text string) { submit(t, w, allBuild(text)) }, flag)
+
+			code := k.run()
+
+			if code != 0 {
+				t.Fatalf("exit %d\n%s", code, k.f.err)
+			}
+			if k.dog.prompted("Triage table") {
+				t.Errorf("a table was typed with no gate: %q", k.dog.Calls())
+			}
+		})
+	}
+}

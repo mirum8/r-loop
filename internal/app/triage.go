@@ -152,80 +152,105 @@ func (w *Wiring) startAfterTriage(opts core.RunOptions, run *triageRun, end tria
 }
 
 func (w *Wiring) submitTriage(t core.Triage) (bool, string, string) {
+	ok, reason, table, typed := w.acceptTriage(t)
+	if typed != "" {
+		w.typeTable(typed, table)
+	}
+	return ok, reason, table
+}
+
+func (w *Wiring) acceptTriage(t core.Triage) (bool, string, string, string) {
 	w.triageMu.Lock()
 	defer w.triageMu.Unlock()
 	run := w.triaging
 	if run == nil || run.closed {
-		return false, "no triage is open", ""
+		return false, "no triage is open", "", ""
 	}
 	checked, err := core.ValidateTriage(w.Plan, run.list, t, func(c string) string { return core.CheckCitation(w.Repo.Root(), c) })
 	if err != nil {
-		return false, err.Error(), ""
+		return false, err.Error(), "", ""
 	}
-	table, err := w.showTriage(run, checked)
+	table, path, err := w.showTriage(run, checked)
 	if err != nil {
-		return false, err.Error(), ""
+		return false, err.Error(), "", ""
 	}
-	if !run.ask {
-		by := "yes"
-		if w.Opts.Unattended {
-			by = "unattended"
-		}
-		run.closed = true
-		run.end <- triageEnd{decision: core.GateGo, by: by, triage: checked}
+	if run.ask {
+		return true, "", table, path
 	}
-	return true, "", table
+	by := "yes"
+	if w.Opts.Unattended {
+		by = "unattended"
+	}
+	run.closed = true
+	run.end <- triageEnd{decision: core.GateGo, by: by, triage: checked}
+	return true, "", table, ""
 }
 
 func (w *Wiring) submitGate(g core.GateDecision) (bool, string, string) {
+	ok, reason, table, typed := w.applyGate(g)
+	if typed != "" {
+		w.typeTable(typed, table)
+	}
+	return ok, reason, table
+}
+
+func (w *Wiring) applyGate(g core.GateDecision) (bool, string, string, string) {
 	w.triageMu.Lock()
 	defer w.triageMu.Unlock()
 	run := w.triaging
 	switch {
 	case run == nil || run.closed:
-		return false, "no triage is open", ""
+		return false, "no triage is open", "", ""
 	case !run.ask:
-		return false, "this run starts without asking the maintainer; there is no gate", ""
+		return false, "this run starts without asking the maintainer; there is no gate", "", ""
 	case run.current == nil:
-		return false, "no triage accepted yet: call submit_triage first", ""
+		return false, "no triage accepted yet: call submit_triage first", "", ""
 	}
 	next, err := core.ApplyGate(w.Plan, run.list, *run.current, g)
 	if err != nil {
-		return false, err.Error(), ""
+		return false, err.Error(), "", ""
 	}
 	if g.Decision == core.GateAbort {
 		run.closed = true
 		run.end <- triageEnd{decision: core.GateAbort, by: "maintainer", said: g.MaintainerSaid, triage: *run.current}
-		return true, "", ""
+		return true, "", "", ""
 	}
-	table, err := w.showTriage(run, next)
+	table, path, err := w.showTriage(run, next)
 	if err != nil {
-		return false, err.Error(), ""
+		return false, err.Error(), "", ""
 	}
 	if g.Decision == core.GateGo {
 		run.closed = true
 		run.end <- triageEnd{decision: core.GateGo, by: "maintainer", said: g.MaintainerSaid, triage: next}
+		return true, "", table, ""
 	}
-	return true, "", table
+	return true, "", table, path
 }
 
-func (w *Wiring) showTriage(run *triageRun, t core.Triage) (string, error) {
+func (w *Wiring) typeTable(path, table string) {
+	text := "Triage table, saved at " + path + ":\n\n" + table + "\n\nThis is the table the maintainer decides on. Ask them now, then call submit_gate."
+	if err := w.Dog.Notify(text, false, w.Config.Watchdog.TriageTimeout); err != nil {
+		w.record(core.Event{Kind: "warning", Fields: map[string]string{"reason": "triage table: " + err.Error()}})
+	}
+}
+
+func (w *Wiring) showTriage(run *triageRun, t core.Triage) (string, string, error) {
 	dir := w.Store.Dir(w.Loop.RunID)
 	data, err := json.MarshalIndent(t, "", "  ")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := os.WriteFile(filepath.Join(dir, "triage.json"), append(data, '\n'), 0o644); err != nil {
-		return "", err
+		return "", "", err
 	}
 	summary, table := core.RenderTriage(core.TriageView{Plan: w.Plan, List: run.list, Checks: w.Findings, Deferrals: run.deferrals, Kinds: w.Loop.Kinds}, &t)
 	path := filepath.Join(dir, "triage.md")
 	if err := os.WriteFile(path, []byte(summary+"\n\n"+table), 0o644); err != nil {
-		return "", err
+		return "", "", err
 	}
 	run.current = &t
 	w.record(core.Event{Kind: "triage", Fields: map[string]string{"summary": summary, "table": table, "path": path}})
-	return table, nil
+	return table, path, nil
 }
 
 func (w *Wiring) recordRunList(list []core.Phase, groups []core.Group) error {

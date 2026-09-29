@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -112,7 +111,7 @@ func (s *Server) tableResult(out tableOutput) (*mcp.CallToolResult, tableOutput,
 	text := "Refused: " + out.Reason
 	switch {
 	case out.Accepted && out.Table != "":
-		text = out.Table + "\n\nPrint this table to the maintainer verbatim, exactly as it is above; never summarise it. When you ask them about it, name " + filepath.Join(s.RunDir, "triage.md") + ", where the table is saved."
+		text = out.Table
 	case out.Accepted:
 		text = "Accepted."
 	}

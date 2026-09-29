@@ -847,7 +847,7 @@ func fixItem(id string) core.ItemVerdict {
 }
 
 func asksTheMaintainer(text string) bool {
-	return strings.Contains(text, "then ask the maintainer and call submit_gate")
+	return strings.Contains(text, "When it arrives, ask the maintainer, then call submit_gate")
 }
 
 func autoTriage(w *Wiring, text string) {

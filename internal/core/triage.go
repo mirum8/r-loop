@@ -151,7 +151,7 @@ func TriageText(plan Plan, list []Phase, ask bool) string {
 		fmt.Fprintf(&b, "triage plan %s phases %s. Follow your prompt's \"Triage\" section: verify each phase against the code and call submit_triage with one verdict per phase.\n", plan.Path, joinIDs(phaseIDs(list)))
 	}
 	if ask {
-		b.WriteString("When submit_triage is accepted, print the table it returns verbatim, never a summary of it, then ask the maintainer and call submit_gate.\n")
+		b.WriteString("When submit_triage is accepted, end your turn without printing or summarising the table: the driver types it into this pane. When it arrives, ask the maintainer, then call submit_gate.\n")
 	} else {
 		b.WriteString("Do not ask the maintainer; the run starts when submit_triage is accepted.\n")
 	}

@@ -724,7 +724,7 @@ func TestSubmitGateHandsTheDecisionToItsHandler(t *testing.T) {
 	}
 }
 
-func TestTriageToolsReturnTheTableAsTextWithTheOrderToPrintIt(t *testing.T) {
+func TestTriageToolsReturnTheTableAsPlainText(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
 	s.Handle(WatchdogHandlers{
 		SubmitTriage: func(core.Triage) (bool, string, string) { return true, "", "| Group | Items |\n| G1 | 3 |" },
@@ -741,9 +741,7 @@ func TestTriageToolsReturnTheTableAsTextWithTheOrderToPrintIt(t *testing.T) {
 	refused := callText(t, cs, "submit_gate", map[string]any{"decision": "revise", "drop": []any{"G9"}, "maintainer_said": "drop G9"})
 	aborted := callText(t, cs, "submit_gate", map[string]any{"decision": "abort", "maintainer_said": "abort"})
 
-	want := "| Group | Items |\n| G1 | 3 |\n\n" +
-		"Print this table to the maintainer verbatim, exactly as it is above; never summarise it. When you ask them about it, name " + filepath.Join(s.RunDir, "triage.md") + ", where the table is saved."
-	if accepted != want {
+	if accepted != "| Group | Items |\n| G1 | 3 |" {
 		t.Errorf("accepted text =\n%s", accepted)
 	}
 	if refused != "Refused: group G9 is not in the table" {
