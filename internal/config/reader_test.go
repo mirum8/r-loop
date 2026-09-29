@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -66,15 +67,15 @@ func TestDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Pipeline, []string{"plan", "implement"}) {
 		t.Errorf("Pipeline = %v", cfg.Pipeline)
 	}
-	wantPlan := StepRow{Prompt: "plan", Check: "plan-file", Provider: "claude", Model: "fable", Effort: "medium",
-		Fallback: Fallback{Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium"}, Timeout: time.Hour,
-		Reviewers: []Reviewer{{Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium"}}, Rounds: 2, ReviewTimeout: 20 * time.Minute}
+	wantPlan := StepRow{Prompt: "plan", Check: "plan-file", Provider: "claude", Model: "opus", Effort: "high",
+		Fallback: Fallback{Provider: "codex", Model: "gpt-6-sol", Effort: "high"}, Timeout: time.Hour,
+		Reviewers: []Reviewer{{Provider: "codex", Model: "gpt-6-sol", Effort: "high"}}, Rounds: 2, ReviewTimeout: 20 * time.Minute}
 	if !reflect.DeepEqual(cfg.Steps["plan"], wantPlan) {
 		t.Errorf("plan = %+v", cfg.Steps["plan"])
 	}
-	wantImpl := StepRow{Prompt: "implement", Check: "diff", Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium",
-		Fallback: Fallback{Provider: "claude", Model: "opus", Effort: "medium"}, Timeout: 4 * time.Hour,
-		Reviewers: []Reviewer{{Provider: "claude", Model: "opus", Effort: "medium"}, {Name: "ui", Provider: "claude", Model: "opus", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}}, Rounds: 3, ReviewTimeout: 45 * time.Minute}
+	wantImpl := StepRow{Prompt: "implement", Check: "diff", Provider: "claude", Model: "opus", Effort: "medium",
+		Fallback: Fallback{Provider: "codex", Model: "gpt-6-sol", Effort: "medium"}, Timeout: 4 * time.Hour,
+		Reviewers: []Reviewer{{Provider: "codex", Model: "gpt-6-sol", Effort: "high"}, {Name: "ui", Provider: "codex", Model: "gpt-6-sol", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}}, Rounds: 3, ReviewTimeout: 45 * time.Minute}
 	if !reflect.DeepEqual(cfg.Steps["implement"], wantImpl) {
 		t.Errorf("implement = %+v", cfg.Steps["implement"])
 	}
@@ -82,7 +83,7 @@ func TestDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Steps["milestone"], wantMilestone) {
 		t.Errorf("milestone = %+v", cfg.Steps["milestone"])
 	}
-	wantLand := Land{FixRounds: 1, GateTimeout: 30 * time.Minute, Fix: GateFix{Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium"}}
+	wantLand := Land{FixRounds: 1, GateTimeout: 30 * time.Minute, Fix: GateFix{Provider: "claude", Model: "opus", Effort: "medium"}}
 	if cfg.Land != wantLand {
 		t.Errorf("Land = %+v", cfg.Land)
 	}
@@ -90,7 +91,7 @@ func TestDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Unattended, wantUnattended) {
 		t.Errorf("Unattended = %+v", cfg.Unattended)
 	}
-	wantWatchdog := Watchdog{Provider: "claude", Model: "opus", Effort: "high", Allow: []string{}, BlockerTimeout: 10 * time.Minute,
+	wantWatchdog := Watchdog{Provider: "claude", Model: "opus", Effort: "medium", Allow: []string{}, BlockerTimeout: 10 * time.Minute,
 		CheckTimeout: 10 * time.Minute, StallGrace: 2 * time.Minute, UnblockTimeout: 2 * time.Hour, TriageTimeout: 2 * time.Hour,
 		OvertimeFactor: 2, DiffFactor: 3, MaxRestarts: 2, Dialogs: []string{}}
 	if !reflect.DeepEqual(cfg.Watchdog, wantWatchdog) {
@@ -244,11 +245,11 @@ func TestFallbackBlockWithoutEffortRejected(t *testing.T) {
 
 func TestBlockFallbackWithModelAndEffort(t *testing.T) {
 	d := newDirs(t)
-	d.writeProject(t, "steps:\n  implement:\n    fallback:\n      provider: claude\n      model: sonnet\n      effort: high\n")
+	d.writeProject(t, "steps:\n  implement:\n    fallback:\n      provider: codex\n      model: gpt-6\n      effort: high\n")
 
 	cfg := d.load(t)
 
-	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "claude", Model: "sonnet", Effort: "high"}) {
+	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "codex", Model: "gpt-6", Effort: "high"}) {
 		t.Errorf("Fallback = %+v", cfg.Steps["implement"].Fallback)
 	}
 }
@@ -430,7 +431,7 @@ func TestLandFixWithOnlyEffortInheritsImplementProviderAndModel(t *testing.T) {
 
 	cfg := d.load(t)
 
-	if cfg.Land.Fix != (GateFix{Provider: "codex", Model: "gpt-5.6-sol", Effort: "high"}) {
+	if cfg.Land.Fix != (GateFix{Provider: "claude", Model: "opus", Effort: "high"}) {
 		t.Errorf("Fix = %+v", cfg.Land.Fix)
 	}
 	if got := cfg.Provenance["land.fix.effort"]; got != ".r-loop/config.yaml:land.fix.effort" {
@@ -443,18 +444,18 @@ func TestLandFixWithOnlyEffortInheritsImplementProviderAndModel(t *testing.T) {
 
 func TestLandFixNamingAnotherProviderWithoutModelRejected(t *testing.T) {
 	d := newDirs(t)
-	d.writeProject(t, "land:\n  fix:\n    provider: claude\n")
+	d.writeProject(t, "land:\n  fix:\n    provider: codex\n")
 
 	d.loadErr(t, "land.fix.model: not set, every session names its provider, model and effort")
 }
 
 func TestLandFixNamingAnotherProviderWithModelAndEffort(t *testing.T) {
 	d := newDirs(t)
-	d.writeProject(t, "land:\n  fix:\n    provider: claude\n    model: opus\n    effort: high\n")
+	d.writeProject(t, "land:\n  fix:\n    provider: codex\n    model: gpt-6-sol\n    effort: high\n")
 
 	cfg := d.load(t)
 
-	if cfg.Land.Fix != (GateFix{Provider: "claude", Model: "opus", Effort: "high"}) {
+	if cfg.Land.Fix != (GateFix{Provider: "codex", Model: "gpt-6-sol", Effort: "high"}) {
 		t.Errorf("Fix = %+v", cfg.Land.Fix)
 	}
 }
@@ -574,18 +575,18 @@ func TestOverrideLeavesFallbackAndReviewersUntouched(t *testing.T) {
 		Override{Key: "effort", Step: "implement", Value: "high"},
 	)
 
-	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "claude", Model: "opus", Effort: "medium"}) {
+	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "codex", Model: "gpt-6-sol", Effort: "medium"}) {
 		t.Errorf("Fallback = %+v", cfg.Steps["implement"].Fallback)
 	}
-	if !reflect.DeepEqual(cfg.Steps["implement"].Reviewers, []Reviewer{{Provider: "claude", Model: "opus", Effort: "medium"}, {Name: "ui", Provider: "claude", Model: "opus", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}}) {
+	if !reflect.DeepEqual(cfg.Steps["implement"].Reviewers, []Reviewer{{Provider: "codex", Model: "gpt-6-sol", Effort: "high"}, {Name: "ui", Provider: "codex", Model: "gpt-6-sol", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}}) {
 		t.Errorf("Reviewers = %+v", cfg.Steps["implement"].Reviewers)
 	}
 }
 
 func TestAbsentLandFixFollowsModelOverride(t *testing.T) {
-	cfg := newDirs(t).load(t, Override{Key: "model", Step: "implement", Value: "gpt-6"})
+	cfg := newDirs(t).load(t, Override{Key: "model", Step: "implement", Value: "sonnet"})
 
-	if cfg.Land.Fix != (GateFix{Provider: "codex", Model: "gpt-6", Effort: "medium"}) {
+	if cfg.Land.Fix != (GateFix{Provider: "claude", Model: "sonnet", Effort: "medium"}) {
 		t.Errorf("Fix = %+v", cfg.Land.Fix)
 	}
 	if got := cfg.Provenance["land.fix.model"]; got != "flag:--model" {
@@ -611,28 +612,28 @@ func TestParseOverride(t *testing.T) {
 
 func TestBannerForTwoOverrideConfig(t *testing.T) {
 	d := newDirs(t)
-	d.writeProject(t, "steps:\n  implement:\n    provider: claude\n    fallback:\n      provider: gemini\n      model: pro\n      effort: high\nland:\n  fix:\n    effort: high\nwatchdog:\n  effort: low\n  allow:\n    - deps\n")
+	d.writeProject(t, "steps:\n  implement:\n    provider: codex\n    fallback:\n      provider: gemini\n      model: pro\n      effort: high\nland:\n  fix:\n    effort: high\nwatchdog:\n  effort: low\n  allow:\n    - deps\n")
 
 	cfg := d.load(t,
-		Override{Key: "provider", Step: "implement", Value: "codex"},
+		Override{Key: "provider", Step: "implement", Value: "claude"},
 		Override{Key: "model", Step: "plan", Value: "sonnet"},
 	)
 
 	want := strings.Join([]string{
-		"plan  claude  sonnet  medium  1h  plan-file  ← provider default model flag:--model effort default",
+		"plan  claude  sonnet  high  1h  plan-file  ← provider default model flag:--model effort default",
 		"  review rounds 2 20m  ← default",
-		"  reviewer codex gpt-5.6-sol medium  ← default",
-		"  fallback codex gpt-5.6-sol medium  ← default",
-		"implement  codex  gpt-5.6-sol  medium  4h  diff  ← provider flag:--provider model default effort default",
+		"  reviewer codex gpt-6-sol high  ← default",
+		"  fallback codex gpt-6-sol high  ← default",
+		"implement  claude  opus  medium  4h  diff  ← provider flag:--provider model default effort default",
 		"  review rounds 3 45m  ← default",
-		"  reviewer claude opus medium  ← default",
-		"  reviewer claude opus high (name ui, prompt review-ui, requires .claude/skills/test-app/SKILL.md)  ← default",
+		"  reviewer codex gpt-6-sol high  ← default",
+		"  reviewer codex gpt-6-sol high (name ui, prompt review-ui, requires .claude/skills/test-app/SKILL.md)  ← default",
 		"  fallback gemini pro high  ← .r-loop/config.yaml:steps.implement.fallback",
 		"milestone  claude  opus  medium  1h  report  ← default",
-		"gatefix codex gpt-5.6-sol high  ← provider flag:--provider model default effort .r-loop/config.yaml:land.fix.effort",
+		"gatefix claude opus high  ← provider flag:--provider model default effort .r-loop/config.yaml:land.fix.effort",
 		"land gateTimeout 30m  ← default",
-		"override: implement provider codex (flag) replaces claude (.r-loop/config.yaml)",
-		"override: plan model sonnet (flag) replaces fable (default)",
+		"override: implement provider claude (flag) replaces codex (.r-loop/config.yaml)",
+		"override: plan model sonnet (flag) replaces opus (default)",
 		"watchdog: claude opus low allow [deps]  ← provider default model default effort .r-loop/config.yaml:watchdog.effort",
 		"intake: claude sonnet medium  ← default",
 	}, "\n") + "\n"
@@ -642,35 +643,35 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 }
 
 func TestProviderOverrideOntoFallbackSwapsTheFallback(t *testing.T) {
-	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "implement", Value: "claude"})
+	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "implement", Value: "codex"})
 
 	row := cfg.Steps["implement"]
-	if row.Provider != "claude" || row.Model != "gpt-5.6-sol" || row.Effort != "medium" {
+	if row.Provider != "codex" || row.Model != "opus" || row.Effort != "medium" {
 		t.Errorf("row = %s %s %s", row.Provider, row.Model, row.Effort)
 	}
-	if row.Fallback != (Fallback{Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium"}) {
+	if row.Fallback != (Fallback{Provider: "claude", Model: "opus", Effort: "medium"}) {
 		t.Errorf("Fallback = %+v", row.Fallback)
 	}
 	if got := cfg.Provenance["steps.implement.fallback"]; got != "flag:--provider" {
 		t.Errorf("fallback provenance = %q", got)
 	}
-	if cfg.Steps["plan"].Fallback != (Fallback{Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium"}) {
+	if cfg.Steps["plan"].Fallback != (Fallback{Provider: "codex", Model: "gpt-6-sol", Effort: "high"}) {
 		t.Errorf("plan Fallback = %+v", cfg.Steps["plan"].Fallback)
 	}
 }
 
 func TestSwappedFallbackKeepsTheConfiguredModelAndEffortNotTheOverrides(t *testing.T) {
 	cfg := newDirs(t).load(t,
-		Override{Key: "model", Step: "implement", Value: "opus"},
-		Override{Key: "provider", Step: "implement", Value: "claude"},
+		Override{Key: "model", Step: "implement", Value: "gpt-6-sol"},
+		Override{Key: "provider", Step: "implement", Value: "codex"},
 		Override{Key: "effort", Step: "implement", Value: "high"},
 	)
 
 	row := cfg.Steps["implement"]
-	if row.Provider != "claude" || row.Model != "opus" || row.Effort != "high" {
+	if row.Provider != "codex" || row.Model != "gpt-6-sol" || row.Effort != "high" {
 		t.Errorf("row = %s %s %s", row.Provider, row.Model, row.Effort)
 	}
-	if row.Fallback != (Fallback{Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium"}) {
+	if row.Fallback != (Fallback{Provider: "claude", Model: "opus", Effort: "medium"}) {
 		t.Errorf("Fallback = %+v", row.Fallback)
 	}
 }
@@ -678,21 +679,21 @@ func TestSwappedFallbackKeepsTheConfiguredModelAndEffortNotTheOverrides(t *testi
 func TestPlanProviderOverrideOntoFallbackSwaps(t *testing.T) {
 	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "plan", Value: "codex"})
 
-	if cfg.Steps["plan"].Fallback != (Fallback{Provider: "claude", Model: "fable", Effort: "medium"}) {
+	if cfg.Steps["plan"].Fallback != (Fallback{Provider: "claude", Model: "opus", Effort: "high"}) {
 		t.Errorf("Fallback = %+v", cfg.Steps["plan"].Fallback)
 	}
 }
 
 func TestBannerShowsTheSwappedFallbackWithProvenance(t *testing.T) {
-	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "implement", Value: "claude"})
+	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "implement", Value: "codex"})
 
 	banner := Banner(cfg)
 
 	for _, want := range []string{
-		"implement  claude  gpt-5.6-sol  medium  4h  diff  ← provider flag:--provider model default effort default\n",
-		"  fallback codex gpt-5.6-sol medium  ← flag:--provider\n",
-		"override: implement provider claude (flag) replaces codex (default)\n",
-		"override: steps.implement.fallback swapped to codex (--provider) replaces claude opus medium (default)\n",
+		"implement  codex  opus  medium  4h  diff  ← provider flag:--provider model default effort default\n",
+		"  fallback claude opus medium  ← flag:--provider\n",
+		"override: implement provider codex (flag) replaces claude (default)\n",
+		"override: steps.implement.fallback swapped to claude (--provider) replaces codex gpt-6-sol medium (default)\n",
 	} {
 		if !strings.Contains(banner, want) {
 			t.Errorf("%q missing from:\n%s", want, banner)
@@ -702,22 +703,22 @@ func TestBannerShowsTheSwappedFallbackWithProvenance(t *testing.T) {
 
 func TestProviderOverrideOntoAConfiguredFallbackSwapsItWithItsFileProvenance(t *testing.T) {
 	d := newDirs(t)
-	d.writeProject(t, "steps:\n  implement:\n    fallback:\n      provider: claude\n      model: sonnet\n      effort: low\n")
+	d.writeProject(t, "steps:\n  implement:\n    fallback:\n      provider: codex\n      model: gpt-6\n      effort: low\n")
 
-	cfg := d.load(t, Override{Key: "provider", Step: "implement", Value: "claude"})
+	cfg := d.load(t, Override{Key: "provider", Step: "implement", Value: "codex"})
 
-	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "codex", Model: "gpt-5.6-sol", Effort: "medium"}) {
+	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "claude", Model: "opus", Effort: "medium"}) {
 		t.Errorf("Fallback = %+v", cfg.Steps["implement"].Fallback)
 	}
-	if !strings.Contains(Banner(cfg), "override: steps.implement.fallback swapped to codex (--provider) replaces claude sonnet low (.r-loop/config.yaml)\n") {
+	if !strings.Contains(Banner(cfg), "override: steps.implement.fallback swapped to claude (--provider) replaces codex gpt-6 low (.r-loop/config.yaml)\n") {
 		t.Errorf("banner:\n%s", Banner(cfg))
 	}
 }
 
 func TestProviderOverrideToTheRowsOwnProviderLeavesTheFallback(t *testing.T) {
-	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "implement", Value: "codex"})
+	cfg := newDirs(t).load(t, Override{Key: "provider", Step: "implement", Value: "claude"})
 
-	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "claude", Model: "opus", Effort: "medium"}) {
+	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "codex", Model: "gpt-6-sol", Effort: "medium"}) {
 		t.Errorf("Fallback = %+v", cfg.Steps["implement"].Fallback)
 	}
 	if cfg.Provenance["steps.implement.fallback"] != "default" || strings.Contains(Banner(cfg), "swapped") {
@@ -812,8 +813,82 @@ func TestCreateRefusesToOverwrite(t *testing.T) {
 	_, err := Create(d.home)
 
 	data, _ := os.ReadFile(filepath.Join(d.home, ".config", "r-loop", "config.yaml"))
-	if err == nil || !strings.Contains(err.Error(), "already exists") || string(data) != "pipeline:\n  - plan\n" {
+	if !errors.Is(err, fs.ErrExist) || string(data) != "pipeline:\n  - plan\n" {
 		t.Fatalf("err=%v data=%q", err, data)
+	}
+}
+
+func TestResetModelsPutsTheDefaultModelsBackAndKeepsTheRest(t *testing.T) {
+	d := newDirs(t)
+	old := "# mine\nsteps:\n  plan:\n    model: fable\n    timeout: 2h\n  implement:\n    provider: codex\n    model: gpt-5.6-sol\n    effort: medium\n    fallback:\n      provider: claude\n      model: opus\n      effort: medium\n    reviewers:\n      - provider: claude\n        model: opus\n        effort: medium\n  milestone:\n    reviewers:\n      - provider: codex\n        model: gpt-5.6-sol\n        effort: medium\n  docs:\n    prompt: docs\n    check: diff\n    provider: claude\n    model: sonnet\n    effort: low\n    timeout: 30m\nland:\n  fixRounds: 2\n  fix:\n    effort: high\nwatchdog:\n  effort: high\n  maxRestarts: 5\n"
+	d.writeHome(t, old)
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	changes, err := ResetModels(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"steps.plan: fable → claude opus high",
+		"steps.implement: codex gpt-5.6-sol medium → claude opus medium",
+		"steps.implement.fallback: claude opus medium → codex gpt-6-sol medium",
+		"steps.implement.reviewers: claude opus medium → codex gpt-6-sol high, ui codex gpt-6-sol high",
+		"steps.milestone.reviewers: codex gpt-5.6-sol medium → removed",
+		"watchdog: high → claude opus medium",
+		"land.fix: high → removed",
+	}
+	if !reflect.DeepEqual(changes, want) {
+		t.Errorf("changes = %q", changes)
+	}
+	cfg := d.load(t)
+	if got := cfg.Steps["plan"]; got.Model != "opus" || got.Effort != "high" || got.Timeout != 2*time.Hour {
+		t.Errorf("plan = %+v", got)
+	}
+	if got := cfg.Steps["implement"]; got.Provider != "claude" || got.Fallback != (Fallback{"codex", "gpt-6-sol", "medium"}) || len(got.Reviewers) != 2 {
+		t.Errorf("implement = %+v", got)
+	}
+	if got := cfg.Steps["docs"]; got.Model != "sonnet" || got.Effort != "low" {
+		t.Errorf("docs = %+v", got)
+	}
+	if cfg.Watchdog.Effort != "medium" || cfg.Watchdog.MaxRestarts != 5 || cfg.Land.FixRounds != 2 || cfg.Land.Fix != (GateFix{"claude", "opus", "medium"}) {
+		t.Errorf("watchdog = %+v land = %+v", cfg.Watchdog, cfg.Land)
+	}
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "# mine") {
+		t.Errorf("comment lost from:\n%s", data)
+	}
+	if bak, _ := os.ReadFile(path + ".bak"); string(bak) != old {
+		t.Errorf("backup = %q", bak)
+	}
+}
+
+func TestResetModelsThatEmptiesTheFileLeavesItLoadable(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "steps:\n  milestone:\n    reviewers:\n      - provider: codex\n        model: x\n        effort: low\nland:\n  fix:\n    effort: high\n")
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	if _, err := ResetModels(path); err != nil {
+		t.Fatal(err)
+	}
+
+	if data, _ := os.ReadFile(path); len(data) != 0 {
+		t.Errorf("file = %q", data)
+	}
+	d.load(t)
+}
+
+func TestResetModelsLeavesAFileAtTheDefaultsAlone(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "steps:\n  plan:\n    provider: claude\n    model: opus\n    effort: high\n")
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	changes, err := ResetModels(path)
+
+	if err != nil || len(changes) != 0 {
+		t.Fatalf("changes=%q err=%v", changes, err)
+	}
+	if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
+		t.Errorf("backup written for an unchanged file: %v", err)
 	}
 }
 

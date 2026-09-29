@@ -100,6 +100,13 @@ const unattendedConfig = `steps:
   plan:
     rounds: 0
   implement:
+    provider: codex
+    model: gpt-6-sol
+    effort: medium
+    fallback:
+      provider: claude
+      model: opus
+      effort: medium
     rounds: 0
 watchdog:
   maxRestarts: 1

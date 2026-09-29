@@ -175,7 +175,10 @@ Each key is taken from the first place that has it:
 4. the built-in defaults
 
 `r-loop --create-config` writes the built-in defaults to `~/.config/r-loop/config.yaml` as a
-starting point. It refuses to overwrite an existing file.
+starting point. When that file already exists, it resets the models instead: the provider, model
+and effort of each built-in step row, its `fallback` and `reviewers`, the `watchdog` and `intake`
+go back to the built-in defaults, `land.fix` is removed, and every other key stays. It prints each
+change; the original is kept as `config.yaml.bak`.
 
 Every agent session names its provider, model and effort; nothing runs on a provider's own
 defaults. A config that is missing one of the three is an error (exit 2).
@@ -227,12 +230,13 @@ Defaults:
 
 | Step | Provider | Model | Effort | Timeout | Check | Reviewers | Rounds | Review timeout | Fallback |
 |---|---|---|---|---|---|---|---|---|---|
-| `plan` | claude | fable | medium | 1h | plan-file | codex | 2 | 20m | codex |
-| `implement` | codex | gpt-5.6-sol | medium | 4h | diff | claude, ui | 3 | 45m | claude |
+| `plan` | claude | opus | high | 1h | plan-file | codex | 2 | 20m | codex |
+| `implement` | claude | opus | medium | 4h | diff | codex, ui | 3 | 45m | codex |
 | `milestone` | claude | opus | medium | 1h | report | — | — | — | — |
 | `gate` | claude | sonnet | medium | 30m | report | — | — | — | — |
 
-The `ui` reviewer runs the project's `/test-app` skill (claude, opus, high). It needs
+Every reviewer runs on codex, gpt-6-sol, high; the fallbacks on codex, gpt-6-sol with the row's effort.
+The `ui` reviewer runs the project's `/test-app` skill. It needs
 `.claude/skills/test-app/SKILL.md`, so it is skipped in projects without that file.
 
 ### `land`
@@ -247,7 +251,7 @@ The `ui` reviewer runs the project's `/test-app` skill (claude, opus, high). It 
 
 | Key | Default | Meaning |
 |---|---|---|
-| `provider`, `model`, `effort` | claude, opus, high | The watchdog agent. It has no fallback: if it does not start, the run does not start. |
+| `provider`, `model`, `effort` | claude, opus, medium | The watchdog agent. It has no fallback: if it does not start, the run does not start. |
 | `allow` | `[]` | Remedy classes the watchdog may use without asking you. |
 | `maxRestarts` | `2` | Most restarts for one step. |
 | `blockerTimeout` | `10m` | How long a blocker (a failed step or reviewer, a land error, a failed gate fix or milestone report) waits for the watchdog before the phase is blocked. The clock stops while the watchdog is asking you. The old name `remedyWindow` still works. |

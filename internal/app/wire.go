@@ -249,10 +249,23 @@ func Main(args []string, env Env) int {
 
 func CreateConfig(env Env) int {
 	path, err := config.Create(env.Home)
+	if err == nil {
+		fmt.Fprintf(env.Stdout, "wrote %s\n", path)
+		return 0
+	}
+	if !errors.Is(err, fs.ErrExist) {
+		return fail(env, err)
+	}
+	reset, err := config.ResetModels(path)
 	if err != nil {
 		return fail(env, err)
 	}
-	fmt.Fprintf(env.Stdout, "wrote %s\n", path)
+	if len(reset) == 0 {
+		fmt.Fprintf(env.Stdout, "%s: models already at the defaults\n", path)
+	}
+	for _, c := range reset {
+		fmt.Fprintf(env.Stdout, "%s: %s\n", path, c)
+	}
 	return 0
 }
 

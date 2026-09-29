@@ -7,37 +7,37 @@ steps:
     prompt: plan
     check: plan-file
     provider: claude
-    model: fable
-    effort: medium
+    model: opus
+    effort: high
     timeout: 1h
     fallback:
       provider: codex
-      model: gpt-5.6-sol
-      effort: medium
+      model: gpt-6-sol
+      effort: high
     reviewers:
       - provider: codex
-        model: gpt-5.6-sol
-        effort: medium
+        model: gpt-6-sol
+        effort: high
     rounds: 2
     reviewTimeout: 20m
   implement:
     prompt: implement
     check: diff
-    provider: codex
-    model: gpt-5.6-sol
+    provider: claude
+    model: opus
     effort: medium
     timeout: 4h
     fallback:
-      provider: claude
-      model: opus
+      provider: codex
+      model: gpt-6-sol
       effort: medium
     reviewers:
-      - provider: claude
-        model: opus
-        effort: medium
+      - provider: codex
+        model: gpt-6-sol
+        effort: high
       - name: ui
-        provider: claude
-        model: opus
+        provider: codex
+        model: gpt-6-sol
         effort: high
         prompt: review-ui
         requires: .claude/skills/test-app/SKILL.md
@@ -65,7 +65,7 @@ land:
 watchdog:
   provider: claude
   model: opus
-  effort: high
+  effort: medium
   maxRestarts: 2
   allow:
   dialogs:

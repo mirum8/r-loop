@@ -755,7 +755,7 @@ func Create(homeDir string) (string, error) {
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if errors.Is(err, fs.ErrExist) {
-		return "", fmt.Errorf("%s already exists", path)
+		return path, fmt.Errorf("%s already exists: %w", path, fs.ErrExist)
 	}
 	if err != nil {
 		return "", err

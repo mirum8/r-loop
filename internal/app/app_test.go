@@ -352,7 +352,7 @@ func TestImplementReviewerWithoutReviewCommandIsRefusedWithExit2(t *testing.T) {
 
 func TestPlanReviewerNeedsNoReviewCommand(t *testing.T) {
 	f := newFixture(t)
-	f.write(".r-loop/config.yaml", "providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n")
+	f.write(".r-loop/config.yaml", "providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\nsteps:\n  implement:\n    reviewers:\n      - provider: claude\n        model: opus\n        effort: medium\n")
 	f.commit()
 	f.fakeHerdr(1)
 
@@ -414,7 +414,7 @@ func TestPreflightCreatesTheRunAndPrintsTheBanner(t *testing.T) {
 	if !strings.Contains(string(exclude), ".r-loop/runs/") || !strings.Contains(string(exclude), ".r-loop/wt/") {
 		t.Fatalf("exclude=%q", exclude)
 	}
-	for _, want := range []string{"face: plain\n", "implement  codex  gpt-5.6-sol  medium  4h  diff  ← default\n", "prompt plan: embedded\n", "prompt implement: embedded\n", "prompt milestone: embedded\n", "  fallback codex gpt-5.6-sol medium  ← default\n"} {
+	for _, want := range []string{"face: plain\n", "implement  claude  opus  medium  4h  diff  ← default\n", "prompt plan: embedded\n", "prompt implement: embedded\n", "prompt milestone: embedded\n", "  fallback codex gpt-6-sol medium  ← default\n"} {
 		if !strings.Contains(f.out.String(), want) {
 			t.Fatalf("%q missing from banner:\n%s", want, f.out.String())
 		}
@@ -426,7 +426,7 @@ func TestWireBuildsTheGateFixKindAndTheMilestoneBoundary(t *testing.T) {
 	f.write(".r-loop/config.yaml", "land:\n  gateTimeout: 12m\n")
 	f.commit()
 
-	w, err := f.preflight(f.todo, "--plain", "--model", "implement=gpt-x")
+	w, err := f.preflight(f.todo, "--plain", "--provider", "implement=codex", "--model", "implement=gpt-x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +436,7 @@ func TestWireBuildsTheGateFixKindAndTheMilestoneBoundary(t *testing.T) {
 	if g.GateTimeout.String() != "12m0s" || fix.Name != "gatefix" || fix.Prompt != "gatefix" || fix.Check != "diff" || g.Runner == nil || g.FixRounds != 1 {
 		t.Fatalf("gate=%+v", g)
 	}
-	if fix.Row.Provider != "codex" || fix.Row.Model != "gpt-x" || fix.Row.Effort != "medium" || fix.Row.Timeout.String() != "4h0m0s" || fix.Row.Rounds != 1 || len(fix.Row.Reviewers) != 2 || fix.Row.Reviewers[0].Provider != "claude" || fix.Row.Reviewers[1].ID() != "ui" {
+	if fix.Row.Provider != "codex" || fix.Row.Model != "gpt-x" || fix.Row.Effort != "medium" || fix.Row.Timeout.String() != "4h0m0s" || fix.Row.Rounds != 1 || len(fix.Row.Reviewers) != 2 || fix.Row.Reviewers[0].Provider != "codex" || fix.Row.Reviewers[1].ID() != "ui" {
 		t.Fatalf("fix row=%+v", fix.Row)
 	}
 	if b := g.Boundary; b == nil || b.Kind.Name != "milestone" || b.Kind.Check != "report" || b.Kind.Row.Provider != "claude" || b.RunID != w.Loop.RunID || b.Topic != "topic" {
@@ -485,7 +485,7 @@ func TestDryRunPrintsBannerWithOverridesAndTheRunList(t *testing.T) {
 	f.commit()
 	f.fakeHerdr(1)
 
-	code := f.main(f.todo, "--dry-run", "--plain", "--provider", "implement=claude", "--effort", "implement=high")
+	code := f.main(f.todo, "--dry-run", "--plain", "--provider", "implement=codex", "--effort", "implement=high")
 
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%q", code, f.err.String())
@@ -493,14 +493,14 @@ func TestDryRunPrintsBannerWithOverridesAndTheRunList(t *testing.T) {
 	out := f.out.String()
 	for _, want := range []string{
 		"face: plain\n",
-		"implement  claude  gpt-5.6-sol  high  4h  diff  ← provider flag:--provider model default effort flag:--effort\n",
-		"override: implement provider claude (flag) replaces codex (default)\n",
+		"implement  codex  opus  high  4h  diff  ← provider flag:--provider model default effort flag:--effort\n",
+		"override: implement provider codex (flag) replaces claude (default)\n",
 		"override: implement effort high (flag) replaces medium (default)\n",
-		"gatefix claude gpt-5.6-sol high  ← provider flag:--provider model default effort flag:--effort\n",
+		"gatefix codex opus high  ← provider flag:--provider model default effort flag:--effort\n",
 		"prompt implement: embedded\n",
 		"prompt review-ui: embedded\n",
 		"reviewer ui requires .claude/skills/test-app/SKILL.md: missing, reviewer skipped\n",
-		"watchdog: claude opus high allow []  ← default\n",
+		"watchdog: claude opus medium allow []  ← default\n",
 		"intake: claude sonnet medium  ← default\n",
 		"phase 2  PlanReader: phases and milestones  plan (review ×2) → implement (review ×3) → land\n",
 		"phase 31  Unattended mode  plan (review ×2) → implement (review ×3) → land\n",
@@ -844,7 +844,28 @@ func TestCreateConfigWritesTheDefaultsToTheMachineFile(t *testing.T) {
 	}
 }
 
-func TestCreateConfigOverAnExistingFileExits2(t *testing.T) {
+func TestCreateConfigOverAnExistingFileResetsItsModels(t *testing.T) {
+	f := newFixture(t)
+	path := filepath.Join(f.env.Home, ".config", "r-loop", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("steps:\n  plan:\n    model: fable\n    timeout: 2h\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code := f.main("--create-config")
+
+	if code != 0 || f.out.String() != path+": steps.plan: fable → claude opus high\n" {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, f.out.String(), f.err.String())
+	}
+	data, _ := os.ReadFile(path)
+	if want := "steps:\n  plan:\n    model: opus\n    timeout: 2h\n    provider: claude\n    effort: high\n"; string(data) != want {
+		t.Errorf("file = %q", data)
+	}
+}
+
+func TestCreateConfigOverAFileAtTheDefaultsSaysSo(t *testing.T) {
 	f := newFixture(t)
 	path := filepath.Join(f.env.Home, ".config", "r-loop", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -856,8 +877,8 @@ func TestCreateConfigOverAnExistingFileExits2(t *testing.T) {
 
 	code := f.main("--create-config")
 
-	if code != 2 || !strings.Contains(f.err.String(), "already exists") {
-		t.Fatalf("code=%d stderr=%q", code, f.err.String())
+	if code != 0 || f.out.String() != path+": models already at the defaults\n" {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, f.out.String(), f.err.String())
 	}
 }
 
@@ -875,8 +896,8 @@ func TestMigrateConfigRewritesTheMachineAndProjectFiles(t *testing.T) {
 	code := f.main("--migrate-config")
 
 	project := filepath.Join(f.root, ".r-loop", "config.yaml")
-	want := home + ": steps.plan.fallback: codex → codex gpt-5.6-sol medium\n" +
-		project + ": steps.implement.reviewers.0: claude → claude opus medium\n"
+	want := home + ": steps.plan.fallback: codex → codex gpt-6-sol high\n" +
+		project + ": steps.implement.reviewers.0: claude → claude opus high\n"
 	if code != 0 || f.out.String() != want {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, f.out.String(), f.err.String())
 	}

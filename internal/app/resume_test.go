@@ -426,7 +426,24 @@ const reviewConfig = `steps:
   plan:
     rounds: 0
   implement:
+    provider: codex
+    model: gpt-6-sol
+    effort: medium
+    fallback:
+      provider: claude
+      model: opus
+      effort: medium
     rounds: 3
+    reviewers:
+      - provider: claude
+        model: opus
+        effort: medium
+      - name: ui
+        provider: claude
+        model: opus
+        effort: high
+        prompt: review-ui
+        requires: .claude/skills/test-app/SKILL.md
 `
 
 func TestResumeDuringAReviewContinuesAtTheRecordedRound(t *testing.T) {

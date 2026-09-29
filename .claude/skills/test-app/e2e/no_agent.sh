@@ -147,11 +147,87 @@ if [ "$rc" = 4 ] && { grep -q 'calc.go' "$T/err" || grep -q 'herdr server unreac
 else fail "dirty tree rc=$rc"; fi
 git checkout -q calc.go
 
-H=$(mktemp -d)
+H=$(mktemp -d); HC="$H/.config/r-loop/config.yaml"
+HOME=$H "$BIN" --create-config > "$T/out" 2> "$T/err"; rc=$?
+[ "$rc" = 0 ] && grep -qx "wrote $HC" "$T/out" && cmp -s "$HC" "$ROOT/internal/config/defaults.yaml" \
+  && ok "--create-config writes the embedded defaults" || fail "--create-config rc=$rc"
+HOME=$H "$BIN" --create-config > "$T/out" 2> "$T/err"; rc=$?
+[ "$rc" = 0 ] && grep -qx "$HC: models already at the defaults" "$T/out" && cmp -s "$HC" "$ROOT/internal/config/defaults.yaml" && [ ! -e "$HC.bak" ] \
+  && ok "--create-config over the defaults changes nothing" || fail "--create-config unchanged rc=$rc: $(cat "$T/out" "$T/err")"
+
+cat > "$HC" <<'EOF'
+# mine
+steps:
+  plan:
+    model: fable
+    timeout: 2h
+  implement:
+    provider: codex
+    model: gpt-5.6-sol
+    effort: medium
+    fallback:
+      provider: claude
+      model: sonnet
+      effort: low
+    reviewers:
+      - provider: claude
+        model: sonnet
+        effort: low
+  milestone:
+    reviewers:
+      - provider: codex
+        model: gpt-5.6-sol
+        effort: low
+  docs:
+    prompt: docs
+    check: diff
+    provider: claude
+    model: sonnet
+    effort: low
+    timeout: 30m
+land:
+  fixRounds: 2
+  fix:
+    effort: high
+watchdog:
+  effort: high
+  maxRestarts: 5
+notify:
+  onHalt: "echo hi"
+EOF
+cp "$HC" "$T/orig"
+HOME=$H "$BIN" --create-config > "$T/out" 2> "$T/err"; rc=$?
+lines_ok=1
+for k in 'steps.plan: fable → claude opus high' 'steps.implement: codex gpt-5.6-sol medium → claude opus medium' \
+  'steps.implement.fallback: ' 'steps.implement.reviewers: ' 'steps.milestone.reviewers: .* → removed' 'watchdog: ' 'land.fix: .* → removed'; do
+  grep -q "^$HC: $k" "$T/out" || { lines_ok=0; echo "     missing change line: $k"; }
+done
+if [ "$rc" = 0 ] && [ "$lines_ok" = 1 ] && [ "$(wc -l < "$T/out")" -eq 7 ] && cmp -s "$T/orig" "$HC.bak" \
+  && grep -qx '# mine' "$HC" && grep -qx '    timeout: 2h' "$HC" && grep -qx '  fixRounds: 2' "$HC" && grep -qx '  maxRestarts: 5' "$HC" \
+  && grep -qx '  onHalt: "echo hi"' "$HC" && ! grep -q -e '{}' -e '\[\]' -e gpt-5.6-sol -e fable -e '^  milestone:' -e '^  fix:' "$HC" \
+  && awk '/^  docs:/{f=1;next} f&&/^ ? ?[^ ]/{f=0} f' "$HC" | tr -d ' ' | tr '\n' ',' | grep -qx 'prompt:docs,check:diff,provider:claude,model:sonnet,effort:low,timeout:30m,'; then
+  ok "--create-config resets the models of a customised file, keeps the rest, writes .bak"
+else fail "--create-config reset rc=$rc: $(cat "$T/out" "$T/err")"; fi
+git rm -q .r-loop/config.yaml && git commit -qm drop-config
+HOME=$H "$BIN" docs/plan/todo-tiny.md --dry-run --plain > "$T/out" 2> "$T/err"; rc=$?
+[ "$rc" = 0 ] && grep -q '^plan  claude  opus  high  2h ' "$T/out" && grep -q '^implement  claude  opus  medium ' "$T/out" \
+  && grep -q '^watchdog: claude opus medium ' "$T/out" && ! grep -q -e gpt-5.6-sol -e fable "$T/out" \
+  && ok "the reset file loads with the default models and the kept timeout" || fail "dry-run after reset rc=$rc: $(head -2 "$T/err")"
+
+rm -f "$HC.bak"
+printf 'steps:\n  milestone:\n    reviewers:\n      - provider: codex\n        model: x\n        effort: low\nland:\n  fix:\n    effort: high\n' > "$HC"
 HOME=$H "$BIN" --create-config > "$T/out" 2> "$T/err"; rc1=$?
-HOME=$H "$BIN" --create-config > "$T/out" 2> "$T/err"; rc2=$?
-[ "$rc1" = 0 ] && [ -s "$H/.config/r-loop/config.yaml" ] && [ "$rc2" = 2 ] && ok "--create-config writes once, then refuses" || fail "--create-config rc=$rc1/$rc2"
+HOME=$H "$BIN" docs/plan/todo-tiny.md --dry-run --plain > "$T/out" 2> "$T/err"; rc2=$?
+[ "$rc1" = 0 ] && [ "$rc2" = 0 ] && ! grep -q -e '{}' -e '\[\]' "$HC" \
+  && ok "a reset that empties every mapping still leaves a loadable file" || fail "reset emptied every mapping: create rc=$rc1, dry-run rc=$rc2, file: $(cat "$HC") $(head -1 "$T/err")"
+
+rm -f "$HC.bak"
+printf 'steps:\n  plan:\n    model: [unclosed\n' > "$HC"; cp "$HC" "$T/orig"
+HOME=$H "$BIN" --create-config > "$T/out" 2> "$T/err"; rc=$?
+[ "$rc" = 2 ] && grep -q 'config.yaml: yaml: line' "$T/err" && cmp -s "$T/orig" "$HC" && [ ! -e "$HC.bak" ] \
+  && ok "--create-config over malformed YAML exits 2 and leaves it" || fail "--create-config malformed rc=$rc"
 rm -rf "$H"
+git reset -q --hard HEAD~1
 
 for arg in '../../etc/passwd.md' "x; touch $T/pwned.md" "\`touch $T/pwned\`.md" "\$(touch $T/pwned).md"; do
   run "$arg" --dry-run --plain

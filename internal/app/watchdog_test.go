@@ -453,7 +453,7 @@ func TestExecuteStartsTheWatchdogAndAHaltThroughItsMCPSurfaceExits5(t *testing.T
 	runDir := w.Store.Dir(w.Loop.RunID)
 	mcpPath, data, perm := dog.startConfig()
 	calls := dog.Calls()
-	if len(calls) < 3 || calls[0] != `Split "driver-pane" right `+f.root || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model opus --effort high --mcp-config "+mcpPath || !strings.Contains(calls[2], runDir) {
+	if len(calls) < 3 || calls[0] != `Split "driver-pane" right `+f.root || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model opus --effort medium --mcp-config "+mcpPath || !strings.Contains(calls[2], runDir) {
 		t.Errorf("watchdog calls %q", calls)
 	}
 	if !strings.Contains(data, w.Ask.WatchdogURL()) {

@@ -155,5 +155,13 @@ func defaultRoles() (byPath, byProvider map[string]Fallback, err error) {
 			byProvider[fb.Provider] = fb
 		}
 	})
+	steps := child(doc.Content[0], "steps")
+	for i := 0; i+1 < len(steps.Content); i += 2 {
+		row := steps.Content[i+1]
+		fb := Fallback{child(row, "provider").Value, child(row, "model").Value, child(row, "effort").Value}
+		if _, ok := byProvider[fb.Provider]; !ok {
+			byProvider[fb.Provider] = fb
+		}
+	}
 	return byPath, byProvider, nil
 }
