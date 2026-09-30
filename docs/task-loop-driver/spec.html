@@ -1456,7 +1456,7 @@ change is visible as an edit to one small type.</figcaption>
 <h2 id="topology">Topology</h2>
 
 <p><strong>One binary, in a herdr pane.</strong> The driver renders the TUI on the left and opens
-the watchdog, <code>rloop-wd-&lt;runID&gt;</code>, beside it by splitting its own pane
+the watchdog, <code>rloop-wd-&lt;token&gt;-&lt;runID&gt;</code>, beside it by splitting its own pane
 (<code>HERDR_PANE_ID</code>) with <code>herdr pane split</code> — or, started outside a herdr
 pane, in a workspace of its own that closes with the run; every step session gets its own workspace,
 and a step's reviewers open as panes inside it. A step's workspace stays standing while its phase is blocked, and closes when a later attempt of the step starts or the phase lands; a landed phase's worktree and branch are removed after it. It runs for the length of the run and exits with it, creating no daemon: the sessions
@@ -1480,7 +1480,7 @@ a documented instruction rather than something the driver enforces.</p>
   <rect x="34" y="40" width="404" height="36" rx="4" class="s-fill" stroke="#D1CFC5"/>
   <text x="48" y="63" class="lbl-hd">r-loop TUI</text><text x="150" y="63" class="lbl-sm">RunLoop · every decision</text>
   <rect x="452" y="40" width="394" height="36" rx="4" class="s-fill" stroke="#D97757" stroke-width="2"/>
-  <text x="466" y="63" class="lbl-hd">watchdog</text><text x="554" y="63" class="lbl-sm">rloop-wd-&lt;runID&gt; · reads, never writes</text>
+  <text x="466" y="63" class="lbl-hd">watchdog</text><text x="554" y="63" class="lbl-sm">rloop-wd-&lt;token&gt;-&lt;runID&gt; · reads, never writes</text>
 
   <line x1="120" y1="86" x2="120" y2="104" class="stroke2" marker-end="url(#wg-a)"/>
   <rect x="20" y="106" width="840" height="36" rx="6" class="s-fill" stroke="#D97757" stroke-dasharray="5 4"/>

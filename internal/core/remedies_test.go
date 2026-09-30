@@ -239,7 +239,7 @@ func TestTheBlockerTimeoutIsOpenWhenTheWatchdogHearsStepEnded(t *testing.T) {
 	r.host.behaviour["rloop-p2-implement"] = "fail"
 	w := routedWatch(r.store)
 	host := &probeHost{watch: w, held: make(chan bool, 4)}
-	w.Dog = &Watchdog{Host: host, Store: r.store, RunID: "run-1"}
+	w.Dog = &Watchdog{Host: host, Store: r.store, RunID: "run-1", Root: "/repo"}
 	r.loop.Watcher = w
 
 	r.run(RunOptions{Phases: []string{"2"}})

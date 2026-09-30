@@ -47,24 +47,25 @@ type Watchdog struct {
 	notifyCancel context.CancelFunc
 }
 
-func WatchdogName(runID string) string {
+func WatchdogName(root, runID string) string {
 	id := []byte(strings.ToLower(runID))
 	for i, c := range id {
 		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
 			id[i] = '-'
 		}
 	}
-	if room := watchdogNameMax - len(watchdogPrefix); len(id) > room {
+	prefix := watchdogPrefix + shortHash(root+"\n"+runID) + "-"
+	if room := watchdogNameMax - len(prefix); len(id) > room {
 		h := fnv.New32a()
 		h.Write([]byte(runID))
 		sum := fmt.Sprintf("%08x", h.Sum32())
 		id = append(id[:room-len(sum)-1], "-"+sum...)
 	}
-	return watchdogPrefix + string(id)
+	return prefix + string(id)
 }
 
 func (d *Watchdog) agent() string {
-	return WatchdogName(d.RunID)
+	return WatchdogName(d.Root, d.RunID)
 }
 
 func (d *Watchdog) Start(ctx context.Context) error {

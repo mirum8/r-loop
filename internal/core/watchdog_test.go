@@ -23,6 +23,8 @@ func (p *varsCapture) Render(name string, vars map[string]any) (string, string, 
 	return "watch the run", "embedded:" + name, nil
 }
 
+var dogName = WatchdogName("/repo", "run-1")
+
 func newWatchdog(host SessionHost, store Store, provider ProviderArgs) *Watchdog {
 	return &Watchdog{
 		Host: host, Prompts: &varsCapture{}, Store: store, Provider: provider,
@@ -40,7 +42,7 @@ type vanishingHost struct {
 func (h *vanishingHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
 	if h.gone.Load() {
 		h.record("SessionHost.Prompt %s %q %t %s", agent, text, wait, timeout)
-		return errors.New("herdr agent prompt: herdr: agent_not_found: no agent named rloop-wd-run-1")
+		return errors.New("herdr agent prompt: herdr: agent_not_found: no agent named " + dogName)
 	}
 	return h.fakeSessionHost.Prompt(agent, text, wait, timeout)
 }
@@ -122,7 +124,7 @@ func TestATransientPromptErrorLeavesTheWatchdogLive(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			host := &checkHost{err: errors.New("herdr agent prompt: timed out after 30s")}
-			host.States = map[string]AgentState{"rloop-wd-run-1": tc.state}
+			host.States = map[string]AgentState{dogName: tc.state}
 			host.Err = tc.stateErr
 			store := &fakeStore{}
 			dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
@@ -157,7 +159,7 @@ type stallingHost struct {
 func (h *stallingHost) Prompt(string, string, bool, time.Duration) error {
 	close(h.entered)
 	<-h.release
-	return errors.New("herdr agent prompt: herdr: agent_not_found: no agent named rloop-wd-run-1")
+	return errors.New("herdr agent prompt: herdr: agent_not_found: no agent named " + dogName)
 }
 
 func (h *stallingHost) State(string) (AgentState, error) { return AgentGone, nil }
@@ -303,10 +305,10 @@ func TestWatchdogStartSplitsThenStartsThenPromptsWithoutWait(t *testing.T) {
 	}
 
 	want := []string{
-		"SessionHost.AgentPane rloop-wd-run-1",
+		"SessionHost.AgentPane " + dogName,
 		"SessionHost.Split driver-pane right /repo",
-		"SessionHost.Start pane-1 rloop-wd-run-1 claude [--model sonnet --effort low --mcp-config /run/wd.json]",
-		`SessionHost.Prompt rloop-wd-run-1 "watch the run" false 0s`,
+		"SessionHost.Start pane-1 " + dogName + " claude [--model sonnet --effort low --mcp-config /run/wd.json]",
+		`SessionHost.Prompt ` + dogName + ` "watch the run" false 0s`,
 	}
 	if got := host.Calls(); !reflect.DeepEqual(got, want) {
 		t.Errorf("calls\n got %q\nwant %q", got, want)
@@ -341,7 +343,7 @@ func TestWatchdogWithoutModelAndEffortStartsWithNoSuchArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := host.Calls()[2]; got != "SessionHost.Start pane-1 rloop-wd-run-1 codex []" {
+	if got := host.Calls()[2]; got != "SessionHost.Start pane-1 "+dogName+" codex []" {
 		t.Errorf("start %q", got)
 	}
 }
@@ -374,7 +376,7 @@ func TestWatchdogStopClosesThePaneItOpened(t *testing.T) {
 }
 
 func TestWatchdogStartClosesTheStaleWatchdogOfADeadDriverFirst(t *testing.T) {
-	host := &fakeSessionHost{Panes: map[string]string{"rloop-wd-run-1": "old-pane"}}
+	host := &fakeSessionHost{Panes: map[string]string{dogName: "old-pane"}}
 	store := &fakeStore{}
 	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
 
@@ -383,11 +385,11 @@ func TestWatchdogStartClosesTheStaleWatchdogOfADeadDriverFirst(t *testing.T) {
 	}
 
 	want := []string{
-		"SessionHost.AgentPane rloop-wd-run-1",
+		"SessionHost.AgentPane " + dogName,
 		"SessionHost.ClosePane old-pane",
 		"SessionHost.Split driver-pane right /repo",
-		"SessionHost.Start pane-1 rloop-wd-run-1 claude []",
-		`SessionHost.Prompt rloop-wd-run-1 "watch the run" false 0s`,
+		"SessionHost.Start pane-1 " + dogName + " claude []",
+		`SessionHost.Prompt ` + dogName + ` "watch the run" false 0s`,
 	}
 	if got := host.Calls(); !reflect.DeepEqual(got, want) {
 		t.Errorf("calls\n got %q\nwant %q", got, want)
@@ -435,11 +437,11 @@ func TestWatchdogWithNoDriverPaneOpensItsOwnWorkspaceAndStopClosesIt(t *testing.
 	}
 
 	want := []string{
-		"SessionHost.AgentPane rloop-wd-run-1",
+		"SessionHost.AgentPane " + dogName,
 		"SessionHost.Open /repo ◆ watchdog map[]",
 		"SessionHost.Tag ws-1 map[rloop:◆ run run-1]",
-		"SessionHost.Start pane-1 rloop-wd-run-1 claude []",
-		`SessionHost.Prompt rloop-wd-run-1 "watch the run" false 0s`,
+		"SessionHost.Start pane-1 " + dogName + " claude []",
+		`SessionHost.Prompt ` + dogName + ` "watch the run" false 0s`,
 		"SessionHost.Close ws-1",
 	}
 	if got := host.Calls(); !reflect.DeepEqual(got, want) {
@@ -462,7 +464,7 @@ func TestWatchdogStopBeforeStartTouchesNothing(t *testing.T) {
 
 func TestUnreachableIsRecordedBeforeTheWatchdogIsDropped(t *testing.T) {
 	host := &blockedHost{}
-	host.States = map[string]AgentState{"rloop-wd-run-1": AgentGone}
+	host.States = map[string]AgentState{dogName: AgentGone}
 	store := &fakeStore{Err: errors.New("disk full")}
 	face := &fakeFace{}
 	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
@@ -497,7 +499,7 @@ func (h *blockedHost) Prompt(agent, text string, wait bool, timeout time.Duratio
 
 func TestNotifyRecordsWatchdogUnreachableWhenABlockedWatchdogIsGone(t *testing.T) {
 	host := &blockedHost{}
-	host.States = map[string]AgentState{"rloop-wd-run-1": AgentGone}
+	host.States = map[string]AgentState{dogName: AgentGone}
 	store := &fakeStore{}
 	face := &fakeFace{}
 	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
@@ -558,7 +560,7 @@ func TestNotifyIsOnePromptWhenTheWatchdogAccepts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := host.Calls(); !reflect.DeepEqual(got, []string{`SessionHost.Prompt rloop-wd-run-1 "hello" true 1m0s`}) {
+	if got := host.Calls(); !reflect.DeepEqual(got, []string{`SessionHost.Prompt ` + dogName + ` "hello" true 1m0s`}) {
 		t.Errorf("calls %q", got)
 	}
 }
@@ -578,8 +580,8 @@ func TestWatchSendsStepStartedAndStepEndedToTheWatchdog(t *testing.T) {
 	}
 
 	want := []string{
-		`SessionHost.Prompt rloop-wd-run-1 "step started phase-2/implement agent rloop-p2-implement worktree /repo/.r-loop/wt/phase-2 base abc123" false 0s`,
-		`SessionHost.Prompt rloop-wd-run-1 "step ended phase-2/implement failed tests red" false 0s`,
+		`SessionHost.Prompt ` + dogName + ` "step started phase-2/implement agent rloop-p2-implement worktree /repo/.r-loop/wt/phase-2 base abc123" false 0s`,
+		`SessionHost.Prompt ` + dogName + ` "step ended phase-2/implement failed tests red" false 0s`,
 	}
 	if got := host.Calls(); !reflect.DeepEqual(got, want) {
 		t.Errorf("calls\n got %q\nwant %q", got, want)
@@ -629,32 +631,38 @@ func TestAHaltFromTheMCPHandlerStopsTheLoopWithExit5(t *testing.T) {
 func TestWatchdogNameIsPerRunAndFitsHerdrsNameRule(t *testing.T) {
 	valid := regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	cases := map[string]string{
-		"20260919-082451":   "rloop-wd-20260919-082451",
-		"20260919-082451-2": "rloop-wd-20260919-082451-2",
-		"run-1":             "rloop-wd-run-1",
+		"20260919-082451":   "rloop-wd-752q2-20260919-082451",
+		"20260919-082451-2": "rloop-wd-sogz9-20260919-082451-2",
+		"run-1":             "rloop-wd-2kuxv-run-1",
 	}
 	for runID, want := range cases {
-		if got := WatchdogName(runID); got != want {
+		if got := WatchdogName("/repo", runID); got != want {
 			t.Errorf("WatchdogName(%q) = %q, want %q", runID, got, want)
 		}
 	}
 	for _, runID := range []string{"20260919-082451-12345678901234567890", "Run.ID/With Odd:Chars", ""} {
-		if got := WatchdogName(runID); !valid.MatchString(got) {
+		if got := WatchdogName("/repo", runID); !valid.MatchString(got) {
 			t.Errorf("WatchdogName(%q) = %q breaks herdr's name rule", runID, got)
 		}
 	}
-	if WatchdogName("20260919-082451") == WatchdogName("20260919-082451-2") {
+	if WatchdogName("/repo", "20260919-082451") == WatchdogName("/repo", "20260919-082451-2") {
 		t.Error("two runs share a watchdog name")
 	}
-	if WatchdogName("20260919-082451-123456789012345678901") == WatchdogName("20260919-082451-123456789012345678902") {
+	if WatchdogName("/repo", "20260919-082451-123456789012345678901") == WatchdogName("/repo", "20260919-082451-123456789012345678902") {
 		t.Error("long run ids that differ at the end share a watchdog name")
+	}
+	if WatchdogName("/repo-a", "20260919-082451") == WatchdogName("/repo-b", "20260919-082451") {
+		t.Error("two repos share a watchdog name")
+	}
+	if WatchdogName("/repo", "20260919-082451") != WatchdogName("/repo", "20260919-082451") {
+		t.Error("a resumed run gets a different watchdog name")
 	}
 }
 
 func TestWatchdogStartNeverTouchesAnotherRunsLiveWatchdog(t *testing.T) {
 	host := &fakeSessionHost{Panes: map[string]string{
-		"rloop-wd-20260919-082451": "other-run-pane",
-		"rloop-watchdog":           "legacy-pane",
+		WatchdogName("/repo", "20260919-082451"): "other-run-pane",
+		"rloop-watchdog":                         "legacy-pane",
 	}}
 	store := &fakeStore{}
 	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
@@ -664,11 +672,52 @@ func TestWatchdogStartNeverTouchesAnotherRunsLiveWatchdog(t *testing.T) {
 	}
 
 	for _, c := range host.Calls() {
-		if strings.HasPrefix(c, "SessionHost.ClosePane") || strings.HasPrefix(c, "SessionHost.AgentPane rloop-wd-20260919") {
+		if strings.HasPrefix(c, "SessionHost.ClosePane") || c == "SessionHost.AgentPane "+WatchdogName("/repo", "20260919-082451") {
 			t.Errorf("touched another run's watchdog: %q", c)
 		}
 	}
 	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == "watchdog-stale-closed" {
+			t.Errorf("recorded %+v", rec.Event)
+		}
+	}
+}
+
+func TestWatchdogsOfTwoReposStartedInTheSameSecondKeepApart(t *testing.T) {
+	started := func(host *fakeSessionHost) string {
+		for _, c := range host.Calls() {
+			if f := strings.Fields(c); len(f) > 2 && f[0] == "SessionHost.Start" {
+				return f[2]
+			}
+		}
+		t.Fatalf("no watchdog started: %q", host.Calls())
+		return ""
+	}
+	hostA := &fakeSessionHost{}
+	dogA := newWatchdog(hostA, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	dogA.RunID, dogA.Root = "20260930-173751", "/repo-a"
+	if err := dogA.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	nameA := started(hostA)
+	hostB := &fakeSessionHost{Panes: map[string]string{nameA: "repo-a-watchdog"}}
+	storeB := &fakeStore{}
+	dogB := newWatchdog(hostB, storeB, ProviderArgs{Kind: "claude"})
+	dogB.RunID, dogB.Root = "20260930-173751", "/repo-b"
+
+	if err := dogB.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if nameB := started(hostB); nameB == nameA {
+		t.Errorf("both repos' watchdogs are named %s", nameA)
+	}
+	for _, c := range hostB.Calls() {
+		if c == "SessionHost.ClosePane repo-a-watchdog" {
+			t.Errorf("repo b closed repo a's live watchdog")
+		}
+	}
+	for _, rec := range storeB.Records[dogB.RunID] {
 		if rec.Kind == RecordEvent && rec.Event.Kind == "watchdog-stale-closed" {
 			t.Errorf("recorded %+v", rec.Event)
 		}
@@ -687,14 +736,14 @@ func (h *askingHost) Prompt(agent, text string, wait bool, timeout time.Duration
 	defer h.mu.Unlock()
 	h.prompts++
 	if h.prompts <= h.blockedFor {
-		return errors.New("herdr agent prompt: herdr: agent_blocked: agent rloop-wd-run-1 is blocked and requires interactive input")
+		return errors.New("herdr agent prompt: herdr: agent_blocked: agent " + dogName + " is blocked and requires interactive input")
 	}
 	return nil
 }
 
 func TestNotifyWaitsOutAWatchdogAskingTheMaintainer(t *testing.T) {
 	host := &askingHost{blockedFor: 5}
-	host.States = map[string]AgentState{"rloop-wd-run-1": AgentBlocked}
+	host.States = map[string]AgentState{dogName: AgentBlocked}
 	store := &fakeStore{}
 	face := &fakeFace{}
 	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
@@ -727,7 +776,7 @@ func TestNotifyWaitsOutAWatchdogAskingTheMaintainer(t *testing.T) {
 
 func TestWaitingIsMarkedOnceAcrossDeliveriesUntilAPromptIsAccepted(t *testing.T) {
 	host := &askingHost{blockedFor: 3}
-	host.States = map[string]AgentState{"rloop-wd-run-1": AgentBlocked}
+	host.States = map[string]AgentState{dogName: AgentBlocked}
 	store := &fakeStore{}
 	face := &fakeFace{}
 	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
@@ -753,7 +802,7 @@ func TestWaitingIsMarkedOnceAcrossDeliveriesUntilAPromptIsAccepted(t *testing.T)
 
 func TestStopGivesUpOnANoticeTheWatchdogIsBlockedOn(t *testing.T) {
 	host := &askingHost{blockedFor: 100}
-	host.States = map[string]AgentState{"rloop-wd-run-1": AgentBlocked}
+	host.States = map[string]AgentState{dogName: AgentBlocked}
 	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
 	dog.Sleep = nil
 	dog.Post("step started phase-2/implement")
@@ -1225,7 +1274,7 @@ func TestAskingTheMaintainerShowsTheQuestionUntilTheWatchdogsNextCall(t *testing
 
 func TestAWatchdogAskingThenBlockedOnTheMaintainerIsShownWaitingOnce(t *testing.T) {
 	host := &askingHost{blockedFor: 2}
-	host.States = map[string]AgentState{"rloop-wd-run-1": AgentBlocked}
+	host.States = map[string]AgentState{dogName: AgentBlocked}
 	store := &fakeStore{}
 	face := &fakeFace{}
 	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
@@ -1294,7 +1343,7 @@ func TestAWatchdogAskingTheMaintainerTakesFocusOncePerQuestion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"rloop-wd-run-1", "rloop-wd-run-1"}
+	want := []string{dogName, dogName}
 	if !reflect.DeepEqual(host.focused, want) {
 		t.Fatalf("focused %v, want %v", host.focused, want)
 	}
@@ -1302,7 +1351,7 @@ func TestAWatchdogAskingTheMaintainerTakesFocusOncePerQuestion(t *testing.T) {
 
 func TestAWatchdogBlockedOnAPromptTakesFocus(t *testing.T) {
 	host := &focusHost{askingHost: askingHost{blockedFor: 1}}
-	host.States = map[string]AgentState{"rloop-wd-run-1": AgentBlocked}
+	host.States = map[string]AgentState{dogName: AgentBlocked}
 	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
 	dog.Face = &fakeFace{}
 
@@ -1310,7 +1359,7 @@ func TestAWatchdogBlockedOnAPromptTakesFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if want := []string{"rloop-wd-run-1"}; !reflect.DeepEqual(host.focused, want) {
+	if want := []string{dogName}; !reflect.DeepEqual(host.focused, want) {
 		t.Fatalf("focused %v, want %v", host.focused, want)
 	}
 }

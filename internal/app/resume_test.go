@@ -196,7 +196,7 @@ func (f *fixture) sim(w *Wiring, sim *simHost) *landRecorder {
 	w.Loop.Sessions.Host = sim
 	w.Loop.Sessions.Poll = 5 * time.Millisecond
 	w.Dog.Host = answeringDog(w, "sqlite", "docs/topic/todo.md:1")
-	triagers.Store(core.WatchdogName(w.Loop.RunID), w)
+	triagers.Store(core.WatchdogName(w.Dog.Root, w.Loop.RunID), w)
 	w.Config.Watchdog.TriageTimeout = 10 * time.Second
 	w.Loop.BlockerTimeout = 0
 	lander := &landRecorder{st: w.Store}
@@ -1769,9 +1769,9 @@ func TestResumeAfterAKilledDriverClosesItsStaleWatchdogAndStartsItsOwn(t *testin
 	}
 	f.sim(w, newSim())
 	dog := &dogHost{stale: map[string]string{
-		core.WatchdogName(id):                "old-wd",
-		core.WatchdogName("20260101-000000"): "other-run-wd",
-		"rloop-watchdog":                     "legacy-wd",
+		core.WatchdogName(w.Dog.Root, id):                "old-wd",
+		core.WatchdogName(w.Dog.Root, "20260101-000000"): "other-run-wd",
+		"rloop-watchdog":                                 "legacy-wd",
 	}}
 	w.Dog.Host = dog
 	code := w.Execute(opts)
@@ -1780,7 +1780,7 @@ func TestResumeAfterAKilledDriverClosesItsStaleWatchdogAndStartsItsOwn(t *testin
 		t.Fatalf("resume exit %d\n%s%s", code, f.out, f.err)
 	}
 	calls := dog.Calls()
-	if len(calls) < 3 || calls[0] != "ClosePane old-wd" || !strings.HasPrefix(calls[1], `Split "driver-pane" right`) || !strings.HasPrefix(calls[2], "Start wd-pane "+core.WatchdogName(id)+" ") {
+	if len(calls) < 3 || calls[0] != "ClosePane old-wd" || !strings.HasPrefix(calls[1], `Split "driver-pane" right`) || !strings.HasPrefix(calls[2], "Start wd-pane "+core.WatchdogName(w.Dog.Root, id)+" ") {
 		t.Fatalf("watchdog calls %q", calls)
 	}
 	for _, c := range calls {

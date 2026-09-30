@@ -134,7 +134,7 @@ func TestRaiseRecordsRoutesAndPausesTheReviewersOwner(t *testing.T) {
 	if !r.s.OpenQuestion.Load() {
 		t.Error("the owner step was not paused")
 	}
-	if got := r.waitDog(t, 1); got[0] != "SessionHost.Prompt rloop-wd-run-1 "+strconv.Quote(text)+" false 0s" {
+	if got := r.waitDog(t, 1); got[0] != "SessionHost.Prompt "+dogName+" "+strconv.Quote(text)+" false 0s" {
 		t.Errorf("watchdog prompts %q", got)
 	}
 

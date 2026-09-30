@@ -318,10 +318,12 @@ so.
   All these agents use one 32-character cap: the suffix stays, while an overlong prefix is cut
   and receives a five-character hash of its full value. An `agent-named` event with
   `attempt`, `agent`, and for reviewers `reviewer` and `round`, is appended before each `Host.Start`.
-  Watchdog `rloop-wd-<runID>`
-  (`core.WatchdogName`: the run id lowercased, every character outside `[a-z0-9_-]` turned into
-  `-`, and a name longer than 32 cut to fit with a `-<8-hex fnv32a of the run id>` suffix), so a
-  run never touches another run's watchdog — all within `[a-z][a-z0-9_-]{0,31}`. Findings `phase-<N>/<kind>-findings-<name>-r<round>.json`; verdict
+  Watchdog `rloop-wd-<token>-<runID>`
+  (`core.WatchdogName(root, runID)`: the token is five base36 characters of
+  `fnv32a(<repo root>\n<runID>)` modulo 36⁵, the run id lowercased, every character outside
+  `[a-z0-9_-]` turned into `-`, and a name longer than 32 cut to fit with a
+  `-<8-hex fnv32a of the run id>` suffix), so a run never touches another run's watchdog, even
+  one in another repository started in the same second — all within `[a-z][a-z0-9_-]{0,31}`. Findings `phase-<N>/<kind>-findings-<name>-r<round>.json`; verdict
   `phase-<N>/<kind>-verdict-r<round>.json`; milestone report
   `docs/<topic>/reports/milestone-<M>-<slug>.md`.
 - **Spawn** — `SessionManager{Host; Repo; Prompts; Store; Ask AskChannel; Resolve; Now; Poll,
@@ -608,7 +610,7 @@ so.
 
 ## Milestone 7 — The watchdog
 
-- **Session** — agent `rloop-wd-<runID>` (`core.WatchdogName`, Milestone 2 names). `Start` first
+- **Session** — agent `rloop-wd-<token>-<runID>` (`core.WatchdogName(Root, RunID)`, Milestone 2 names). `Start` first
   asks `AgentPane` for that name; a stale watchdog of the same run (left by a killed driver) is
   recorded as `Event{Kind: "watchdog-stale-closed", Fields{pane}}` and closed with `ClosePane`.
   It then records `Event{Kind: "watchdog-start"}` and splits a pane to the right of the driver's

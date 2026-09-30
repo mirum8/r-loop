@@ -472,7 +472,7 @@ func TestThePhaseCheckStartReachesTheFaceBeforeTheWorktreeAndTheCheckPrompt(t *t
 	phase := indexOf(calls, "Face.Emit phase-start")
 	start := indexOf(calls, "Face.Emit phase-check-start")
 	worktree := indexOf(calls, "Repo.AddWorktree .r-loop/wt/phase-1")
-	prompt := indexOf(calls, `SessionHost.Prompt rloop-wd-run-1 "check phase 1`)
+	prompt := indexOf(calls, `SessionHost.Prompt `+dogName+` "check phase 1`)
 	if phase < 0 || start < 0 || worktree < 0 || prompt < 0 || !(phase < start && start < worktree && worktree < prompt) {
 		t.Fatalf("event order: phase %d, start %d, worktree %d, prompt %d in %q", phase, start, worktree, prompt, calls)
 	}

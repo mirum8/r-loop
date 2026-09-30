@@ -109,7 +109,7 @@ func newCheckRig(t *testing.T) *checkRig {
 	prompts := &planVars{}
 	r.loop.Sessions.Prompts = prompts
 	host := &checkHost{fakeSessionHost: fakeSessionHost{callLog: callLog{Shared: r.shared}}}
-	dog := &Watchdog{Host: host, Store: r.store, Face: r.face, RunID: "run-1", Sleep: func(time.Duration) {}}
+	dog := &Watchdog{Host: host, Store: r.store, Face: r.face, RunID: "run-1", Root: "/repo", Sleep: func(time.Duration) {}}
 	w := &Watch{Store: r.store, Face: r.face, PhaseCheck: &PhaseCheck{Dog: dog, Repo: r.repo, Timeout: 10 * time.Minute}}
 	r.loop.Watcher = w
 	return &checkRig{loopRig: r, dogHost: host, watch: w, prompts: prompts}
@@ -170,7 +170,7 @@ func TestPhaseCheckCreatesTheWorktreeThenWaitsOnTheCheckPromptBeforeThePlanSpawn
 
 	calls := r.shared.Calls()
 	add := indexOf(calls, "Repo.AddWorktree .r-loop/wt/phase-1 r-loop/phase-1 main")
-	check := indexOf(calls, `SessionHost.Prompt rloop-wd-run-1 "check phase 1`)
+	check := indexOf(calls, `SessionHost.Prompt `+dogName+` "check phase 1`)
 	spawn := indexOf(calls, "SessionHost.Open")
 	if add < 0 || check < 0 || spawn < 0 || !(add < check && check < spawn) {
 		t.Fatalf("worktree %d, check %d, spawn %d in\n%q", add, check, spawn, calls)
@@ -200,7 +200,7 @@ func TestABacklogItemCheckCarriesTheBlockWithoutFilesOrRisk(t *testing.T) {
 		t.Fatalf("exit %d", code)
 	}
 	calls := r.shared.Calls()
-	check := indexOf(calls, `SessionHost.Prompt rloop-wd-run-1 "check phase 1`)
+	check := indexOf(calls, `SessionHost.Prompt `+dogName+` "check phase 1`)
 	if check < 0 {
 		t.Fatalf("check prompt absent: %q", calls)
 	}
@@ -227,7 +227,7 @@ func TestABacklogGroupCheckNamesEveryMember(t *testing.T) {
 		t.Fatalf("exit %d", code)
 	}
 	calls := r.shared.Calls()
-	check := indexOf(calls, `SessionHost.Prompt rloop-wd-run-1 "check phase 1`)
+	check := indexOf(calls, `SessionHost.Prompt `+dogName+` "check phase 1`)
 	if check < 0 {
 		t.Fatalf("check prompt absent: %q", calls)
 	}
@@ -253,7 +253,7 @@ func TestAPlanFilePhaseWithoutFilesOrRiskStillSaysNone(t *testing.T) {
 		t.Fatalf("exit %d", code)
 	}
 	calls := r.shared.Calls()
-	check := indexOf(calls, `SessionHost.Prompt rloop-wd-run-1 "check phase 1`)
+	check := indexOf(calls, `SessionHost.Prompt `+dogName+` "check phase 1`)
 	if check < 0 {
 		t.Fatalf("check prompt absent: %q", calls)
 	}

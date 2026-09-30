@@ -77,7 +77,7 @@ func TestRouteHandsTheQuestionToTheWatchdogAndReturns(t *testing.T) {
 
 	r.route(t)
 
-	want := `SessionHost.Prompt rloop-wd-run-1 "question q1 from phase-3/implement: which db? options: sqlite, postgres recommended: sqlite" false 0s`
+	want := `SessionHost.Prompt ` + dogName + ` "question q1 from phase-3/implement: which db? options: sqlite, postgres recommended: sqlite" false 0s`
 	if got := r.host.Calls(); len(got) != 1 || got[0] != want {
 		t.Errorf("watchdog prompts %q", got)
 	}

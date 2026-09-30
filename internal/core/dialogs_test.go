@@ -111,7 +111,7 @@ func (r *dialogRig) waitDog(t *testing.T, n int) []string {
 }
 
 func dialogPrompt(id, step, screen string) string {
-	return "SessionHost.Prompt rloop-wd-run-1 " + strconv.Quote("dialog "+id+" from phase-2/"+step+": answer with answer_dialog\n\n"+screen) + " false 0s"
+	return "SessionHost.Prompt " + dogName + " " + strconv.Quote("dialog "+id+" from phase-2/"+step+": answer with answer_dialog\n\n"+screen) + " false 0s"
 }
 
 func (r *dialogRig) questions() []Question {

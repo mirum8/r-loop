@@ -660,7 +660,7 @@ func TestARejectedWatchdogSignalDuringTheBlockerTimeoutHaltsTheHeldStep(t *testi
 
 func TestStepNoticesDoNotWaitForAWatchdogAskingTheMaintainer(t *testing.T) {
 	host := &askingHost{blockedFor: 1}
-	host.States = map[string]AgentState{"rloop-wd-run-1": AgentBlocked}
+	host.States = map[string]AgentState{dogName: AgentBlocked}
 	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
 	answered := make(chan struct{})
 	dog.Sleep = func(time.Duration) { <-answered }
