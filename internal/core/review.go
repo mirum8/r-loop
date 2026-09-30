@@ -233,15 +233,8 @@ func (h ReviewHalf) args(worker *Session, rv Reviewer) (ProviderArgs, string, er
 	if err != nil {
 		return a, url, fmt.Errorf("reviewer %s: %w", rv.ID(), err)
 	}
-	switch rv.TemplateFor(worker.Ref.Key.Kind) {
-	case "review":
-		if a.Review == "" {
-			return a, url, fmt.Errorf("reviewer %s declares no native reviewer", rv.ID())
-		}
-	case "review-security":
-		if a.SecurityReview == "" {
-			return a, url, fmt.Errorf("reviewer %s: provider %s declares no securityReview", rv.ID(), rv.Provider)
-		}
+	if rv.TemplateFor(worker.Ref.Key.Kind) == "review" && a.Review == "" {
+		return a, url, fmt.Errorf("reviewer %s declares no native reviewer", rv.ID())
 	}
 	return a, url, nil
 }
@@ -650,11 +643,7 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 	vars["Round"] = rd.n
 	vars["Rounds"] = rd.rounds
 	vars["ReviewRan"] = false
-	command := args.Review
-	if rv.TemplateFor(key.Kind) == "review-security" {
-		command = args.SecurityReview
-	}
-	vars["ReviewCommand"] = strings.ReplaceAll(command, "{output}", shellQuote(filepath.Join(artifacts, "native-review.txt")))
+	vars["ReviewCommand"] = strings.ReplaceAll(args.Review, "{output}", shellQuote(filepath.Join(artifacts, "native-review.txt")))
 	vars["FindingsPath"] = filepath.Join(dir, fmt.Sprintf("%s-findings-%s-r%d.json", key.Kind, id, rd.n))
 	vars["ArtifactsDir"] = artifacts
 	vars["RequiredPath"] = required
@@ -674,7 +663,7 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 }
 
 func nativeReview(template string) bool {
-	return template == "review" || template == "review-security"
+	return template == "review"
 }
 
 func reviewCommand(s *Session) string {

@@ -726,19 +726,10 @@ reviewer.
   findings files go to the one fix half, a real P1/P2 from either opens the next round, and real
   P3/P4 UI findings are reported only (`finding` events). `gatefix` inherits the implement row's
   reviewers, the `ui` reviewer with them.
-- **Security reviewer (ADR-85)**:
-  - **Provider keys.** A provider block may set `securityReview`, the scan the reviewer runs, and `securityPlugin`, a `plugin@marketplace`. `securityPlugin` needs `securityReview`. `ToCore` carries `securityReview` as `ProviderArgs.SecurityReview`.
-    - codex: `$codex-security:security-diff-scan`, plugin `codex-security@openai-curated`
-    - claude: `/security-review`, no plugin
+- **Security reviewer (ADR-85, amended)**:
   - **Default reviewer.** `implement.reviewers` gets `{name: security, provider: codex, model: sol, effort: high, prompt: review-security}`.
-  - **Template.** A reviewer with template `review-security` gets `ReviewCommand` = `SecurityReview`. `ReviewHalf.args` fails `reviewer <name>: provider <p> declares no securityReview` before any pane opens.
-  - **Evidence.** Its evidence is `<ArtifactsDir>/native-review.txt`, the scan's full report, checked like a `review` reviewer's. It never takes the native pane-review path.
-  - **Preflight.** A missing `securityReview` is `exit 2`. For each unique `(kind, securityPlugin)`, `providers.EnsurePlugin` does three things:
-    1. runs `<kind> plugin list --json`;
-    2. when the plugin is not installed and enabled, runs `codex plugin add` or `claude plugin install`;
-    3. lists again, prints `plugin: <kind> <selector> installed`, or fails with `exit 2`.
-
-    `--dry-run` skips this, as it skips the binary checks.
+  - **Template.** `review-security` is a prompt review, like `review-ui`: the reviewer reads `git status --porcelain`, `git diff HEAD` and every untracked file in the worktree, follows the changed behaviour into the code it reaches, and reports only findings with a concrete path from an attacker-controlled input to a sink. It gets no `ReviewCommand`, writes no `native-review.txt`, and its `review-find` records `command: prompt review-security`. It runs on any provider.
+  - **No provider keys, no plugin.** Providers have no `securityReview` or `securityPlugin` key (either is an unknown key, `exit 2`), and preflight installs nothing.
 
 ## Milestone 9 — Free-text start
 

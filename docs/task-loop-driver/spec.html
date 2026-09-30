@@ -3735,37 +3735,38 @@ landed.</p>
 need reconciling.</p>
 </div>
 <div class="adr">
-<h3 id="adr-85">ADR-85 — A security reviewer runs the provider's own security scan</h3>
-<p><span class="f">Status</span> accepted</p>
+<h3 id="adr-85">ADR-85 — A security reviewer reviews the change itself</h3>
+<p><span class="f">Status</span> accepted, amended 2026-09-30</p>
 <p><span class="f">Context</span> The code reviewer and the <code>ui</code> reviewer do not
-look for security regressions on purpose. Codex ships a security plugin, <code>codex-security</code>.
-Claude Code has a built-in <code>/security-review</code> and a <code>claude-security</code> plugin.
-The maintainer picks which of the two runs the pass, and does not want to install a plugin by hand.</p>
+look for security regressions on purpose. The first version of this decision ran each provider's
+own scan: <code>$codex-security:security-diff-scan</code> from a Codex plugin, or Claude's built-in
+<code>/security-review</code>. Neither works under the driver. codex-cli 0.156.1 lists
+<code>codex-security</code> as installed and enabled but loads none of its skills in a session: the
+local <code>openai-curated</code> marketplace is hidden behind <code>openai-curated-remote</code>, and
+a session loads no remote-marketplace plugin. <code>/security-review</code> diffs against
+<code>origin/HEAD</code>, fails where there is none, scans every unpushed commit, and misses
+untracked files — and every new file a phase writes is untracked until the driver commits it.</p>
 <p><span class="f">Decision</span> Security review is an ordinary reviewer with
 <code>prompt: review-security</code>, <code>name: security</code> on the implement row by default,
-<code>provider: codex</code>. Its <code>provider</code> picks who runs it. A provider block names
-the scan in <code>securityReview</code> and, when the scan needs one, the plugin in
-<code>securityPlugin</code> (<code>plugin@marketplace</code>). Codex runs
-<code>$codex-security:security-diff-scan</code> from <code>codex-security@openai-curated</code>.
-Claude runs the built-in <code>/security-review</code>, with no plugin. Preflight, not the install
-script, makes sure every plugin a configured security reviewer needs is installed and enabled. It
-lists the provider's plugins as JSON, adds a missing one, and checks the list again. A failed install
-stops preflight with exit 2; <code>--dry-run</code> installs nothing. The scan's full report is the
-reviewer's <code>native-review.txt</code>, and the driver fails a security reviewer whose report is
-missing or empty. Its findings go to the step's own session like any other reviewer's: the session
-judges each one, then fixes the real P1/P2 findings.</p>
-<p><span class="f">Alternatives</span> Install the plugins in <code>install.sh</code> —
-rejected: the script does not know the config, and a project config can switch the provider after
-the install. <code>claude-security</code> for Claude — rejected: it scans committed changes only,
-and nothing is committed before the last review round. It also asks the user questions through its
-own menus. A new step kind — rejected: a reviewer already has the pane, rounds, findings and
-verdict.</p>
-<p><span class="f">Consequences</span> The first run with a Codex security reviewer changes the
-machine's Codex setup by installing a plugin. <code>gatefix</code> inherits the security reviewer
-with the implement row's other reviewers. A machine config written before this ADR keeps its own
-reviewer list; <code>r-loop --create-config</code> resets it to the defaults.</p>
-<p><span class="f">Revisit when</span> <code>claude-security</code> can scan a working tree
-without asking, or a Codex security scan outgrows <code>reviewTimeout</code>.</p>
+<code>provider: codex</code>. The template is a prompt review, like <code>review-ui</code>: the
+reviewer reads <code>git status</code>, <code>git diff HEAD</code> and every untracked file in the
+worktree, follows the changed behaviour into the code it reaches, and reports only findings with a
+concrete path from an attacker-controlled input to a sink, each with severity, <code>path:line</code>,
+the path and the remediation. It runs on any provider, needs no plugin, and preflight installs
+nothing. Its findings go to the step's own session like any other reviewer's: the session judges
+each one, then fixes the real P1/P2 findings.</p>
+<p><span class="f">Alternatives</span> The provider's own scan (the first version) — rejected: see
+Context. Installing the plugins in <code>install.sh</code> — rejected with it.
+<code>claude-security</code> for Claude — rejected: it scans committed changes only, and nothing is
+committed before the last review round. It also asks the user questions through its own menus.
+A new step kind — rejected: a reviewer already has the pane, rounds, findings and verdict.</p>
+<p><span class="f">Consequences</span> The pass is as deep as the reviewer's model and prompt, not
+a dedicated scanner's. Providers have no <code>securityReview</code> or <code>securityPlugin</code>
+key. <code>gatefix</code> inherits the security reviewer with the implement row's other reviewers.
+A machine config written before this ADR keeps its own reviewer list;
+<code>r-loop --create-config</code> resets it to the defaults.</p>
+<p><span class="f">Revisit when</span> a Codex session loads <code>codex-security</code> again, or
+<code>/security-review</code> can scan a working tree with its untracked files against a given base.</p>
 </div>
 
 

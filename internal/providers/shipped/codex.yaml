@@ -10,5 +10,3 @@ ask: mcp
 review: "/review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings."
 reviewStart: ">> Code review started"
 reviewDone: "<< Code review finished"
-securityReview: "$codex-security:security-diff-scan"
-securityPlugin: "codex-security@openai-curated"

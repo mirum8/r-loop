@@ -995,23 +995,23 @@ func TestWatchdogCatchesUpWithRunStatusAndStepInfo(t *testing.T) {
 	}
 }
 
-func TestSecurityReviewRunsTheScanFirstAndKeepsItsReport(t *testing.T) {
-	vars := fullVars()
-	vars["ReviewCommand"] = "$codex-security:security-diff-scan"
-
-	got := render(t, New(t.TempDir()), "review-security", vars)
+func TestSecurityReviewReadsTheUntrackedFilesAndNeedsAnAttackPath(t *testing.T) {
+	got := render(t, New(t.TempDir()), "review-security", fullVars())
 
 	for _, want := range []string{
-		"    $codex-security:security-diff-scan\n",
-		"One that starts with `$` is a skill",
-		"scan the uncommitted working-tree changes against HEAD, to modify no code",
-		"Save the scan's full final report verbatim to `/runs/r1/phase-7/implement-rv-ui-r1/native-review.txt`",
-		"never review by hand",
-		"Each `detail` gives the scan's severity",
+		"`git status --porcelain` and `git diff HEAD`",
+		"Read every untracked file in full",
+		"a concrete path from an attacker-controlled input to the sink",
+		"P1 exploitable as shipped",
 		"Change no file in",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, got)
+		}
+	}
+	for _, gone := range []string{"ReviewCommand", "native-review.txt", "never review by hand"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("prompt still has %q", gone)
 		}
 	}
 }
