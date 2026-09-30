@@ -1002,6 +1002,8 @@ func TestSecurityReviewReadsTheUntrackedFilesAndNeedsAnAttackPath(t *testing.T) 
 		"`git status --porcelain` and `git diff HEAD`",
 		"Read every untracked file in full",
 		"a concrete path from an attacker-controlled input to the sink",
+		"Data the operator supplies",
+		"is trusted",
 		"P1 exploitable as shipped",
 		"Change no file in",
 	} {
