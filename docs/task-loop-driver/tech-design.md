@@ -636,7 +636,11 @@ so.
   (Milestone 16) ·
   `resolve_blocker(id, action, rule?, addendum?, keys?, provider?, model?, effort?, maintainer_said?)
   → {decision: authorised|refused|ask, reason?}` (Milestone 17) ·
-  `ask_maintainer(question, options?, recommended?) → {accepted, reason?}`; `step` is `phase-<N>/<kind>`,
+  `ask_maintainer(question, options?, recommended?) → {accepted, reason?}` ·
+  `stop_run(when: after-phase|now, reason, maintainer_said) → {accepted, reason?}` ·
+  `pause_run(reason, maintainer_said) → {accepted, reason?}` ·
+  `continue_run(maintainer_said) → {accepted, reason?}` (ADR-86: handled by `RunLoop.StopRun`,
+  `PauseRun`, `ContinueRun`, read only between phases; a pause records `RunPaused` and waits); `step` is `phase-<N>/<kind>`,
   resolved to the latest attempt. None of these is reachable from a step path, and this path
   serves no `ask_watchdog`. Every call is recorded as `watchdog-call` before its handler runs.
 - **Waiting for the maintainer (ADR-73, amended 2026-09-23)** — `ask_maintainer` returns at once;

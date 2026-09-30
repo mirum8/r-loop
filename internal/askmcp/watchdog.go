@@ -34,6 +34,25 @@ type WatchdogHandlers struct {
 
 	RunStatus func() (core.RunStatusView, error)
 	StepInfo  func(step string) (core.StepInfo, bool)
+
+	StopRun     func(when, reason, maintainerSaid string) (bool, string)
+	PauseRun    func(reason, maintainerSaid string) (bool, string)
+	ContinueRun func(maintainerSaid string) (bool, string)
+}
+
+type stopRunInput struct {
+	When           string `json:"when"`
+	Reason         string `json:"reason"`
+	MaintainerSaid string `json:"maintainer_said"`
+}
+
+type pauseRunInput struct {
+	Reason         string `json:"reason"`
+	MaintainerSaid string `json:"maintainer_said"`
+}
+
+type continueRunInput struct {
+	MaintainerSaid string `json:"maintainer_said"`
 }
 
 type askMaintainerInput struct {
@@ -173,7 +192,7 @@ type decisionOutput struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
-var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true}
+var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true, "stop_run": true, "pause_run": true, "continue_run": true}
 
 func (s *Server) Handle(h WatchdogHandlers) {
 	s.mu.Lock()
@@ -229,6 +248,57 @@ func (s *Server) watchdogServer() *mcp.Server {
 		}
 		decision, reason := h(in.Class, in.Command, in.Why, in.MaintainerSaid)
 		return nil, decisionOutput{Decision: decision, Reason: reason}, nil
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "stop_run",
+		Description: "Stop the run on the maintainer's word: when after-phase lets the current phase finish and halts before the next one starts; when now aborts the live step at once. r-loop resume continues. Needs maintainer_said: the maintainer's reply, quoted.",
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in stopRunInput) (*mcp.CallToolResult, acceptedOutput, error) {
+		if err := s.record("stop_run", "", map[string]string{"when": in.When, "reason": in.Reason, "maintainer_said": in.MaintainerSaid}); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		if err := s.resume(); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		h := s.handlersNow().StopRun
+		if h == nil {
+			return nil, acceptedOutput{Reason: notAvailable}, nil
+		}
+		ok, reason := h(in.When, in.Reason, in.MaintainerSaid)
+		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "pause_run",
+		Description: "Pause the run on the maintainer's word: the current phase finishes, then the driver waits before the next one until continue_run or stop_run. Needs maintainer_said: the maintainer's reply, quoted.",
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in pauseRunInput) (*mcp.CallToolResult, acceptedOutput, error) {
+		if err := s.record("pause_run", "", map[string]string{"reason": in.Reason, "maintainer_said": in.MaintainerSaid}); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		if err := s.resume(); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		h := s.handlersNow().PauseRun
+		if h == nil {
+			return nil, acceptedOutput{Reason: notAvailable}, nil
+		}
+		ok, reason := h(in.Reason, in.MaintainerSaid)
+		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "continue_run",
+		Description: "Continue a paused run, or cancel a pause still waiting for its phase to finish. Needs maintainer_said: the maintainer's reply, quoted.",
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in continueRunInput) (*mcp.CallToolResult, acceptedOutput, error) {
+		if err := s.record("continue_run", "", map[string]string{"maintainer_said": in.MaintainerSaid}); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		if err := s.resume(); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		h := s.handlersNow().ContinueRun
+		if h == nil {
+			return nil, acceptedOutput{Reason: notAvailable}, nil
+		}
+		ok, reason := h(in.MaintainerSaid)
+		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "restart_step",

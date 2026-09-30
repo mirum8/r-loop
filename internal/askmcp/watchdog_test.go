@@ -3,6 +3,7 @@ package askmcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -277,6 +278,9 @@ func TestANilHandlerAnswersNotAvailable(t *testing.T) {
 		{"restart_step", map[string]any{"step": "phase-3/implement"}},
 		{"answer_question", map[string]any{"id": "q1", "answer": "a", "citation": "spec.md:1"}},
 		{"ask_maintainer", map[string]any{"question": "q"}},
+		{"stop_run", map[string]any{"when": "after-phase", "reason": "r", "maintainer_said": "stop"}},
+		{"pause_run", map[string]any{"reason": "r", "maintainer_said": "pause"}},
+		{"continue_run", map[string]any{"maintainer_said": "go on"}},
 	} {
 		if out := call(t, cs, c.tool, c.args); out["accepted"] != false || out["reason"] != "not available" {
 			t.Fatalf("%s = %+v", c.tool, out)
@@ -406,7 +410,7 @@ func TestWatchdogPathListsNoAskTool(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	if want := []string{"answer_dialog", "answer_question", "ask_maintainer", "propose_remedy", "resolve_blocker", "restart_step", "run_status", "signal", "step_info", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
+	if want := []string{"answer_dialog", "answer_question", "ask_maintainer", "continue_run", "pause_run", "propose_remedy", "resolve_blocker", "restart_step", "run_status", "signal", "step_info", "stop_run", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
 		t.Fatalf("watchdog tools = %v, want %v", names, want)
 	}
 }
@@ -456,7 +460,7 @@ func TestWatchdogToolsOnAStepPathAre404(t *testing.T) {
 	if len(tools.Tools) != 1 || tools.Tools[0].Name != "ask_watchdog" {
 		t.Fatalf("step tools = %+v", tools.Tools)
 	}
-	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info"} {
+	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info", "stop_run", "pause_run", "continue_run"} {
 		_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{"kind": "halt", "step": "phase-3/implement"}})
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not found") {
 			t.Fatalf("%s on a step path: err = %v", name, err)
@@ -882,5 +886,46 @@ func TestStepInfoReturnsTheStepsAgentWorktreeAndBaseWithoutRecordingOrResuming(t
 	}
 	if resumed || len(st.records()) != 0 {
 		t.Fatalf("resumed %v, records %+v", resumed, st.records())
+	}
+}
+
+func TestRunControlToolsAreRecordedResumeAndReachTheirHandlers(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	var calls []string
+	s.Handle(WatchdogHandlers{
+		Resume: func() error {
+			calls = append(calls, "resume")
+			return nil
+		},
+		StopRun: func(when, reason, maintainerSaid string) (bool, string) {
+			calls = append(calls, fmt.Sprintf("stop %s|%s|%s records=%d", when, reason, maintainerSaid, len(st.records())))
+			return true, ""
+		},
+		PauseRun: func(reason, maintainerSaid string) (bool, string) {
+			calls = append(calls, "pause "+reason+"|"+maintainerSaid)
+			return false, "a pause is already pending"
+		},
+		ContinueRun: func(maintainerSaid string) (bool, string) {
+			calls = append(calls, "continue "+maintainerSaid)
+			return true, ""
+		},
+	})
+	cs := connect(t, s.WatchdogURL())
+
+	stop := call(t, cs, "stop_run", map[string]any{"when": "after-phase", "reason": "review first", "maintainer_said": "stop after this phase"})
+	pause := call(t, cs, "pause_run", map[string]any{"reason": "lunch", "maintainer_said": "pause"})
+	cont := call(t, cs, "continue_run", map[string]any{"maintainer_said": "go on"})
+
+	if stop["accepted"] != true || pause["accepted"] != false || pause["reason"] != "a pause is already pending" || cont["accepted"] != true {
+		t.Fatalf("stop = %+v, pause = %+v, continue = %+v", stop, pause, cont)
+	}
+	want := "resume,stop after-phase|review first|stop after this phase records=1,resume,pause lunch|pause,resume,continue go on"
+	if got := strings.Join(calls, ","); got != want {
+		t.Fatalf("calls = %s", got)
+	}
+	recs := st.records()
+	if len(recs) != 3 || recs[0].Event.Fields["tool"] != "stop_run" || recs[0].Event.Fields["when"] != "after-phase" || recs[0].Event.Fields["maintainer_said"] != "stop after this phase" || recs[2].Event.Fields["tool"] != "continue_run" {
+		t.Fatalf("records = %+v", recs)
 	}
 }

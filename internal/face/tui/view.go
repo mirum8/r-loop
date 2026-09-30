@@ -469,6 +469,9 @@ func (m Model) footer(w int) []string {
 		if m.Notice != "" {
 			return []string{fill(th.Status, m.Notice, w)}
 		}
+		if m.Paused != "" {
+			return []string{fill(th.Warn, "paused · "+m.Paused+" · tell the watchdog to continue or stop", w)}
+		}
 		return nil
 	case "halted":
 		banner := "halted"

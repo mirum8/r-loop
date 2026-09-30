@@ -106,6 +106,7 @@ type RunLoop struct {
 	nextHalt    *Signal
 	stopReason  string
 	stopped     runStop
+	control     runControl
 	serving     bool
 	tagWarn     sync.Once
 	questions   sync.WaitGroup
@@ -232,11 +233,16 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 				l.nextHalt = nil
 				break
 			}
-			continue
+		} else {
+			code := l.block(ph, step, out)
+			if first == 0 {
+				first, firstPhase, firstStep, firstReason = code, ph.ID, step, out.Reason
+			}
 		}
-		code := l.block(ph, step, out)
-		if first == 0 {
-			first, firstPhase, firstStep, firstReason = code, ph.ID, step, out.Reason
+		if brk, code, exit := l.atBoundary(ctx, ph.ID); exit {
+			return code
+		} else if brk {
+			break
 		}
 	}
 	l.drainSignals()

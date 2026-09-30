@@ -257,6 +257,23 @@ func TestStatusOfARunWhoseDriverDiedSaysSoAndClaimsNoLiveStep(t *testing.T) {
 	}
 }
 
+func TestStatusOfAPausedRunWhoseDriverDiedSaysSo(t *testing.T) {
+	f := newFixture(t)
+	id := f.seedRun(
+		core.Record{Kind: core.RecordRun, Run: core.RunRunning},
+		core.Record{Kind: core.RecordRun, Run: core.RunPaused, Reason: "lunch"},
+	)
+	if err := store.New(f.root).SetCurrent(id, 999999); err != nil {
+		t.Fatal(err)
+	}
+
+	f.main("status", "--plain")
+
+	if out := f.out.String(); !strings.HasPrefix(out, "run "+id+" paused (driver pid 999999 not alive — r-loop resume)\n") {
+		t.Fatalf("first line:\n%s", out)
+	}
+}
+
 func TestStatusMarksPhasesOutsideTheRunList(t *testing.T) {
 	f := newFixture(t)
 	f.seedRun(

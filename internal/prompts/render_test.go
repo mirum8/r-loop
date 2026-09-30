@@ -791,6 +791,10 @@ func TestOnlyTheWatchdogAsksTheMaintainerInItsOwnSession(t *testing.T) {
 		"Offer what you can do yourself as an option",
 		"propose_remedy(class, command, why, maintainer_said?)",
 		"restart_step(step, addendum?, provider?, model?, effort?, maintainer_said?)",
+		"stop_run(when, reason, maintainer_said)",
+		"pause_run(reason, maintainer_said)",
+		"continue_run(maintainer_said)",
+		"## Stopping or pausing the run",
 		"call `propose_remedy` again with `maintainer_said` set to their reply",
 		"write the empty file the request names",
 	} {

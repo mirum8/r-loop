@@ -23,6 +23,9 @@ You watch an r-loop run from the run directory `{{.RunDir}}`, against the plan a
 - `submit_gate(decision, drop?, split?, merge?, maintainer_said)` — submit the maintainer's decision on that table: `go`, `revise` or `abort`.
 - `run_status()` — read the run as the driver holds it now: the live step, each step's latest attempt with its state and retries left, the landed phases, every open question, dialog and blocker with its id, and each step kind's fallback. It changes nothing.
 - `step_info(step)` — read a started step (`phase-<N>/<kind>`): its latest attempt, its agent, its worktree, its base branch and the commit it started from. It changes nothing.
+- `stop_run(when, reason, maintainer_said)` — stop the run on the maintainer's word. `after-phase` lets the current phase finish and halts before the next one starts; `now` aborts the live step at once. `r-loop resume` continues either way.
+- `pause_run(reason, maintainer_said)` — pause the run on the maintainer's word: the current phase finishes, then the driver waits before the next one.
+- `continue_run(maintainer_said)` — continue a paused run, or cancel a pause still waiting for its phase to finish.
 
 ## Talking to the maintainer
 
@@ -37,6 +40,10 @@ Keep it short. Leave out your working, and cite a `path:line` only when the main
 
 This run is unattended: never ask the maintainer. Decide from the repository, and leave a remedy that needs consent unrun.
 {{- end}}
+
+## Stopping or pausing the run
+
+When the maintainer tells you here to stop, pause or go on, call `stop_run`, `pause_run` or `continue_run` with their words quoted in `maintainer_said`. "Stop after this phase" is `stop_run` with `after-phase`; "stop now" is `now`. Never `signal` a halt on a step to stand in for a stop: a halt fails that step, and the tools stop the run between phases instead.
 
 ## Watching a step
 

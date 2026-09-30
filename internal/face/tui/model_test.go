@@ -1225,3 +1225,16 @@ func TestQuitKeysDoNotCloseALiveRun(t *testing.T) {
 		t.Fatal("ctrl+c on a live run did not ask to stop")
 	}
 }
+
+func TestAPausedRunSaysSoInTheFooterUntilItContinues(t *testing.T) {
+	m := newModel(recorded()[:10])
+	m = m.Apply(core.Event{At: at(22), Kind: "paused", Phase: "1", Fields: map[string]string{"reason": "lunch"}})
+
+	if view := m.View(); !strings.Contains(view, "paused · lunch · tell the watchdog to continue or stop") {
+		t.Fatalf("pause footer missing:\n%s", view)
+	}
+	m = m.Apply(core.Event{At: at(23), Kind: "continued", Phase: "1"})
+	if view := m.View(); strings.Contains(view, "paused · lunch") {
+		t.Fatalf("pause footer stays after continue:\n%s", view)
+	}
+}

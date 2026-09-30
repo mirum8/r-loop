@@ -132,6 +132,7 @@ type Model struct {
 	Blocked    string
 	Resume     string
 	Notice     string
+	Paused     string
 	stopping   bool
 	aborting   bool
 	abort      func() error
@@ -267,6 +268,16 @@ func (m Model) Apply(ev core.Event) Model {
 		m.group(core.RunListGroups(ev.Fields))
 	case "signal-rejected", "note", "report-skipped", "reviewer-skipped":
 		m.log(ev, toneDim, ev.Fields["reason"])
+	case "stop-requested":
+		m.log(ev, toneDim, "stop requested after this phase: "+ev.Fields["reason"])
+	case "pause-requested":
+		m.log(ev, toneDim, "pause requested after this phase: "+ev.Fields["reason"])
+	case "paused":
+		m.Paused = ev.Fields["reason"]
+		m.log(ev, toneWarn, "paused after phase "+ev.Phase+": "+ev.Fields["reason"])
+	case "continued":
+		m.Paused = ""
+		m.log(ev, toneDim, "continued")
 	case "finished":
 		m.end("finished", ev.At)
 	case "halt":
@@ -289,7 +300,7 @@ func replay(m Model, history []core.Event) Model {
 	m.Status, m.Blocked, m.Resume, m.Current, m.Live, m.past = "", "", "", "", nil, nil
 	m.ended = time.Time{}
 	m.checking, m.landing = "", ""
-	m.Questions, m.DogGone, m.DogWaiting = nil, false, false
+	m.Questions, m.DogGone, m.DogWaiting, m.Paused = nil, false, false, ""
 	return m
 }
 
@@ -486,7 +497,7 @@ func withReason(text, reason string) string {
 }
 
 func (m *Model) end(status string, at time.Time) {
-	m.checking, m.landing = "", ""
+	m.checking, m.landing, m.Paused = "", "", ""
 	m.Status = status
 	m.ended = at
 	m.Current = ""

@@ -1654,7 +1654,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Eighty-four decisions, each with the alternative that was live at the time; eleven are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and forty-four carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, and ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed.</p>
+<p class="lede">Eighty-six decisions, each with the alternative that was live at the time; eleven are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and forty-four carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, and ADR-86 lets the maintainer stop or pause the run between phases through the watchdog.</p>
 
 <div id="adr-index">
 
@@ -3769,6 +3769,39 @@ A machine config written before this ADR keeps its own reviewer list;
 <code>/security-review</code> can scan a working tree with its untracked files against a given base.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-86">ADR-86 — The maintainer stops or pauses the run through the watchdog</h3>
+<p><span class="f">Status</span> accepted 2026-09-30</p>
+<p><span class="f">Context</span> A maintainer who says "stop after this phase" in the watchdog's
+session had no way to be obeyed. <code>signal</code> halts one step: a halt is refused during the
+phase check and on a landed phase, so the watchdog could only wait for the next plan step and halt
+it, failing a step that had done nothing wrong. <code>r-loop abort</code> stops at once, not
+between phases, and nothing let the run wait and go on.</p>
+<p><span class="f">Decision</span> Three watchdog tools, each carrying the maintainer's reply
+quoted in <code>maintainer_said</code>; an empty one is refused, and the consent is recorded as a
+<code>human</code> event before anything changes. <code>stop_run(when: after-phase|now, reason,
+maintainer_said)</code>: <code>after-phase</code> lets the live phase finish — it lands or blocks —
+and then halts the run with exit 5 and reason <code>stopped by the watchdog: &lt;reason&gt;</code>;
+<code>now</code> marks the run aborted, as <code>r-loop abort</code> does. <code>pause_run(reason,
+maintainer_said)</code> lets the live phase finish, records the run <code>paused</code> and waits
+before the next one, the driver, the watchdog and herdr still up. <code>continue_run(maintainer_said)</code>
+ends the pause, or cancels a pause still pending. A paused run stops as usual on an abort, an
+interrupt, a <code>stop_run</code> or a gone watchdog. The driver reads a request only between
+phases, so neither ever cuts a phase short, and one made during the last phase is dropped with a
+warning: the run ends there anyway. <code>r-loop resume</code> continues a stopped run at the next
+phase.</p>
+<p><span class="f">Alternatives</span> A phase-less <code>signal</code> halt — rejected: it fails
+the next step instead of waiting for the phase to land. Letting the watchdog stop on its own
+judgement — rejected: stopping is the maintainer's call (<a href="#adr-73">ADR-73</a>), and the
+watchdog already halts a step going wrong. Pause as a stop plus <code>r-loop resume</code> —
+rejected: it pays for preflight and a new watchdog to go on.</p>
+<p><span class="f">Consequences</span> <code>RunStatus</code> gains <code>paused</code>;
+<code>r-loop status</code> counts a paused driver as live, and a paused run whose driver died
+resumes like a halted one. The TUI shows the pause in amber: the run waits for the maintainer.</p>
+<p><span class="f">Revisit when</span> the maintainer needs to stop or pause without a watchdog
+session to type into.</p>
+</div>
+
 
 
 
@@ -4023,7 +4056,10 @@ reason?, table?}</code> carries the maintainer's answer, returning the new table
 (<a href="#adr-77">ADR-77</a>, <a href="#adr-78">ADR-78</a>). Two tools only read:
 <code>run_status() → {run, status, live, steps, landed, open, fallbacks}</code> and
 <code>step_info(step) → {found, reason?, step, attempt, agent, worktree, base, start_sha}</code>;
-neither is recorded nor ends a wait (<a href="#adr-83">ADR-83</a>). A signal whose effect would move the run forward
+neither is recorded nor ends a wait (<a href="#adr-83">ADR-83</a>). <code>stop_run(when: after-phase|now, reason, maintainer_said) → {accepted, reason?}</code>,
+<code>pause_run(reason, maintainer_said) → {accepted, reason?}</code> and
+<code>continue_run(maintainer_said) → {accepted, reason?}</code> stop, pause and continue the run
+between phases on the maintainer's word (<a href="#adr-86">ADR-86</a>). A signal whose effect would move the run forward
 is rejected by <code>Watch</code> and the rejection is recorded — the tool surface is narrow by
 design, but the enforcement is not the surface. A <code>signal</code> whose step is not
 <code>phase-&lt;N&gt;/&lt;kind&gt;</code> goes through <code>Watch</code> too, is rejected, and

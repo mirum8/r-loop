@@ -33,6 +33,7 @@ const (
 	RunCreated  RunStatus = "created"
 	RunRunning  RunStatus = "running"
 	RunHalted   RunStatus = "halted"
+	RunPaused   RunStatus = "paused"
 	RunFinished RunStatus = "finished"
 )
 
