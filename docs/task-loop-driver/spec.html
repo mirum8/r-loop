@@ -3864,7 +3864,7 @@ steps:
     prompt: implement
     check: diff
     provider: codex
-    model: gpt-5.6-sol
+    model: sol                # a bare name: an alias, resolved to the newest gpt-*-sol at start and on resume
     effort: medium
     timeout: 4h
     fallback:                 # a name, or a block like a reviewer entry (ADR-68)
@@ -3888,6 +3888,7 @@ providers:                    # claude and codex ship built in; a block here add
     kind: codex               # the herdr --kind value
     flags: "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true"   # passed first on every start (ADR-6)
     modelFlag: "-c model={model}"
+    models: "debug models"    # kind subcommand printing the model catalog, for model aliases
     effortFlag: "-c model_reasoning_effort={effort}"
     dirFlag: '-c sandbox_workspace_write.writable_roots=["{dir}"]'   # the phase's run folder, for a session in a phase worktree (ADR-79)
     doneSignal: sentinel

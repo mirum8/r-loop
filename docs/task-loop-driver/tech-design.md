@@ -232,7 +232,7 @@ so.
 
 - **Provider block** — `providers.<name>`: `kind` (required), `flags` (fixed, no
   placeholder, passed first on every start), `modelFlag` (`{model}`),
-  `effortFlag` (`{effort}`, may be empty → banner `effort n/a`), `askFlag` (`{url}` or
+  `effortFlag` (`{effort}`, may be empty → banner `effort n/a`), `models` (a `kind` subcommand printing the model catalog JSON; a bare lowercase model (`^[a-z]+$`) is an alias resolved to the newest `visibility: list` slug `gpt-<version>-<alias>`, once per process (memoised in the wiring, checked in preflight, applied on every `Resolve`; a resume resolves again and may pick up a newer release); no match or a failing catalog exits 2), `askFlag` (`{url}` or
   `{mcpConfig}`), `dirFlag` (`{dir}` or empty, ADR-79), `doneSignal ∈ {sentinel}`, `ask ∈ {mcp, none}`, `review` (may be empty; `{args}` is replaced with `Args(p, model, effort, "", "", "")`, and `{output}` with the shell-quoted `<ArtifactsDir>/native-review.txt`), `reviewStart` and `reviewDone` (the screen texts a pane review begins and ends with; both or neither, and only with a `review` that starts with `/`, else refused on `Resolve` naming the key and the source; Milestone 17).
   `flags` may carry none of `{model}`, `{effort}`, `{url}`, `{mcpConfig}`, `{dir}`.
   **Precedence is whole-block**: the project config's block, else
@@ -246,7 +246,7 @@ so.
   phase worktree — plan, implement, gatefix and their reviewers — and `""` for the primary-tree
   sessions: gate, milestone, watchdog, intake.
   Shipped: `claude` (`--model {model}`, `--effort {effort}`, `--mcp-config {mcpConfig}`, `dirFlag: --add-dir {dir}`, `review: /code-review`) and
-  `codex` (`flags: -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true`, `-c model={model}`, `-c model_reasoning_effort={effort}`, `-c
+  `codex` (`flags: -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true`, `models: debug models`, `-c model={model}`, `-c model_reasoning_effort={effort}`, `-c
   mcp_servers.r-loop.url={url}`, `dirFlag: -c sandbox_workspace_write.writable_roots=["{dir}"]`, `review: /review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.`, `reviewStart: >> Code review started`, `reviewDone: << Code review finished` — ADR-81, replacing `codex exec review --uncommitted {args} -o {output}`).
   `{mcpConfig}` is a per-agent file
   `{"mcpServers":{"r-loop":{"type":"http","url":"<url>"}}}`. Neither sets an MCP tool timeout:

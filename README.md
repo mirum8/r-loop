@@ -208,7 +208,7 @@ milestone closes) and `gate` (finds the test suite command for an issues file).
 | `prompt` | Prompt template name. |
 | `check` | Evidence the step must leave: `plan-file` (a valid plan file, and no other change), `diff` (the worktree changed) or `report` (a non-empty report). |
 | `provider` | Agent CLI: `claude` or `codex`, or your own provider. |
-| `model` | Model name passed to the provider. |
+| `model` | Model name passed to the provider. A bare lowercase name is an alias for the newest version: claude resolves `opus`/`sonnet` itself; for codex, r-loop resolves `sol`, `luna`, … to the newest listed `gpt-<version>-<alias>` in `codex debug models`, once per start: every session of a run uses the same version, and a `resume` resolves again, picking up a newer release. |
 | `effort` | Reasoning effort passed to the provider. |
 | `timeout` | Hard limit for one attempt. After it, the step fails. |
 | `fallback` | Session the watchdog may switch to when the step fails: a block with `provider`, `model`, `effort`. |
@@ -235,7 +235,7 @@ Defaults:
 | `milestone` | claude | opus | medium | 1h | report | — | — | — | — |
 | `gate` | claude | sonnet | medium | 30m | report | — | — | — | — |
 
-Every reviewer runs on codex, gpt-6-sol, high; the fallbacks on codex, gpt-6-sol with the row's effort.
+Every reviewer runs on codex, sol, high; the fallbacks on codex, sol with the row's effort.
 The `ui` reviewer runs the project's `/test-app` skill. It needs
 `.claude/skills/test-app/SKILL.md`, so it is skipped in projects without that file.
 
@@ -303,6 +303,7 @@ new one, put a block under `providers:` in the project config, or a file at
 | `flags` | Flags passed first on every start, split on spaces. No placeholders. |
 | `modelFlag` | Flag template with `{model}`, for example `--model {model}`. |
 | `effortFlag` | Flag template with `{effort}`. May be empty. |
+| `models` | Subcommand of `kind` that prints the model catalog as JSON, used to resolve a model alias. Built in: `debug models` (codex). Empty: models pass through unchanged. |
 | `askFlag` | Flag that connects the agent to r-loop's MCP server. Uses `{url}` or `{mcpConfig}`. |
 | `dirFlag` | Flag that lets the agent write its phase's run folder, `.r-loop/runs/<run>/phase-<N>/`, where it writes its sentinel. Uses `{dir}`. Given only to sessions working in a phase worktree. Built in: `--add-dir {dir}` (claude), `-c sandbox_workspace_write.writable_roots=["{dir}"]` (codex). May be empty. |
 | `doneSignal` | How the agent reports that it is done. Only `sentinel`. |
@@ -321,11 +322,11 @@ steps:
     effort: high
     fallback:
       provider: codex
-      model: gpt-5.6-sol
+      model: sol
       effort: high
     reviewers:
       - provider: codex
-        model: gpt-5.6-sol
+        model: sol
         effort: medium
     rounds: 2
 

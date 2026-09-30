@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -83,8 +84,13 @@ func newFixtureIn(t *testing.T, root string) *fixture {
 func fakeProviders(t *testing.T) {
 	t.Helper()
 	bin := t.TempDir()
-	for _, name := range []string{"claude", "codex"} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	scripts := map[string]string{
+		"claude": "#!/bin/sh\nexit 0\n",
+		"codex": "#!/bin/sh\nif [ \"$1 $2\" = \"debug models\" ]; then\n  echo x >> \"$0.catalog-calls\"\n" +
+			"  echo '{\"models\":[{\"slug\":\"gpt-6-sol\",\"visibility\":\"list\"},{\"slug\":\"gpt-6.1-sol\",\"visibility\":\"list\"},{\"slug\":\"gpt-6-luna\",\"visibility\":\"list\"}]}'\nfi\nexit 0\n",
+	}
+	for name, script := range scripts {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -414,7 +420,7 @@ func TestPreflightCreatesTheRunAndPrintsTheBanner(t *testing.T) {
 	if !strings.Contains(string(exclude), ".r-loop/runs/") || !strings.Contains(string(exclude), ".r-loop/wt/") {
 		t.Fatalf("exclude=%q", exclude)
 	}
-	for _, want := range []string{"face: plain\n", "implement  claude  opus  medium  4h  diff  ← default\n", "prompt plan: embedded\n", "prompt implement: embedded\n", "prompt milestone: embedded\n", "  fallback codex gpt-6-sol medium  ← default\n"} {
+	for _, want := range []string{"face: plain\n", "implement  claude  opus  medium  4h  diff  ← default\n", "prompt plan: embedded\n", "prompt implement: embedded\n", "prompt milestone: embedded\n", "  fallback codex sol medium  ← default\n"} {
 		if !strings.Contains(f.out.String(), want) {
 			t.Fatalf("%q missing from banner:\n%s", want, f.out.String())
 		}
@@ -448,6 +454,41 @@ func TestWireBuildsTheGateFixKindAndTheMilestoneBoundary(t *testing.T) {
 	args, err := w.Loop.Sessions.Resolve("codex", "gpt-x", "high", "", "", "")
 	if err != nil || args.Kind != "codex" || strings.Join(args.Args, " ") != "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -c model=gpt-x -c model_reasoning_effort=high" {
 		t.Fatalf("args=%+v err=%v", args, err)
+	}
+}
+
+func TestACodexModelAliasResolvesToTheNewestCatalogVersionOncePerRun(t *testing.T) {
+	f := newFixture(t)
+	f.commit()
+
+	w, err := f.preflight(f.todo, "--plain", "--provider", "implement=codex", "--model", "implement=sol")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	args, err := w.Loop.Sessions.Resolve("codex", "sol", "high", "", "", "")
+	if err != nil || !slices.Contains(args.Args, "model=gpt-6.1-sol") {
+		t.Fatalf("args=%+v err=%v", args, err)
+	}
+	if out := f.out.String(); !strings.Contains(out, "model: codex sol → gpt-6.1-sol") {
+		t.Errorf("banner does not name the resolution:\n%s", out)
+	}
+	codex, _ := exec.LookPath("codex")
+	calls, err := os.ReadFile(codex + ".catalog-calls")
+	if err != nil || strings.Count(string(calls), "x") != 1 {
+		t.Errorf("catalog calls %q, err %v; want one per run", calls, err)
+	}
+}
+
+func TestACodexModelAliasWithoutACatalogMatchExitsTwoNamingTheField(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "watchdog:\n  provider: codex\n  model: nosuch\n  effort: medium\n")
+	f.commit()
+
+	_, err := f.preflight(f.todo, "--plain")
+
+	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), `watchdog.provider: codex has no model matching "nosuch"`) || f.herdrCalled() {
+		t.Fatalf("code=%d err=%v herdr called=%v", code, err, f.herdrCalled())
 	}
 }
 
@@ -896,7 +937,7 @@ func TestMigrateConfigRewritesTheMachineAndProjectFiles(t *testing.T) {
 	code := f.main("--migrate-config")
 
 	project := filepath.Join(f.root, ".r-loop", "config.yaml")
-	want := home + ": steps.plan.fallback: codex → codex gpt-6-sol high\n" +
+	want := home + ": steps.plan.fallback: codex → codex sol high\n" +
 		project + ": steps.implement.reviewers.0: claude → claude opus high\n"
 	if code != 0 || f.out.String() != want {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, f.out.String(), f.err.String())

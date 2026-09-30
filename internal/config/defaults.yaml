@@ -12,11 +12,11 @@ steps:
     timeout: 1h
     fallback:
       provider: codex
-      model: gpt-6-sol
+      model: sol
       effort: high
     reviewers:
       - provider: codex
-        model: gpt-6-sol
+        model: sol
         effort: high
     rounds: 2
     reviewTimeout: 20m
@@ -29,15 +29,15 @@ steps:
     timeout: 4h
     fallback:
       provider: codex
-      model: gpt-6-sol
+      model: sol
       effort: medium
     reviewers:
       - provider: codex
-        model: gpt-6-sol
+        model: sol
         effort: high
       - name: ui
         provider: codex
-        model: gpt-6-sol
+        model: sol
         effort: high
         prompt: review-ui
         requires: .claude/skills/test-app/SKILL.md

@@ -260,8 +260,8 @@ func (w *Wiring) leftovers(list []core.Phase) error {
 }
 
 type role struct {
-	field, provider string
-	review          bool
+	field, provider, model string
+	review                 bool
 }
 
 func (w *Wiring) validateProviders() error {
@@ -270,20 +270,20 @@ func (w *Wiring) validateProviders() error {
 	for _, name := range w.sessionSteps() {
 		row := cfg.Steps[name]
 		p := "steps." + name + "."
-		roles = append(roles, role{field: p + "provider", provider: row.Provider})
+		roles = append(roles, role{field: p + "provider", provider: row.Provider, model: row.Model})
 		if row.Fallback.Provider != "" {
-			roles = append(roles, role{field: p + "fallback", provider: row.Fallback.Provider})
+			roles = append(roles, role{field: p + "fallback", provider: row.Fallback.Provider, model: row.Fallback.Model})
 		}
 		for _, rv := range row.Reviewers {
-			roles = append(roles, role{field: p + "reviewers", provider: rv.Provider, review: reviewTemplate(name, rv) == "review"})
+			roles = append(roles, role{field: p + "reviewers", provider: rv.Provider, model: rv.Model, review: reviewTemplate(name, rv) == "review"})
 		}
 	}
-	roles = append(roles, role{field: "land.fix.provider", provider: cfg.Land.Fix.Provider})
+	roles = append(roles, role{field: "land.fix.provider", provider: cfg.Land.Fix.Provider, model: cfg.Land.Fix.Model})
 	for _, rv := range cfg.Steps["implement"].Reviewers {
-		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, review: reviewTemplate("gatefix", rv) == "review"})
+		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, model: rv.Model, review: reviewTemplate("gatefix", rv) == "review"})
 	}
-	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider})
-	roles = append(roles, role{field: "intake.provider", provider: cfg.Intake.Provider})
+	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider, model: cfg.Watchdog.Model})
+	roles = append(roles, role{field: "intake.provider", provider: cfg.Intake.Provider, model: cfg.Intake.Model})
 	resolved := make([]providers.Provider, len(roles))
 	for i, r := range roles {
 		p, err := checkRole(w.Registry, r)
@@ -298,6 +298,11 @@ func (w *Wiring) validateProviders() error {
 	for i, r := range roles {
 		if err := checkBinary(r, resolved[i].Kind); err != nil {
 			return err
+		}
+	}
+	for i, r := range roles {
+		if _, err := w.models.resolve(resolved[i], r.model); err != nil {
+			return exit(2, "%s: %v", r.field, err)
 		}
 	}
 	return nil
@@ -376,6 +381,9 @@ func (w *Wiring) promptSources() ([]string, error) {
 func (w *Wiring) banner(out io.Writer, prompts []string) {
 	fmt.Fprintf(out, "face: %s\n", w.faceName())
 	fmt.Fprint(out, config.Banner(w.Config, w.extraSteps()...))
+	for _, l := range w.models.lines {
+		fmt.Fprintln(out, l)
+	}
 	for _, l := range prompts {
 		fmt.Fprintln(out, l)
 	}

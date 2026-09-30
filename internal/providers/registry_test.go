@@ -84,7 +84,7 @@ func TestShippedCodexBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Provider{Name: "codex", Kind: "codex", Flags: "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
-		AskFlag: "-c mcp_servers.r-loop.url={url}", DirFlag: `-c sandbox_workspace_write.writable_roots=["{dir}"]`, DoneSignal: "sentinel", Ask: "mcp",
+		AskFlag: "-c mcp_servers.r-loop.url={url}", DirFlag: `-c sandbox_workspace_write.writable_roots=["{dir}"]`, DoneSignal: "sentinel", Ask: "mcp", Models: "debug models",
 		Review:      "/review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.",
 		ReviewStart: ">> Code review started", ReviewDone: "<< Code review finished", Source: "shipped"}
 	if p != want {

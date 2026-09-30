@@ -76,6 +76,9 @@ func newIntake(args []string, given Options, env Env) (*intake, error) {
 	if err := checkBinary(r, p.Kind); err != nil {
 		return nil, err
 	}
+	if cfg.Intake.Model, err = providers.ResolveModel(p, cfg.Intake.Model, runCatalog); err != nil {
+		return nil, exit(2, "%s: %v", r.field, err)
+	}
 	if _, err := exec.LookPath(env.Herdr); err != nil {
 		return nil, exit(127, "herdr binary %s not found", env.Herdr)
 	}

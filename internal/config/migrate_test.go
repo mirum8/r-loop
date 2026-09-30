@@ -20,16 +20,16 @@ func TestMigrateTurnsBareNamesIntoBlocksWithTheDefaultsModelAndEffort(t *testing
 		t.Fatal(err)
 	}
 	want := []string{
-		"steps.plan.fallback: codex → codex gpt-6-sol high",
-		"steps.plan.reviewers.0: codex → codex gpt-6-sol high",
-		"steps.implement.fallback: codex → codex gpt-6-sol medium",
+		"steps.plan.fallback: codex → codex sol high",
+		"steps.plan.reviewers.0: codex → codex sol high",
+		"steps.implement.fallback: codex → codex sol medium",
 		"steps.implement.reviewers.0: claude → claude opus high",
 	}
 	if !reflect.DeepEqual(m.Changes, want) || len(m.Unresolved) != 0 {
 		t.Errorf("migration = %+v", m)
 	}
 	cfg := d.load(t)
-	if cfg.Steps["plan"].Fallback != (Fallback{"codex", "gpt-6-sol", "high"}) {
+	if cfg.Steps["plan"].Fallback != (Fallback{"codex", "sol", "high"}) {
 		t.Errorf("plan fallback = %+v", cfg.Steps["plan"].Fallback)
 	}
 	if got := cfg.Steps["implement"].Reviewers; len(got) != 2 || got[0] != (Reviewer{Provider: "claude", Model: "opus", Effort: "high"}) || got[1].Name != "ui" {
@@ -90,7 +90,7 @@ func TestMigrateFillsAMissingModelOrEffortInABlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"steps.plan.fallback.model: unset → gpt-6-sol",
+		"steps.plan.fallback.model: unset → sol",
 		"steps.plan.reviewers.0.model: unset → opus",
 		"steps.plan.reviewers.0.effort: unset → high",
 	}
@@ -98,7 +98,7 @@ func TestMigrateFillsAMissingModelOrEffortInABlock(t *testing.T) {
 		t.Errorf("changes = %q", m.Changes)
 	}
 	cfg := d.load(t)
-	if cfg.Steps["plan"].Fallback != (Fallback{"codex", "gpt-6-sol", "high"}) {
+	if cfg.Steps["plan"].Fallback != (Fallback{"codex", "sol", "high"}) {
 		t.Errorf("fallback = %+v", cfg.Steps["plan"].Fallback)
 	}
 	if got := cfg.Steps["plan"].Reviewers; len(got) != 1 || got[0] != (Reviewer{Provider: "claude", Model: "opus", Effort: "high", Name: "deep"}) {

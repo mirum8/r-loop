@@ -99,6 +99,7 @@ type Wiring struct {
 	lock     *store.Lock
 	dogDir   string
 	settings string
+	models   modelCache
 }
 
 type overrides struct {
@@ -874,6 +875,10 @@ func (w *Wiring) resolve(provider, model, effort, askURL, mcpConfigPath, dir str
 		return core.ProviderArgs{}, err
 	}
 	p.Settings = w.settings
+	model, err = w.models.resolve(p, model)
+	if err != nil {
+		return core.ProviderArgs{}, err
+	}
 	return providers.ToCore(p, model, effort, askURL, mcpConfigPath, dir), nil
 }
 
