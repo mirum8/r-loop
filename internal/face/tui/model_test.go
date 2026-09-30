@@ -804,6 +804,22 @@ func TestAFinishedRunShowsTheReportWithoutAResumeLine(t *testing.T) {
 	}
 }
 
+func TestTheQuitKeyStaysVisibleWhenTheReportPathIsLong(t *testing.T) {
+	for _, kind := range []string{"finished", "halt"} {
+		t.Run(kind, func(t *testing.T) {
+			m := newModel(recorded())
+			m.Report = "/private/var/folders/xx/abcdefghijklmnop/T/sandbox-123456/.r-loop/runs/20260930-142940/report.md"
+
+			m = m.Apply(core.Event{At: at(90), Kind: kind, Fields: map[string]string{"resume": "r-loop resume"}})
+
+			view := m.View()
+			if !strings.Contains(view, "q quit") || !strings.Contains(view, "report: /private/var") {
+				t.Fatalf("view:\n%s", view)
+			}
+		})
+	}
+}
+
 func TestAFinishedRunStopsTheClocks(t *testing.T) {
 	events := recorded()
 	m := newModel(events[:len(events)-1])

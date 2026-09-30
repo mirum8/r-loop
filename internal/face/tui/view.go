@@ -476,9 +476,9 @@ func (m Model) footer(w int) []string {
 		if m.Resume != "" {
 			banner += " · resume: " + m.Resume
 		}
-		return []string{fill(th.Halt, banner, w), fill(th.Status, m.report()+"q quit", w)}
+		return []string{fill(th.Halt, banner, w), fill(th.Status, "q quit"+m.report(), w)}
 	default:
-		return []string{fill(th.Status, m.Status+" · "+m.report()+"q quit", w)}
+		return []string{fill(th.Status, m.Status+" · q quit"+m.report(), w)}
 	}
 }
 
@@ -486,7 +486,7 @@ func (m Model) report() string {
 	if m.Report == "" {
 		return ""
 	}
-	return "report: " + m.Report + " · "
+	return " · report: " + m.Report
 }
 
 func field(label, value string) string {
