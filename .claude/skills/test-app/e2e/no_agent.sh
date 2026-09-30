@@ -28,32 +28,33 @@ run issues.md --dry-run --plain
 
 table_ok() { awk -F'|' '/^\|/ { n = NF; if (w == "") w = n; else if (n != w) bad = 1; rows++ } END { exit !(rows >= 3 && !bad) }' "$T/out"; }
 
+block_ok() { grep -A3 "^Phase $1 · " "$T/out" | grep -q "^  M1 · wave $2\$" && grep -A3 "^Phase $1 · " "$T/out" | grep -q "^  Files: *$3"; }
+
 run docs/plan/todo.md --dry-run --plain
 if [ "$rc" = 0 ] && grep -q '^Plan: .* — 3 phases' "$T/out" \
-  && grep -qx '| Phase | Title | Risk | Milestone | Wave | Files | Done when |' "$T/out" \
-  && ! grep -q 'Verified' "$T/out" && table_ok \
-  && grep -q '^| 1 | .* | 0 | calc.go' "$T/out" && grep -q '^| 2 | .* | 0 | multiply.go' "$T/out" \
-  && ! grep -q '^| 3 |' "$T/out" \
+  && ! grep -q 'Verified' "$T/out" \
+  && block_ok 1 0 calc.go && block_ok 2 0 multiply.go \
+  && ! grep -q '^Phase 3 · ' "$T/out" \
   && grep -q '^Plan check: no notes' "$T/out" \
   && grep -q '^Resolve first: Custom delimiter syntax → phases 3' "$T/out" \
   && grep -q '^2 phases: 4 step sessions' "$T/out" \
   && grep -qx 'verification: not run (--dry-run starts no sessions)' "$T/out"; then
-  ok "dry-run todo.md: triage table, waves, plan check, Resolve first, cost"
-else fail "dry-run todo.md triage table rc=$rc"; fi
+  ok "dry-run todo.md: triage blocks, waves, plan check, Resolve first, cost"
+else fail "dry-run todo.md triage blocks rc=$rc"; fi
 
 sed -i '' 's/^- \[ \] \*\*Custom delimiter syntax\*\*/- [x] **Custom delimiter syntax**/' docs/plan/todo.md && git commit -qam tick
 run docs/plan/todo.md --dry-run --plain
-[ "$rc" = 0 ] && grep -q '^| 3 | .* | 1 | calc.go' "$T/out" && grep -q '^Resolve first: none outstanding' "$T/out" && table_ok \
+[ "$rc" = 0 ] && block_ok 3 1 calc.go && grep -q '^Resolve first: none outstanding' "$T/out" \
   && ok "dry-run todo.md, entry ticked: phase 3 in wave 1" || fail "phase 3 wave rc=$rc"
 git reset -q --hard HEAD~1
 
 run docs/plan/todo-tiny.md --dry-run --plain
-if [ "$rc" = 0 ] && grep -q '^Plan: .* — 1 phase' "$T/out" && table_ok \
-  && grep -q '^| 1 | Subtract | .* | 0 | subtract.go' "$T/out" && grep -q '^Plan check: no notes' "$T/out" \
+if [ "$rc" = 0 ] && grep -q '^Plan: .* — 1 phase' "$T/out" \
+  && grep -q '^Phase 1 · Subtract$' "$T/out" && block_ok 1 0 subtract.go && grep -q '^Plan check: no notes' "$T/out" \
   && grep -q '^Resolve first: none outstanding' "$T/out" && grep -q '^1 phase: 2 step sessions' "$T/out" \
   && grep -qx 'verification: not run (--dry-run starts no sessions)' "$T/out"; then
-  ok "dry-run todo-tiny.md: triage table"
-else fail "dry-run todo-tiny.md triage table rc=$rc"; fi
+  ok "dry-run todo-tiny.md: triage block"
+else fail "dry-run todo-tiny.md triage block rc=$rc"; fi
 
 run issues.md --dry-run --plain
 if [ "$rc" = 0 ] && grep -q '^Backlog: .*issues.md (1 item)' "$T/out" && grep -qx '| Item | Title |' "$T/out" && table_ok \
