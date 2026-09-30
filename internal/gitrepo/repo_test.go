@@ -1112,3 +1112,34 @@ func TestCommitAllCommitsAnIgnoredTaskPlan(t *testing.T) {
 		t.Fatalf("HEAD touches %q", got)
 	}
 }
+
+func TestBranchesListsOnlyTheMatchingBranches(t *testing.T) {
+	r, dir := newRepo(t)
+	for _, b := range []string{"r-loop/phase-1", "r-loop/phase-12", "r-loop/other", "feature"} {
+		git(t, dir, "branch", b)
+	}
+
+	got, err := r.Branches("r-loop/phase-*")
+
+	if err != nil || !reflect.DeepEqual(got, []string{"r-loop/phase-1", "r-loop/phase-12"}) {
+		t.Fatalf("Branches = %v, %v", got, err)
+	}
+}
+
+func TestPruneWorktreesDropsARegisteredWorktreeWhoseDirectoryIsGone(t *testing.T) {
+	r, dir := newRepo(t)
+	if err := r.AddWorktree(".r-loop/wt/phase-1", "r-loop/phase-1", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(dir, ".r-loop/wt/phase-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.PruneWorktrees(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, _ := r.WorktreePath("r-loop/phase-1"); got != "" {
+		t.Fatalf("worktree still registered at %s", got)
+	}
+}

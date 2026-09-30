@@ -349,7 +349,12 @@ so.
   is a warning, never a failure. After a land, and after its workspaces close, the loop appends `worktree-removed`
   and runs `RemoveWorktree(.r-loop/wt/phase-<N>)` then `DeleteBranch(r-loop/phase-<N>)`
   (`git branch -d`, which refuses an unmerged branch); either failing is a warning. A skipped item
-  never merged, so it keeps its worktree and branch.
+  never merged, so its worktree and branch are removed with `git branch -D`. `r-loop --cleanup`
+  removes whatever earlier runs left standing: it closes their open step workspaces, force-removes
+  every `.r-loop/wt/` entry and deletes every `r-loop/phase-*` branch. It takes the run lock first (exit 4 while a run is live), appends
+  `workspace-closing` before each close and `workspace-closed` only after it succeeds, so a failed
+  close is retried by the next cleanup, and appends `worktree-removed` before removing a phase's
+  worktree and branch.
 - **One commit per step** — after the author half (and, when configured, every review round) ends
   `ok`, the driver appends a `commit-intent` event with the step's attempt, current HEAD, exact
   worktree tree, directory and commit message. It then runs

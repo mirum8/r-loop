@@ -272,6 +272,19 @@ func (r *Repo) BranchExists(branch string) (bool, error) {
 	return strings.TrimSpace(out) != "", err
 }
 
+func (r *Repo) Branches(pattern string) ([]string, error) {
+	out, err := r.git("", "for-each-ref", "--format=%(refname:short)", "refs/heads/"+pattern)
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(out), nil
+}
+
+func (r *Repo) PruneWorktrees() error {
+	_, err := r.git("", "worktree", "prune")
+	return err
+}
+
 func (r *Repo) DeleteBranch(branch string, force bool) error {
 	exists, err := r.BranchExists(branch)
 	if err != nil || !exists {

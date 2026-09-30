@@ -224,6 +224,10 @@ func Main(args []string, env Env) int {
 			if len(args) == 1 {
 				return MigrateConfig(env)
 			}
+		case "--cleanup":
+			if len(args) == 1 {
+				return Cleanup(env)
+			}
 		}
 	}
 	opts, positional, err := parseFlags(args)

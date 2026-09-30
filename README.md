@@ -103,6 +103,7 @@ r-loop resume [--replan] [--unattended] [--yes] [--plain] [<run-id>]
 r-loop abort
 r-loop --create-config
 r-loop --migrate-config
+r-loop --cleanup
 r-loop --version
 ```
 
@@ -149,6 +150,7 @@ With `--unattended`, the intake session starts the command without asking you. C
 | `resume` | Continue the last halted run. Landed phases and finished steps are skipped. The step that stopped runs again as a new attempt. A run that stopped before you confirmed its table is triaged again; one that passed it keeps its run list and groups. |
 | `resume --replan` | Also run the phase's `plan` step again before the step that failed. The failure reason goes into the new plan. |
 | `abort` | Stop the live run. The run can be resumed later. |
+| `--cleanup` | Close the herdr step workspaces left by earlier runs, force-remove every worktree under `.r-loop/wt/` and delete every `r-loop/phase-*` branch, merged or not. A halted run can no longer be resumed afterwards. Refused while a run is live (exit 4); exit 1 if anything could not be removed. Run history under `.r-loop/runs/` is kept. |
 
 ### Exit codes
 
@@ -158,7 +160,7 @@ With `--unattended`, the intake session starts the command without asking you. C
 | `1` | A step failed, or the run was aborted (also at the triage question). |
 | `2` | Bad usage, bad config or plan, or a git state problem. |
 | `3` | A step stalled (no activity) and then failed. |
-| `4` | Preflight refused to start: dirty tree, herdr not reachable, watchdog did not start, and similar. Also: the triage did not finish within `watchdog.triageTimeout`, or was interrupted. |
+| `4` | Preflight refused to start: dirty tree, herdr not reachable, watchdog did not start, and similar. Also: the triage did not finish within `watchdog.triageTimeout`, or was interrupted. `--cleanup` also exits 4 while a run is live. |
 | `5` | The watchdog halted the run, or is gone (also during the triage). |
 | `127` | `git` or `herdr` was not found. |
 

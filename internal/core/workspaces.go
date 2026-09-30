@@ -6,11 +6,11 @@ import (
 	"strconv"
 )
 
-type stepWorkspace struct {
-	kind, id string
+type StepWorkspace struct {
+	Kind, ID string
 }
 
-func everyWorkspace(string, int) bool { return true }
+func EveryWorkspace(string, int) bool { return true }
 
 func (l *RunLoop) removeWorktree(phase string, force bool) error {
 	wt, branch := fmt.Sprintf(".r-loop/wt/phase-%s", phase), fmt.Sprintf("r-loop/phase-%s", phase)
@@ -33,32 +33,32 @@ func (l *RunLoop) closeWorkspaces(phase string, match func(kind string, attempt 
 		l.emit(Event{Kind: "warning", Phase: phase, Fields: map[string]string{"reason": "close workspaces: " + err.Error()}})
 		return
 	}
-	for _, ws := range openWorkspaces(st, phase, match) {
-		l.emit(Event{Kind: "workspace-closed", Phase: phase, Step: ws.kind, Fields: map[string]string{"workspace": ws.id}})
-		if err := l.Sessions.Host.Close(ws.id); err != nil {
-			l.emit(Event{Kind: "warning", Phase: phase, Step: ws.kind, Fields: map[string]string{"reason": "close workspace " + ws.id + ": " + err.Error()}})
+	for _, ws := range OpenWorkspaces(st, phase, match) {
+		l.emit(Event{Kind: "workspace-closed", Phase: phase, Step: ws.Kind, Fields: map[string]string{"workspace": ws.ID}})
+		if err := l.Sessions.Host.Close(ws.ID); err != nil {
+			l.emit(Event{Kind: "warning", Phase: phase, Step: ws.Kind, Fields: map[string]string{"reason": "close workspace " + ws.ID + ": " + err.Error()}})
 		}
 	}
 }
 
-func openWorkspaces(st RunState, phase string, match func(kind string, attempt int) bool) []stepWorkspace {
+func OpenWorkspaces(st RunState, phase string, match func(kind string, attempt int) bool) []StepWorkspace {
 	closed := map[string]bool{}
 	for _, ev := range st.Events {
 		if ev.Kind == "workspace-closed" {
 			closed[ev.Fields["workspace"]] = true
 		}
 	}
-	var out []stepWorkspace
+	var out []StepWorkspace
 	for _, ev := range st.Events {
 		id := ev.Fields["workspace"]
 		if ev.Kind != "step" || ev.Phase != phase || id == "" || closed[id] {
 			continue
 		}
 		attempt, _ := strconv.Atoi(ev.Fields["attempt"])
-		if !match(ev.Step, attempt) || slices.ContainsFunc(out, func(w stepWorkspace) bool { return w.id == id }) {
+		if !match(ev.Step, attempt) || slices.ContainsFunc(out, func(w StepWorkspace) bool { return w.ID == id }) {
 			continue
 		}
-		out = append(out, stepWorkspace{kind: ev.Step, id: id})
+		out = append(out, StepWorkspace{Kind: ev.Step, ID: id})
 	}
 	return out
 }
