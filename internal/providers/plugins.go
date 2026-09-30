@@ -52,8 +52,13 @@ func EnsurePlugin(p Provider, run func(name string, args ...string) ([]byte, err
 }
 
 func pluginState(p Provider, cli pluginCLI, run func(name string, args ...string) ([]byte, error)) (installed, enabled bool, err error) {
-	cmd := p.Kind + " " + strings.Join(cli.list, " ")
-	out, err := run(p.Kind, cli.list...)
+	args := cli.list
+	if p.Kind == "codex" {
+		_, marketplace, _ := strings.Cut(p.SecurityPlugin, "@")
+		args = append(append([]string{}, args...), "-m", marketplace)
+	}
+	cmd := p.Kind + " " + strings.Join(args, " ")
+	out, err := run(p.Kind, args...)
 	if err != nil {
 		return false, false, fmt.Errorf("%s: %w", cmd, err)
 	}

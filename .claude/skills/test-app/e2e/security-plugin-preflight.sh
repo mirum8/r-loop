@@ -23,7 +23,7 @@ cat > "$FAKE/codex" <<EOF
 #!/bin/sh
 case "\$*" in
   "debug models") echo '{"models":[{"slug":"gpt-6-sol","visibility":"list"}]}' ;;
-  "plugin list --json")
+  "plugin list --json -m openai-curated")
     if [ -e "$MARK" ]; then echo '{"installed":[{"pluginId":"codex-security@openai-curated","enabled":true}]}'
     else echo '{"installed":[]}'; fi ;;
   "plugin add "*)

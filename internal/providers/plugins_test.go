@@ -3,6 +3,7 @@ package providers
 import (
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -40,7 +41,7 @@ func TestEnsurePluginLeavesAnEnabledPluginAlone(t *testing.T) {
 	if err != nil || installed {
 		t.Fatalf("installed=%v err=%v", installed, err)
 	}
-	if want := [][]string{{"codex", "plugin", "list", "--json"}}; !reflect.DeepEqual(r.calls, want) {
+	if want := [][]string{{"codex", "plugin", "list", "--json", "-m", "openai-curated"}}; !reflect.DeepEqual(r.calls, want) {
 		t.Errorf("calls = %q, want %q", r.calls, want)
 	}
 }
@@ -53,7 +54,7 @@ func TestEnsurePluginAddsAMissingCodexPlugin(t *testing.T) {
 	if err != nil || !installed {
 		t.Fatalf("installed=%v err=%v", installed, err)
 	}
-	want := [][]string{{"codex", "plugin", "list", "--json"}, {"codex", "plugin", "add", "codex-security@openai-curated"}, {"codex", "plugin", "list", "--json"}}
+	want := [][]string{{"codex", "plugin", "list", "--json", "-m", "openai-curated"}, {"codex", "plugin", "add", "codex-security@openai-curated"}, {"codex", "plugin", "list", "--json", "-m", "openai-curated"}}
 	if !reflect.DeepEqual(r.calls, want) {
 		t.Errorf("calls = %q, want %q", r.calls, want)
 	}
@@ -115,5 +116,25 @@ func TestEnsurePluginInstallsAMissingClaudePlugin(t *testing.T) {
 	}
 	if want := []string{"claude", "plugin", "install", "sec@official"}; !reflect.DeepEqual(r.calls[1], want) {
 		t.Errorf("install call = %q, want %q", r.calls[1], want)
+	}
+}
+
+func TestEnsurePluginListsTheCodexMarketplaceItsSelectorNames(t *testing.T) {
+	var calls [][]string
+	run := func(name string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string{name}, args...))
+		if slices.Contains(args, "-m") && slices.Contains(args, "openai-curated") {
+			return []byte(codexWithSecurity), nil
+		}
+		return []byte(codexWithoutSecurity), nil
+	}
+
+	installed, err := EnsurePlugin(codexSecurity, run)
+
+	if err != nil || installed {
+		t.Fatalf("installed=%v err=%v calls=%q", installed, err, calls)
+	}
+	if want := [][]string{{"codex", "plugin", "list", "--json", "-m", "openai-curated"}}; !reflect.DeepEqual(calls, want) {
+		t.Errorf("calls = %q, want %q", calls, want)
 	}
 }
