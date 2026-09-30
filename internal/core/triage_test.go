@@ -405,12 +405,29 @@ func TestRenderTriagePlanAndBacklog(t *testing.T) {
 
 	wantPlan := `Plan: docs/x/todo.md — 5 phases, 1 already done, running 2, 3 (2 phases)
 
-| Phase | Title | Risk | Milestone | Wave | Files | Done when | Verified |
-|---|---|---|---|---|---|---|---|
-| 2 | Store | yes | M1 | 1 | store.go, store_test.go, run.go +1 | ` + "`go test ./store/...`" + ` is green. | build: no store \| yet |
-| 3 | Loop \| core | — | M1 | 2 | loop.go | ` + "`go test ./...`" + ` | build |
-| 4 | Face | — | M2 | 1 | — | — | blocked: needs a key |
-| 5 | TUI | — | M2 | 2 | — | — | depends on phase 4 (blocked) |
+Phase 2 · Store
+  M1 · wave 1 · risk
+  Files:     store.go, store_test.go, run.go +1
+  Done when: ` + "`go test ./store/...`" + ` is green.
+  Verified:  build: no store | yet
+
+Phase 3 · Loop | core
+  M1 · wave 2
+  Files:     loop.go
+  Done when: ` + "`go test ./...`" + `
+  Verified:  build
+
+Phase 4 · Face
+  M2 · wave 1
+  Files:     —
+  Done when: —
+  Verified:  blocked: needs a key
+
+Phase 5 · TUI
+  M2 · wave 2
+  Files:     —
+  Done when: —
+  Verified:  depends on phase 4 (blocked)
 
 Plan check: 1 note
 - Phase 4 — Face: no 'Implements' line
@@ -428,9 +445,10 @@ Milestones completed by this run: M1 Core
 	_, dry := RenderTriage(TriageView{Plan: plan, List: plan.Phases[1:2]}, nil)
 	wantDry := `Plan: docs/x/todo.md — 5 phases, 1 already done, running 2 (1 phase)
 
-| Phase | Title | Risk | Milestone | Wave | Files | Done when |
-|---|---|---|---|---|---|---|
-| 2 | Store | yes | M1 | 1 | store.go, store_test.go, run.go +1 | ` + "`go test ./store/...`" + ` is green. |
+Phase 2 · Store
+  M1 · wave 1 · risk
+  Files:     store.go, store_test.go, run.go +1
+  Done when: ` + "`go test ./store/...`" + ` is green.
 
 Plan check: no notes
 Resolve first: none outstanding
@@ -566,6 +584,32 @@ func TestBacklogTriageWrapsLongTextAndDropsTheLabelThatRepeatsTheID(t *testing.T
       Fix:   lockBatch orders by mass_mailing_id with no matching index; a new migration adds a
              partial expression index WHERE status IN ('NEW', 'FAILED') on message
       Files: V015.sql
+`
+	if !strings.Contains(table, want) {
+		t.Errorf("table =\n%s\nwant it to contain\n%s", table, want)
+	}
+}
+
+func TestPlanTriageWrapsLongTextWithoutClipping(t *testing.T) {
+	ph := Phase{ID: "11", Title: "Rebuild projections from the events table", Files: []string{
+		"core/src/main/java/uz/kapitalbank/antifraud/core/signals/domain/Projection.java",
+		"core/src/main/java/uz/kapitalbank/antifraud/core/signals/port/in/RebuildProjectionsUseCase.java",
+	}, Items: []Item{{Text: "a"}}, DoneWhen: "mvn -pl core,kafka-intake-adapter,persistence-jdbc-adapter -am verify -Dtest=ProjectionFoldsTest,EventReplayReaderTest"}
+	plan := Plan{Path: "docs/todo.md", Phases: []Phase{ph}}
+	checks := PlanFindings{Notes: []string{"Phase 5 and Phase 7 are both in wave 4 but touch kafka-intake-adapter/src/main/java/IntakeEventParser.java — add a 'Depends on' edge"}}
+
+	_, table := RenderTriage(TriageView{Plan: plan, List: plan.Phases, Checks: checks}, nil)
+
+	want := `Phase 11 · Rebuild projections from the events table
+  wave 0
+  Files:     core/src/main/java/uz/kapitalbank/antifraud/core/signals/domain/Projection.java,
+             core/src/main/java/uz/kapitalbank/antifraud/core/signals/port/in/RebuildProjectionsUseCase.java
+  Done when: mvn -pl core,kafka-intake-adapter,persistence-jdbc-adapter -am verify
+             -Dtest=ProjectionFoldsTest,EventReplayReaderTest
+
+Plan check: 1 note
+- Phase 5 and Phase 7 are both in wave 4 but touch
+  kafka-intake-adapter/src/main/java/IntakeEventParser.java — add a 'Depends on' edge
 `
 	if !strings.Contains(table, want) {
 		t.Errorf("table =\n%s\nwant it to contain\n%s", table, want)

@@ -3358,8 +3358,9 @@ primary tree and calls <code>submit_triage</code> with one verdict each — for 
 submission and refuses it with the reason, so the watchdog fixes it and submits again: one verdict
 per entry, every value in its enum, and an <code>already-done</code> phase or a <code>stale</code> or
 <code>duplicate</code> item must cite a <code>path:line</code> that exists in the primary tree.
-<em>The gate</em>: an accepted submission returns the table the driver rendered —
-<code>Phase | Title | Risk | Milestone | Wave | Files | Done when | Verified</code> for a plan, with
+<em>The gate</em>: an accepted submission returns the table the driver rendered — for a plan one
+block per phase (<code>Phase &lt;id&gt; · &lt;title&gt;</code>, then milestone · wave · risk, and
+wrapped <code>Files:</code>, <code>Done when:</code> and <code>Verified:</code> lines), with
 the plan-check notes, the deferred entries, a cost line from each step's review rounds and the
 milestones the run completes — and writes <code>triage.json</code> and <code>triage.md</code> to the
 run directory and a <code>triage</code> event to the faces. The watchdog prints the table as it is,
@@ -3377,7 +3378,7 @@ still run one at a time (<a href="#adr-11">ADR-11</a>). The watchdog not finishi
 <code>watchdog.triageTimeout</code> (default <code>2h</code>), or an interrupt, exits 4; a
 watchdog that is gone exits 5; <code>abort</code> at the gate, like <code>r-loop abort</code>, exits 1. In each case no <code>run-list</code> is recorded, so
 <code>r-loop resume</code> triages again; a run that has one resumes without triage.
-<code>--dry-run</code> runs the plan check and prints the table without a Verified column and with
+<code>--dry-run</code> runs the plan check and prints the table without the Verified lines and with
 <code>verification: not run</code>: it starts no session. The per-phase check of
 <a href="#adr-53">ADR-53</a> stays, for the drift earlier phases cause.</p>
 <p><span class="f">Alternatives</span> The watchdog writes its verdicts to a marker file the driver
@@ -3850,7 +3851,7 @@ named reason on stderr; there is nothing paginated.</p>
       <td>the TUI, or with <code>--plain</code> a banner naming the resolved rows, the triage table,
           one line per step transition and review round, and a final report; <code>--dry-run</code>
           runs the plan check and prints the run list, each open <code>## Resolve first</code> entry
-          that blocks it, and the table without its Verified column, ending
+          that blocks it, and the table without its Verified lines, ending
           <code>verification: not run</code> — it starts no session
           (<a href="#adr-77">ADR-77</a>)</td></tr>
   <tr><td><code>r-loop &lt;free text&gt;</code></td><td>Say what to run without the flags</td>

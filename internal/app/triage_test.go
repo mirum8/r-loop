@@ -104,7 +104,7 @@ func TestTriageStartsTheRunOnGoAndRecordsTheRunList(t *testing.T) {
 	if !k.dog.prompted("triage plan " + k.f.todo + " phases 1, 2, 3.") {
 		t.Errorf("no triage request: %q", k.dog.Calls())
 	}
-	if !strings.Contains(table, "| 1 | one |") || !strings.Contains(table, "Verified") {
+	if !strings.Contains(table, "Phase 1 · one\n") || !strings.Contains(table, "Verified:") {
 		t.Errorf("table:\n%s", table)
 	}
 	if !slices.Equal(k.land.landed, []string{"1", "2", "3"}) {
@@ -134,7 +134,7 @@ func TestTriageStartsTheRunOnGoAndRecordsTheRunList(t *testing.T) {
 			t.Error(err)
 		}
 	}
-	if !strings.Contains(k.f.out.String(), "| 2 | two |") || !strings.Contains(k.f.out.String(), "run list: 1, 2, 3\n") {
+	if !strings.Contains(k.f.out.String(), "Phase 2 · two\n") || !strings.Contains(k.f.out.String(), "run list: 1, 2, 3\n") {
 		t.Errorf("plain face:\n%s", k.f.out)
 	}
 }

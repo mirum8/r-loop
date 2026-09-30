@@ -620,27 +620,21 @@ func renderPlan(v TriageView, t *Triage) (string, string) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Plan: %s — %s, %d already done, running %s (%s)\n\n", v.Plan.Path, Plural(len(v.Plan.Phases), "phase"),
 		len(v.Plan.Phases)-len(unticked), orNone(joinIDs(phaseIDs(kept))), Plural(len(kept), "phase"))
-	cols := []string{"Phase", "Title", "Risk"}
 	withMilestones := len(v.Plan.Milestones) > 0
-	if withMilestones {
-		cols = append(cols, "Milestone")
-	}
-	cols = append(cols, "Wave", "Files", "Done when")
-	if t != nil {
-		cols = append(cols, "Verified")
-	}
 	wave, _ := Waves(v.Plan)
-	var rows [][]string
 	for _, ph := range v.List {
-		risk := "—"
+		writeWrapped(&b, "Phase "+Printable(ph.ID)+" · ", ph.Title)
+		var meta []string
+		if withMilestones && ph.Milestone > 0 {
+			meta = append(meta, fmt.Sprintf("M%d", ph.Milestone))
+		}
+		meta = append(meta, fmt.Sprintf("wave %d", wave[ph.ID]))
 		if ph.Risk != "" {
-			risk = "yes"
+			meta = append(meta, "risk")
 		}
-		row := []string{ph.ID, ph.Title, risk}
-		if withMilestones {
-			row = append(row, milestoneCell(ph.Milestone))
-		}
-		row = append(row, fmt.Sprint(wave[ph.ID]), filesCell(ph.Files), clip(firstLine(ph.DoneWhen), 48))
+		writeWrapped(&b, "  ", strings.Join(meta, " · "))
+		writeWrapped(&b, "  Files:     ", filesCell(ph.Files))
+		writeWrapped(&b, "  Done when: ", orDash(firstLine(ph.DoneWhen)))
 		if t != nil {
 			verified := why[ph.ID]
 			if verified == "" {
@@ -649,25 +643,23 @@ func renderPlan(v TriageView, t *Triage) (string, string) {
 					verified += ": " + n
 				}
 			}
-			row = append(row, clip(verified, 60))
+			writeWrapped(&b, "  Verified:  ", verified)
 		}
-		rows = append(rows, row)
+		b.WriteString("\n")
 	}
-	writeTable(&b, cols, rows)
-	b.WriteString("\n")
 	if len(v.Checks.Notes) == 0 {
 		b.WriteString("Plan check: no notes\n")
 	} else {
 		fmt.Fprintf(&b, "Plan check: %s\n", Plural(len(v.Checks.Notes), "note"))
 		for _, n := range v.Checks.Notes {
-			fmt.Fprintf(&b, "- %s\n", n)
+			writeWrapped(&b, "- ", n)
 		}
 	}
 	if len(v.Deferrals) == 0 {
 		b.WriteString("Resolve first: none outstanding\n")
 	}
 	for _, d := range v.Deferrals {
-		fmt.Fprintf(&b, "Resolve first: %s → phases %s\n", d.Entry, joinIDs(d.Phases))
+		writeWrapped(&b, "Resolve first: ", d.Entry+" → phases "+joinIDs(d.Phases))
 	}
 	fmt.Fprintf(&b, "%s: %s (%s), up to %s\n", Plural(len(kept), "phase"), Plural(len(kept)*len(v.Kinds), "step session"),
 		strings.Join(kindNames(v.Kinds), ", "), Plural(len(kept)*reviewRounds(v.Kinds), "review round"))
@@ -785,13 +777,6 @@ func Printable(s string) string {
 	}, s)
 }
 
-func milestoneCell(n int) string {
-	if n == 0 {
-		return "—"
-	}
-	return fmt.Sprintf("M%d", n)
-}
-
 func filesCell(files []string) string {
 	if len(files) <= 3 {
 		return orDash(strings.Join(files, ", "))
@@ -809,14 +794,6 @@ func orDash(s string) string {
 func firstLine(s string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 	return strings.TrimSpace(line)
-}
-
-func clip(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return orDash(s)
-	}
-	return strings.TrimSpace(string(r[:n-1])) + "…"
 }
 
 func Plural(n int, word string) string {
