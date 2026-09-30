@@ -120,6 +120,9 @@ type Model struct {
 	done       map[stepID]string
 	checking   string
 	checkFrom  time.Time
+	landing    string
+	landStage  string
+	landFrom   time.Time
 	Questions  []Question
 	DogGone    bool
 	DogWaiting bool
@@ -164,19 +167,29 @@ func landed(ph core.Phase) bool {
 func (m Model) Apply(ev core.Event) Model {
 	switch ev.Kind {
 	case "phase-start":
+		m.landing = ""
 		m.Current = ev.Phase
 	case "phase-state":
 		m.setPhase(ev.Phase, core.PhaseState(ev.Fields["state"]))
 	case "phase-blocked", "phase-skipped", "item-skipped":
+		if m.landing == ev.Phase {
+			m.landing = ""
+		}
 		m.setPhase(ev.Phase, core.PhaseBlocked)
 	case "step":
-		m.checking = ""
+		m.checking, m.landing = "", ""
 		m.step(ev)
 	case "review-round", "agent-named", "review-find", "finding", "review-clean":
 		m.review(ev)
 	case "phase-check-start":
 		m.retire(ev.Phase, "", 0)
-		m.checking, m.checkFrom, m.Live = ev.Phase, ev.At, nil
+		m.checking, m.checkFrom, m.Live, m.landing = ev.Phase, ev.At, nil, ""
+	case "land-stage":
+		if m.landing != ev.Phase {
+			m.retire(ev.Phase, "", 0)
+			m.landFrom = ev.At
+		}
+		m.landing, m.landStage, m.Live = ev.Phase, ev.Fields["stage"], nil
 	case "phase-check", "phase-check-timeout", "phase-check-skipped":
 		m.checking = ""
 		m.log(ev, toneDim, "phase check "+checkDetail(ev))
@@ -204,6 +217,7 @@ func (m Model) Apply(ev core.Event) Model {
 	case "nudge":
 		m.log(ev, toneDim, "nudged")
 	case "landed":
+		m.landing = ""
 		m.log(ev, toneDim, landedText(ev.Fields))
 	case "gate-fix":
 		m.log(ev, toneDim, "land gate fix r"+ev.Fields["round"])
@@ -226,6 +240,9 @@ func (m Model) Apply(ev core.Event) Model {
 		m.settle(ev.Fields["id"])
 		m.log(ev, toneDim, ev.Fields["id"]+" closed: "+ev.Fields["reason"])
 	case "blocked-on":
+		if m.landing == ev.Phase {
+			m.landing = ""
+		}
 		m.Questions = append(append([]Question(nil), m.Questions...), Question{ID: ev.Fields["id"], Phase: ev.Phase, Step: ev.Step, At: ev.At, Blocker: true})
 		m.log(ev, toneDim, fmt.Sprintf("blocker %s (%s): %s", ev.Fields["id"], ev.Fields["source"], ev.Fields["reason"]))
 	case "blocker-resolved":
@@ -271,7 +288,7 @@ func replay(m Model, history []core.Event) Model {
 	}
 	m.Status, m.Blocked, m.Resume, m.Current, m.Live, m.past = "", "", "", "", nil, nil
 	m.ended = time.Time{}
-	m.checking = ""
+	m.checking, m.landing = "", ""
 	m.Questions, m.DogGone, m.DogWaiting = nil, false, false
 	return m
 }
@@ -469,7 +486,7 @@ func withReason(text, reason string) string {
 }
 
 func (m *Model) end(status string, at time.Time) {
-	m.checking = ""
+	m.checking, m.landing = "", ""
 	m.Status = status
 	m.ended = at
 	m.Current = ""

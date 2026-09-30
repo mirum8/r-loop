@@ -330,6 +330,32 @@ func TestTheCheckingLineIsDimAndItsWarningsAmber(t *testing.T) {
 	}
 }
 
+func TestTheLandingLineShowsItsStageUntilThePhaseLands(t *testing.T) {
+	m := newModel(nil)
+	m.Now = at(5)
+	m = m.Apply(core.Event{At: at(2), Kind: "phase-start", Phase: "2"})
+	m = m.Apply(core.Event{At: at(2), Kind: "land-stage", Phase: "2", Fields: map[string]string{"phase": "2", "stage": "merging"}})
+	m = m.Apply(core.Event{At: at(3), Kind: "land-stage", Phase: "2", Fields: map[string]string{"phase": "2", "stage": "gate go test ./..."}})
+	if view := m.View(); !strings.Contains(view, "phase 2 · landing · gate go test ./... · 3m0s") {
+		t.Fatalf("no landing line:\n%s", view)
+	}
+	m = m.Apply(core.Event{At: at(4), Kind: "landed", Phase: "2", Fields: map[string]string{"phase": "2"}})
+	if view := m.View(); strings.Contains(view, "landing ·") || !strings.Contains(view, "no step running") {
+		t.Fatalf("landing line stays after the landing:\n%s", view)
+	}
+}
+
+func TestTheLandingLineGoesWhenTheLandingBlocks(t *testing.T) {
+	m := newModel(nil)
+	m.Now = at(5)
+	m = m.Apply(core.Event{At: at(2), Kind: "phase-start", Phase: "2"})
+	m = m.Apply(core.Event{At: at(2), Kind: "land-stage", Phase: "2", Fields: map[string]string{"phase": "2", "stage": "gate go test ./..."}})
+	m = m.Apply(core.Event{At: at(3), Kind: "blocked-on", Phase: "2", Step: "land", Fields: map[string]string{"id": "b1", "source": "land", "reason": "gate red"}})
+	if view := m.View(); strings.Contains(view, "landing ·") {
+		t.Fatalf("landing line stays while the landing is blocked:\n%s", view)
+	}
+}
+
 func TestTheReviewBlockShowsEachRoundOnOneLine(t *testing.T) {
 	m := newModel(reviewed())
 	m.Now = at(50)

@@ -258,6 +258,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 	if err := g.Store.Append(g.RunID, Record{Kind: RecordEvent, At: mergeAt, Event: &mergeIntent}); err != nil {
 		return Landing{}, "", "", fmt.Errorf("record: %w", err)
 	}
+	g.stage(n, "merging")
 	if err := g.Repo.MergeNoFF(ctx, fmt.Sprintf("r-loop/phase-%s", n), g.committedTodo()...); err != nil {
 		return Landing{}, "", "", err
 	}
@@ -299,6 +300,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 			return Landing{}, "", "", errors.Join(err, g.Repo.AbortMerge())
 		}
 		command = item + " && " + suite
+		g.stage(n, "red check "+item)
 		if output, err := g.redAtBase(ctx, phase, item); err != nil {
 			return Landing{}, command, output, errors.Join(err, g.Repo.AbortMerge())
 		}
@@ -307,6 +309,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 		landing.GateSkipped = true
 		g.emit(Event{Kind: "gate-skipped", Phase: n, Step: "land", Fields: map[string]string{"phase": n}})
 	} else {
+		g.stage(n, "gate "+command)
 		code, output, err := g.Repo.Run(ctx, "", command, g.GateTimeout)
 		if err == nil && code != 0 {
 			err = fmt.Errorf("%w: %s exited %d\n%s", ErrGate, command, code, output)
@@ -374,6 +377,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 	if err := g.Store.Append(g.RunID, Record{Kind: RecordEvent, At: commitAt, Event: &commitIntent}); err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("record: %w", err), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
 	}
+	g.stage(n, "committing")
 	sha, err := g.Repo.Commit(ctx, message, g.committedTodo()...)
 	if err != nil {
 		commitErr := fmt.Errorf("commit: %w", err)
@@ -568,6 +572,10 @@ type watchedRecorder struct {
 func (r watchedRecorder) Started(s *Session) {
 	r.stepRecorder.Started(s)
 	r.w.StepStarted(r.ref, s)
+}
+
+func (g *LandGate) stage(phase, stage string) {
+	g.emit(Event{Kind: "land-stage", Phase: phase, Step: "land", Fields: map[string]string{"phase": phase, "stage": stage}})
 }
 
 func (g *LandGate) emit(ev Event) {

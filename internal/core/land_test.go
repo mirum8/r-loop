@@ -981,8 +981,31 @@ func TestLandGateWithoutDoneWhenRecordsASkip(t *testing.T) {
 	if len(skips) != 1 || skips[0].Phase != "1" {
 		t.Errorf("gate-skipped events = %+v", skips)
 	}
-	if len(e.face.events) == 0 || e.face.events[0].Kind != "gate-skipped" {
+	var kinds []string
+	for _, ev := range e.face.events {
+		kinds = append(kinds, ev.Kind)
+	}
+	if !reflect.DeepEqual(kinds, []string{"land-stage", "gate-skipped", "land-stage"}) {
 		t.Errorf("face events = %+v", e.face.events)
+	}
+}
+
+func TestLandGateShowsEachStageBeforeItRuns(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+
+	if _, err := e.gate().Land(context.Background(), phaseOne("`test -f feature.txt` is green.")); err != nil {
+		t.Fatal(err)
+	}
+
+	var stages []string
+	for _, ev := range e.face.events {
+		if ev.Kind == "land-stage" {
+			stages = append(stages, ev.Fields["stage"])
+		}
+	}
+	if want := []string{"merging", "gate test -f feature.txt", "committing"}; !reflect.DeepEqual(stages, want) {
+		t.Fatalf("stages = %q, want %q", stages, want)
 	}
 }
 
@@ -1289,6 +1312,34 @@ func TestMilestoneReportSpawnedOnlyAfterTheLastPhaseInThePrimaryTree(t *testing.
 	}
 	if st := gitCmd(t, e.root, "status", "--porcelain"); st != "" {
 		t.Errorf("primary tree not clean:\n%s", st)
+	}
+}
+
+func TestTheLandShowsItsCommitAndTheMilestoneReportAsStages(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, _, _ := e.boundaryGate("ok")
+	stages := func() []string {
+		var out []string
+		for _, ev := range e.face.events {
+			if ev.Kind == "land-stage" {
+				out = append(out, ev.Phase+" "+ev.Fields["stage"])
+			}
+		}
+		return out
+	}
+
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatalf("Land 1: %v", err)
+	}
+	if _, err := g.Land(context.Background(), phaseTwo("")); err != nil {
+		t.Fatalf("Land 2: %v", err)
+	}
+
+	want := []string{"1 merging", "1 committing", "2 merging", "2 committing", "2 milestone 1 report"}
+	if got := stages(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("stages = %q, want %q", got, want)
 	}
 }
 

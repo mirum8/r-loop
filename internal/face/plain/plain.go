@@ -29,6 +29,8 @@ func (f *Face) Emit(ev core.Event) {
 		line := fmt.Sprintf("%s  phase %s  %s  %s  %s  %s", ev.At.Format("15:04:05"), ev.Phase, ev.Step,
 			ev.Fields["state"], ev.Fields["provider"], detail)
 		fmt.Fprintln(f.Out, strings.TrimRight(line, " "))
+	case "land-stage":
+		fmt.Fprintf(f.Out, "%s  phase %s  land  %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["stage"])
 	case "nudge":
 		fmt.Fprintf(f.Out, "%s  phase %s  %s  nudge\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step)
 	case "watchdog-waiting":

@@ -141,6 +141,17 @@ func TestOtherEventsAreOneLine(t *testing.T) {
 	}
 }
 
+func TestALandStageIsOneLine(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	f.Emit(core.Event{At: at, Kind: "land-stage", Phase: "4", Step: "land", Fields: map[string]string{"phase": "4", "stage": "gate go test ./..."}})
+
+	if want := "14:03:09  phase 4  land  gate go test ./...\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
 func TestThePhaseCheckIsOneLineWhenItStartsAndOneWithItsResult(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

@@ -159,6 +159,8 @@ func (m Model) panel(w, room int) []string {
 	add := func(style lipgloss.Style, s string) { lines = append(lines, style.Render(ansi.Truncate(s, w, "…"))) }
 	if m.checking != "" {
 		add(th.Label, fmt.Sprintf("phase %s · watchdog checking the plan · %s", m.checking, m.clock().Sub(m.checkFrom).Truncate(time.Second)))
+	} else if m.landing != "" {
+		add(th.Label, fmt.Sprintf("phase %s · landing · %s · %s", m.landing, m.landStage, m.clock().Sub(m.landFrom).Truncate(time.Second)))
 	} else if s := m.Live; s != nil {
 		add(th.Text, fmt.Sprintf("PHASE %s · %s", s.Phase, stepName(s)))
 		label := th.Text.Render(fmt.Sprintf("%-10s ", "steps"))

@@ -33,6 +33,7 @@ func (b *MilestoneBoundary) After(ctx context.Context, phase Phase) {
 	if !ok {
 		return
 	}
+	recordEvent(b.Sessions.Store, b.Face, b.RunID, Event{Kind: "land-stage", Phase: phase.ID, Step: "land", Fields: map[string]string{"phase": phase.ID, "stage": fmt.Sprintf("milestone %d report", m.Number)}})
 	addendum := ""
 	for attempt := 1; ; attempt++ {
 		reason := b.attempt(ctx, phase, m, attempt, addendum)
