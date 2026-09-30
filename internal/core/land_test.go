@@ -351,13 +351,14 @@ func (f runnerFunc) Run(ctx context.Context, ref core.StepRef, obs core.Observer
 }
 
 type landEnv struct {
-	t     *testing.T
-	repo  *gitrepo.Repo
-	root  string
-	todo  string
-	plan  *tickPlan
-	store *memStore
-	face  *memFace
+	t         *testing.T
+	repo      *gitrepo.Repo
+	root      string
+	todo      string
+	plan      *tickPlan
+	store     *memStore
+	face      *memFace
+	localTodo bool
 }
 
 func newLandEnv(t *testing.T) *landEnv {
@@ -412,6 +413,7 @@ func (e *landEnv) gate() *core.LandGate {
 		TodoPath:    e.todo,
 		GateTimeout: time.Minute,
 		FixKind:     core.StepKind{Name: "gatefix", Prompt: "gatefix", Check: "diff"},
+		LocalTodo:   e.localTodo,
 	}
 }
 
@@ -652,6 +654,70 @@ func TestLandGateTicksEveryGroupMemberInTheOneLandingCommit(t *testing.T) {
 	if !slices.Equal(touched, []string{"docs/demo/todo.md", "feature.txt"}) {
 		t.Errorf("landing commit touches %v", touched)
 	}
+}
+
+func newIgnoredTodoLandEnv(t *testing.T) *landEnv {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	writeFile(t, filepath.Join(dir, ".gitignore"), "/issues/\n")
+	writeFile(t, filepath.Join(dir, "a.txt"), "one\n")
+	writeFile(t, filepath.Join(dir, ".git/info/exclude"), ".r-loop/\n")
+	gitCmd(t, dir, "add", "-A")
+	gitCmd(t, dir, "commit", "-q", "-m", "init")
+	writeFile(t, filepath.Join(dir, "issues/issues-demo.md"), todoText)
+	repo, err := gitrepo.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &landEnv{
+		t:         t,
+		repo:      repo,
+		root:      repo.Root(),
+		todo:      filepath.Join(repo.Root(), "issues/issues-demo.md"),
+		plan:      &tickPlan{root: repo.Root()},
+		store:     &memStore{dir: t.TempDir()},
+		face:      &memFace{},
+		localTodo: true,
+	}
+}
+
+func TestLandGateLandsCodeOnlyWhenTheTodoIsGitignored(t *testing.T) {
+	e := newIgnoredTodoLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	before := e.head()
+
+	landing, err := e.gate().Land(context.Background(), phaseOne("`test -f feature.txt` is green."))
+
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if landing.MergeSHA != e.head() || gitCmd(t, e.root, "rev-parse", "HEAD^1") != before {
+		t.Errorf("landing %+v is not one commit on %s", landing, before)
+	}
+	touched := strings.Fields(gitCmd(t, e.root, "show", "--name-only", "--format=", "--diff-merges=first-parent", "HEAD"))
+	if !slices.Equal(touched, []string{"feature.txt"}) {
+		t.Errorf("landing commit touches %v, want only feature.txt", touched)
+	}
+	if todo := readFile(t, e.todo); !strings.Contains(todo, "- [x] p1 item") || !strings.Contains(todo, "- [ ] p2 item") {
+		t.Errorf("ignored todo not ticked on disk:\n%s", todo)
+	}
+}
+
+func TestLandGateRedLeavesAGitignoredTodoUnticked(t *testing.T) {
+	e := newIgnoredTodoLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	head := e.head()
+
+	_, err := e.gate().Land(context.Background(), phaseOne("`false` is green."))
+
+	if !errors.Is(err, core.ErrGate) {
+		t.Errorf("err = %v, want ErrGate", err)
+	}
+	e.assertUntouched(head)
+	assertNoMergeHead(t, e.root)
 }
 
 func TestLandGateRecordsThePhasesDiffSize(t *testing.T) {

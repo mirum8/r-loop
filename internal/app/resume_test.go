@@ -1852,3 +1852,82 @@ func TestResumeWithdrawsAQuestionTheKilledDriverLeftOpen(t *testing.T) {
 		t.Fatalf("blocker %+v", qs[1])
 	}
 }
+
+func (f *fixture) untrackTodo() {
+	f.t.Helper()
+	f.write(".gitignore", "/docs/topic/\n")
+	git(f.t, f.root, "rm", "-q", "--cached", "docs/topic/todo.md")
+	f.commit()
+}
+
+func (f *fixture) seedLocalLandCommitIntent(id string) {
+	f.t.Helper()
+	f.appendRunEvent(id, ev(t0, "commit-intent", 1, "land", map[string]string{
+		"phase": "1", "tree": git(f.t, f.root, "write-tree"), "gateSkipped": "false", "added": "1", "deleted": "0",
+	}))
+}
+
+func TestResumeCompletesALocalTodoMergeAndTicksThePhaseOnDisk(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	f.untrackTodo()
+	id, _, base := f.seedKilledLand("1,2")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.seedLocalLandCommitIntent(id)
+
+	code, lander, err := f.resume(newSim())
+
+	if err != nil || code != 0 || lander == nil || !slices.Equal(lander.landed, []string{"2"}) || !strings.Contains(f.out.String(), "completed phase 1's merge") {
+		t.Fatalf("code=%d err=%v lander=%v out=%s", code, err, lander, f.out)
+	}
+	sha := git(t, f.root, "rev-parse", "HEAD")
+	if landed := f.load(id).Landed; len(landed) == 0 || landed[0].MergeSHA != sha {
+		t.Fatalf("landed=%+v", landed)
+	}
+	if touched := git(t, f.root, "show", "--name-only", "--format=", "--diff-merges=first-parent", sha); touched != "one.txt" {
+		t.Errorf("landing commit touches %q, want one.txt", touched)
+	}
+	if todo, _ := os.ReadFile(f.todo); !strings.Contains(string(todo), "- [x] a") {
+		t.Errorf("local todo not ticked:\n%s", todo)
+	}
+}
+
+func TestResumeTicksALocalTodoForAPhaseThatLandedBeforeTheCrash(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	f.untrackTodo()
+	id, _, base := f.seedKilledLand("1,2")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.seedLocalLandCommitIntent(id)
+	git(t, f.root, "commit", "-q", "-m", "phase 1: one")
+	sha := git(t, f.root, "rev-parse", "HEAD")
+
+	code, lander, err := f.resume(newSim())
+
+	if err != nil || code != 0 || lander == nil || !slices.Equal(lander.landed, []string{"2"}) || !strings.Contains(f.out.String(), "phase 1 landed as "+sha[:7]+" before the crash") {
+		t.Fatalf("code=%d err=%v lander=%v out=%s", code, err, lander, f.out)
+	}
+	if landed := f.load(id).Landed; len(landed) == 0 || landed[0].MergeSHA != sha {
+		t.Fatalf("landed=%+v", landed)
+	}
+	if todo, _ := os.ReadFile(f.todo); !strings.Contains(string(todo), "- [x] a") {
+		t.Errorf("local todo not ticked:\n%s", todo)
+	}
+}
+
+func TestResumeAbortsALocalTodoMergeTheCrashLeftDuringTheGate(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	f.untrackTodo()
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+
+	code, lander, err := f.resume(newSim())
+
+	if err != nil || code != 0 || lander == nil || !slices.Equal(lander.landed, []string{"1"}) || !strings.Contains(f.out.String(), "aborted phase 1's merge") || git(t, f.root, "rev-parse", "HEAD") != base {
+		t.Fatalf("code=%d err=%v lander=%v out=%s", code, err, lander, f.out)
+	}
+	if todo, _ := os.ReadFile(f.todo); string(todo) != resumeTodo {
+		t.Errorf("local todo changed:\n%s", todo)
+	}
+}

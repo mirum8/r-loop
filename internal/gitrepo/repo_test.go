@@ -349,6 +349,22 @@ func TestMergeNoFFThenCommit(t *testing.T) {
 	}
 }
 
+func TestTrackedTellsAnIgnoredUntrackedFileFromATrackedOne(t *testing.T) {
+	r, dir := newRepo(t)
+	write(t, filepath.Join(dir, ".gitignore"), "/issues/\n")
+	write(t, filepath.Join(dir, "issues/tracked.md"), "- [ ] one\n")
+	git(t, dir, "add", "-f", ".gitignore", "issues/tracked.md")
+	git(t, dir, "commit", "-q", "-m", "track one ignored file")
+	write(t, filepath.Join(dir, "issues/local.md"), "- [ ] two\n")
+
+	for path, want := range map[string]bool{"issues/tracked.md": true, "issues/local.md": false, "a.txt": true, "missing.md": false} {
+		got, err := r.Tracked(path)
+		if err != nil || got != want {
+			t.Errorf("Tracked(%s) = %v, %v; want %v", path, got, err, want)
+		}
+	}
+}
+
 func TestRevParseResolvesMergeHeadAndABranch(t *testing.T) {
 	r, dir := newRepo(t)
 	branchWith(t, dir, "r-loop/phase-1", "feature.txt", "feature\n")

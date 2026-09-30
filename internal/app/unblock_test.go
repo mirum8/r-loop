@@ -43,6 +43,12 @@ func startWalk(t *testing.T, onWalk func(w *Wiring), args ...string) *walk {
 	f := newResumeFixture(t, noReviewConfig)
 	f.write("docs/topic/todo.md", blockedTodo)
 	f.commit()
+	return walkOn(f, onWalk, args...)
+}
+
+func walkOn(f *fixture, onWalk func(w *Wiring), args ...string) *walk {
+	t := f.t
+	t.Helper()
 	w, err := f.preflight(append([]string{f.todo, "--plain"}, args...)...)
 	if err != nil {
 		t.Fatal(err)
@@ -122,6 +128,33 @@ func TestTheWatchdogWalksABlockerAndTheDriverCommitsOnlyThePlan(t *testing.T) {
 	}
 	if rep := core.Report(run, k.w.Plan); !strings.Contains(rep, "## Blockers\n\n- Pick the database → 2026-09-21 — Postgres; the team already runs it\n") {
 		t.Errorf("report:\n%s", rep)
+	}
+}
+
+func TestAWalkOverALocalTodoResolvesTheEntryWithoutACommit(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	f.write("docs/topic/todo.md", blockedTodo)
+	f.untrackTodo()
+	head := git(t, f.root, "rev-parse", "HEAD")
+	var k *walk
+	k = walkOn(f, func(w *Wiring) {
+		k.edit("- [ ] **Pick the database** — which one backs the store?\n      Owner: me. Blocks: Phase 1. Timebox: an hour. Output: a line in the spec.\n",
+			"- [x] **Pick the database** — which one backs the store?\n      Owner: me. Blocks: Phase 1. Timebox: an hour. Output: a line in the spec.\n      Resolved: 2026-09-21 — Postgres; the team already runs it.\n")
+	})
+
+	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2", "3"}})
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, f.out, f.err)
+	}
+	if got := git(t, f.root, "rev-parse", "HEAD"); got != head {
+		t.Errorf("HEAD moved from %s to %s", head, got)
+	}
+	if len(k.land.landed) != 3 {
+		t.Errorf("landed %v, want 1, 2 and 3", k.land.landed)
+	}
+	if got := stepEvents(f.load(k.w.Loop.RunID), "entry-resolved"); len(got) != 1 || got[0].Fields["resolved"] != "2026-09-21 — Postgres; the team already runs it" {
+		t.Errorf("entry-resolved %+v", got)
 	}
 }
 

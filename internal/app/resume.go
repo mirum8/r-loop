@@ -128,11 +128,25 @@ func reconcileLand(repo *gitrepo.Repo, st *store.Store, run core.RunState, todoA
 		return exit(2, "%v", err)
 	}
 	todoRel = filepath.ToSlash(todoRel)
+	tracked, err := repo.Tracked(todoRel)
+	if err != nil {
+		return exit(2, "%v", err)
+	}
+	local := !tracked
+	var todoPaths []string
+	if !local {
+		todoPaths = []string{todoRel}
+	}
 	merging, err := repo.MergeInProgress()
 	if err != nil {
 		return exit(2, "%v", err)
 	}
 	landing := func(sha string) error {
+		if local {
+			if err := tickLocal(run, mi.Phase, todoAbs); err != nil {
+				return exit(4, "phase %s landed as %s, but ticking it in %s failed: %v; fix the plan, then resume", mi.Phase, sha[:7], todoRel, err)
+			}
+		}
 		added, _ := strconv.Atoi(ci.Fields["added"])
 		deleted, _ := strconv.Atoi(ci.Fields["deleted"])
 		l := core.Landing{Phase: mi.Phase, MergeSHA: sha, GateSkipped: ci.Fields["gateSkipped"] == "true", Added: added, Deleted: deleted}
@@ -162,12 +176,12 @@ func reconcileLand(repo *gitrepo.Repo, st *store.Store, run core.RunState, todoA
 			if err != nil {
 				return unfinishedMergeError(repo, mi.Phase, err)
 			}
-			idx, err := repo.IndexTree(todoRel)
+			idx, err := repo.IndexTree(todoPaths...)
 			if err != nil {
 				return unfinishedMergeError(repo, mi.Phase, err)
 			}
 			if wt == ci.Fields["tree"] && idx == ci.Fields["tree"] {
-				sha, err := repo.Commit(context.Background(), mi.Fields["message"], todoRel)
+				sha, err := repo.Commit(context.Background(), mi.Fields["message"], todoPaths...)
 				if err != nil {
 					return exit(4, "complete phase %s's unfinished merge: %v", mi.Phase, err)
 				}
@@ -194,12 +208,14 @@ func reconcileLand(repo *gitrepo.Repo, st *store.Store, run core.RunState, todoA
 			if err != nil {
 				return unfinishedMergeError(repo, mi.Phase, err)
 			}
-			ok, err := todoMatchesOwnTick(repo, run, mi.Phase, baseline, idx, todoRel, todoAbs)
-			if err != nil {
-				return exit(4, "phase %s's unfinished merge (MERGE_HEAD): check %s before aborting: %v", mi.Phase, todoRel, err)
-			}
-			if !ok {
-				return exit(4, "phase %s's unfinished merge (MERGE_HEAD) has unproven changes to %s; commit them or run git merge --abort by hand, then resume", mi.Phase, todoRel)
+			if !local {
+				ok, err := todoMatchesOwnTick(repo, run, mi.Phase, baseline, idx, todoRel, todoAbs)
+				if err != nil {
+					return exit(4, "phase %s's unfinished merge (MERGE_HEAD): check %s before aborting: %v", mi.Phase, todoRel, err)
+				}
+				if !ok {
+					return exit(4, "phase %s's unfinished merge (MERGE_HEAD) has unproven changes to %s; commit them or run git merge --abort by hand, then resume", mi.Phase, todoRel)
+				}
 			}
 		}
 		paths, err := repo.TreeDiff(idx, wt)
@@ -226,7 +242,7 @@ func reconcileLand(repo *gitrepo.Repo, st *store.Store, run core.RunState, todoA
 			return exit(4, "phase %s's unfinished merge (MERGE_HEAD) has changes outside its recorded state at %s; commit them or run git merge --abort by hand, then resume", mi.Phase, strings.Join(paths, ", "))
 		}
 		var originalTodo []byte
-		if ci == nil {
+		if ci == nil && !local {
 			originalTodo, err = os.ReadFile(todoAbs)
 			if err != nil {
 				return exit(4, "phase %s's unfinished merge (MERGE_HEAD): read %s before aborting: %v", mi.Phase, todoRel, err)
@@ -282,6 +298,27 @@ func reconcileLand(repo *gitrepo.Repo, st *store.Store, run core.RunState, todoA
 	}
 	fmt.Fprintf(out, "phase %s landed as %s before the crash; its landing is now recorded\n", mi.Phase, sha[:7])
 	return nil
+}
+
+func tickLocal(run core.RunState, phase, todoAbs string) error {
+	reader := plan.Reader{}
+	p, err := reader.Read(todoAbs)
+	if err != nil {
+		return err
+	}
+	if groups := recordedGroups(run); len(groups) > 0 {
+		p = core.GroupBacklog(p, groups)
+	}
+	for _, ph := range p.Phases {
+		if ph.ID != phase {
+			continue
+		}
+		if err := reader.Tick(todoAbs, ph); err != nil && !errors.Is(err, plan.ErrNothingToTick) {
+			return err
+		}
+		return nil
+	}
+	return fmt.Errorf("phase %s is absent", phase)
 }
 
 func missingPhaseBranch(phase, branch string, cause error) error {

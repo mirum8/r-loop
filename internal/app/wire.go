@@ -66,31 +66,32 @@ func exit(code int, format string, args ...any) *ExitError {
 }
 
 type Wiring struct {
-	Opts     Options
-	Env      Env
-	Todo     string
-	Plan     core.Plan
-	Findings core.PlanFindings
-	Config   config.LoopConfig
-	Registry *providers.Registry
-	Store    *store.Store
-	records  *core.RecordGuard
-	Prompts  *prompts.Renderer
-	Host     herdr.Client
-	Repo     *gitrepo.Repo
-	Face     core.Face
-	Plain    *plain.Face
-	TUI      *tui.Face
-	Notify   *notify.Shell
-	Gate     *core.LandGate
-	Probe    *core.GateProbe
-	Loop     *core.RunLoop
-	Ask      *askmcp.Server
-	Watch    *core.Watch
-	Dog      *core.Watchdog
-	Remedies *core.Remedies
-	Router   *core.QuestionRouter
-	Triaged  bool
+	Opts      Options
+	Env       Env
+	Todo      string
+	Plan      core.Plan
+	Findings  core.PlanFindings
+	Config    config.LoopConfig
+	Registry  *providers.Registry
+	Store     *store.Store
+	records   *core.RecordGuard
+	Prompts   *prompts.Renderer
+	Host      herdr.Client
+	Repo      *gitrepo.Repo
+	Face      core.Face
+	Plain     *plain.Face
+	TUI       *tui.Face
+	Notify    *notify.Shell
+	Gate      *core.LandGate
+	Probe     *core.GateProbe
+	Loop      *core.RunLoop
+	Ask       *askmcp.Server
+	Watch     *core.Watch
+	Dog       *core.Watchdog
+	Remedies  *core.Remedies
+	Router    *core.QuestionRouter
+	Triaged   bool
+	LocalTodo bool
 
 	groups   []core.Group
 	triageMu sync.Mutex
@@ -484,6 +485,11 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Repo:     repo,
 		Plain:    &plain.Face{Out: env.Stdout},
 	}
+	tracked, err := repo.Tracked(w.todoRel())
+	if err != nil {
+		return nil, exit(2, "%v", err)
+	}
+	w.LocalTodo = !tracked
 	w.records = &core.RecordGuard{Store: w.Store}
 	w.Face = w.Plain
 	if useTUI(opts.Plain, terminal(env.Stdin), terminal(env.Stdout)) {
@@ -551,6 +557,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		FixRounds: cfg.Land.FixRounds,
 		FixKind:   fixKind,
 		Runner:    core.DefaultRunners(sm, []core.StepKind{fixKind})["diff"],
+		LocalTodo: w.LocalTodo,
 	}
 	if pl.Backlog {
 		w.Gate.Suite = w.Probe

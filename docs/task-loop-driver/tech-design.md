@@ -439,7 +439,10 @@ so.
   → append `commit-intent{phase, tree, gateSkipped, added, deleted}` after checking that the
   intended index tree equals the merged and ticked working tree → `Commit("phase <N>: <title>")`
   → `CommitTouches` must include the todo and one other path, else
-  `ResetHard("HEAD~1")` and halt. A conflict aborts before the gate. The gate therefore proves the
+  `ResetHard("HEAD~1")` and halt. A todo not tracked in the repository (gitignored and untracked,
+  ADR-84) is driver-local: `MergeNoFF` keeps no path, `IndexTree()` and `Commit` take no todo path,
+  `CommitTouches` must touch at least one path and never the todo, and `Tick` runs only after that
+  check passes; resume ticks a local todo when it finds the phase landed. A conflict aborts before the gate. The gate therefore proves the
   phase's code, and no merge commit exists unless it passed. Every land error — a conflict, an
   unfinished merge, a wrong branch, a dirty or changed tree, a red gate with no fix round left, an
   item gate green at base or with no test file, a tick or commit failure — leaves the primary tree

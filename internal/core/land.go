@@ -129,6 +129,7 @@ type LandGate struct {
 	Suite           Suite
 	Raise           func(context.Context, Blocker) (Resolution, bool)
 	Watcher         Watcher
+	LocalTodo       bool
 }
 
 func (g *LandGate) Land(ctx context.Context, phase Phase) (Landing, error) {
@@ -257,7 +258,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 	if err := g.Store.Append(g.RunID, Record{Kind: RecordEvent, At: mergeAt, Event: &mergeIntent}); err != nil {
 		return Landing{}, "", "", fmt.Errorf("record: %w", err)
 	}
-	if err := g.Repo.MergeNoFF(ctx, fmt.Sprintf("r-loop/phase-%s", n), g.todoRel()); err != nil {
+	if err := g.Repo.MergeNoFF(ctx, fmt.Sprintf("r-loop/phase-%s", n), g.committedTodo()...); err != nil {
 		return Landing{}, "", "", err
 	}
 	mergedIndex, err := g.Repo.IndexTree()
@@ -331,10 +332,12 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 		return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), g.Repo.AbortMerge())
 	}
 	mergedTodo = before
-	if err := g.Plan.Tick(g.TodoPath, phase); err != nil {
-		return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
+	if !g.LocalTodo {
+		if err := g.Plan.Tick(g.TodoPath, phase); err != nil {
+			return Landing{}, "", "", errors.Join(fmt.Errorf("tick: %w", err), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
+		}
 	}
-	tree, err := g.Repo.IndexTree(g.todoRel())
+	tree, err := g.Repo.IndexTree(g.committedTodo()...)
 	if err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("record: %w", err), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
 	}
@@ -371,7 +374,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 	if err := g.Store.Append(g.RunID, Record{Kind: RecordEvent, At: commitAt, Event: &commitIntent}); err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("record: %w", err), os.WriteFile(todoAbs, before, 0o644), g.Repo.AbortMerge())
 	}
-	sha, err := g.Repo.Commit(ctx, message, g.todoRel())
+	sha, err := g.Repo.Commit(ctx, message, g.committedTodo()...)
 	if err != nil {
 		commitErr := fmt.Errorf("commit: %w", err)
 		if abortErr := g.Repo.AbortMerge(); abortErr == nil {
@@ -387,7 +390,16 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 	}
 	touched, err := g.Repo.CommitTouches(sha)
 	todo := g.todoRel()
-	if err != nil || !slices.Contains(touched, todo) || len(touched) < 2 {
+	if g.LocalTodo {
+		if err != nil || slices.Contains(touched, todo) || len(touched) < 1 {
+			rejected = true
+			reason := fmt.Errorf("%w: a driver-local todo lands code only; %s touched %v", ErrLanding, sha, touched)
+			return Landing{}, "", "", errors.Join(reason, err, g.Repo.ResetKeep("HEAD~1"))
+		}
+		if err := g.Plan.Tick(g.TodoPath, phase); err != nil {
+			return Landing{}, "", "", fmt.Errorf("tick: phase %s landed as %s but its local todo is unticked: %w", n, sha, err)
+		}
+	} else if err != nil || !slices.Contains(touched, todo) || len(touched) < 2 {
 		rejected = true
 		reason := fmt.Errorf("%w: code and ticks land as one commit; %s touched %v", ErrLanding, sha, touched)
 		return Landing{}, "", "", errors.Join(reason, err, g.Repo.ResetKeep("HEAD~1"))
@@ -448,6 +460,13 @@ func (g *LandGate) redAtBase(ctx context.Context, phase Phase, item string) (str
 
 func (g *LandGate) todoRel() string {
 	return repoRel(g.Repo.Root(), g.TodoPath)
+}
+
+func (g *LandGate) committedTodo() []string {
+	if g.LocalTodo {
+		return nil
+	}
+	return []string{g.todoRel()}
 }
 
 func repoRel(root, p string) string {

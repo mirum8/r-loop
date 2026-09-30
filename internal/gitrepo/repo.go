@@ -674,6 +674,11 @@ func (r *Repo) Commit(ctx context.Context, message string, paths ...string) (str
 	return "", commitErr
 }
 
+func (r *Repo) Tracked(path string) (bool, error) {
+	out, err := r.git("", "--literal-pathspecs", "ls-files", "-z", "--", path)
+	return len(split0(out)) > 0, err
+}
+
 func (r *Repo) CommitTouches(sha string) ([]string, error) {
 	out, err := r.git("", "show", "--name-only", "-z", "--no-renames", "--format=", "--diff-merges=first-parent", sha)
 	return split0(out), err
