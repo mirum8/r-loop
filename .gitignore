@@ -2,3 +2,4 @@
 /bin/
 /.claude/skills/test-app/test_creds.txt
 /.claude/worktrees/
+/.claude/skills/test-app/e2e/frames/
