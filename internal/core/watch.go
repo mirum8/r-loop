@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const defaultWatchPoll = 10 * time.Second
+
 type Check interface {
 	Name() string
 	Run(ctx CheckContext) []Signal
@@ -89,7 +91,7 @@ func (w *Watch) now() time.Time {
 
 func (w *Watch) poll() time.Duration {
 	if w.Poll <= 0 {
-		return defaultPoll
+		return defaultWatchPoll
 	}
 	return w.Poll
 }

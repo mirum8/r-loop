@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	defaultPoll       = 10 * time.Second
+	defaultPoll       = 2 * time.Second
 	defaultStallGrace = 2 * time.Minute
 	sentinelGrace     = 30 * time.Second
 )
@@ -69,6 +69,7 @@ type Session struct {
 	OpenQuestion, Reviewing          atomic.Bool
 	owner                            *Session
 	fix                              *fixHalf
+	prompted                         time.Time
 
 	mu        sync.Mutex
 	ended     bool
@@ -330,14 +331,16 @@ func (m *SessionManager) waitAll(ctx context.Context, sessions []*Session, obs O
 	defer ticker.Stop()
 	outs := make([]Outcome, len(sessions))
 	watches := make([]*watch, len(sessions))
+	last := m.now()
 	for i, s := range sessions {
 		watches[i] = &watch{s: s, obs: obs}
 		if s.fix != nil {
 			watches[i].elapsed = s.fix.spent
+		} else if !s.prompted.IsZero() {
+			watches[i].elapsed = max(0, last.Sub(s.prompted))
 		}
 	}
 	pending := len(sessions)
-	last := m.now()
 	for pending > 0 {
 		select {
 		case <-ctx.Done():

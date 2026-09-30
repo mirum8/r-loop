@@ -285,18 +285,27 @@ func (h ReviewHalf) open(ctx context.Context, worker *Session, rows []Reviewer, 
 			}
 		}
 	}
+	promptAll := func(pane bool) Outcome {
+		for _, r := range runs {
+			if r.fail != nil || paneReview(r) != pane {
+				continue
+			}
+			if f := h.prompt(r); f != nil {
+				if out := failed(r, f); out.State == StepFailed {
+					return out
+				}
+			}
+		}
+		return Outcome{}
+	}
+	if out := promptAll(false); out.State == StepFailed {
+		return nil, out
+	}
 	if out := h.paneReviews(ctx, worker, runs, failed); out.State == StepFailed {
 		return nil, out
 	}
-	for _, r := range runs {
-		if r.fail != nil {
-			continue
-		}
-		if f := h.prompt(r); f != nil {
-			if out := failed(r, f); out.State == StepFailed {
-				return nil, out
-			}
-		}
+	if out := promptAll(true); out.State == StepFailed {
+		return nil, out
 	}
 	return runs, Outcome{}
 }
@@ -371,6 +380,7 @@ func (h ReviewHalf) prompt(r *reviewerRun) *reviewerFail {
 	if err != nil {
 		return &reviewerFail{reason: "reviewer " + s.Reviewer + ": " + err.Error()}
 	}
+	s.prompted = sm.now()
 	return nil
 }
 

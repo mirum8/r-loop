@@ -1055,12 +1055,13 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
   `AgentPane(agent)` names, no `enter`; an agent herdr does not know is an error naming it. Every
   `SessionHost` fake implements it; the core fake records the calls in order with `SendKeys`.
 - **The pane review** — `ReviewHalf.open`, for a reviewer whose provider has `ReviewStart`, after
-  `Start` and before the prompt, one goroutine per reviewer, all reviewers of the round at once:
+  `Start` and before the prompt, one goroutine per reviewer, all reviewers of the round at once. The
+  round's other reviewers are prompted before the pane reviews start, so they work beside them:
   1. `SendText(agent, Review)`; read `Screen(agent)` until the composer shows the text (whitespace
      ignored, within 5s), then `SendKeys(agent, "enter")`. codex swallows an Enter that lands right
      after fast typed input, so while the text is still in the composer and `ReviewStart` is not on
      the screen 3s after a press, press `enter` again — at most 5 presses in all; `review-ran` records them as `presses`.
-  2. Read `Screen(agent)` at the session poll interval until it shows `ReviewStart`, within
+  2. Read `Screen(agent)` every 250 ms (or at the session poll, if shorter) until it shows `ReviewStart`, within
      2 minutes (codex starts its MCP servers first). herdr reports codex's menus and dialogs as
      `idle` or `done`, never `blocked`, so the screen's text is the only detector; the agent state
      is read only for `gone`.

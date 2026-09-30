@@ -105,6 +105,74 @@ func TestPaneReviewRunsBeforeTheReviewerIsPrompted(t *testing.T) {
 	}
 }
 
+func TestNonPaneReviewersArePromptedWhileThePaneReviewRuns(t *testing.T) {
+	var uiPrompted atomic.Bool
+	r, _ := paneReviewRig(t, func(h *screenHost, agent string, n int) string {
+		switch {
+		case h.enters[agent] == 0:
+			return "› " + paneReviewText
+		case uiPrompted.Load():
+			return ">> Code review started <<\n<< Code review finished >>"
+		}
+		return ">> Code review started <<"
+	}, Reviewer{Provider: "codex"}, Reviewer{Provider: "codex", Name: "ui", Prompt: "review-ui"})
+	r.behave = func(vars map[string]any) {
+		if vars["prompt"] == "review-ui" {
+			uiPrompted.Store(true)
+		}
+		writeReview(t, vars, "ok", 0)
+	}
+	r.worker.Ref.Kind.Row.ReviewTimeout = time.Second
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	var order []string
+	for _, v := range r.reviews {
+		order = append(order, v["prompt"].(string))
+	}
+	if !reflect.DeepEqual(order, []string{"review-ui", "review"}) {
+		t.Fatalf("prompt order = %v", order)
+	}
+}
+
+func TestANonPaneReviewersBackstopCountsTheTimeItWorkedBesideThePaneReview(t *testing.T) {
+	var mu sync.Mutex
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	r, _ := paneReviewRig(t, func(h *screenHost, agent string, n int) string {
+		if h.enters[agent] == 0 {
+			return "› " + paneReviewText
+		}
+		mu.Lock()
+		now = now.Add(2 * time.Hour)
+		mu.Unlock()
+		return ">> Code review started <<\n<< Code review finished >>"
+	}, Reviewer{Provider: "codex"}, Reviewer{Provider: "codex", Name: "ui", Prompt: "review-ui"})
+	r.sm.Now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return now
+	}
+	r.behave = func(vars map[string]any) {
+		if vars["prompt"] != "review-ui" {
+			writeReview(t, vars, "ok", 0)
+		}
+	}
+
+	done := make(chan Outcome, 1)
+	go func() { done <- r.run() }()
+	select {
+	case out := <-done:
+		if out.State != StepFailed || out.Reason != "reviewer ui: backstop 1h0m0s" {
+			t.Fatalf("outcome = %+v", out)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the ui reviewer's backstop ignored the time it worked during the pane review")
+	}
+}
+
 func TestPaneReviewThatNeverStartsFailsNamingTheReviewer(t *testing.T) {
 	fastPaneReview(t)
 	r, _ := paneReviewRig(t, scripted("› ", "› /review Review the current code changes"), Reviewer{Provider: "codex"})

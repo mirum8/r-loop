@@ -16,6 +16,8 @@ var (
 	paneReviewSubmitWait = 3 * time.Second
 )
 
+const paneScreenPoll = 250 * time.Millisecond
+
 const paneReviewPresses = 5
 
 var paneReviewFailures = []string{"Review was interrupted", "Reviewer failed to output a response"}
@@ -24,7 +26,7 @@ func (h ReviewHalf) paneReviews(ctx context.Context, worker *Session, runs []*re
 	sm := h.Sessions
 	var pane []int
 	for i, r := range runs {
-		if r.fail == nil && r.args.ReviewDone != "" && r.s.Ref.Kind.Prompt == "review" {
+		if r.fail == nil && paneReview(r) {
 			pane = append(pane, i)
 		}
 	}
@@ -65,6 +67,10 @@ func (h ReviewHalf) paneReviews(ctx context.Context, worker *Session, runs []*re
 		r.s.Ref.Vars["ReviewRan"] = true
 	}
 	return Outcome{}
+}
+
+func paneReview(r *reviewerRun) bool {
+	return r.args.ReviewDone != "" && r.s.Ref.Kind.Prompt == "review"
 }
 
 type paneStuck struct{ msg string }
@@ -131,9 +137,9 @@ func (h ReviewHalf) awaitScreen(ctx context.Context, agent, marker string, limit
 }
 
 func (h ReviewHalf) pollScreen(ctx context.Context, agent string, limit time.Duration, done func(string) bool) (string, bool, error) {
-	poll := h.Sessions.Poll
-	if poll <= 0 {
-		poll = defaultPoll
+	poll := paneScreenPoll
+	if p := h.Sessions.Poll; p > 0 {
+		poll = min(p, poll)
 	}
 	deadline := time.Now().Add(limit)
 	for {
