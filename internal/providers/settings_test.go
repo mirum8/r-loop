@@ -45,7 +45,7 @@ func TestWriteStatusSettingsPointsTheStatuslineAtTheTap(t *testing.T) {
 	}
 
 	data, _ := os.ReadFile(path)
-	want := `{"statusLine":{"command":"'/opt/r loop/r-loop' statusline-tap /run/usage/claude.json","type":"command"}}`
+	want := `{"permissions":{"allow":["mcp__r-loop"]},"statusLine":{"command":"'/opt/r loop/r-loop' statusline-tap /run/usage/claude.json","type":"command"}}`
 	if string(data) != want {
 		t.Fatalf("settings = %s\nwant %s", data, want)
 	}

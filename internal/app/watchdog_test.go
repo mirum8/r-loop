@@ -456,7 +456,7 @@ func TestExecuteStartsTheWatchdogAndAHaltThroughItsMCPSurfaceExits5(t *testing.T
 	if len(calls) < 3 || calls[0] != `Split "driver-pane" right `+f.root || calls[1] != "Start wd-pane "+core.WatchdogName(w.Loop.RunID)+" claude --model opus --effort medium --mcp-config "+mcpPath+" --settings "+filepath.Join(runDir, "claude.settings.json") || !strings.Contains(calls[2], runDir) {
 		t.Errorf("watchdog calls %q", calls)
 	}
-	if settings, err := os.ReadFile(filepath.Join(runDir, "claude.settings.json")); err != nil || !strings.Contains(string(settings), "statusline-tap "+filepath.Join(runDir, "usage", "claude.json")) {
+	if settings, err := os.ReadFile(filepath.Join(runDir, "claude.settings.json")); err != nil || !strings.Contains(string(settings), "statusline-tap "+filepath.Join(runDir, "usage", "claude.json")) || !strings.Contains(string(settings), `"permissions":{"allow":["mcp__r-loop"]}`) {
 		t.Errorf("status settings %s: %v", settings, err)
 	}
 	if !strings.Contains(data, w.Ask.WatchdogURL()) {

@@ -179,10 +179,21 @@ func WriteMCPConfig(path, url string) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
+var mcpPermissions = map[string]any{"allow": []string{"mcp__r-loop"}}
+
 func WriteStatusSettings(path, exe, tapFile string) error {
-	data, err := json.Marshal(map[string]any{
-		"statusLine": map[string]any{"type": "command", "command": shellWord(exe) + " statusline-tap " + shellWord(tapFile)},
+	return writeSettings(path, map[string]any{
+		"permissions": mcpPermissions,
+		"statusLine":  map[string]any{"type": "command", "command": shellWord(exe) + " statusline-tap " + shellWord(tapFile)},
 	})
+}
+
+func WriteMCPSettings(path string) error {
+	return writeSettings(path, map[string]any{"permissions": mcpPermissions})
+}
+
+func writeSettings(path string, settings map[string]any) error {
+	data, err := json.Marshal(settings)
 	if err != nil {
 		return err
 	}

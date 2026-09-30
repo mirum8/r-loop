@@ -26,6 +26,7 @@ type intakeHost struct {
 	errs          []error
 	done          chan struct{}
 	configAtStart bool
+	settings      string
 }
 
 func (h *intakeHost) Reachable() error { return nil }
@@ -39,6 +40,10 @@ func (h *intakeHost) Start(pane, name, kind string, args []string) (core.Agent, 
 		if arg == "--mcp-config" && i+1 < len(args) {
 			_, err := os.Stat(args[i+1])
 			h.configAtStart = err == nil
+		}
+		if arg == "--settings" && i+1 < len(args) {
+			data, _ := os.ReadFile(args[i+1])
+			h.settings = string(data)
 		}
 	}
 	h.mu.Unlock()
@@ -244,6 +249,22 @@ func TestIntakeRefusesAnInvalidArgvThenReturnsTheConfirmedOne(t *testing.T) {
 		if !strings.Contains(host.prompt, want) {
 			t.Errorf("prompt missing %q:\n%s", want, host.prompt)
 		}
+	}
+}
+
+func TestIntakeStartsClaudeWithItsOwnMCPToolsAllowed(t *testing.T) {
+	f := newFixture(t)
+	f.commit()
+	host := &intakeHost{done: make(chan struct{}), submit: [][]string{{"docs/topic/todo.md", "--phases", "2"}}}
+
+	_, err := f.intake(host, "the topic plan, only phase 2", "--plain")
+	<-host.done
+
+	if err != nil || len(host.errs) != 0 {
+		t.Fatalf("err=%v host errs=%v", err, host.errs)
+	}
+	if want := `{"permissions":{"allow":["mcp__r-loop"]}}`; host.settings != want {
+		t.Fatalf("settings at start = %q, want %q", host.settings, want)
 	}
 }
 
