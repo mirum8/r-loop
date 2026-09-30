@@ -3733,6 +3733,39 @@ landed.</p>
 <p><span class="f">Revisit when</span> a local todo's ticks drift from the landings often enough to
 need reconciling.</p>
 </div>
+<div class="adr">
+<h3 id="adr-85">ADR-85 — A security reviewer runs the provider's own security scan</h3>
+<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Context</span> The code reviewer and the <code>ui</code> reviewer do not
+look for security regressions on purpose. Codex ships a security plugin, <code>codex-security</code>.
+Claude Code has a built-in <code>/security-review</code> and a <code>claude-security</code> plugin.
+The maintainer picks which of the two runs the pass, and does not want to install a plugin by hand.</p>
+<p><span class="f">Decision</span> Security review is an ordinary reviewer with
+<code>prompt: review-security</code>, <code>name: security</code> on the implement row by default,
+<code>provider: codex</code>. Its <code>provider</code> picks who runs it. A provider block names
+the scan in <code>securityReview</code> and, when the scan needs one, the plugin in
+<code>securityPlugin</code> (<code>plugin@marketplace</code>). Codex runs
+<code>$codex-security:security-diff-scan</code> from <code>codex-security@openai-curated</code>.
+Claude runs the built-in <code>/security-review</code>, with no plugin. Preflight, not the install
+script, makes sure every plugin a configured security reviewer needs is installed and enabled. It
+lists the provider's plugins as JSON, adds a missing one, and checks the list again. A failed install
+stops preflight with exit 2; <code>--dry-run</code> installs nothing. The scan's full report is the
+reviewer's <code>native-review.txt</code>, and the driver fails a security reviewer whose report is
+missing or empty. Its findings go to the step's own session like any other reviewer's: the session
+judges each one, then fixes the real P1/P2 findings.</p>
+<p><span class="f">Alternatives</span> Install the plugins in <code>install.sh</code> —
+rejected: the script does not know the config, and a project config can switch the provider after
+the install. <code>claude-security</code> for Claude — rejected: it scans committed changes only,
+and nothing is committed before the last review round. It also asks the user questions through its
+own menus. A new step kind — rejected: a reviewer already has the pane, rounds, findings and
+verdict.</p>
+<p><span class="f">Consequences</span> The first run with a Codex security reviewer changes the
+machine's Codex setup by installing a plugin. <code>gatefix</code> inherits the security reviewer
+with the implement row's other reviewers. A machine config written before this ADR keeps its own
+reviewer list; <code>r-loop --create-config</code> resets it to the defaults.</p>
+<p><span class="f">Revisit when</span> <code>claude-security</code> can scan a working tree
+without asking, or a Codex security scan outgrows <code>reviewTimeout</code>.</p>
+</div>
 
 
 

@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Source of truth
 
-- `docs/task-loop-driver/spec.html` — the spec (stories, domain model, invariants, 84 ADRs). Decisions are settled there; don't re-decide them.
+- `docs/task-loop-driver/spec.html` — the spec (stories, domain model, invariants, 85 ADRs). Decisions are settled there; don't re-decide them.
 - `docs/task-loop-driver/todo.md` — the implementation plan: 17 milestones, 46 phases, each with `Depends on:`, `Files:`, checklist items and a `Done when:` command. The `## Waves` block is generated from the `Depends on` edges — regenerate, never hand-edit.
 - `docs/task-loop-driver/tech-design.md` — contracts shared across phases of a milestone (types, enums, port signatures, run-dir layout, sentinel format, config resolution). Leaf items in `todo.md` repeat what they need, so an implementer working one phase can rely on that phase's block alone.
 - `docs/task-loop-driver/interview-notes.md` — the interview log behind the spec.
@@ -43,4 +43,5 @@ Hexagonal core inside one self-contained binary, supervising out-of-process agen
 - Config resolves CLI flag → `.r-loop/config.yaml` → `~/.config/r-loop/config.yaml` → embedded defaults, with provenance per key. Block-style YAML only; flow-style nodes and unknown keys are rejected (exit 2).
 - The driver is deterministic; the watchdog is the run's LLM (ADR-71): an always-on full session that does the judgement — watching steps, phase checks, answering questions, and walking `## Resolve first` like `/r:plan-unblock` (ADR-72). The driver commits and keeps the run list.
 - Step agents ask the watchdog (`ask_watchdog`), which returns at once; the agent ends its turn and the driver types the answer into the pane that asked (ADR-76). Only the watchdog asks the maintainer, in its own session (ADR-73). No face asks anything, and the driver never answers a question itself: a gone watchdog halts the run.
+- A `security` reviewer (`prompt: review-security`) runs the provider's `securityReview` scan (codex: `codex-security` plugin, claude: built-in `/security-review`); preflight installs a missing `securityPlugin` (ADR-85).
 - Both faces render the same `Event` stream. The TUI follows `DESIGN.md`: amber (`secondary`) means only "waiting for you", one row is bold (the live phase), one line per row down to 80 columns.

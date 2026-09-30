@@ -22,7 +22,7 @@ const shippedSource = "shipped"
 
 type Provider struct {
 	Name, Kind, Flags, ModelFlag, EffortFlag, AskFlag, DirFlag, SettingsFlag, DoneSignal, Ask, Review, ReviewStart, ReviewDone, Models, Source string
-	Settings                                                                                                                                   string
+	SecurityReview, SecurityPlugin, Settings                                                                                                   string
 }
 
 type Registry struct {
@@ -79,6 +79,7 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 	fields := map[string]*string{
 		"kind": &p.Kind, "flags": &p.Flags, "modelFlag": &p.ModelFlag, "effortFlag": &p.EffortFlag, "askFlag": &p.AskFlag,
 		"dirFlag": &p.DirFlag, "settingsFlag": &p.SettingsFlag, "doneSignal": &p.DoneSignal, "ask": &p.Ask, "review": &p.Review, "reviewStart": &p.ReviewStart, "reviewDone": &p.ReviewDone, "models": &p.Models,
+		"securityReview": &p.SecurityReview, "securityPlugin": &p.SecurityPlugin,
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, val := n.Content[i].Value, n.Content[i+1]
@@ -116,6 +117,10 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 		return fail("reviewStart", "is required with reviewDone")
 	case p.ReviewStart != "" && !strings.HasPrefix(p.Review, "/"):
 		return fail("reviewStart", "and reviewDone need a review that starts with /, got %q", p.Review)
+	case p.SecurityPlugin != "" && p.SecurityReview == "":
+		return fail("securityPlugin", "needs a securityReview")
+	case p.SecurityPlugin != "" && !pluginSelector.MatchString(p.SecurityPlugin):
+		return fail("securityPlugin", "must be <plugin>@<marketplace>, got %q", p.SecurityPlugin)
 	}
 	if p.Ask == "" {
 		p.Ask = "none"
@@ -190,7 +195,7 @@ func ToCore(p Provider, model, effort, askURL, mcpConfigPath, dir string) core.P
 		reviewArgs[i] = shellWord(arg)
 	}
 	return core.ProviderArgs{Kind: p.Kind, Args: Args(p, model, effort, askURL, mcpConfigPath, dir), Ask: p.Ask == "mcp", Review: strings.ReplaceAll(p.Review, "{args}", strings.Join(reviewArgs, " ")),
-		ReviewStart: p.ReviewStart, ReviewDone: p.ReviewDone}
+		ReviewStart: p.ReviewStart, ReviewDone: p.ReviewDone, SecurityReview: p.SecurityReview}
 }
 
 func shellWord(arg string) string {

@@ -261,7 +261,7 @@ func (w *Wiring) leftovers(list []core.Phase) error {
 
 type role struct {
 	field, provider, model string
-	review                 bool
+	review, security       bool
 }
 
 func (w *Wiring) validateProviders() error {
@@ -275,12 +275,14 @@ func (w *Wiring) validateProviders() error {
 			roles = append(roles, role{field: p + "fallback", provider: row.Fallback.Provider, model: row.Fallback.Model})
 		}
 		for _, rv := range row.Reviewers {
-			roles = append(roles, role{field: p + "reviewers", provider: rv.Provider, model: rv.Model, review: reviewTemplate(name, rv) == "review"})
+			t := reviewTemplate(name, rv)
+			roles = append(roles, role{field: p + "reviewers", provider: rv.Provider, model: rv.Model, review: t == "review", security: t == "review-security"})
 		}
 	}
 	roles = append(roles, role{field: "land.fix.provider", provider: cfg.Land.Fix.Provider, model: cfg.Land.Fix.Model})
 	for _, rv := range cfg.Steps["implement"].Reviewers {
-		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, model: rv.Model, review: reviewTemplate("gatefix", rv) == "review"})
+		t := reviewTemplate("gatefix", rv)
+		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, model: rv.Model, review: t == "review", security: t == "review-security"})
 	}
 	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider, model: cfg.Watchdog.Model})
 	roles = append(roles, role{field: "intake.provider", provider: cfg.Intake.Provider, model: cfg.Intake.Model})
@@ -305,6 +307,26 @@ func (w *Wiring) validateProviders() error {
 			return exit(2, "%s: %v", r.field, err)
 		}
 	}
+	return w.ensurePlugins(roles, resolved)
+}
+
+func (w *Wiring) ensurePlugins(roles []role, resolved []providers.Provider) error {
+	seen := map[string]bool{}
+	for i, r := range roles {
+		p := resolved[i]
+		key := p.Kind + "\x00" + p.SecurityPlugin
+		if !r.security || p.SecurityPlugin == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		installed, err := providers.EnsurePlugin(p, runCatalog)
+		if err != nil {
+			return exit(2, "%s: %v", r.field, err)
+		}
+		if installed {
+			fmt.Fprintf(w.Env.Stdout, "plugin: %s %s installed\n", p.Kind, p.SecurityPlugin)
+		}
+	}
 	return nil
 }
 
@@ -315,6 +337,9 @@ func checkRole(reg *providers.Registry, r role) (providers.Provider, error) {
 	}
 	if r.review && p.Review == "" {
 		return providers.Provider{}, exit(2, "%s: provider %s has no review command", r.field, r.provider)
+	}
+	if r.security && p.SecurityReview == "" {
+		return providers.Provider{}, exit(2, "%s: provider %s has no securityReview command", r.field, r.provider)
 	}
 	if p.Ask != "mcp" {
 		return providers.Provider{}, exit(2, "%s: provider %s has no MCP ask channel", r.field, r.provider)

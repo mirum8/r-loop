@@ -11,13 +11,13 @@ import (
 
 var _ core.Prompts = (*Renderer)(nil)
 
-var stepTemplates = []string{"plan", "implement", "review", "review-plan", "review-ui", "fix", "milestone", "gatefix", "gate"}
+var stepTemplates = []string{"plan", "implement", "review", "review-plan", "review-ui", "review-security", "fix", "milestone", "gatefix", "gate"}
 
 func TestEveryStepPromptTellsTheAgentToWriteTheSentinelAtomically(t *testing.T) {
 	r := New(t.TempDir())
 	for _, name := range stepTemplates {
 		for _, kind := range []string{"implement", "milestone"} {
-			if kind == "milestone" && name != "review" && name != "review-ui" && name != "fix" {
+			if kind == "milestone" && name != "review" && name != "review-ui" && name != "review-security" && name != "fix" {
 				continue
 			}
 			t.Run(name+"/"+kind, func(t *testing.T) {
@@ -261,7 +261,7 @@ func TestLandStagePromptsDoNotOfferAskWatchdog(t *testing.T) {
 
 func TestGatefixReviewAndFixPromptsDoNotOfferAskWatchdog(t *testing.T) {
 	r := New(t.TempDir())
-	for _, name := range []string{"review", "review-ui", "fix"} {
+	for _, name := range []string{"review", "review-ui", "review-security", "fix"} {
 		vars := fullVars()
 		vars["ReviewedKind"] = "gatefix"
 		got := render(t, r, name, vars)
@@ -476,7 +476,7 @@ func TestWatchdogCarriesThePhaseCheck(t *testing.T) {
 
 func TestStepTemplatesSendRealChoicesToTheWatchdog(t *testing.T) {
 	r := New(t.TempDir())
-	for _, name := range []string{"plan", "implement", "review", "review-plan", "review-ui", "fix"} {
+	for _, name := range []string{"plan", "implement", "review", "review-plan", "review-ui", "review-security", "fix"} {
 		text := render(t, r, name, fullVars())
 		if !strings.Contains(text, "call the `ask_watchdog` tool") || !strings.Contains(text, "Never ask the user in this pane") {
 			t.Errorf("%s does not send real choices to the watchdog:\n%s", name, text)
@@ -991,6 +991,27 @@ func TestWatchdogCatchesUpWithRunStatusAndStepInfo(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q", want)
+		}
+	}
+}
+
+func TestSecurityReviewRunsTheScanFirstAndKeepsItsReport(t *testing.T) {
+	vars := fullVars()
+	vars["ReviewCommand"] = "$codex-security:security-diff-scan"
+
+	got := render(t, New(t.TempDir()), "review-security", vars)
+
+	for _, want := range []string{
+		"    $codex-security:security-diff-scan\n",
+		"One that starts with `$` is a skill",
+		"scan the uncommitted working-tree changes against HEAD, to modify no code",
+		"Save the scan's full final report verbatim to `/runs/r1/phase-7/implement-rv-ui-r1/native-review.txt`",
+		"never review by hand",
+		"Each `detail` gives the scan's severity",
+		"Change no file in",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, got)
 		}
 	}
 }

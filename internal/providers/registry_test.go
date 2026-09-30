@@ -69,7 +69,7 @@ func TestShippedClaudeBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Provider{Name: "claude", Kind: "claude", ModelFlag: "--model {model}", EffortFlag: "--effort {effort}",
-		AskFlag: "--mcp-config {mcpConfig}", DirFlag: "--add-dir {dir}", SettingsFlag: "--settings {settings}", DoneSignal: "sentinel", Ask: "mcp", Review: "/code-review", Source: "shipped"}
+		AskFlag: "--mcp-config {mcpConfig}", DirFlag: "--add-dir {dir}", SettingsFlag: "--settings {settings}", DoneSignal: "sentinel", Ask: "mcp", Review: "/code-review", SecurityReview: "/security-review", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
 	}
@@ -86,7 +86,8 @@ func TestShippedCodexBlock(t *testing.T) {
 	want := Provider{Name: "codex", Kind: "codex", Flags: "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
 		AskFlag: "-c mcp_servers.r-loop.url={url}", DirFlag: `-c sandbox_workspace_write.writable_roots=["{dir}"]`, DoneSignal: "sentinel", Ask: "mcp", Models: "debug models",
 		Review:      "/review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.",
-		ReviewStart: ">> Code review started", ReviewDone: "<< Code review finished", Source: "shipped"}
+		ReviewStart: ">> Code review started", ReviewDone: "<< Code review finished",
+		SecurityReview: "$codex-security:security-diff-scan", SecurityPlugin: "codex-security@openai-curated", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
 	}
@@ -346,7 +347,7 @@ func TestToCore(t *testing.T) {
 	got := ToCore(claude, "opus", "", "http://x", "/run/mcp.json", "")
 	plain := ToCore(pdev, "m", "e", "http://x", "/run/mcp.json", "")
 
-	want := core.ProviderArgs{Kind: "claude", Args: []string{"--model", "opus", "--mcp-config", "/run/mcp.json"}, Ask: true, Review: "/code-review"}
+	want := core.ProviderArgs{Kind: "claude", Args: []string{"--model", "opus", "--mcp-config", "/run/mcp.json"}, Ask: true, Review: "/code-review", SecurityReview: "/security-review"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v\nwant %+v", got, want)
 	}
@@ -602,6 +603,28 @@ func TestReviewMarkersComeInPairsAfterASlashReview(t *testing.T) {
 
 			if err == nil || !strings.Contains(err.Error(), c.field) || !strings.Contains(err.Error(), path) {
 				t.Errorf("error %v should name field %q and source %q", err, c.field, path)
+			}
+		})
+	}
+}
+
+func TestSecurityPluginNeedsASecurityReviewAndASelector(t *testing.T) {
+	cases := []struct {
+		name, block, want string
+	}{
+		{"plugin without review", "kind: x\ndoneSignal: sentinel\nsecurityPlugin: sec@market\n", "needs a securityReview"},
+		{"plugin without marketplace", "kind: x\ndoneSignal: sentinel\nsecurityReview: /scan\nsecurityPlugin: sec\n", "must be <plugin>@<marketplace>"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "pdev.yaml")
+			os.WriteFile(path, []byte(c.block), 0o644)
+
+			_, err := NewRegistry(nil, nil, dir).Resolve("pdev")
+
+			if err == nil || !strings.Contains(err.Error(), "securityPlugin "+c.want) || !strings.Contains(err.Error(), path) {
+				t.Errorf("error %v should say securityPlugin %s and name %s", err, c.want, path)
 			}
 		})
 	}

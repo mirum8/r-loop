@@ -87,7 +87,8 @@ func fakeProviders(t *testing.T) {
 	scripts := map[string]string{
 		"claude": "#!/bin/sh\nexit 0\n",
 		"codex": "#!/bin/sh\nif [ \"$1 $2\" = \"debug models\" ]; then\n  echo x >> \"$0.catalog-calls\"\n" +
-			"  echo '{\"models\":[{\"slug\":\"gpt-6-sol\",\"visibility\":\"list\"},{\"slug\":\"gpt-6.1-sol\",\"visibility\":\"list\"},{\"slug\":\"gpt-6-luna\",\"visibility\":\"list\"}]}'\nfi\nexit 0\n",
+			"  echo '{\"models\":[{\"slug\":\"gpt-6-sol\",\"visibility\":\"list\"},{\"slug\":\"gpt-6.1-sol\",\"visibility\":\"list\"},{\"slug\":\"gpt-6-luna\",\"visibility\":\"list\"}]}'\nfi\n" +
+			"if [ \"$1 $2\" = \"plugin list\" ]; then\n  echo '{\"installed\":[{\"pluginId\":\"codex-security@openai-curated\",\"enabled\":true}]}'\nfi\nexit 0\n",
 	}
 	for name, script := range scripts {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
@@ -356,6 +357,63 @@ func TestImplementReviewerWithoutReviewCommandIsRefusedWithExit2(t *testing.T) {
 	}
 }
 
+func TestSecurityReviewerWithoutASecurityCommandIsRefusedWithExit2(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "providers:\n  bare:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\nsteps:\n  implement:\n    reviewers:\n      - name: security\n        provider: bare\n        model: m\n        effort: e\n        prompt: review-security\n")
+	f.commit()
+
+	_, err := f.preflight(f.todo, "--plain")
+
+	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), "steps.implement.reviewers: provider bare has no securityReview command") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func fakeCodexPlugins(t *testing.T, add string) string {
+	t.Helper()
+	bin := t.TempDir()
+	marker := filepath.Join(bin, "installed")
+	script := "#!/bin/sh\necho \"$*\" >> \"$0.calls\"\n" +
+		"if [ \"$1 $2\" = \"debug models\" ]; then\n  echo '{\"models\":[{\"slug\":\"gpt-6-sol\",\"visibility\":\"list\"}]}'\nfi\n" +
+		"if [ \"$1 $2\" = \"plugin list\" ]; then\n  if [ -f " + marker + " ]; then echo '{\"installed\":[{\"pluginId\":\"codex-security@openai-curated\",\"enabled\":true}]}'; else echo '{\"installed\":[]}'; fi\nfi\n" +
+		"if [ \"$1 $2\" = \"plugin add\" ]; then\n" + add + "\nfi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return filepath.Join(bin, "codex.calls")
+}
+
+func TestPreflightInstallsAMissingSecurityPluginOnce(t *testing.T) {
+	f := newFixture(t)
+	f.commit()
+	calls := fakeCodexPlugins(t, "  touch "+"\"$(dirname \"$0\")/installed\"")
+
+	if _, err := f.preflight(f.todo, "--plain"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(calls)
+	if err != nil || strings.Count(string(got), "plugin add codex-security@openai-curated") != 1 {
+		t.Fatalf("calls %q, err %v", got, err)
+	}
+	if out := f.out.String(); strings.Count(out, "plugin: codex codex-security@openai-curated installed") != 1 {
+		t.Errorf("preflight does not report the install:\n%s", out)
+	}
+}
+
+func TestAFailedSecurityPluginInstallStopsPreflightWithExit2(t *testing.T) {
+	f := newFixture(t)
+	f.commit()
+	fakeCodexPlugins(t, "  echo 'marketplace unreachable' >&2\n  exit 1")
+
+	_, err := f.preflight(f.todo, "--plain")
+
+	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), "steps.implement.reviewers: codex plugin add codex-security@openai-curated: exit status 1: marketplace unreachable") || f.herdrCalled() {
+		t.Fatalf("code=%d err=%v herdr called=%v", code, err, f.herdrCalled())
+	}
+}
+
 func TestPlanReviewerNeedsNoReviewCommand(t *testing.T) {
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\nsteps:\n  implement:\n    reviewers:\n      - provider: claude\n        model: opus\n        effort: medium\n")
@@ -442,7 +500,7 @@ func TestWireBuildsTheGateFixKindAndTheMilestoneBoundary(t *testing.T) {
 	if g.GateTimeout.String() != "12m0s" || fix.Name != "gatefix" || fix.Prompt != "gatefix" || fix.Check != "diff" || g.Runner == nil || g.FixRounds != 1 {
 		t.Fatalf("gate=%+v", g)
 	}
-	if fix.Row.Provider != "codex" || fix.Row.Model != "gpt-x" || fix.Row.Effort != "medium" || fix.Row.Timeout.String() != "4h0m0s" || fix.Row.Rounds != 1 || len(fix.Row.Reviewers) != 2 || fix.Row.Reviewers[0].Provider != "codex" || fix.Row.Reviewers[1].ID() != "ui" {
+	if fix.Row.Provider != "codex" || fix.Row.Model != "gpt-x" || fix.Row.Effort != "medium" || fix.Row.Timeout.String() != "4h0m0s" || fix.Row.Rounds != 1 || len(fix.Row.Reviewers) != 3 || fix.Row.Reviewers[0].Provider != "codex" || fix.Row.Reviewers[1].ID() != "ui" || fix.Row.Reviewers[2].ID() != "security" {
 		t.Fatalf("fix row=%+v", fix.Row)
 	}
 	if b := g.Boundary; b == nil || b.Kind.Name != "milestone" || b.Kind.Check != "report" || b.Kind.Row.Provider != "claude" || b.RunID != w.Loop.RunID || b.Topic != "topic" {

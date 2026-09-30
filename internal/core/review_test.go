@@ -23,15 +23,16 @@ type reviewRig struct {
 	behave    func(vars map[string]any)
 	resolved  [][]string
 	noReview  map[string]bool
+	noScan    map[string]bool
 	reviewCmd map[string]string
 	fixes     []map[string]any
 	onFix     func(vars map[string]any)
 }
 
 func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
-	r := &reviewRig{rig: newRig(t), noReview: map[string]bool{}, reviewCmd: map[string]string{}}
+	r := &reviewRig{rig: newRig(t), noReview: map[string]bool{}, noScan: map[string]bool{}, reviewCmd: map[string]string{}}
 	r.sm.Prompts = promptsFunc(func(name string, vars map[string]any) (string, string, error) {
-		if name != "review" && name != "review-plan" && name != "review-ui" && name != "fix" {
+		if name != "review" && name != "review-plan" && name != "review-ui" && name != "review-security" && name != "fix" {
 			return "do phase 3", "embedded", nil
 		}
 		copied := make(map[string]any, len(vars)+1)
@@ -62,6 +63,10 @@ func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
 		if cmd := r.reviewCmd[provider]; cmd != "" {
 			review = cmd
 		}
+		security := "/" + provider + "-security"
+		if r.noScan[provider] {
+			security = ""
+		}
 		var args []string
 		if model != "" {
 			args = append(args, "--model", model)
@@ -69,7 +74,7 @@ func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
 		if effort != "" {
 			args = append(args, "--effort", effort)
 		}
-		return ProviderArgs{Kind: provider, Args: args, Review: review}, nil
+		return ProviderArgs{Kind: provider, Args: args, Review: review, SecurityReview: security}, nil
 	}
 	ref := r.ref(1)
 	ref.Kind.Row.Reviewers = reviewers
@@ -201,7 +206,7 @@ func TestAReviewerIsRecordedBeforeItStarts(t *testing.T) {
 
 func writeReview(t *testing.T, vars map[string]any, outcome string, findings int) {
 	t.Helper()
-	if vars["prompt"] == "review" {
+	if vars["prompt"] == "review" || vars["prompt"] == "review-security" {
 		if err := os.MkdirAll(vars["ArtifactsDir"].(string), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -1538,4 +1543,74 @@ func (h startFailHost) Start(pane, name, kind string, args []string) (Agent, err
 		return Agent{}, errors.New("no such binary")
 	}
 	return h.scriptedHost.Start(pane, name, kind, args)
+}
+
+var securityReviewer = Reviewer{Provider: "codex", Model: "sol", Effort: "high", Name: "security", Prompt: "review-security"}
+
+func TestSecurityReviewerRunsItsProvidersSecurityCommand(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"}, securityReviewer)
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if r.reviews[1]["prompt"] != "review-security" || r.reviews[1]["ReviewCommand"] != "/codex-security" || r.reviews[0]["ReviewCommand"] != "/codex-review" {
+		t.Fatalf("reviews = %+v", r.reviews)
+	}
+	if f := r.events("review-find"); len(f) != 2 || f[1].Fields["command"] != "/codex-security" {
+		t.Fatalf("finds = %+v", f)
+	}
+}
+
+func TestSecurityReviewerWithoutItsReportFailsTheStepNamingTheCommand(t *testing.T) {
+	r := newReviewRig(t, securityReviewer)
+	r.behave = func(vars map[string]any) { writeFindings(t, vars, "ok", 0) }
+
+	out := r.run()
+
+	if out.State != StepFailed || out.Reason != "reviewer security: evidence missing: native review `/codex-security` produced no output" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestSecurityReviewerOfAProviderWithoutASecurityCommandFailsBeforeAnyPane(t *testing.T) {
+	r := newReviewRig(t, securityReviewer)
+	r.noScan["codex"] = true
+
+	out := r.run()
+
+	if out.State != StepFailed || out.Reason != "reviewer security: provider codex declares no securityReview" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if n := len(r.callsFrom("SessionHost.Split", "SessionHost.Start pane-2")); n != 0 {
+		t.Fatalf("calls = %q", r.shared.Calls())
+	}
+}
+
+func TestARealSecurityFindingIsFixedByTheStepSession(t *testing.T) {
+	r := newReviewRig(t, securityReviewer)
+	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
+		findings := 0
+		if vars["Round"] == 1 {
+			findings = 1
+		}
+		writeReview(t, vars, "ok", findings)
+	}
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("security-r1-1", "real", "P1", true, ""))
+	}
+
+	out := r.run()
+
+	if out.State != StepOK || out.Warning != "" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	want := []FindingsFile{{Reviewer: "security", Path: filepath.Join(r.runDir, "phase-3", "implement-findings-security-r1.json")}}
+	if len(r.fixes) != 1 || !reflect.DeepEqual(r.fixes[0]["FindingsFiles"], want) || len(r.reviews) != 2 {
+		t.Fatalf("fixes = %+v reviews = %d", r.fixes, len(r.reviews))
+	}
 }

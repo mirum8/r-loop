@@ -341,10 +341,11 @@ func meets(a, b []string) bool {
 }
 
 type ProviderArgs struct {
-	Kind        string
-	Args        []string
-	Ask         bool
-	Review      string
-	ReviewStart string
-	ReviewDone  string
+	Kind           string
+	Args           []string
+	Ask            bool
+	Review         string
+	ReviewStart    string
+	ReviewDone     string
+	SecurityReview string
 }

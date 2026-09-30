@@ -75,7 +75,7 @@ func TestDefaults(t *testing.T) {
 	}
 	wantImpl := StepRow{Prompt: "implement", Check: "diff", Provider: "claude", Model: "opus", Effort: "medium",
 		Fallback: Fallback{Provider: "codex", Model: "sol", Effort: "medium"}, Timeout: 4 * time.Hour,
-		Reviewers: []Reviewer{{Provider: "codex", Model: "sol", Effort: "high"}, {Name: "ui", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}}, Rounds: 3, ReviewTimeout: 45 * time.Minute}
+		Reviewers: []Reviewer{{Provider: "codex", Model: "sol", Effort: "high"}, {Name: "ui", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}, {Name: "security", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-security"}}, Rounds: 3, ReviewTimeout: 45 * time.Minute}
 	if !reflect.DeepEqual(cfg.Steps["implement"], wantImpl) {
 		t.Errorf("implement = %+v", cfg.Steps["implement"])
 	}
@@ -578,7 +578,7 @@ func TestOverrideLeavesFallbackAndReviewersUntouched(t *testing.T) {
 	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "codex", Model: "sol", Effort: "medium"}) {
 		t.Errorf("Fallback = %+v", cfg.Steps["implement"].Fallback)
 	}
-	if !reflect.DeepEqual(cfg.Steps["implement"].Reviewers, []Reviewer{{Provider: "codex", Model: "sol", Effort: "high"}, {Name: "ui", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}}) {
+	if !reflect.DeepEqual(cfg.Steps["implement"].Reviewers, []Reviewer{{Provider: "codex", Model: "sol", Effort: "high"}, {Name: "ui", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}, {Name: "security", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-security"}}) {
 		t.Errorf("Reviewers = %+v", cfg.Steps["implement"].Reviewers)
 	}
 }
@@ -628,6 +628,7 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 		"  review rounds 3 45m  ← default",
 		"  reviewer codex sol high  ← default",
 		"  reviewer codex sol high (name ui, prompt review-ui, requires .claude/skills/test-app/SKILL.md)  ← default",
+		"  reviewer codex sol high (name security, prompt review-security)  ← default",
 		"  fallback gemini pro high  ← .r-loop/config.yaml:steps.implement.fallback",
 		"milestone  claude  opus  medium  1h  report  ← default",
 		"gatefix claude opus high  ← provider flag:--provider model default effort .r-loop/config.yaml:land.fix.effort",
@@ -833,7 +834,7 @@ func TestResetModelsPutsTheDefaultModelsBackAndKeepsTheRest(t *testing.T) {
 		"steps.plan: fable → claude opus high",
 		"steps.implement: codex gpt-5.6-sol medium → claude opus medium",
 		"steps.implement.fallback: claude opus medium → codex sol medium",
-		"steps.implement.reviewers: claude opus medium → codex sol high, ui codex sol high",
+		"steps.implement.reviewers: claude opus medium → codex sol high, ui codex sol high, security codex sol high",
 		"steps.milestone.reviewers: codex gpt-5.6-sol medium → removed",
 		"watchdog: high → claude opus medium",
 		"land.fix: high → removed",
@@ -845,7 +846,7 @@ func TestResetModelsPutsTheDefaultModelsBackAndKeepsTheRest(t *testing.T) {
 	if got := cfg.Steps["plan"]; got.Model != "opus" || got.Effort != "high" || got.Timeout != 2*time.Hour {
 		t.Errorf("plan = %+v", got)
 	}
-	if got := cfg.Steps["implement"]; got.Provider != "claude" || got.Fallback != (Fallback{"codex", "sol", "medium"}) || len(got.Reviewers) != 2 {
+	if got := cfg.Steps["implement"]; got.Provider != "claude" || got.Fallback != (Fallback{"codex", "sol", "medium"}) || len(got.Reviewers) != 3 {
 		t.Errorf("implement = %+v", got)
 	}
 	if got := cfg.Steps["docs"]; got.Model != "sonnet" || got.Effort != "low" {

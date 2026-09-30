@@ -41,6 +41,11 @@ steps:
         effort: high
         prompt: review-ui
         requires: .claude/skills/test-app/SKILL.md
+      - name: security
+        provider: codex
+        model: sol
+        effort: high
+        prompt: review-security
     rounds: 3
     reviewTimeout: 45m
   milestone:

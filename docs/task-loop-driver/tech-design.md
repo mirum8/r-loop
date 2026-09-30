@@ -208,7 +208,7 @@ so.
   `milestone`. Defaults: pipeline `[plan, implement]`; plan `claude/opus/high/1h/plan-file`,
   reviewers `[codex/gpt-5.6-sol/medium]`, `rounds 2`, `reviewTimeout 20m`; implement
   `codex/gpt-5.6-sol/medium/4h/diff`, reviewers `[claude/opus/medium, ui]` (`ui` = `claude/opus/high`,
-  `prompt review-ui`, `requires .claude/skills/test-app/SKILL.md`), `rounds 3`, `reviewTimeout 45m`;
+  `prompt review-ui`, `requires .claude/skills/test-app/SKILL.md`; `security` = `prompt review-security`, ADR-85), `rounds 3`, `reviewTimeout 45m`;
   fallback plan `codex/gpt-5.6-sol/medium`, implement `claude/opus/medium`;
   milestone `claude/opus/medium/1h/report`, no review; `land.fixRounds 1`, `land.gateTimeout 30m`, no `land.fix`;
   `unattended.allow [deps, ports, locks, restart, retry, provider]`, applied only with
@@ -725,6 +725,19 @@ reviewer.
   findings files go to the one fix half, a real P1/P2 from either opens the next round, and real
   P3/P4 UI findings are reported only (`finding` events). `gatefix` inherits the implement row's
   reviewers, the `ui` reviewer with them.
+- **Security reviewer (ADR-85)**:
+  - **Provider keys.** A provider block may set `securityReview`, the scan the reviewer runs, and `securityPlugin`, a `plugin@marketplace`. `securityPlugin` needs `securityReview`. `ToCore` carries `securityReview` as `ProviderArgs.SecurityReview`.
+    - codex: `$codex-security:security-diff-scan`, plugin `codex-security@openai-curated`
+    - claude: `/security-review`, no plugin
+  - **Default reviewer.** `implement.reviewers` gets `{name: security, provider: codex, model: sol, effort: high, prompt: review-security}`.
+  - **Template.** A reviewer with template `review-security` gets `ReviewCommand` = `SecurityReview`. `ReviewHalf.args` fails `reviewer <name>: provider <p> declares no securityReview` before any pane opens.
+  - **Evidence.** Its evidence is `<ArtifactsDir>/native-review.txt`, the scan's full report, checked like a `review` reviewer's. It never takes the native pane-review path.
+  - **Preflight.** A missing `securityReview` is `exit 2`. For each unique `(kind, securityPlugin)`, `providers.EnsurePlugin` does three things:
+    1. runs `<kind> plugin list --json`;
+    2. when the plugin is not installed and enabled, runs `codex plugin add` or `claude plugin install`;
+    3. lists again, prints `plugin: <kind> <selector> installed`, or fails with `exit 2`.
+
+    `--dry-run` skips this, as it skips the binary checks.
 
 ## Milestone 9 — Free-text start
 

@@ -7,3 +7,4 @@ doneSignal: sentinel
 ask: mcp
 review: "/code-review"
 settingsFlag: "--settings {settings}"
+securityReview: "/security-review"
