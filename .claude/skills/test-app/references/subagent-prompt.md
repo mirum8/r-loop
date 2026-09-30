@@ -53,6 +53,7 @@ If a flow needs one that is **not** there, stop and ask the parent agent — the
     "$TUI" resize    "$H" 80x24
     "$TUI" status    "$H"                    # running|exited|absent exit=N geom=WxH alt=0|1
     "$TUI" stop      "$H" --expect-exited    # the terminal-restoration check
+    "$TUI" stop      "$H" --expect-exited --status 1   # same, for an aborted run (C-c → y exits 1 by design)
 
 Its exit codes are the contract, and each one exists because the failure it names otherwise comes back looking like success. Read them rather than only checking for zero:
 
@@ -161,7 +162,7 @@ A check **passes** when all of these hold:
 
 - The expected text is in the captured frame, and nothing in that frame is broken by the rendering list above.
 - The app is still running when it should be, and the driver returned 0 for every call you made.
-- After the quit path, `stop --expect-exited` returned 0 — the terminal was restored.
+- After the quit path, `stop --expect-exited` returned 0 — the terminal was restored. After an abort (`C-c` → `y`), r-loop exits 1 by design (tech-design: an aborted run exits 1), so the check is `stop --expect-exited --status 1`.
 - No new error-level entries appeared in the logs during the test window.
 
 A check **fails** if any of that is wrong, or the driver returned a non-zero code you did not expect. A check is **skipped** — never passed — if the tool it needed was not there; say which, and why.

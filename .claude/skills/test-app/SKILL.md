@@ -81,7 +81,7 @@ Read `references/subagent-prompt.md` and substitute `{WHAT_TO_TEST}` with a conc
 - *Functional:* "In a fresh sandbox, `start` `"$BIN" docs/plan/todo-tiny.md` at 120x40. `wait-for` `Subtract`. Confirm the phase row turns bold as it goes live, the plan step's state moves off `queued`, and after the run the footer says it finished. Then `git log --oneline` in the sandbox shows the phase commit, and `docs/plan/todo-tiny.md` has its box ticked."
 - *Rendering:* "Capture the live frame at 160x50, 120x40 and 80x24. At 80x24 confirm each phase is still one line, the step column is not truncated away, and amber appears only on a row that is waiting for the maintainer."
 - *Keys:* "While the run is live, send `C-c`: the stop prompt appears. Send `n`: the notice clears and the run continues. Press `q` while live: nothing happens. After the end, `q` quits."
-- *Restoration:* "Quit with the documented key and confirm the terminal is restored — alternate screen off, non-zero exit only if the app meant it. `stop --expect-exited` is the check."
+- *Restoration:* "Quit with the documented key and confirm the terminal is restored — alternate screen off, non-zero exit only if the app meant it. `stop --expect-exited` is the check; an aborted run (`C-c` → `y`) exits 1 by design, so it is `stop --expect-exited --status 1`."
 
 ### 3. Surface scan → persisted e2e scripts
 
