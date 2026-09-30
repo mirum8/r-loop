@@ -505,7 +505,13 @@ func (h ReviewHalf) reopen(ctx context.Context, worker *Session, runs []*reviewe
 	}
 	s := h.reviewer(worker, r.rv, r.required, r.args, r.url, rd)
 	s.Ref.Kind.Row.Provider, s.Ref.Kind.Row.Model, s.Ref.Kind.Row.Effort = rv.Provider, rv.Model, rv.Effort
+	if res.Addendum != "" {
+		s.Ref.Vars["Addendum"] = res.Addendum
+	}
 	if err := os.Remove(s.Sentinel); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fail("reviewer " + s.Reviewer + ": " + err.Error())
+	}
+	if err := os.Remove(filepath.Join(s.Ref.Vars["ArtifactsDir"].(string), "native-review.txt")); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fail("reviewer " + s.Reviewer + ": " + err.Error())
 	}
 	r.s, r.fail = s, nil
@@ -615,6 +621,7 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 	for k, v := range worker.Ref.Vars {
 		vars[k] = v
 	}
+	vars["Addendum"] = ""
 	s := &Session{
 		Dir:       worker.Dir,
 		StartSHA:  worker.StartSHA,

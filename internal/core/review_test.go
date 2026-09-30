@@ -1515,6 +1515,59 @@ func TestAReviewerThatFailsAgainAfterARetryRaisesAgain(t *testing.T) {
 	}
 }
 
+func TestARetriedReviewerIsPromptedWithTheRetryNote(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	failCodexOnce(t, r)
+
+	out, _ := r.runRaising(then(Resolution{Action: "retry", By: "watchdog", Addendum: "use /opt/homebrew/bin/python3"}))
+
+	if out.State != StepOK || len(r.reviews) != 2 {
+		t.Fatalf("outcome = %+v, reviews %d", out, len(r.reviews))
+	}
+	if got := r.reviews[0]["Addendum"]; got != "" {
+		t.Errorf("first try addendum = %q", got)
+	}
+	if got := r.reviews[1]["Addendum"]; got != "use /opt/homebrew/bin/python3" {
+		t.Errorf("retried reviewer addendum = %q", got)
+	}
+}
+
+func TestAReviewerDoesNotInheritTheStepsAddendum(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.worker.Ref.Vars["Addendum"] = "step note"
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	if out := r.run(); out.State != StepOK {
+		t.Fatalf("outcome %+v", out)
+	}
+
+	if got := r.reviews[0]["Addendum"]; got != "" {
+		t.Errorf("reviewer addendum = %q", got)
+	}
+}
+
+func TestARetriedReviewerCannotPassOnTheFailedTrysNativeReport(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	codex := 0
+	r.behave = func(vars map[string]any) {
+		codex++
+		if codex == 1 {
+			writeReview(t, vars, "failed", 0)
+			return
+		}
+		writeFindings(t, vars, "ok", 0)
+	}
+
+	out, obs := r.runRaising(then(Resolution{Action: "retry", By: "watchdog"}, Resolution{Action: "block", By: "watchdog"}))
+
+	if out.State != StepFailed || len(obs.blockers) != 2 {
+		t.Fatalf("outcome = %+v, blockers %+v", out, obs.blockers)
+	}
+	if obs.blockers[1].Reason != "reviewer codex: evidence missing: native review `/codex-review` produced no output" {
+		t.Fatalf("second blocker = %q", obs.blockers[1].Reason)
+	}
+}
+
 func TestAReviewerThatCannotOpenRaisesABlockerAfterTheOthersReport(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
 	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
