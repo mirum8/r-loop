@@ -3,7 +3,7 @@ flags: "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_
 modelFlag: "-c model={model}"
 models: "debug models"
 effortFlag: "-c model_reasoning_effort={effort}"
-askFlag: "-c mcp_servers.r-loop.url={url}"
+askFlag: "-c mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.default_tools_approval_mode=approve"
 dirFlag: '-c sandbox_workspace_write.writable_roots=["{dir}"]'
 doneSignal: sentinel
 ask: mcp
