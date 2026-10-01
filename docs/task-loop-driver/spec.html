@@ -3712,7 +3712,7 @@ the snapshot grows past what one tool result should hold.</p>
 
 <div class="adr">
 <h3 id="adr-84">ADR-84 — A gitignored todo is driver-local: ticked on disk, never committed</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-9">ADR-9</a> and the invariant that code and ticks land as one commit</p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-9">ADR-9</a> and the invariant that code and ticks land as one commit · amended 2026-10-01 — a milestone report under a gitignored folder, untracked, is likewise driver-local: the report session must still change nothing else, and the report stays on disk and is never committed; a tracked report, ignored or not, commits as before</p>
 <p><span class="f">Context</span> An issues file often sits in a gitignored folder and is never
 committed. The landing kept main's copy of the todo with <code>git checkout HEAD -- &lt;todo&gt;</code>,
 staged it and required the landing commit to touch it, so a phase over an untracked, ignored todo

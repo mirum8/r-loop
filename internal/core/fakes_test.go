@@ -289,6 +289,10 @@ func (f *fakeRepo) ResetKeep(ref string) error {
 	return f.Err
 }
 
+func (f *fakeRepo) Ignored(path string) (bool, error) {
+	return false, nil
+}
+
 func (f *fakeRepo) CommitTouches(sha string) ([]string, error) {
 	f.record("Repo.CommitTouches %s", sha)
 	return f.Touched, f.Err

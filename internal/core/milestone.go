@@ -168,6 +168,13 @@ func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone
 	if len(extra) > 0 {
 		return "milestone report changed " + strings.Join(extra, ", ") + " besides " + report
 	}
+	ignored, err := b.Repo.Ignored(report)
+	if err != nil {
+		return "ignored: " + err.Error()
+	}
+	if ignored {
+		return ""
+	}
 	if err := recordFailed(b.Sessions.Store); err != nil {
 		return "record: " + err.Error()
 	}

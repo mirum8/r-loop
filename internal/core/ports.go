@@ -77,6 +77,7 @@ type Repo interface {
 	MergeInProgress() (bool, error)
 	Commit(ctx context.Context, message string, paths ...string) (string, error)
 	CommitTouches(sha string) ([]string, error)
+	Ignored(path string) (bool, error)
 	ResetHard(ref string) error
 	ResetKeep(ref string) error
 	Run(ctx context.Context, dir, command string, timeout time.Duration) (int, string, error)

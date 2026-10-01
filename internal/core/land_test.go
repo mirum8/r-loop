@@ -1471,6 +1471,72 @@ func TestTheLandShowsItsCommitAndTheMilestoneReportAsStages(t *testing.T) {
 	}
 }
 
+func TestMilestoneReportInAGitignoredPlanFolderStaysOnDiskUncommitted(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	writeFile(t, filepath.Join(dir, ".gitignore"), "/docs/demo/\n")
+	writeFile(t, filepath.Join(dir, "a.txt"), "one\n")
+	writeFile(t, filepath.Join(dir, ".git/info/exclude"), ".r-loop/\n")
+	gitCmd(t, dir, "add", "-A")
+	gitCmd(t, dir, "commit", "-q", "-m", "init")
+	writeFile(t, filepath.Join(dir, "docs/demo/todo.md"), todoText)
+	repo, err := gitrepo.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &landEnv{
+		t:         t,
+		repo:      repo,
+		root:      repo.Root(),
+		todo:      filepath.Join(repo.Root(), "docs/demo/todo.md"),
+		plan:      &tickPlan{root: repo.Root()},
+		store:     &memStore{dir: t.TempDir()},
+		face:      &memFace{},
+		localTodo: true,
+	}
+	e.phaseWork(1, "one.txt", "1\n")
+	e.phaseWork(2, "two.txt", "2\n")
+	g, host, _ := e.boundaryGate("ok")
+	var raised []core.Blocker
+	g.Boundary.Raise = func(ctx context.Context, b core.Blocker) (core.Resolution, bool) {
+		raised = append(raised, b)
+		return core.Resolution{}, false
+	}
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatalf("Land 1: %v", err)
+	}
+
+	landing, err := g.Land(context.Background(), phaseTwo(""))
+
+	if err != nil {
+		t.Fatalf("Land 2: %v", err)
+	}
+	if len(host.opened) != 1 {
+		t.Fatalf("opened = %+v, want one report session", host.opened)
+	}
+	if len(raised) != 0 {
+		t.Errorf("raised %+v, want no milestone blocker", raised)
+	}
+	if skipped := e.store.events("report-skipped"); len(skipped) != 0 {
+		t.Errorf("report skipped: %+v", skipped)
+	}
+	if e.head() != landing.MergeSHA {
+		t.Errorf("head %s is not the landing %s: the ignored report was committed", e.head(), landing.MergeSHA)
+	}
+	report := "docs/demo/reports/milestone-1-the-core.md"
+	if strings.TrimSpace(readFile(t, filepath.Join(e.root, report))) == "" {
+		t.Errorf("report %s is not on disk", report)
+	}
+	if tracked := gitCmd(t, e.root, "ls-files", "--", "docs/demo"); tracked != "" {
+		t.Errorf("ignored plan folder tracks %q", tracked)
+	}
+	if st := gitCmd(t, e.root, "status", "--porcelain"); st != "" {
+		t.Errorf("primary tree not clean:\n%s", st)
+	}
+}
+
 func TestMilestoneReportThatChangedAnotherPathIsSkippedAndDiscarded(t *testing.T) {
 	e := newLandEnv(t)
 	e.phaseWork(1, "one.txt", "1\n")

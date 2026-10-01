@@ -693,6 +693,15 @@ func (r *Repo) Tracked(path string) (bool, error) {
 	return len(split0(out)) > 0, err
 }
 
+func (r *Repo) Ignored(path string) (bool, error) {
+	_, err := r.git("", "check-ignore", "-q", "--", path)
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (r *Repo) CommitTouches(sha string) ([]string, error) {
 	out, err := r.git("", "show", "--name-only", "-z", "--no-renames", "--format=", "--diff-merges=first-parent", sha)
 	return split0(out), err

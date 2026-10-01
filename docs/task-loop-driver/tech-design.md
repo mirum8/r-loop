@@ -139,7 +139,7 @@ so.
     `MergeNoFF(ctx, branch) error` (`--no-commit`; when ctx ends, git's process group is killed and the primary tree is put back at the pre-merge HEAD, returning an error that says interrupted; a failure that leaves unmerged paths returns
     `ErrMergeConflict` naming them after `git merge --abort`; any other failure returns git's
     error) · `AbortMerge() error` · `Commit(ctx, message) (string, error)` (`git add -A`
-    then commit, in the primary tree; the commit is killed when ctx ends) · `CommitTouches(sha) ([]string, error)` · `ResetHard(ref)
+    then commit, in the primary tree; the commit is killed when ctx ends) · `CommitTouches(sha) ([]string, error)` · `Ignored(path) (bool, error)` (`git check-ignore -q`: true when git ignores the path and it is untracked; exit 1 is false, any other failure an error) · `ResetHard(ref)
     error` · `Run(ctx, dir, command string, timeout) (exit int, output string, err error)` (via `sh
     -c`, in its own process group with `GIT_TERMINAL_PROMPT=0`; the group is killed when ctx ends, on the timeout, and once the command exits; a command that exits while a background child still holds its output is judged by its exit code, never by the wait delay). Every other git call runs with GIT_TERMINAL_PROMPT=0 in its own process group, killed after a 10-minute per-call timeout with an error naming the command and the timeout; every herdr CLI call has a 30 s per-call timeout (a waiting Prompt gets its wait on top), with the same error shape.
   - `Store`: `Create(RunMeta) (runID string, err error)` · `Append(runID, Record) error` (a
@@ -331,7 +331,7 @@ so.
   `-<8-hex fnv32a of the run id>` suffix), so a run never touches another run's watchdog, even
   one in another repository started in the same second — all within `[a-z][a-z0-9_-]{0,31}`. Findings `phase-<N>/<kind>-findings-<name>-r<round>.json`; verdict
   `phase-<N>/<kind>-verdict-r<round>.json`; milestone report
-  `docs/<topic>/reports/milestone-<M>-<slug>.md`.
+  `docs/<topic>/reports/milestone-<M>-<slug>.md`, committed alone unless `Ignored` reports it, then kept on disk uncommitted (ADR-84).
 - **Spawn** — `SessionManager{Host; Repo; Prompts; Store; Ask AskChannel; Resolve; Now; Poll,
   StallGrace}`; `StepRef{Key StepKey; Kind StepKind; Phase Phase; InPrimary bool; Worktree, Branch,
   Base, RunDir, AskURL string; Vars map[string]any; ReviewFrom int; PrevRoundTree string;

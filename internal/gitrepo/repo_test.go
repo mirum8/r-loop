@@ -365,6 +365,30 @@ func TestTrackedTellsAnIgnoredUntrackedFileFromATrackedOne(t *testing.T) {
 	}
 }
 
+func TestIgnoredTellsAnIgnoredUntrackedFileFromATrackedOne(t *testing.T) {
+	r, dir := newRepo(t)
+	write(t, filepath.Join(dir, ".gitignore"), "/issues/\n")
+	write(t, filepath.Join(dir, "issues/tracked.md"), "- [ ] one\n")
+	git(t, dir, "add", "-f", ".gitignore", "issues/tracked.md")
+	git(t, dir, "commit", "-q", "-m", "track one ignored file")
+	write(t, filepath.Join(dir, "issues/local.md"), "- [ ] two\n")
+
+	for path, want := range map[string]bool{"issues/tracked.md": false, "issues/local.md": true, "issues/missing.md": true, "a.txt": false, "missing.md": false} {
+		got, err := r.Ignored(path)
+		if err != nil || got != want {
+			t.Errorf("Ignored(%s) = %v, %v; want %v", path, got, err, want)
+		}
+	}
+}
+
+func TestIgnoredFailsOutsideTheRepo(t *testing.T) {
+	r, _ := newRepo(t)
+
+	if _, err := r.Ignored("../outside.md"); err == nil {
+		t.Error("Ignored(../outside.md) succeeded, want an error")
+	}
+}
+
 func TestRevParseResolvesMergeHeadAndABranch(t *testing.T) {
 	r, dir := newRepo(t)
 	branchWith(t, dir, "r-loop/phase-1", "feature.txt", "feature\n")
