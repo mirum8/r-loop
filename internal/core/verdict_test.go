@@ -333,7 +333,7 @@ func TestThreeRoundsWithFixesEndOKWithTheLimitWarningAndOneCommit(t *testing.T) 
 	ref.Kind.Row.Rounds = 3
 	r.repo.TreeChanges = []string{"a.go"}
 	r.host.script = func(int) AgentState {
-		os.WriteFile(filepath.Join(r.runDir, "phase-3", "implement-a2.sentinel"), []byte(`{"outcome":"ok","reason":""}`), 0o644)
+		os.WriteFile(filepath.Join(r.runDir, "phase-3", "implement-a2.sentinel"), []byte(`{"outcome":"ok","reason":"","commit":"feat(core): add the widget store"}`), 0o644)
 		return AgentWorking
 	}
 	r.behave = func(vars map[string]any) {

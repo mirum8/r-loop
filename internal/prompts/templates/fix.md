@@ -26,4 +26,5 @@ with one entry per finding, answering every finding id across every findings fil
 
 Do not commit: the driver commits the step's work once the review is done.
 {{template "tests" .}}
+{{if not (or (eq .ReviewedKind "gate") (eq .ReviewedKind "milestone"))}}{{template "commit-fix" .}}{{end}}
 {{if or (eq .ReviewedKind "gatefix") (eq .ReviewedKind "gate") (eq .ReviewedKind "milestone")}}{{template "outcome" .}}{{else}}{{template "sentinel" .}}{{end}}

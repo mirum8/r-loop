@@ -513,6 +513,7 @@ var (
 type Sentinel struct {
 	Outcome string `json:"outcome"`
 	Reason  string `json:"reason"`
+	Commit  string `json:"commit,omitempty"`
 }
 
 func ReadSentinel(path string) (Sentinel, error) {

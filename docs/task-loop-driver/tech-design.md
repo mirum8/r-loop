@@ -170,8 +170,14 @@ so.
   marker. `.r-loop/runs/` and `.r-loop/wt/` are appended to `<git-common-dir>/info/exclude` when
   absent, never to `.gitignore`.
 - **Sentinel** — JSON in `.r-loop/runs/<runID>/phase-<N>/`:
-  `{"outcome":"ok"|"failed","reason":"<text>"}`; the driver timestamps every record itself, and an
-  unknown field (an old sentinel's `at`) is ignored. The author half writes
+  `{"outcome":"ok"|"failed","reason":"<text>","commit":"<subject>"}`; the driver timestamps every
+  record itself, and an unknown field (an old sentinel's `at`) is ignored. `commit` is required on
+  the `ok` sentinel of every step the driver commits (ADR-87): a Conventional Commits subject
+  `<type>(<scope>)!: <description>` (types `feat fix docs style refactor perf test build ci chore
+  revert`, one line, ≤ 100 characters, the description not a phase or step label); a missing or
+  malformed one fails the step `sentinel commit: <why>`. A valid one is recorded as
+  `commit-subject{attempt, subject}` before the step goes on; a fix round's sentinel may restate it,
+  and a resume into a review round takes the attempt's recorded subject. The author half writes
   `<kind>-a<attempt>.sentinel`; a reviewer `<kind>-rv-<name>-r<round>-a<attempt>.sentinel`;
   the author's verify-and-apply half `<kind>-fix-r<round>-a<attempt>.sentinel`. Agents write the
   sentinel atomically through a temporary file in the same directory, then rename. A malformed
@@ -360,7 +366,7 @@ so.
 - **One commit per step** — after the author half (and, when configured, every review round) ends
   `ok`, the driver appends a `commit-intent` event with the step's attempt, current HEAD, exact
   worktree tree, directory and commit message. It then runs
-  `CommitAll(worktree, "r-loop: phase <N> <kind>")` once and records the step `ok`. A step that
+  `CommitAll(worktree, <the step's commit subject>)` once and records the step `ok`. A step that
   ends any other way commits nothing: its work stays
   uncommitted in the worktree, and the driver appends `Event{Kind: "snapshot", Fields{step,
   tree}}` with `Snapshot(worktree)` before it records the terminal state, so a resume can tell the
@@ -435,10 +441,12 @@ so.
   implement row's timeout and its reviewers for one round; the gate command itself runs under
   `land.gateTimeout` (default 30m) and is killed after `land.gateIdle` (default 10m, `0` off) with
   no output, after a best-effort `jcmd <pid> Thread.print` of each JVM in its process group; its
-  output streams to `.r-loop/runs/<runID>/phase-<N>/gate.log`; its `ok` commits `r-loop: phase <N> gatefix`, and the
+  output streams to `.r-loop/runs/<runID>/phase-<N>/gate.log`; its `ok` commits under the gatefix sentinel's own subject, and the
   landing starts again from the merge. A red gate with no fix round left, or a gatefix step that
   does not end `ok`, raises a blocker (Milestone 17) before the phase is blocked.
-- **Land** — in the primary tree: append `merge-intent{phase, branch, base, message}` →
+- **Land** — in the primary tree: take `message` from the phase's latest implement
+  `commit-intent` (none, or not a valid subject → `ErrLanding`, nothing merged); append
+  `merge-intent{phase, branch, base, message}` →
   `MergeNoFF(r-loop/phase-<N>, <todo>)` (`--no-commit`) → the merged tree
   keeps main's copy of the todo, including when the branch deleted it or a conflict is confined
   to it; the merged tree is on disk, uncommitted → `Run(root, gate command, gate timeout)`, the gate command being the
@@ -944,7 +952,8 @@ An amendment to ADR-73. The contract is Milestone 7's "Waiting for the maintaine
 ## Milestone 13 — A sentinel without a timestamp
 
 An amendment to ADR-6. The sentinel is `{"outcome":"ok"|"failed","reason":"<text>"}`; a sentinel
-that still carries `at` is read with it ignored. Milestone 2's two-signal rule is unchanged.
+that still carries `at` is read with it ignored. ADR-87 later adds `commit`, the subject the driver
+commits the step's work under. Milestone 2's two-signal rule is unchanged.
 
 ## Milestone 14 — Claude's trust dialog
 

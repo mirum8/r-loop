@@ -46,7 +46,7 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 	case "already-done":
 		writeFile(filepath.Join(spec.CWD, text), "status: already-done\n\n## Evidence\n- do it: store/store.go:12\n")
 		h.repo.setChanges(text)
-		writeFile(sentinel, `{"outcome":"ok","reason":""}`)
+		writeFile(sentinel, `{"outcome":"ok","reason":"","commit":"feat(core): add the widget store"}`)
 	default:
 		changed := "code.go"
 		if spec.Env["R_LOOP_STEP"] == "plan" {
@@ -54,7 +54,7 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 			writeFile(filepath.Join(spec.CWD, text), "status: planned\n\n## Summary\nx\n## Changes\nx\n## Tests\n- a test\n## Assumptions\n- phase "+spec.Env["R_LOOP_PHASE"]+" keeps state in memory\n")
 		}
 		h.repo.setChanges(changed)
-		writeFile(sentinel, `{"outcome":"ok","reason":""}`)
+		writeFile(sentinel, `{"outcome":"ok","reason":"","commit":"feat(core): add the widget store for p`+spec.Env["R_LOOP_PHASE"]+` `+spec.Env["R_LOOP_STEP"]+`"}`)
 	}
 	return nil
 }
@@ -395,7 +395,7 @@ func TestAHaltQueuedAsTheStepEndsOkBlocksThePhaseBeforeItLands(t *testing.T) {
 						return (singleRunner{sm: r.loop.Sessions}).Run(ctx, ref, obs)
 					}
 					obs.Started(&Session{Ref: ref})
-					out := r.loop.Sessions.Finish(&Session{Ref: ref}, Outcome{State: StepOK})
+					out := r.loop.Sessions.Finish(&Session{Ref: ref, Subject: "feat(core): add the widget store"}, Outcome{State: StepOK})
 					w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: ref.Key, Reason: "stop"})
 					return out
 				})
@@ -438,7 +438,7 @@ func TestAHaltStillBeingRecordedWhenTheLastPhaseEndsHaltsTheRun(t *testing.T) {
 					obs.Started(&Session{Ref: ref})
 					go w.Accept(Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: ref.Key, Reason: "stop"})
 					<-hook.recording
-					return r.loop.Sessions.Finish(&Session{Ref: ref}, Outcome{State: StepOK})
+					return r.loop.Sessions.Finish(&Session{Ref: ref, Subject: "feat(core): add the widget store"}, Outcome{State: StepOK})
 				})
 				r.loop.Runners = map[string]StepRunner{"plan-file": runner, "diff": runner}
 			} else {
@@ -1093,7 +1093,7 @@ func TestOneCommitPerOkStep(t *testing.T) {
 	for _, c := range r.calls("Repo.CommitAll ") {
 		got = append(got, c[strings.Index(c, `"`):])
 	}
-	want := []string{`"r-loop: phase 1 plan"`, `"r-loop: phase 2 plan"`, `"r-loop: phase 2 implement"`}
+	want := []string{`"feat(core): add the widget store for p1 plan"`, `"feat(core): add the widget store for p2 plan"`, `"feat(core): add the widget store for p2 implement"`}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("commits\n got %v\nwant %v", got, want)
 	}

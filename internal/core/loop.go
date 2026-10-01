@@ -373,6 +373,9 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 			ref.KeepUncommitted = true
 		case !replan && attempt > 0:
 			ref.ReviewFrom, ref.PrevRoundTree = recordedRound(prior, n, kind.Name, attempt)
+			if ref.ReviewFrom > 0 {
+				ref.Subject = recordedSubject(prior, n, kind.Name, attempt)
+			}
 		}
 		ref, out, aborted := l.runAttempts(ctx, ref)
 		if out.Session != nil {
@@ -656,6 +659,16 @@ func recordedRound(prior RunState, phase, kind string, attempt int) (int, string
 		return 0, ""
 	}
 	return round, trees[round-1]
+}
+
+func recordedSubject(prior RunState, phase, kind string, attempt int) string {
+	subject := ""
+	for _, e := range prior.Events {
+		if e.Kind == EventCommitSubject && e.Phase == phase && e.Step == kind && e.Fields["attempt"] == strconv.Itoa(attempt) {
+			subject = e.Fields["subject"]
+		}
+	}
+	return subject
 }
 
 func (l *RunLoop) runAttempts(ctx context.Context, ref StepRef) (StepRef, Outcome, bool) {

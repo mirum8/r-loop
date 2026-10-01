@@ -179,16 +179,17 @@ func TestFinishRecordsTheCommitIntentThenCommitsThenRecordsOk(t *testing.T) {
 	r := newRig(t)
 	r.sm.Store = &RecordGuard{Store: orderStore{Store: r.store, log: r.shared}}
 	s := r.spawn(t, 1)
+	s.Subject = "feat(core): add the widget store"
 	out := r.sm.Finish(s, Outcome{State: StepOK, Session: s})
 	if out.State != StepOK {
 		t.Fatalf("finish = %+v", out)
 	}
-	orderedCalls(t, r.shared.Calls(), "append event/commit-intent", "Repo.CommitAll "+s.Dir+" \"r-loop: phase 3 implement\"", "append step/ok")
+	orderedCalls(t, r.shared.Calls(), "append event/commit-intent", "Repo.CommitAll "+s.Dir+" \"feat(core): add the widget store\"", "append step/ok")
 	events := r.events("commit-intent")
 	if len(events) != 1 {
 		t.Fatalf("intents = %+v", events)
 	}
-	want := map[string]string{"attempt": "1", "head": "sha-start", "tree": "tree-start", "dir": s.Dir, "message": "r-loop: phase 3 implement"}
+	want := map[string]string{"attempt": "1", "head": "sha-start", "tree": "tree-start", "dir": s.Dir, "message": "feat(core): add the widget store"}
 	for key, value := range want {
 		if events[0].Fields[key] != value {
 			t.Errorf("intent %s = %q, want %q", key, events[0].Fields[key], value)
@@ -200,6 +201,7 @@ func TestFinishCommitsNothingWhenTheCommitIntentCannotBeRecorded(t *testing.T) {
 	r := newRig(t)
 	r.sm.Store = &RecordGuard{Store: failingStore{Store: r.store, fail: func(rec Record) bool { return isEvent(rec, "commit-intent") }}}
 	s := r.spawn(t, 1)
+	s.Subject = "feat(core): add the widget store"
 	out := r.sm.Finish(s, Outcome{State: StepOK, Session: s})
 	if out.State != StepFailed || out.Reason != "record: disk full" {
 		t.Fatalf("finish = %+v", out)
@@ -221,7 +223,9 @@ func newRecordLand(t *testing.T, store Store) (*LandGate, *fakeRepo, *fakeStore,
 	}
 	log := &callLog{}
 	repo := &fakeRepo{callLog: callLog{Shared: log}, RootDir: root, SHA: "base", Tree: "tree", Touched: []string{"docs/todo.md", "a.go"}}
-	base := &fakeStore{callLog: callLog{Shared: log}}
+	base := &fakeStore{callLog: callLog{Shared: log}, Records: map[string][]Record{"run-1": {
+		{Kind: RecordEvent, Event: &Event{Kind: EventCommitIntent, Phase: "1", Step: "implement", Fields: map[string]string{"message": "feat(core): add the first widget"}}},
+	}}}
 	if store == nil {
 		store = base
 	}
@@ -236,7 +240,7 @@ func TestLandRecordsMergeIntentMergesThenCommitIntentCommitsThenLanding(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	orderedCalls(t, log.Calls(), "append event/merge-intent", "Repo.MergeNoFF r-loop/phase-1", "append event/commit-intent", "Repo.Commit \"phase 1: First\"", "append landing")
+	orderedCalls(t, log.Calls(), "append event/merge-intent", "Repo.MergeNoFF r-loop/phase-1", "append event/commit-intent", "Repo.Commit \"feat(core): add the first widget\"", "append landing")
 	var merge, commit Event
 	for _, rec := range base.Records["run-1"] {
 		if isEvent(rec, "merge-intent") {
@@ -246,7 +250,7 @@ func TestLandRecordsMergeIntentMergesThenCommitIntentCommitsThenLanding(t *testi
 			commit = *rec.Event
 		}
 	}
-	if merge.Fields["branch"] != "r-loop/phase-1" || merge.Fields["base"] != repo.SHA || merge.Fields["message"] != "phase 1: First" || commit.Fields["tree"] != repo.Tree {
+	if merge.Fields["branch"] != "r-loop/phase-1" || merge.Fields["base"] != repo.SHA || merge.Fields["message"] != "feat(core): add the first widget" || commit.Fields["tree"] != repo.Tree {
 		t.Fatalf("merge = %+v, commit = %+v", merge, commit)
 	}
 }

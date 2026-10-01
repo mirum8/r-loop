@@ -113,10 +113,10 @@ func TestTheWatchdogWalksABlockerAndTheDriverCommitsOnlyThePlan(t *testing.T) {
 			t.Errorf("walk request missing %q:\n%s", want, walkText)
 		}
 	}
-	if got := git(t, k.f.root, "log", "--format=%s", "-1", "--", "docs/topic/todo.md"); got != "docs: resolve 1 plan blockers" {
+	if got := git(t, k.f.root, "log", "--format=%s", "-1", "--", "docs/topic/todo.md"); got != "docs(plan): settle Pick the database" {
 		t.Errorf("plan commit %q", got)
 	}
-	if got := git(t, k.f.root, "show", "--name-only", "--format=", ":/docs: resolve 1 plan blockers"); got != "docs/topic/todo.md" {
+	if got := git(t, k.f.root, "show", "--name-only", "--format=", ":/settle Pick the database"); got != "docs/topic/todo.md" {
 		t.Errorf("the resolve commit touches %q", got)
 	}
 	if len(k.land.landed) != 3 {
@@ -350,5 +350,34 @@ func TestAWalkThatNeverFinishesTimesOutAndSkipsTheBlockedPhases(t *testing.T) {
 	}
 	if got := stepEvents(k.f.load(k.w.Loop.RunID), "warning"); len(got) == 0 || !strings.Contains(got[0].Fields["reason"], "did not finish") {
 		t.Errorf("warnings %+v", got)
+	}
+}
+
+func TestUnblockMessageNamesTheSettledEntries(t *testing.T) {
+	long := strings.TrimSpace(strings.Repeat("Decide the storage engine ", 4))
+	cases := []struct {
+		name     string
+		resolved []core.Entry
+		want     string
+	}{
+		{"none", nil, "docs(plan): settle the plan's open questions"},
+		{"one", []core.Entry{{Name: "Pick the database", Resolved: "Postgres; the team already runs it"}},
+			"docs(plan): settle Pick the database\n\nPostgres; the team already runs it"},
+		{"three", []core.Entry{
+			{Name: "Pick the database", Resolved: "Postgres"},
+			{Name: "Name the queue", Resolved: "jobs"},
+			{Name: "Get the API key", Resolved: "in the vault"},
+		}, "docs(plan): settle Pick the database and 2 more\n\n- Pick the database: Postgres\n- Name the queue: jobs\n- Get the API key: in the vault"},
+		{"long name", []core.Entry{
+			{Name: long, Resolved: "SQLite"},
+			{Name: "Name the queue", Resolved: "jobs"},
+		}, "docs(plan): settle 2 plan blockers\n\n- " + long + ": SQLite\n- Name the queue: jobs"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := unblockMessage(c.resolved); got != c.want {
+				t.Fatalf("unblockMessage = %q, want %q", got, c.want)
+			}
+		})
 	}
 }

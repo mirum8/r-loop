@@ -118,7 +118,7 @@ func (r *rig) spawn(t *testing.T, attempt int) *Session {
 
 func (r *rig) writeSentinel(t *testing.T, s *Session, outcome, reason string) {
 	t.Helper()
-	body := `{"outcome":"` + outcome + `","reason":"` + reason + `"}`
+	body := `{"outcome":"` + outcome + `","reason":"` + reason + `","commit":"feat(core): add the widget store"}`
 	if err := os.WriteFile(s.Sentinel, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -774,11 +774,65 @@ func TestOkSentinelWithEvidenceIsOkAndCommitsOnlyInFinish(t *testing.T) {
 		t.Fatalf("finish = %+v", fin)
 	}
 	commits := slices.DeleteFunc(r.shared.Calls(), func(c string) bool { return !strings.HasPrefix(c, "Repo.CommitAll") })
-	if !reflect.DeepEqual(commits, []string{`Repo.CommitAll /repo/.r-loop/wt/phase-3 "r-loop: phase 3 implement"`}) {
+	if !reflect.DeepEqual(commits, []string{`Repo.CommitAll /repo/.r-loop/wt/phase-3 "feat(core): add the widget store"`}) {
 		t.Fatalf("commits = %q", commits)
 	}
 	if got := r.steps(); !reflect.DeepEqual(got, []StepState{StepSpawned, StepRunning, StepOK}) {
 		t.Fatalf("steps = %v", got)
+	}
+}
+
+func TestAnOkSentinelWithoutAValidCommitFailsTheStep(t *testing.T) {
+	cases := []struct {
+		name, body, reason string
+	}{
+		{"absent", `{"outcome":"ok","reason":"done"}`, "sentinel commit: no commit subject"},
+		{"phase label", `{"outcome":"ok","reason":"done","commit":"feat(core): phase 3"}`, `sentinel commit: commit subject "feat(core): phase 3" must describe the change, not label the step`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRig(t)
+			s := r.spawn(t, 1)
+			r.repo.TreeChanges = []string{"internal/plan/reader.go"}
+			r.host.script = func(n int) AgentState {
+				r.writeRawSentinel(t, s, c.body)
+				return AgentWorking
+			}
+
+			out := r.sm.Wait(context.Background(), s, &recObserver{})
+
+			if out.State != StepFailed || out.Reason != c.reason {
+				t.Fatalf("outcome = %+v", out)
+			}
+			if got := r.events("commit-subject"); len(got) != 0 {
+				t.Fatalf("commit-subject events = %+v", got)
+			}
+		})
+	}
+}
+
+func TestAValidSentinelCommitIsRecordedAndNamesTheCommit(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+	r.repo.TreeChanges = []string{"internal/plan/reader.go"}
+	r.host.script = func(n int) AgentState {
+		r.writeRawSentinel(t, s, `{"outcome":"ok","reason":"done","commit":"feat(plan): read phases from the todo"}`)
+		return AgentWorking
+	}
+
+	out := r.sm.Wait(context.Background(), s, &recObserver{})
+	fin := r.sm.Finish(s, out)
+
+	if out.State != StepOK || fin.State != StepOK {
+		t.Fatalf("outcome = %+v, finish = %+v", out, fin)
+	}
+	events := r.events("commit-subject")
+	if len(events) != 1 || !reflect.DeepEqual(events[0].Fields, map[string]string{"attempt": "1", "subject": "feat(plan): read phases from the todo"}) {
+		t.Fatalf("commit-subject events = %+v", events)
+	}
+	commits := slices.DeleteFunc(r.shared.Calls(), func(c string) bool { return !strings.HasPrefix(c, "Repo.CommitAll") })
+	if !reflect.DeepEqual(commits, []string{`Repo.CommitAll /repo/.r-loop/wt/phase-3 "feat(plan): read phases from the todo"`}) {
+		t.Fatalf("commits = %q", commits)
 	}
 }
 

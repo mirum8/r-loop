@@ -456,8 +456,8 @@ once, after that; <em>and</em> the report lists each finding with its round and 
 the driver never has to read my terminal to find out.</p>
 <p><em>Given</em> a step prompt carrying a sentinel path, <em>when</em> I finish or halt,
 <em>then</em> I write the outcome to that path as my last action —
-<code>{"outcome":"ok"|"failed","reason":"&lt;text&gt;"}</code> — and the driver reads it rather
-than my output.</p>
+<code>{"outcome":"ok"|"failed","reason":"&lt;text&gt;"}</code>, and on a step the driver commits a
+<code>"commit"</code> subject naming what I changed — and the driver reads it rather than my output.</p>
 
 <h3>Ask the watchdog a question</h3>
 <p>As a <strong>provider agent</strong>, I want one way to ask when the plan does not tell me
@@ -1501,7 +1501,7 @@ a documented instruction rather than something the driver enforces.</p>
   <text x="548" y="266" class="lbl-sm">never writes the tree</text>
   <line x1="504" y1="218" x2="528" y2="218" class="stroke2" marker-end="url(#wg-a)"/>
   <line x1="534" y1="252" x2="510" y2="252" class="clay" marker-end="url(#wg-c)"/>
-  <text x="34" y="286" class="lbl-sm">↳ one commit after the last round: r-loop: phase &lt;N&gt; plan</text>
+  <text x="34" y="286" class="lbl-sm">↳ one commit after the last round, under the agent's subject</text>
 
   <line x1="120" y1="290" x2="120" y2="308" class="stroke2" marker-end="url(#wg-a)"/>
   <rect x="20" y="310" width="840" height="128" rx="6" class="g-fill" stroke="#D1CFC5"/>
@@ -1518,7 +1518,7 @@ a documented instruction rather than something the driver enforces.</p>
   <text x="548" y="414" class="lbl-sm">never writes the tree</text>
   <line x1="504" y1="366" x2="528" y2="366" class="stroke2" marker-end="url(#wg-a)"/>
   <line x1="534" y1="400" x2="510" y2="400" class="clay" marker-end="url(#wg-c)"/>
-  <text x="34" y="434" class="lbl-sm">↳ one commit after the last round: r-loop: phase &lt;N&gt; implement</text>
+  <text x="34" y="434" class="lbl-sm">↳ one commit after the last round, under the agent's subject</text>
 
   <line x1="120" y1="438" x2="120" y2="456" class="stroke2" marker-end="url(#wg-a)"/>
   <rect x="20" y="458" width="412" height="52" rx="6" class="s-fill" stroke="#788C5D" stroke-width="2"/>
@@ -1654,7 +1654,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Eighty-six decisions, each with the alternative that was live at the time; eleven are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and forty-four carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, and ADR-86 lets the maintainer stop or pause the run between phases through the watchdog.</p>
+<p class="lede">Eighty-seven decisions, each with the alternative that was live at the time; eleven are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and forty-four carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, and ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it.</p>
 
 <div id="adr-index">
 
@@ -3800,6 +3800,37 @@ rejected: it pays for preflight and a new watchdog to go on.</p>
 resumes like a halted one. The TUI shows the pause in amber: the run waits for the maintainer.</p>
 <p><span class="f">Revisit when</span> the maintainer needs to stop or pause without a watchdog
 session to type into.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-87">ADR-87 — Driver commits follow Conventional Commits and name the change</h3>
+<p><span class="f">Status</span> accepted 2026-10-01</p>
+<p><span class="f">Context</span> The driver wrote <code>r-loop: phase &lt;N&gt; &lt;kind&gt;</code>
+for each step and <code>phase &lt;N&gt;: &lt;title&gt;</code> for the land merge. Both reach the base
+branch, and neither says what changed: a phase number means nothing once the plan is done, and the
+history reads unlike the rest of the repository, which follows
+<a href="https://www.conventionalcommits.org/en/v1.0.0/">Conventional Commits 1.0.0</a>.</p>
+<p><span class="f">Decision</span> Every commit the driver writes is a Conventional Commits subject
+that describes the change and never names the phase or the step. Only the agent knows what it
+changed, so a step the driver commits (plan, implement, gatefix) puts its subject in its
+<code>ok</code> sentinel as <code>commit</code>; the driver checks the shape — a known type, an
+optional lower-case scope, <code>!</code> for a breaking change, one line of at most 100
+characters, a description that is not a phase or step label — and fails the step on a missing or
+malformed one, as it would on missing evidence. A fix round may restate the subject when its fixes
+change what the step did. The subject is recorded before the step goes on, so a resume into a review
+round keeps it. The land merge takes the implement step's subject; a phase with none is not landed.
+The milestone report commits as <code>docs(report): summarize &lt;milestone&gt;</code>, and the
+<code>## Resolve first</code> walk as <code>docs(plan): settle &lt;entry&gt;</code> with each
+resolution in the body.</p>
+<p><span class="f">Alternatives</span> A fixed type by step kind (<code>feat(phase-N): &lt;title&gt;</code>)
+— rejected: the type is wrong for a test or refactor phase and the subject still names the phase.
+The watchdog writing the merge subject at land — rejected: one more round trip in the land for a
+judgement the implementer has already made. A fallback subject when the agent gives none —
+rejected: it would bring back exactly the generic messages this decision removes.</p>
+<p><span class="f">Consequences</span> The sentinel gains <code>commit</code>; the plan, implement,
+gatefix and fix prompts say how to write it. An overridden prompt that omits it fails its steps
+until it asks for one.</p>
+<p><span class="f">Revisit when</span> the project adopts a different commit convention.</p>
 </div>
 
 

@@ -329,7 +329,7 @@ func (h *eventsHost) spec(agent string) OpenSpec {
 
 func (h *eventsHost) finish(agent string) {
 	h.repo.setChanges("code.go")
-	writeFile(h.spec(agent).Env["R_LOOP_SENTINEL"], `{"outcome":"ok","reason":""}`)
+	writeFile(h.spec(agent).Env["R_LOOP_SENTINEL"], `{"outcome":"ok","reason":"","commit":"feat(core): add the widget store"}`)
 }
 
 func (h *eventsHost) State(agent string) (AgentState, error) {
@@ -1256,7 +1256,7 @@ func TestAHaltAfterTheRunnerRecordedOkLeavesOnlyTheOkRecord(t *testing.T) {
 		if ref.Key != key {
 			return (singleRunner{sm: r.loop.Sessions}).Run(ctx, ref, obs)
 		}
-		out := r.loop.Sessions.Finish(&Session{Ref: ref}, Outcome{State: StepOK})
+		out := r.loop.Sessions.Finish(&Session{Ref: ref, Subject: "feat(core): add the widget store"}, Outcome{State: StepOK})
 		r.watcher.signals <- Signal{Kind: SignalHalt, Source: SourceWatchdog, Step: key, Reason: "wrong turn"}
 		return out
 	})

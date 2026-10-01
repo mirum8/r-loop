@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -398,7 +399,36 @@ func (e *landEnv) phaseWork(n int, path, content string) {
 		e.t.Fatal(err)
 	}
 	writeFile(e.t, filepath.Join(e.worktree(n), path), content)
-	if _, err := e.repo.CommitAll(wt, fmt.Sprintf("r-loop: phase %d implement", n)); err != nil {
+	e.commitImplement(n)
+}
+
+func implementSubject(n int) string {
+	return fmt.Sprintf("feat(core): add widget %d", n)
+}
+
+func (e *landEnv) commitImplement(n int) {
+	e.t.Helper()
+	wt := fmt.Sprintf(".r-loop/wt/phase-%d", n)
+	if _, err := e.repo.CommitAll(wt, implementSubject(n)); err != nil {
+		e.t.Fatal(err)
+	}
+	e.recordImplementSubject(n)
+}
+
+func (e *landEnv) landCommitIntents() []core.Event {
+	var out []core.Event
+	for _, ev := range e.store.events(core.EventCommitIntent) {
+		if ev.Step == "land" {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+func (e *landEnv) recordImplementSubject(n int) {
+	e.t.Helper()
+	ev := core.Event{Kind: core.EventCommitIntent, Phase: strconv.Itoa(n), Step: "implement", Fields: map[string]string{"message": implementSubject(n)}}
+	if err := e.store.Append("run1", core.Record{Kind: core.RecordEvent, Event: &ev}); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -541,7 +571,7 @@ func TestLandGatePassesOnlyBecauseItRunsAfterTheMerge(t *testing.T) {
 	if !strings.Contains(landing.GateOutput, "gate green") {
 		t.Errorf("gate output = %q", landing.GateOutput)
 	}
-	if msg := gitCmd(t, e.root, "log", "-1", "--format=%s"); msg != "phase 1: First" {
+	if msg := gitCmd(t, e.root, "log", "-1", "--format=%s"); msg != "feat(core): add widget 1" {
 		t.Errorf("commit message = %q", msg)
 	}
 	if parents := strings.Fields(gitCmd(t, e.root, "log", "-1", "--format=%P")); len(parents) != 2 {
@@ -559,6 +589,51 @@ func TestLandGatePassesOnlyBecauseItRunsAfterTheMerge(t *testing.T) {
 	}
 	if _, err := os.Stat(e.worktree(1)); err != nil {
 		t.Errorf("phase worktree removed: %v", err)
+	}
+}
+
+func TestLandNamesTheMergeAfterTheLatestImplementCommit(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	for _, ev := range []core.Event{
+		{Kind: core.EventCommitIntent, Phase: "1", Step: "implement", Fields: map[string]string{"message": "feat(core): add the widget cache"}},
+		{Kind: core.EventCommitIntent, Phase: "1", Step: "gatefix", Fields: map[string]string{"message": "fix(core): make the gate pass"}},
+		{Kind: core.EventCommitIntent, Phase: "2", Step: "implement", Fields: map[string]string{"message": "feat(core): add the second widget"}},
+	} {
+		if err := e.store.Append("run1", core.Record{Kind: core.RecordEvent, Event: &ev}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := e.gate().Land(context.Background(), phaseOne("true"))
+
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if msg := gitCmd(t, e.root, "log", "-1", "--format=%s"); msg != "feat(core): add the widget cache" {
+		t.Errorf("merge subject = %q", msg)
+	}
+}
+
+func TestLandWithoutAnImplementCommitIsRefused(t *testing.T) {
+	e := newLandEnv(t)
+	if err := e.repo.AddWorktree(".r-loop/wt/phase-1", "r-loop/phase-1", "main"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(e.worktree(1), "feature.txt"), "new\n")
+	if _, err := e.repo.CommitAll(".r-loop/wt/phase-1", "feat(core): add widget 1"); err != nil {
+		t.Fatal(err)
+	}
+	head := e.head()
+
+	_, err := e.gate().Land(context.Background(), phaseOne("true"))
+
+	if !errors.Is(err, core.ErrLanding) || err.Error() != "landing refused: no implement commit to name the merge: no commit subject" {
+		t.Fatalf("err = %v, want ErrLanding", err)
+	}
+	e.assertUntouched(head)
+	if got := e.store.events(core.EventMergeIntent); len(got) != 0 {
+		t.Fatalf("merge intents = %+v", got)
 	}
 }
 
@@ -585,6 +660,7 @@ func TestLandGateLandsSubmodulePointerBump(t *testing.T) {
 	gitCmd(t, filepath.Join(wt, "sub"), "checkout", "-q", second)
 	gitCmd(t, wt, "add", "sub")
 	gitCmd(t, wt, "commit", "-q", "-m", "bump submodule")
+	e.recordImplementSubject(1)
 
 	landing, err := e.gate().Land(context.Background(), phaseOne(""))
 	if err != nil {
@@ -623,8 +699,8 @@ func TestLandRefusesAnOrdinaryIndexWorktreeMismatchAfterMerge(t *testing.T) {
 	if !errors.Is(err, core.ErrDirtyTree) || !strings.Contains(err.Error(), "feature.txt") {
 		t.Fatalf("Land err = %v", err)
 	}
-	if e.head() != base || len(e.store.landings()) != 0 || len(e.store.events(core.EventCommitIntent)) != 0 {
-		t.Fatalf("head = %s, landings = %+v, intents = %+v", e.head(), e.store.landings(), e.store.events(core.EventCommitIntent))
+	if e.head() != base || len(e.store.landings()) != 0 || len(e.landCommitIntents()) != 0 {
+		t.Fatalf("head = %s, landings = %+v, intents = %+v", e.head(), e.store.landings(), e.landCommitIntents())
 	}
 }
 
@@ -1137,6 +1213,7 @@ func TestLandTicksTheSameBacklogItemWhenThePhaseBranchInsertedOne(t *testing.T) 
 	if _, err := e.repo.CommitAll(".r-loop/wt/phase-2", "insert backlog item"); err != nil {
 		t.Fatal(err)
 	}
+	e.recordImplementSubject(2)
 	g := e.gate()
 	g.Plan = plan.Reader{}
 	if _, err := g.Land(context.Background(), core.Phase{ID: "2", Title: "second item", Items: []core.Item{{Text: "second item"}}}); err != nil {
@@ -1154,6 +1231,7 @@ func TestLandGateRefusesAMergeWithoutCode(t *testing.T) {
 	if err := e.repo.AddWorktree(".r-loop/wt/phase-1", "r-loop/phase-1", "main"); err != nil {
 		t.Fatal(err)
 	}
+	e.recordImplementSubject(1)
 	head := e.head()
 
 	_, err := e.gate().Land(context.Background(), phaseOne("true"))
@@ -1247,7 +1325,7 @@ func (h *reportHost) Prompt(agent, text string, wait bool, timeout time.Duration
 		}
 		outcome = "ok"
 	}
-	data, _ := json.Marshal(map[string]string{"outcome": outcome, "reason": "report failed"})
+	data, _ := json.Marshal(map[string]string{"outcome": outcome, "reason": "report failed", "commit": "fix(core): make the gate pass"})
 	return os.WriteFile(sentinel, data, 0o644)
 }
 
@@ -1315,6 +1393,21 @@ func (e *landEnv) boundaryGate(outcome string) (*core.LandGate, *reportHost, *re
 	return g, host, prompts
 }
 
+func TestMilestoneReportCommitCutsALongMilestoneNameAtAWord(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "one.txt", "1\n")
+	g, _, _ := e.boundaryGate("ok")
+	g.Boundary.Plan.Milestones = []core.Milestone{{Number: 1, Name: "The Plan Reader, The Run Store, The Session Manager And Every Adapter They Need To Run", Phases: []string{"1"}}}
+
+	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+
+	if msg := gitCmd(t, e.root, "log", "-1", "--format=%s"); msg != "docs(report): summarize the plan reader, the run store, the session manager and every adapter they" {
+		t.Errorf("head commit = %q", msg)
+	}
+}
+
 func TestMilestoneReportSpawnedOnlyAfterTheLastPhaseInThePrimaryTree(t *testing.T) {
 	e := newLandEnv(t)
 	e.phaseWork(1, "one.txt", "1\n")
@@ -1339,7 +1432,7 @@ func TestMilestoneReportSpawnedOnlyAfterTheLastPhaseInThePrimaryTree(t *testing.
 	if vars["ReportPath"] != report || vars["MilestoneName"] != "The core" || vars["MilestonePhases"] != "1, 2" {
 		t.Errorf("vars = %v", vars)
 	}
-	if msg := gitCmd(t, e.root, "log", "-1", "--format=%s"); msg != "docs(report): milestone 1" {
+	if msg := gitCmd(t, e.root, "log", "-1", "--format=%s"); msg != "docs(report): summarize the core" {
 		t.Errorf("head commit = %q", msg)
 	}
 	if touched := gitCmd(t, e.root, "show", "--name-only", "--format=", "HEAD"); touched != report {
@@ -1476,8 +1569,8 @@ func TestLandRefusesAChangeStagedApartFromTheWorkingTreeDuringTheGate(t *testing
 	if !errors.Is(err, core.ErrDirtyTree) || !errors.Is(err, core.ErrUnfinishedMerge) || !strings.Contains(err.Error(), "one.txt") || !strings.Contains(err.Error(), "unfinished merge") {
 		t.Fatalf("Land err = %v", err)
 	}
-	if e.head() != base || len(e.store.landings()) != 0 || len(e.store.events(core.EventCommitIntent)) != 0 {
-		t.Fatalf("head = %s, landings = %+v, intents = %+v", e.head(), e.store.landings(), e.store.events(core.EventCommitIntent))
+	if e.head() != base || len(e.store.landings()) != 0 || len(e.landCommitIntents()) != 0 {
+		t.Fatalf("head = %s, landings = %+v, intents = %+v", e.head(), e.store.landings(), e.landCommitIntents())
 	}
 	if _, statErr := os.Stat(filepath.Join(e.root, ".git", "MERGE_HEAD")); statErr != nil {
 		t.Fatalf("MERGE_HEAD missing: %v", statErr)
@@ -1508,7 +1601,7 @@ func TestMilestoneReportCommitsNothingOnceAStepRecordHasFailed(t *testing.T) {
 	if _, err := g.Land(context.Background(), phaseTwo("")); err != nil {
 		t.Fatalf("Land 2: %v", err)
 	}
-	if got := gitCmd(t, e.root, "log", "-1", "--format=%s"); got == "docs(report): milestone 1" {
+	if got := gitCmd(t, e.root, "log", "-1", "--format=%s"); got == "docs(report): summarize the core" {
 		t.Fatalf("report was committed")
 	}
 	if got := gitCmd(t, e.root, "status", "--porcelain"); got != "" {
@@ -2188,7 +2281,7 @@ func TestAFailedMilestoneReportRaisesAMilestoneBlockerAndRetryRunsTheReportAgain
 	if !strings.HasSuffix(prompts.vars[1]["Sentinel"].(string), "-a2.sentinel") {
 		t.Errorf("second report sentinel %v", prompts.vars[1]["Sentinel"])
 	}
-	if msg := gitCmd(t, e.root, "log", "-1", "--format=%s"); msg != "docs(report): milestone 1" {
+	if msg := gitCmd(t, e.root, "log", "-1", "--format=%s"); msg != "docs(report): summarize the core" {
 		t.Errorf("head commit = %q", msg)
 	}
 	if skips := e.store.events("report-skipped"); len(skips) != 0 {

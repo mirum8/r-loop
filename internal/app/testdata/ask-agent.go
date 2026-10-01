@@ -59,7 +59,7 @@ func run() error {
 		return err
 	}
 	tmp := sentinel + ".tmp"
-	if err := os.WriteFile(tmp, []byte(`{"outcome":"ok","reason":""}`), 0o644); err != nil {
+	if err := os.WriteFile(tmp, []byte(`{"outcome":"ok","reason":"","commit":"feat(store): store the answer the watchdog gave"}`), 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, sentinel)

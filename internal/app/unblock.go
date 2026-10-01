@@ -92,7 +92,7 @@ func (w *Wiring) walk(ctx context.Context, blocking []core.Entry, list []core.Ph
 		}
 	}
 	if !w.LocalTodo {
-		if _, err := w.Repo.Commit(ctx, fmt.Sprintf("docs: resolve %d plan blockers", len(resolved))); err != nil {
+		if _, err := w.Repo.Commit(ctx, unblockMessage(resolved)); err != nil {
 			return exit(2, "%v", err)
 		}
 	}
@@ -178,4 +178,24 @@ func phaseIDs(list []core.Phase) []string {
 
 func joinIDs(ids []string) string {
 	return strings.Join(ids, ", ")
+}
+
+func unblockMessage(resolved []core.Entry) string {
+	switch len(resolved) {
+	case 0:
+		return "docs(plan): settle the plan's open questions"
+	case 1:
+		return core.Subject("docs(plan): settle ", resolved[0].Name) + "\n\n" + resolved[0].Resolved
+	}
+	more := fmt.Sprintf(" and %d more", len(resolved)-1)
+	subject := core.Subject("docs(plan): settle ", resolved[0].Name+more)
+	if !strings.HasSuffix(subject, more) {
+		subject = fmt.Sprintf("docs(plan): settle %d plan blockers", len(resolved))
+	}
+	var b strings.Builder
+	b.WriteString(subject + "\n")
+	for _, e := range resolved {
+		fmt.Fprintf(&b, "\n- %s: %s", e.Name, e.Resolved)
+	}
+	return b.String()
 }

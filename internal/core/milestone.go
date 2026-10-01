@@ -171,7 +171,7 @@ func (b *MilestoneBoundary) report(ctx context.Context, phase Phase, m Milestone
 	if err := recordFailed(b.Sessions.Store); err != nil {
 		return "record: " + err.Error()
 	}
-	sha, err := b.Repo.Commit(ctx, fmt.Sprintf("docs(report): milestone %d", m.Number), report)
+	sha, err := b.Repo.Commit(ctx, Subject("docs(report): summarize ", strings.ToLower(m.Name)), report)
 	if err != nil {
 		return "commit: " + err.Error()
 	}

@@ -21,7 +21,7 @@ var names = map[string]bool{
 const sentinel = `{{define "outcome"}}
 ## Reporting the outcome
 
-As your last action, write ` + "`" + `{"outcome":"ok","reason":""}` + "`" + ` to ` + "`" + `{{.Sentinel}}` + "`" + `. When the work cannot be done, write ` + "`" + `{"outcome":"failed","reason":"<why>"}` + "`" + ` there instead, naming the cause. The driver reads only that file: never report completion only in the terminal. Never commit — the driver commits the step's work once its review is done.
+As your last action, write ` + "`" + `{"outcome":"ok","reason":""}` + "`" + ` to ` + "`" + `{{.Sentinel}}` + "`" + `, with the ` + "`" + `commit` + "`" + ` field added when this prompt asks you to name the commit. When the work cannot be done, write ` + "`" + `{"outcome":"failed","reason":"<why>"}` + "`" + ` there instead, naming the cause. The driver reads only that file: never report completion only in the terminal. Never commit — the driver commits the step's work once its review is done.
 
 Write the sentinel atomically: put the JSON in a temporary file in the same directory, then rename that file onto ` + "`" + `{{.Sentinel}}` + "`" + `. The driver may read the sentinel at any moment, and must never see it half-written.
 {{- if .Addendum}}
@@ -34,7 +34,7 @@ Write the sentinel atomically: put the JSON in a temporary file in the same dire
 {{define "sentinel"}}
 ## Reporting the outcome
 
-As your last action, write ` + "`" + `{"outcome":"ok","reason":""}` + "`" + ` to ` + "`" + `{{.Sentinel}}` + "`" + `. When the work cannot be done, write ` + "`" + `{"outcome":"failed","reason":"<why>"}` + "`" + ` there instead, naming the cause. The driver reads only that file: never report completion only in the terminal. Never commit — the driver commits the step's work once its review is done.
+As your last action, write ` + "`" + `{"outcome":"ok","reason":""}` + "`" + ` to ` + "`" + `{{.Sentinel}}` + "`" + `, with the ` + "`" + `commit` + "`" + ` field added when this prompt asks you to name the commit. When the work cannot be done, write ` + "`" + `{"outcome":"failed","reason":"<why>"}` + "`" + ` there instead, naming the cause. The driver reads only that file: never report completion only in the terminal. Never commit — the driver commits the step's work once its review is done.
 
 Write the sentinel atomically: put the JSON in a temporary file in the same directory, then rename that file onto ` + "`" + `{{.Sentinel}}` + "`" + `. The driver may read the sentinel at any moment, and must never see it half-written.
 
@@ -45,6 +45,19 @@ When you need a decision you cannot take from the repository, call the ` + "`" +
 
 {{.Addendum}}
 {{- end}}
+{{end}}
+{{define "commit"}}
+## Naming the commit
+
+The driver commits this step's work under a message you write. Put it in the ` + "`" + `ok` + "`" + ` sentinel as ` + "`" + `commit` + "`" + `: ` + "`" + `{"outcome":"ok","reason":"","commit":"<type>(<scope>): <description>"}` + "`" + `, a Conventional Commits subject that says what this change does, as a developer would write it by hand.
+
+- ` + "`" + `type` + "`" + ` is one of ` + "`" + `feat` + "`" + `, ` + "`" + `fix` + "`" + `, ` + "`" + `docs` + "`" + `, ` + "`" + `style` + "`" + `, ` + "`" + `refactor` + "`" + `, ` + "`" + `perf` + "`" + `, ` + "`" + `test` + "`" + `, ` + "`" + `build` + "`" + `, ` + "`" + `ci` + "`" + `, ` + "`" + `chore` + "`" + `, ` + "`" + `revert` + "`" + `; add ` + "`" + `!` + "`" + ` before the colon for a breaking change.
+- ` + "`" + `scope` + "`" + ` is optional: the area the change touches, lower case, such as a package or module name.
+- The description is imperative and lower case, names the substance of the change, and keeps the whole subject to one line of at most 100 characters.
+- Never name the phase, its number or this step: ` + "`" + `feat(core): phase 3` + "`" + ` or ` + "`" + `chore: implement` + "`" + ` is rejected, and a missing or malformed ` + "`" + `commit` + "`" + ` fails the step.
+{{end}}
+{{define "commit-fix"}}
+Your ` + "`" + `ok` + "`" + ` sentinel may carry ` + "`" + `commit` + "`" + `, a Conventional Commits subject (` + "`" + `<type>(<scope>): <description>` + "`" + `, at most 100 characters, never naming the phase or the step). Set it only when this round's fixes change what the step's work does; otherwise leave it out and the step keeps the subject it already named.
 {{end}}
 {{define "tests"}}
 ## Writing tests

@@ -74,4 +74,7 @@ When the code already does what every open item asks, or the item is not code wo
 
 Re-read the plan as the implementer would, then fix it until all of this holds: every obligation has a change in `## Changes` and a test in `## Tests`; every change serves an obligation; only the phase's files are named; every `path:line` cited exists; no line leaves a choice open — no "consider", "if needed", "TBD", "or" between options, or deferred decision.{{if .ItemGate}} `## Gate` runs exactly those tests and nothing else.{{end}}
 {{template "tests" .}}
+{{template "commit" .}}
+
+This step's commit adds only the plan file, so its subject is `docs(plan): <what the plan covers>`, such as `docs(plan): plan the subtract function and its table test` — never the `feat` or `fix` subject the implementer will give the code.
 {{template "sentinel" .}}

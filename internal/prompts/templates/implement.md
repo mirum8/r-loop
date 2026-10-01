@@ -17,4 +17,5 @@ This phase fixes backlog items {{.GroupItems}} with one change. Every member's c
 
 When the plan is wrong — it names a file that cannot work, a test that cannot pass, or contradicts the code — do not deviate from it: write a `failed` sentinel whose reason names what is wrong with the plan.
 {{template "tests" .}}
+{{template "commit" .}}
 {{template "sentinel" .}}

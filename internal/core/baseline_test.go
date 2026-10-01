@@ -119,7 +119,7 @@ func (b *baselineRig) attempt(t *testing.T, sm *SessionManager, ref StepRef, out
 		t.Fatalf("spawn: %v", err)
 	}
 	work()
-	body := `{"outcome":"` + outcome + `","reason":"agent crashed"}`
+	body := `{"outcome":"` + outcome + `","reason":"agent crashed","commit":"feat(core): add the widget store"}`
 	if err := os.WriteFile(s.Sentinel, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

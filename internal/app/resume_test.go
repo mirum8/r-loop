@@ -125,7 +125,11 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 		}
 		writeTo(filepath.Join(spec.CWD, name), "written by "+agent)
 	}
-	writeTo(sentinel, `{"outcome":"ok","reason":""}`)
+	commit := "feat(core): add the widget store"
+	if spec.Env["R_LOOP_STEP"] == "plan" {
+		commit = "docs(plan): plan the widget store"
+	}
+	writeTo(sentinel, `{"outcome":"ok","reason":"","commit":"`+commit+`"}`)
 	return nil
 }
 
@@ -299,7 +303,7 @@ func TestResumeAfterFailedImplementRerunsOnlyImplementAsAttempt2OverItsWork(t *t
 	if b := git(t, f.root, "show", "r-loop/phase-1:wip.txt"); b != "half done by rloop-p1-implement" {
 		t.Fatalf("attempt 1 work lost: %q", b)
 	}
-	if log := git(t, f.root, "log", "--format=%s", "-1", "r-loop/phase-1"); log != "r-loop: phase 1 implement" {
+	if log := git(t, f.root, "log", "--format=%s", "-1", "r-loop/phase-1"); log != "feat(core): add the widget store" {
 		t.Fatalf("last commit %q", log)
 	}
 	out := agentRole(f.out.String())
@@ -476,6 +480,7 @@ func TestResumeDuringAReviewContinuesAtTheRecordedRound(t *testing.T) {
 		{Kind: core.RecordStep, Step: &plan, State: core.StepOK},
 		{Kind: core.RecordStep, Step: &impl, State: core.StepRunning},
 		ev(t0, "step", 1, "implement", map[string]string{"state": "running", "attempt": "1", "workspace": "w7"}),
+		ev(t0, "commit-subject", 1, "implement", map[string]string{"attempt": "1", "subject": "feat(store): keep the widget store in memory"}),
 		ev(t0, "review-round", 1, "implement", map[string]string{"step": "implement", "attempt": "1", "round": "1", "tree": "tree-r1"}),
 		ev(t0, "review-round", 1, "implement", map[string]string{"step": "implement", "attempt": "1", "round": "2", "tree": tree}),
 		{Kind: core.RecordStep, Step: &impl, State: core.StepFailed, Reason: "reviewer claude: backstop"},
@@ -524,6 +529,9 @@ func TestResumeDuringAReviewContinuesAtTheRecordedRound(t *testing.T) {
 	if !strings.Contains(agentRole(f.out.String()), "previous session rloop-p1-implement left in workspace w7") {
 		t.Fatalf("banner:\n%s", f.out)
 	}
+	if log := git(t, f.root, "log", "--format=%s", "-1", "r-loop/phase-1"); log != "feat(store): keep the widget store in memory" {
+		t.Fatalf("resumed review committed under %q", log)
+	}
 }
 
 func TestReplanRerunsPlanWithTheAddendumThenImplement(t *testing.T) {
@@ -548,7 +556,7 @@ func TestReplanRerunsPlanWithTheAddendumThenImplement(t *testing.T) {
 	if strings.Contains(sim.text("rloop-p1-implement-a2"), "Note from the previous attempt:") {
 		t.Fatal("implement got the addendum")
 	}
-	if log := git(t, f.root, "log", "--format=%s", "r-loop/phase-1", "--", "wip.txt"); log != "r-loop: phase 1 implement" {
+	if log := git(t, f.root, "log", "--format=%s", "r-loop/phase-1", "--", "wip.txt"); log != "feat(core): add the widget store" {
 		t.Fatalf("failed work committed by %q", log)
 	}
 	st := f.load(id)
@@ -989,7 +997,7 @@ func (f *fixture) seedStepCommitIntent(id, wt string) (string, string) {
 		f.t.Fatal(err)
 	}
 	f.appendRunEvent(id, ev(t0, "commit-intent", 1, "implement", map[string]string{
-		"attempt": "1", "head": head, "tree": tree, "dir": wt, "message": "r-loop: phase 1 implement",
+		"attempt": "1", "head": head, "tree": tree, "dir": wt, "message": "feat(store): keep the work a crash left",
 	}))
 	return head, tree
 }
@@ -999,7 +1007,7 @@ func TestResumeAfterACrashBetweenTheStepCommitAndItsOkRecordDoesNotRerunIt(t *te
 	id, wt := f.seedKilledImplement()
 	f.seedStepCommitIntent(id, wt)
 	git(t, wt, "add", "-A")
-	git(t, wt, "commit", "-q", "-m", "r-loop: phase 1 implement")
+	git(t, wt, "commit", "-q", "-m", "feat(store): keep the work a crash left")
 	sim := newSim()
 	code, lander, err := f.resume(sim)
 	if err != nil || code != 0 {
@@ -1022,7 +1030,7 @@ func TestResumeCommitsAStepsWorkWhenTheCrashCameBeforeItsCommit(t *testing.T) {
 	}
 	key := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
 	branch := "r-loop/phase-1"
-	if f.load(id).Steps[key] != core.StepOK || len(sim.promptedAgents()) != 0 || git(t, f.root, "rev-parse", branch) == head || git(t, f.root, "log", "-1", "--format=%s", branch) != "r-loop: phase 1 implement" || !strings.Contains(f.out.String(), "committed the work the crash left uncommitted") {
+	if f.load(id).Steps[key] != core.StepOK || len(sim.promptedAgents()) != 0 || git(t, f.root, "rev-parse", branch) == head || git(t, f.root, "log", "-1", "--format=%s", branch) != "feat(store): keep the work a crash left" || !strings.Contains(f.out.String(), "committed the work the crash left uncommitted") {
 		t.Fatalf("step=%s prompts=%v head=%s out=%s", f.load(id).Steps[key], sim.promptedAgents(), git(t, f.root, "rev-parse", branch), f.out)
 	}
 }
@@ -1081,7 +1089,7 @@ func (f *fixture) seedKilledLand(phases string) (string, string, string) {
 	wt := filepath.Join(f.root, ".r-loop/wt/phase-1")
 	f.write(".r-loop/wt/phase-1/one.txt", "one\n")
 	git(f.t, wt, "add", "one.txt")
-	git(f.t, wt, "commit", "-q", "-m", "r-loop: phase 1 implement")
+	git(f.t, wt, "commit", "-q", "-m", "feat(core): add the widget store")
 	base := git(f.t, f.root, "rev-parse", "HEAD")
 	st := store.New(f.root)
 	id, err := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now(), Branch: "main"})
@@ -1548,6 +1556,7 @@ func TestResumeInterruptsARecordedReviewerStillWorking(t *testing.T) {
 	f := newResumeFixture(t, reviewConfig)
 	id, _ := f.seedKilledImplement()
 	f.appendRunEvent(id, ev(t0, "review-round", 1, "implement", map[string]string{"round": "2", "tree": "tree", "attempt": "1"}))
+	f.appendRunEvent(id, ev(t0, "commit-subject", 1, "implement", map[string]string{"attempt": "1", "subject": "feat(core): add the widget store"}))
 	f.appendRunEvent(id, ev(t0, "agent-named", 1, "implement", map[string]string{"attempt": "1", "agent": "rloop-k3x9q-p1-implement"}))
 	agent := "rloop-k3x9q-p1-implemen-abcde-r2"
 	f.appendRunEvent(id, ev(t0, "agent-named", 1, "implement", map[string]string{"attempt": "1", "agent": agent, "reviewer": "claude", "round": "2"}))
@@ -1566,6 +1575,7 @@ func TestResumeOfARunStartedBeforeTheChangeInterruptsItsLegacyReviewer(t *testin
 	f := newResumeFixture(t, reviewConfig)
 	id, _ := f.seedKilledImplement()
 	f.appendRunEvent(id, ev(t0, "review-round", 1, "implement", map[string]string{"round": "2", "tree": "tree", "attempt": "1"}))
+	f.appendRunEvent(id, ev(t0, "commit-subject", 1, "implement", map[string]string{"attempt": "1", "subject": "feat(core): add the widget store"}))
 	agent := "rloop-p1-implement-rv-claude-r2"
 	f.herdrWorking(t, agent)
 	code, _, err := f.resume(newSim())
@@ -1643,7 +1653,7 @@ func TestResumeClaimsTheLeftoversOfAStepKilledInItsWorkHalfAndBuildsOnThem(t *te
 		t.Fatalf("landed %v", lander.landed)
 	}
 	files := git(t, f.root, "show", "--name-only", "--format=%s", "r-loop/phase-1")
-	if !strings.Contains(files, "r-loop: phase 1 implement") || !strings.Contains(files, "wip.txt") || !strings.Contains(files, "code.txt") {
+	if !strings.Contains(files, "feat(core): add the widget store") || !strings.Contains(files, "wip.txt") || !strings.Contains(files, "code.txt") {
 		t.Fatalf("implement commit:\n%s", files)
 	}
 	if got := stepEvents(f.load(id), "baseline"); len(got) != 1 {

@@ -57,7 +57,7 @@ type StepRef struct {
 	Worktree, Branch, Base, RunDir, AskURL string
 	Vars                                   map[string]any
 	ReviewFrom                             int
-	PrevRoundTree                          string
+	PrevRoundTree, Subject                 string
 	KeepUncommitted                        bool
 }
 
@@ -65,7 +65,7 @@ type Session struct {
 	Ref                              StepRef
 	Dir, StartSHA, StartTree         string
 	Workspace, Pane, Agent, Sentinel string
-	Reviewer                         string
+	Reviewer, Subject                string
 	OpenQuestion, Reviewing          atomic.Bool
 	owner                            *Session
 	fix                              *fixHalf
@@ -141,7 +141,7 @@ type Outcome struct {
 }
 
 func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, error) {
-	s := &Session{Ref: ref}
+	s := &Session{Ref: ref, Subject: ref.Subject}
 	if err := recordFailed(m.Store); err != nil {
 		return s, fmt.Errorf("record: %w", err)
 	}
@@ -536,7 +536,28 @@ func (m *SessionManager) judge(s *Session, sentinel Sentinel, sErr error) Outcom
 	}
 	ok, missing := check(m.evidence(s))
 	state, reason := Judge(sentinel, nil, ok, missing)
+	if state == StepOK && s.commits() {
+		return m.subject(s, sentinel.Commit)
+	}
 	return Outcome{State: state, Reason: reason, Session: s}
+}
+
+func (s *Session) commits() bool {
+	return !s.Ref.InPrimary && !s.Ref.KeepUncommitted && s.Reviewer == ""
+}
+
+func (m *SessionManager) subject(s *Session, subject string) Outcome {
+	if subject == "" && s.fix != nil && s.Subject != "" {
+		return Outcome{State: StepOK, Session: s}
+	}
+	if err := ValidSubject(subject); err != nil {
+		return m.fail(s, "sentinel commit: "+err.Error())
+	}
+	if err := m.event(m.now(), s, Event{Kind: EventCommitSubject, Fields: map[string]string{"attempt": strconv.Itoa(s.Ref.Key.Attempt), "subject": subject}}); err != nil {
+		return m.fail(s, "record: "+err.Error())
+	}
+	s.Subject = subject
+	return Outcome{State: StepOK, Session: s}
 }
 
 func (m *SessionManager) headMoved(s *Session, head string) string {
@@ -614,8 +635,10 @@ func (m *SessionManager) Finish(s *Session, out Outcome) Outcome {
 			out.State, out.Reason = StepFailed, "commit: "+err.Error()
 		} else if tree, err := m.Repo.Snapshot(s.Dir); err != nil {
 			out.State, out.Reason = StepFailed, "commit: "+err.Error()
+		} else if err := ValidSubject(s.Subject); err != nil {
+			out.State, out.Reason = StepFailed, "commit: "+err.Error()
 		} else {
-			msg := fmt.Sprintf("r-loop: phase %s %s", key.Phase, key.Kind)
+			msg := s.Subject
 			err := m.event(m.now(), s, Event{Kind: EventCommitIntent, Fields: map[string]string{
 				"attempt": strconv.Itoa(key.Attempt), "head": head, "tree": tree, "dir": s.Dir, "message": msg,
 			}})

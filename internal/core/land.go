@@ -183,6 +183,10 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 		return Landing{}, "", "", err
 	}
 	n := phase.ID
+	message, err := g.mergeMessage(n)
+	if err != nil {
+		return Landing{}, "", "", err
+	}
 	itemGate := g.Suite != nil && phase.DoneWhen == ""
 	var suite string
 	if itemGate {
@@ -254,7 +258,6 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 		}
 		err = errors.Join(perr, restore)
 	}()
-	message := fmt.Sprintf("phase %s: %s", n, phase.Title)
 	mergeAt := time.Now()
 	mergeIntent := Event{At: mergeAt, Kind: EventMergeIntent, Phase: n, Step: "land", Fields: map[string]string{
 		"phase": n, "branch": "r-loop/phase-" + n, "base": base, "message": message,
@@ -414,6 +417,23 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 	}
 	landing.MergeSHA = sha
 	return landing, "", "", nil
+}
+
+func (g *LandGate) mergeMessage(phase string) (string, error) {
+	st, err := g.Store.Load(g.RunID)
+	if err != nil {
+		return "", fmt.Errorf("load run: %w", err)
+	}
+	message := ""
+	for _, e := range st.Events {
+		if e.Kind == EventCommitIntent && e.Phase == phase && e.Step == "implement" {
+			message = e.Fields["message"]
+		}
+	}
+	if err := ValidSubject(message); err != nil {
+		return "", fmt.Errorf("%w: no implement commit to name the merge: %v", ErrLanding, err)
+	}
+	return message, nil
 }
 
 func (g *LandGate) itemCommand(phase Phase) (string, error) {

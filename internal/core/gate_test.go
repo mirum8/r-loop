@@ -33,9 +33,7 @@ func (e *landEnv) itemWork(n int, files map[string]string) {
 	for path, content := range files {
 		writeFile(e.t, filepath.Join(e.worktree(n), path), content)
 	}
-	if _, err := e.repo.CommitAll(wt, fmt.Sprintf("r-loop: phase %d implement", n)); err != nil {
-		e.t.Fatal(err)
-	}
+	e.commitImplement(n)
 }
 
 func (e *landEnv) itemGate(suite string) (*core.LandGate, *[]string) {
@@ -238,7 +236,7 @@ func (h *probeHost) Prompt(agent, text string, wait bool, timeout time.Duration)
 	if h.hook != nil {
 		h.hook()
 	}
-	data, _ := json.Marshal(map[string]string{"outcome": h.outcome, "reason": "probe failed"})
+	data, _ := json.Marshal(map[string]string{"outcome": h.outcome, "reason": "probe failed", "commit": "fix(core): make the gate pass"})
 	return os.WriteFile(sentinel, data, 0o644)
 }
 

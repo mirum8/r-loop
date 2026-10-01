@@ -8,19 +8,21 @@ import (
 
 const EventMergeIntent = "merge-intent"
 const EventCommitIntent = "commit-intent"
+const EventCommitSubject = "commit-subject"
 
 var resumeEvents = map[string]bool{
-	EventMergeIntent:  true,
-	EventCommitIntent: true,
-	"run-list":        true,
-	"step":            true,
-	"baseline":        true,
-	"snapshot":        true,
-	"review-round":    true,
-	"agent-named":     true,
-	"restart":         true,
-	"item-skipped":    true,
-	gateDiscovered:    true,
+	EventMergeIntent:   true,
+	EventCommitIntent:  true,
+	EventCommitSubject: true,
+	"run-list":         true,
+	"step":             true,
+	"baseline":         true,
+	"snapshot":         true,
+	"review-round":     true,
+	"agent-named":      true,
+	"restart":          true,
+	"item-skipped":     true,
+	gateDiscovered:     true,
 }
 
 func FatalRecord(rec Record) bool {

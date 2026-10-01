@@ -80,6 +80,7 @@ func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.Subject = "feat(core): add the widget store"
 	r.worker = s
 	r.resolved = nil
 	r.dirs = nil
@@ -805,7 +806,7 @@ func TestDefaultRunnersRunTheReviewHalfBeforeTheCommit(t *testing.T) {
 	ref.Key.Attempt = 2
 	r.repo.TreeChanges = []string{"a.go"}
 	r.host.script = func(int) AgentState {
-		os.WriteFile(filepath.Join(r.runDir, "phase-3", "implement-a2.sentinel"), []byte(`{"outcome":"ok","reason":""}`), 0o644)
+		os.WriteFile(filepath.Join(r.runDir, "phase-3", "implement-a2.sentinel"), []byte(`{"outcome":"ok","reason":"","commit":"feat(core): add the widget store"}`), 0o644)
 		return AgentWorking
 	}
 	runner := DefaultRunners(r.sm, []StepKind{ref.Kind})["diff"]
@@ -1635,5 +1636,55 @@ func TestARealSecurityFindingIsFixedByTheStepSession(t *testing.T) {
 	want := []FindingsFile{{Reviewer: "security", Path: filepath.Join(r.runDir, "phase-3", "implement-findings-security-r1.json")}}
 	if len(r.fixes) != 1 || !reflect.DeepEqual(r.fixes[0]["FindingsFiles"], want) || len(r.reviews) != 2 {
 		t.Fatalf("fixes = %+v reviews = %d", r.fixes, len(r.reviews))
+	}
+}
+
+func TestAFixRoundSentinelCommitDecidesTheSubjectFinishCommitsUnder(t *testing.T) {
+	cases := []struct {
+		name, commit string
+		state        StepState
+		reason       string
+		message      string
+	}{
+		{"absent keeps the earlier subject", "", StepOK, "", "feat(core): add the widget store"},
+		{"valid replaces it", "fix(core): guard the widget store against a nil map", StepOK, "", "fix(core): guard the widget store against a nil map"},
+		{"invalid fails the step", "fix(core): phase 3", StepFailed, `sentinel commit: commit subject "fix(core): phase 3" must describe the change, not label the step`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newReviewRig(t, Reviewer{Provider: "codex"})
+			r.behave = func(vars map[string]any) {
+				r.repo.TreeChanges = nil
+				findings := 0
+				if vars["Round"] == 1 {
+					findings = 1
+				}
+				writeReview(t, vars, "ok", findings)
+			}
+			r.onFix = func(vars map[string]any) {
+				r.repo.TreeChanges = []string{"a.go"}
+				writeVerdict(t, vars, entry("codex-r1-1", "real", "P1", true, ""))
+				if c.commit != "" {
+					sentinel := `{"outcome":"ok","reason":"","commit":"` + c.commit + `"}`
+					if err := os.WriteFile(vars["Sentinel"].(string), []byte(sentinel), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			out := r.run()
+
+			if out.State != c.state || out.Reason != c.reason {
+				t.Fatalf("outcome = %+v", out)
+			}
+			if c.state != StepOK {
+				return
+			}
+			r.sm.Finish(r.worker, out)
+			want := []string{`Repo.CommitAll /repo/.r-loop/wt/phase-3 "` + c.message + `"`}
+			if got := r.callsFrom("Repo.CommitAll"); !reflect.DeepEqual(got, want) {
+				t.Fatalf("commits = %q", got)
+			}
+		})
 	}
 }
