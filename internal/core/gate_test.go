@@ -115,6 +115,25 @@ func TestItemGateRefusesTestsThatPassWithoutTheChange(t *testing.T) {
 	e.assertUntouched(head)
 }
 
+func TestItemGateRefusesARedCheckThatHangsOnTheBaseCode(t *testing.T) {
+	e := newLandEnv(t)
+	e.itemWork(1, map[string]string{
+		".task-plans/phase-1-first.md": itemPlan,
+		"feature_test.sh":              "test -f feature.txt || sleep 30\n",
+		"feature.txt":                  "new\n",
+	})
+	head := e.head()
+	g, _ := e.itemGate("true")
+	g.GateIdle = 300 * time.Millisecond
+
+	_, err := g.Land(context.Background(), phaseOne(""))
+
+	if !errors.Is(err, core.ErrGate) || !strings.Contains(err.Error(), "did not finish") || !strings.Contains(err.Error(), "no output for 300ms") {
+		t.Fatalf("err = %v, want ErrGate saying the red check did not finish", err)
+	}
+	e.assertUntouched(head)
+}
+
 func TestItemGateRefusesAPhaseWithoutTests(t *testing.T) {
 	e := newLandEnv(t)
 	e.itemWork(1, map[string]string{

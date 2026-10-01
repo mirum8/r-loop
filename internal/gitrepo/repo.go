@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -726,36 +727,121 @@ func (r *Repo) ResetKeep(ref string) error {
 }
 
 func (r *Repo) Run(ctx context.Context, dir, command string, timeout time.Duration) (int, string, error) {
+	return r.run(ctx, dir, command, core.GateLimits{Timeout: timeout})
+}
+
+func (r *Repo) Gate(ctx context.Context, dir, command string, lim core.GateLimits) (int, string, error) {
+	return r.run(ctx, dir, command, lim)
+}
+
+type stampedWriter struct {
+	mu   sync.Mutex
+	buf  bytes.Buffer
+	log  *os.File
+	last atomic.Int64
+}
+
+func (w *stampedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.last.Store(time.Now().UnixNano())
+	if w.log != nil {
+		w.log.Write(p)
+	}
+	return w.buf.Write(p)
+}
+
+func (w *stampedWriter) quiet() time.Duration {
+	return time.Since(time.Unix(0, w.last.Load()))
+}
+
+func (r *Repo) run(ctx context.Context, dir, command string, lim core.GateLimits) (int, string, error) {
 	if err := ctx.Err(); err != nil {
 		return -1, "", fmt.Errorf("interrupted: %w", err)
+	}
+	out := &stampedWriter{}
+	if lim.Log != "" {
+		if err := os.MkdirAll(filepath.Dir(lim.Log), 0o755); err != nil {
+			return -1, "", fmt.Errorf("gate log: %w", err)
+		}
+		f, err := os.OpenFile(lim.Log, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+		if err != nil {
+			return -1, "", fmt.Errorf("gate log: %w", err)
+		}
+		defer f.Close()
+		fmt.Fprintf(f, "$ %s  %s\n", command, time.Now().Format(time.RFC3339))
+		out.log = f
 	}
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = r.path(dir)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = time.Second
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.Stdout, cmd.Stderr = out, out
+	out.last.Store(time.Now().UnixNano())
 	if err := cmd.Start(); err != nil {
 		return -1, "", err
 	}
-	kill := func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	pgid := cmd.Process.Pid
+	kill := func() { syscall.Kill(-pgid, syscall.SIGKILL) }
 	stop := context.AfterFunc(ctx, kill)
 	var timedOut atomic.Bool
-	timer := time.AfterFunc(timeout, func() {
+	timer := time.AfterFunc(lim.Timeout, func() {
 		timedOut.Store(true)
 		kill()
 	})
+	var idled atomic.Bool
+	watched := make(chan struct{})
+	exited := make(chan struct{})
+	if lim.Idle > 0 {
+		go func() {
+			defer close(watched)
+			ticker := time.NewTicker(max(min(lim.Idle/10, 30*time.Second), time.Millisecond))
+			defer ticker.Stop()
+			for {
+				select {
+				case <-exited:
+					return
+				case <-ticker.C:
+					if out.quiet() < lim.Idle || timedOut.Load() {
+						continue
+					}
+					out.Write([]byte(threadDump(pgid)))
+					idled.Store(true)
+					kill()
+					return
+				}
+			}
+		}()
+	} else {
+		close(watched)
+	}
 	err := cmd.Wait()
+	close(exited)
+	<-watched
 	timer.Stop()
 	stop()
 	kill()
-	output := out.String()
-	if timedOut.Load() {
+	out.mu.Lock()
+	output := out.buf.String()
+	out.mu.Unlock()
+	ended := func(reason string) (int, string, error) {
 		if output != "" && !strings.HasSuffix(output, "\n") {
 			output += "\n"
 		}
-		return -1, output + "timed out after " + timeout.String(), nil
+		if lim.Log != "" {
+			reason += "; log " + lim.Log
+		}
+		if out.log != nil {
+			fmt.Fprintln(out.log, reason)
+		}
+		return -1, output + reason, nil
+	}
+	if idled.Load() {
+		return ended("no output for " + lim.Idle.String())
+	}
+	if timedOut.Load() {
+		return ended("timed out after " + lim.Timeout.String())
 	}
 	if err := ctx.Err(); err != nil {
 		return -1, output, fmt.Errorf("interrupted: %w", err)
@@ -765,4 +851,29 @@ func (r *Repo) Run(ctx context.Context, dir, command string, timeout time.Durati
 		return -1, output, err
 	}
 	return cmd.ProcessState.ExitCode(), output, nil
+}
+
+func threadDump(pgid int) string {
+	ps, err := exec.Command("ps", "-A", "-o", "pid=,pgid=,comm=").Output()
+	if err != nil {
+		return "\nno thread dump: " + err.Error() + "\n"
+	}
+	var b strings.Builder
+	for _, line := range strings.Split(string(ps), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 || f[1] != strconv.Itoa(pgid) || filepath.Base(strings.Join(f[2:], " ")) != "java" {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		dump, err := exec.CommandContext(ctx, "jcmd", f[0], "Thread.print").CombinedOutput()
+		cancel()
+		fmt.Fprintf(&b, "\nthread dump of java %s:\n%s", f[0], dump)
+		if err != nil {
+			fmt.Fprintf(&b, "jcmd: %v\n", err)
+		}
+	}
+	if b.Len() == 0 {
+		return "\nno JVM to dump\n"
+	}
+	return b.String()
 }

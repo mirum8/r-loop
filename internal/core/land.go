@@ -122,6 +122,7 @@ type LandGate struct {
 	Face            Face
 	RunID, TodoPath string
 	GateTimeout     time.Duration
+	GateIdle        time.Duration
 	Boundary        *MilestoneBoundary
 	FixRounds       int
 	FixKind         StepKind
@@ -132,7 +133,10 @@ type LandGate struct {
 	LocalTodo       bool
 }
 
-func (g *LandGate) Land(ctx context.Context, phase Phase) (Landing, error) {
+func (g *LandGate) Land(ctx context.Context, phase Phase) (_ Landing, err error) {
+	if g.Watcher != nil {
+		defer func() { g.Watcher.LandEnded(phase.ID, err) }()
+	}
 	landing, command, output, err := g.attempt(ctx, phase)
 	kind := g.FixKind
 	for round := 1; errors.Is(err, ErrGate) && round <= g.FixRounds && g.Runner != nil; round++ {
@@ -300,7 +304,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 			return Landing{}, "", "", errors.Join(err, g.Repo.AbortMerge())
 		}
 		command = item + " && " + suite
-		g.stage(n, "red check "+item)
+		g.stage(n, "red check", item)
 		if output, err := g.redAtBase(ctx, phase, item); err != nil {
 			return Landing{}, command, output, errors.Join(err, g.Repo.AbortMerge())
 		}
@@ -309,8 +313,8 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 		landing.GateSkipped = true
 		g.emit(Event{Kind: "gate-skipped", Phase: n, Step: "land", Fields: map[string]string{"phase": n}})
 	} else {
-		g.stage(n, "gate "+command)
-		code, output, err := g.Repo.Run(ctx, "", command, g.GateTimeout)
+		g.stage(n, "gate", command)
+		code, output, err := g.Repo.Gate(ctx, "", command, g.gateLimits(n))
 		if err == nil && code != 0 {
 			err = fmt.Errorf("%w: %s exited %d\n%s", ErrGate, command, code, output)
 		}
@@ -451,9 +455,13 @@ func (g *LandGate) redAtBase(ctx context.Context, phase Phase, item string) (str
 	if code, out, err := g.Repo.Run(ctx, "", remove+"; "+strings.Join(setup, " && "), time.Minute); err != nil || code != 0 {
 		return out, fmt.Errorf("base worktree for the red check: exit %d: %v\n%s", code, err, out)
 	}
-	code, out, err := g.Repo.Run(ctx, red, item, g.GateTimeout)
+	code, out, err := g.Repo.Gate(ctx, red, item, g.gateLimits(n))
 	if err != nil {
 		return out, fmt.Errorf("red check: %w", err)
+	}
+	if code < 0 {
+		msg := fmt.Sprintf("the red check %s did not finish on the base code\n%s", item, out)
+		return msg, fmt.Errorf("%w: %s", ErrGate, msg)
 	}
 	if code == 0 {
 		msg := fmt.Sprintf("the item gate %s passes on the base code with only the phase's tests added (%s): the tests do not exercise the change\n%s", item, strings.Join(tests, ", "), out)
@@ -574,8 +582,28 @@ func (r watchedRecorder) Started(s *Session) {
 	r.w.StepStarted(r.ref, s)
 }
 
-func (g *LandGate) stage(phase, stage string) {
-	g.emit(Event{Kind: "land-stage", Phase: phase, Step: "land", Fields: map[string]string{"phase": phase, "stage": stage}})
+func (g *LandGate) stage(phase, stage string, command ...string) {
+	fields := map[string]string{"phase": phase, "stage": stage}
+	var cmd, log string
+	if len(command) > 0 {
+		cmd, log = command[0], g.gateLog(phase)
+		if rel := repoRel(g.Repo.Root(), log); !strings.HasPrefix(rel, "../") {
+			log = rel
+		}
+		fields["command"], fields["log"] = cmd, log
+	}
+	g.emit(Event{Kind: "land-stage", Phase: phase, Step: "land", Fields: fields})
+	if g.Watcher != nil {
+		g.Watcher.LandStage(phase, stage, cmd, log)
+	}
+}
+
+func (g *LandGate) gateLog(phase string) string {
+	return filepath.Join(g.Store.Dir(g.RunID), "phase-"+phase, "gate.log")
+}
+
+func (g *LandGate) gateLimits(phase string) GateLimits {
+	return GateLimits{Timeout: g.GateTimeout, Idle: g.GateIdle, Log: g.gateLog(phase)}
 }
 
 func (g *LandGate) emit(ev Event) {

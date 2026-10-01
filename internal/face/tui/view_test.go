@@ -335,13 +335,25 @@ func TestTheLandingLineShowsItsStageUntilThePhaseLands(t *testing.T) {
 	m.Now = at(5)
 	m = m.Apply(core.Event{At: at(2), Kind: "phase-start", Phase: "2"})
 	m = m.Apply(core.Event{At: at(2), Kind: "land-stage", Phase: "2", Fields: map[string]string{"phase": "2", "stage": "merging"}})
-	m = m.Apply(core.Event{At: at(3), Kind: "land-stage", Phase: "2", Fields: map[string]string{"phase": "2", "stage": "gate go test ./..."}})
-	if view := m.View(); !strings.Contains(view, "phase 2 · landing · gate go test ./... · 3m0s") {
+	m = m.Apply(core.Event{At: at(3), Kind: "land-stage", Phase: "2", Fields: map[string]string{"phase": "2", "stage": "gate", "command": "go test ./...", "log": ".r-loop/runs/r1/phase-2/gate.log"}})
+	view := m.View()
+	if !strings.Contains(view, "phase 2 · landing · gate · 2m0s") || !strings.Contains(view, "command    go test ./...") || !strings.Contains(view, "log        .r-loop/runs/r1/phase-2/gate.log") {
 		t.Fatalf("no landing line:\n%s", view)
 	}
 	m = m.Apply(core.Event{At: at(4), Kind: "landed", Phase: "2", Fields: map[string]string{"phase": "2"}})
 	if view := m.View(); strings.Contains(view, "landing ·") || !strings.Contains(view, "no step running") {
 		t.Fatalf("landing line stays after the landing:\n%s", view)
+	}
+}
+
+func TestAtEightyColumnsALongGateCommandDoesNotHideTheGateTime(t *testing.T) {
+	m := newModel(nil)
+	m.Now = at(15)
+	m.Width, m.Height = 80, 40
+	m = m.Apply(core.Event{At: at(2), Kind: "phase-start", Phase: "9"})
+	m = m.Apply(core.Event{At: at(3), Kind: "land-stage", Phase: "9", Fields: map[string]string{"phase": "9", "stage": "gate", "command": "./mvnw -q -pl persistence,service,web -am verify -Dsurefire.failIfNoSpecifiedTests=false"}})
+	if view := m.View(); !strings.Contains(view, "phase 9 · landing · gate · 12m0s") {
+		t.Fatalf("no gate time:\n%s", view)
 	}
 }
 

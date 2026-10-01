@@ -551,6 +551,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Face:        w.Face,
 		TodoPath:    todo,
 		GateTimeout: cfg.Land.GateTimeout,
+		GateIdle:    cfg.Land.GateIdle,
 		Boundary: &core.MilestoneBoundary{
 			Plan:     pl,
 			Sessions: sm,

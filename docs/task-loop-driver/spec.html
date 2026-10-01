@@ -3968,6 +3968,7 @@ providers:                    # claude and codex ship built in; a block here add
 land:
   fixRounds: 1                # a red Done when: gets this many gate-fix steps (ADR-64)
   gateTimeout: 30m            # how long the Done when: command may run
+  gateIdle: 10m               # kill it after this long with no output, thread dump first; 0 = off
   fix:                        # the gatefix session; absent = the implement row (ADR-68)
     effort: high
 

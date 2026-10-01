@@ -326,6 +326,29 @@ func (w *Watch) StepEnded(ref StepRef, out Outcome) {
 	}
 }
 
+func (w *Watch) LandStage(phase, stage, command, log string) {
+	if w.Dog == nil {
+		return
+	}
+	msg := fmt.Sprintf("land stage phase-%s %s", phase, stage)
+	if command != "" {
+		msg += fmt.Sprintf(" started %s log %s", command, log)
+	}
+	w.Dog.Post(msg)
+}
+
+func (w *Watch) LandEnded(phase string, err error) {
+	if w.Dog == nil {
+		return
+	}
+	if err == nil {
+		w.Dog.Post(fmt.Sprintf("land ended phase-%s ok", phase))
+		return
+	}
+	reason, _, _ := strings.Cut(err.Error(), "\n")
+	w.Dog.Post(fmt.Sprintf("land ended phase-%s failed %s", phase, reason))
+}
+
 func (w *Watch) tick(ref StepRef, s *Session, started time.Time, t *ticking) {
 	defer close(t.done)
 	if len(w.Checks) == 0 {

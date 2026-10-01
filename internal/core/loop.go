@@ -30,6 +30,8 @@ type Watcher interface {
 	BeforePhase(ctx context.Context, ph Phase, base string) CheckOutcome
 	StepStarted(ref StepRef, s *Session)
 	StepEnded(ref StepRef, out Outcome)
+	LandStage(phase, stage, command, log string)
+	LandEnded(phase string, err error)
 	Signals() <-chan Signal
 	Restarts() <-chan Restart
 	Route(ctx context.Context, q Question) (routed bool)
@@ -55,6 +57,8 @@ func (nopWatcher) BeforePhase(ctx context.Context, ph Phase, base string) CheckO
 }
 func (nopWatcher) StepStarted(ref StepRef, s *Session)                 {}
 func (nopWatcher) StepEnded(ref StepRef, out Outcome)                  {}
+func (nopWatcher) LandStage(phase, stage, command, log string)         {}
+func (nopWatcher) LandEnded(phase string, err error)                   {}
 func (nopWatcher) Signals() <-chan Signal                              { return nil }
 func (nopWatcher) Restarts() <-chan Restart                            { return nil }
 func (nopWatcher) Route(ctx context.Context, q Question) (routed bool) { return false }

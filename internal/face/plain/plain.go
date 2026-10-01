@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"r-loop/internal/core"
 )
@@ -15,11 +16,13 @@ type Face struct {
 	Out    io.Writer
 	Report string
 	mu     sync.Mutex
+	gate   *core.Event
 }
 
 func (f *Face) Emit(ev core.Event) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.closeGate(ev)
 	switch ev.Kind {
 	case "step":
 		detail := ev.Fields["reason"]
@@ -30,7 +33,15 @@ func (f *Face) Emit(ev core.Event) {
 			ev.Fields["state"], ev.Fields["provider"], detail)
 		fmt.Fprintln(f.Out, strings.TrimRight(line, " "))
 	case "land-stage":
-		fmt.Fprintf(f.Out, "%s  phase %s  land  %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["stage"])
+		line := fmt.Sprintf("%s  phase %s  land  %s", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["stage"])
+		if cmd := ev.Fields["command"]; cmd != "" {
+			line += "  " + cmd
+			f.gate = &ev
+		}
+		if log := ev.Fields["log"]; log != "" {
+			line += "  log " + log
+		}
+		fmt.Fprintln(f.Out, line)
 	case "nudge":
 		fmt.Fprintf(f.Out, "%s  phase %s  %s  nudge\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step)
 	case "watchdog-waiting":
@@ -131,6 +142,18 @@ func where(phase, step string) string {
 		return ""
 	}
 	return fmt.Sprintf("phase %s %s: ", phase, step)
+}
+
+func (f *Face) closeGate(ev core.Event) {
+	g := f.gate
+	if g == nil || ev.Phase != g.Phase {
+		return
+	}
+	switch ev.Kind {
+	case "land-stage", "landed", "gate-fix", "blocked-on", "phase-blocked", "error":
+		f.gate = nil
+		fmt.Fprintf(f.Out, "%s  phase %s  land  %s took %s\n", ev.At.Format("15:04:05"), g.Phase, g.Fields["stage"], ev.At.Sub(g.At).Truncate(time.Second))
+	}
 }
 
 func checkDetail(ev core.Event) string {

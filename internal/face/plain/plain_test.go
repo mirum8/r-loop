@@ -145,9 +145,24 @@ func TestALandStageIsOneLine(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}
 
-	f.Emit(core.Event{At: at, Kind: "land-stage", Phase: "4", Step: "land", Fields: map[string]string{"phase": "4", "stage": "gate go test ./..."}})
+	f.Emit(core.Event{At: at, Kind: "land-stage", Phase: "4", Step: "land", Fields: map[string]string{"phase": "4", "stage": "merging"}})
 
-	if want := "14:03:09  phase 4  land  gate go test ./...\n"; out.String() != want {
+	if want := "14:03:09  phase 4  land  merging\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
+func TestTheGateLineNamesItsLogAndTheNextLandLineSaysHowLongItTook(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	f.Emit(core.Event{At: at, Kind: "land-stage", Phase: "4", Step: "land", Fields: map[string]string{"phase": "4", "stage": "gate", "command": "go test ./...", "log": ".r-loop/runs/r1/phase-4/gate.log"}})
+	f.Emit(core.Event{At: at.Add(12*time.Minute + 30*time.Second), Kind: "land-stage", Phase: "4", Step: "land", Fields: map[string]string{"phase": "4", "stage": "committing"}})
+
+	want := "14:03:09  phase 4  land  gate  go test ./...  log .r-loop/runs/r1/phase-4/gate.log\n" +
+		"14:15:39  phase 4  land  gate took 12m30s\n" +
+		"14:15:39  phase 4  land  committing\n"
+	if out.String() != want {
 		t.Fatalf("got %q, want %q", out.String(), want)
 	}
 }

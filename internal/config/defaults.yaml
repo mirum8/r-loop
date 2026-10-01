@@ -66,6 +66,7 @@ steps:
 land:
   fixRounds: 1
   gateTimeout: 30m
+  gateIdle: 10m
 
 watchdog:
   provider: claude

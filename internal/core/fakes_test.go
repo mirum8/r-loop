@@ -304,6 +304,11 @@ func (f *fakeRepo) Run(ctx context.Context, dir, command string, timeout time.Du
 	return f.RunExit, f.RunOutput, f.Err
 }
 
+func (f *fakeRepo) Gate(ctx context.Context, dir, command string, lim GateLimits) (int, string, error) {
+	f.record("Repo.Gate %s %q %s %s", dir, command, lim.Timeout, lim.Idle)
+	return f.RunExit, f.RunOutput, f.Err
+}
+
 type fakeStore struct {
 	callLog
 	mu         sync.Mutex

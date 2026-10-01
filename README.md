@@ -247,6 +247,7 @@ The `ui` reviewer runs the project's `/test-app` skill. It needs
 |---|---|---|
 | `fixRounds` | `1` | How many times an agent may try to fix a red check command before the phase is blocked. |
 | `gateTimeout` | `30m` | Time limit for the check command. |
+| `gateIdle` | `10m` | Kill the check command when it prints nothing this long, after a thread dump of any JVM under it; `0` turns it off. Its output streams to `.r-loop/runs/<id>/phase-<N>/gate.log`. |
 | `fix` | implement row | Optional block with `provider`, `model`, `effort` for the fix agent. A key it leaves out comes from the implement row; naming another provider requires `model` and `effort` too. |
 
 ### `watchdog`

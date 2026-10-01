@@ -80,6 +80,12 @@ type Repo interface {
 	ResetHard(ref string) error
 	ResetKeep(ref string) error
 	Run(ctx context.Context, dir, command string, timeout time.Duration) (int, string, error)
+	Gate(ctx context.Context, dir, command string, lim GateLimits) (int, string, error)
+}
+
+type GateLimits struct {
+	Timeout, Idle time.Duration
+	Log           string
 }
 
 type Store interface {

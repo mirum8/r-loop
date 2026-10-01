@@ -61,6 +61,14 @@ func (w *fakeWatcher) StepEnded(ref StepRef, out Outcome) {
 	}
 }
 
+func (w *fakeWatcher) LandStage(phase, stage, command, log string) {
+	w.log.record("Watcher.LandStage %s %s", phase, stage)
+}
+
+func (w *fakeWatcher) LandEnded(phase string, err error) {
+	w.log.record("Watcher.LandEnded %s %v", phase, err)
+}
+
 func (w *fakeWatcher) Post(text string) {
 	w.log.record("Watcher.Post %s", text)
 }

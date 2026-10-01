@@ -588,6 +588,31 @@ func TestWatchSendsStepStartedAndStepEndedToTheWatchdog(t *testing.T) {
 	}
 }
 
+func TestWatchSendsLandStagesAndTheLandEndToTheWatchdog(t *testing.T) {
+	host := &fakeSessionHost{}
+	store := &fakeStore{}
+	w := newWatch(store)
+	w.Dog = newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+
+	w.LandStage("9", "merging", "", "")
+	w.LandStage("9", "gate", "./mvnw -q verify", ".r-loop/runs/r1/phase-9/gate.log")
+	w.LandEnded("9", errors.Join(ErrGate, errors.New("x")))
+	w.LandEnded("10", nil)
+	if err := w.Dog.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		`SessionHost.Prompt ` + dogName + ` "land stage phase-9 merging" false 0s`,
+		`SessionHost.Prompt ` + dogName + ` "land stage phase-9 gate started ./mvnw -q verify log .r-loop/runs/r1/phase-9/gate.log" false 0s`,
+		`SessionHost.Prompt ` + dogName + ` "land ended phase-9 failed gate failed" false 0s`,
+		`SessionHost.Prompt ` + dogName + ` "land ended phase-10 ok" false 0s`,
+	}
+	if got := host.Calls(); !reflect.DeepEqual(got, want) {
+		t.Errorf("calls\n got %q\nwant %q", got, want)
+	}
+}
+
 type mcpHaltWatch struct {
 	*Watch
 	handler func(Signal) (bool, string)

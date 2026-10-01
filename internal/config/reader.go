@@ -70,6 +70,7 @@ type Intake struct {
 type Land struct {
 	FixRounds   int
 	GateTimeout time.Duration
+	GateIdle    time.Duration
 	Fix         GateFix
 }
 
@@ -127,7 +128,7 @@ var topSchema = schema{
 	}},
 	"providers":  schema{"*": nil},
 	"intake":     roleSchema,
-	"land":       schema{"fixRounds": nil, "gateTimeout": nil, "fix": roleSchema},
+	"land":       schema{"fixRounds": nil, "gateTimeout": nil, "gateIdle": nil, "fix": roleSchema},
 	"unattended": schema{"allow": nil},
 	"notify":     schema{"onHalt": nil, "onWarn": nil, "onDone": nil},
 	"watchdog": schema{
@@ -267,6 +268,14 @@ func (r *resolver) str(path string) (string, error) {
 }
 
 func (r *resolver) duration(path string) (time.Duration, error) {
+	return r.durationFrom(path, false)
+}
+
+func (r *resolver) durationOrOff(path string) (time.Duration, error) {
+	return r.durationFrom(path, true)
+}
+
+func (r *resolver) durationFrom(path string, zeroIsOff bool) (time.Duration, error) {
 	v, n, l, err := r.numeric(path)
 	if err != nil || n == nil {
 		return 0, err
@@ -275,7 +284,7 @@ func (r *resolver) duration(path string) (time.Duration, error) {
 	if err != nil {
 		return 0, errAt(l.file, n, "%s: %q is not a duration", path, v)
 	}
-	if d <= 0 {
+	if d < 0 || d == 0 && !zeroIsOff {
 		return 0, errAt(l.file, n, "%s: %q is not a positive duration", path, v)
 	}
 	return d, nil
@@ -639,6 +648,9 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 		if *f.dst, err = r.duration(f.path); err != nil {
 			return err
 		}
+	}
+	if cfg.Land.GateIdle, err = r.durationOrOff("land.gateIdle"); err != nil {
+		return err
 	}
 	if w.BlockerTimeout, err = r.aliased("watchdog.blockerTimeout", "watchdog.remedyWindow"); err != nil {
 		return err

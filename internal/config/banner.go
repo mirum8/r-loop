@@ -31,6 +31,11 @@ func Banner(cfg LoopConfig, extra ...string) string {
 	fmt.Fprintf(&b, "gatefix %s  ← %s\n", roleLine(fix.Provider, fix.Model, fix.Effort),
 		sources(p["land.fix.provider"], p["land.fix.model"], p["land.fix.effort"]))
 	fmt.Fprintf(&b, "land gateTimeout %s  ← %s\n", Duration(cfg.Land.GateTimeout), p["land.gateTimeout"])
+	idle := "off"
+	if cfg.Land.GateIdle > 0 {
+		idle = Duration(cfg.Land.GateIdle)
+	}
+	fmt.Fprintf(&b, "land gateIdle %s  ← %s\n", idle, p["land.gateIdle"])
 	for _, o := range cfg.overrides {
 		fmt.Fprintf(&b, "override: %s %s %s (flag) replaces %s (%s)\n", o.Step, o.Key, o.Value, o.old,
 			strings.TrimSuffix(o.oldSource, ":"+o.path))

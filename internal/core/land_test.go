@@ -89,8 +89,8 @@ type cancelAfterGate struct {
 	cancel context.CancelFunc
 }
 
-func (r cancelAfterGate) Run(ctx context.Context, dir, command string, timeout time.Duration) (int, string, error) {
-	code, output, err := r.Repo.Run(ctx, dir, command, timeout)
+func (r cancelAfterGate) Gate(ctx context.Context, dir, command string, lim core.GateLimits) (int, string, error) {
+	code, output, err := r.Repo.Gate(ctx, dir, command, lim)
 	r.cancel()
 	return code, output, err
 }
@@ -1001,12 +1001,47 @@ func TestLandGateShowsEachStageBeforeItRuns(t *testing.T) {
 	var stages []string
 	for _, ev := range e.face.events {
 		if ev.Kind == "land-stage" {
-			stages = append(stages, ev.Fields["stage"])
+			stages = append(stages, strings.TrimSpace(ev.Fields["stage"]+" "+ev.Fields["command"]))
 		}
 	}
 	if want := []string{"merging", "gate test -f feature.txt", "committing"}; !reflect.DeepEqual(stages, want) {
 		t.Fatalf("stages = %q, want %q", stages, want)
 	}
+}
+
+func TestLandGateStreamsTheGateOutputToThePhaseLog(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+
+	if _, err := e.gate().Land(context.Background(), phaseOne("`echo gate-ran && test -f feature.txt` is green.")); err != nil {
+		t.Fatal(err)
+	}
+
+	log := filepath.Join(e.store.Dir("run1"), "phase-1", "gate.log")
+	b, err := os.ReadFile(log)
+	if err != nil || !strings.Contains(string(b), "$ echo gate-ran && test -f feature.txt") || !strings.Contains(string(b), "gate-ran\n") {
+		t.Fatalf("gate.log = %q, %v", b, err)
+	}
+	for _, ev := range e.face.events {
+		if ev.Kind == "land-stage" && ev.Fields["stage"] == "gate" && ev.Fields["log"] != log {
+			t.Fatalf("gate stage log = %q, want %q", ev.Fields["log"], log)
+		}
+	}
+}
+
+func TestLandGateWithNoOutputForTheIdleLimitFailsSayingSo(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	head := e.head()
+	g := e.gate()
+	g.GateIdle = 300 * time.Millisecond
+
+	_, err := g.Land(context.Background(), phaseOne("`sleep 30` is green."))
+
+	if !errors.Is(err, core.ErrGate) || !strings.Contains(err.Error(), "no output for 300ms") {
+		t.Fatalf("Land err = %v", err)
+	}
+	e.assertUntouched(head)
 }
 
 func TestLandGateConflictLeavesTheTodoUntouched(t *testing.T) {
@@ -2087,6 +2122,16 @@ func (w *stepWatcher) StepEnded(ref core.StepRef, out core.Outcome) {
 	defer w.mu.Unlock()
 	w.events = append(w.events, fmt.Sprintf("ended %s %d %s", ref.Key.Kind, ref.Key.Attempt, out.State))
 }
+func (w *stepWatcher) LandStage(phase, stage, command, log string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.events = append(w.events, fmt.Sprintf("land %s %s", phase, stage))
+}
+func (w *stepWatcher) LandEnded(phase string, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.events = append(w.events, fmt.Sprintf("land ended %s %v", phase, err))
+}
 func (w *stepWatcher) Signals() <-chan core.Signal                     { return nil }
 func (w *stepWatcher) Restarts() <-chan core.Restart                   { return nil }
 func (w *stepWatcher) Route(ctx context.Context, q core.Question) bool { return false }
@@ -2108,7 +2153,8 @@ func TestAGatefixStepIsPostedToTheWatcherAsItStartsAndEnds(t *testing.T) {
 	if _, err := g.Land(context.Background(), phaseOne("test -f fix1.txt")); err != nil {
 		t.Fatalf("Land: %v", err)
 	}
-	if want := []string{"started gatefix 1", "ended gatefix 1 ok"}; !reflect.DeepEqual(w.events, want) {
+	want := []string{"land 1 merging", "land 1 gate", "started gatefix 1", "ended gatefix 1 ok", "land 1 merging", "land 1 gate", "land 1 committing", "land ended 1 <nil>"}
+	if !reflect.DeepEqual(w.events, want) {
 		t.Errorf("watcher = %v, want %v", w.events, want)
 	}
 }

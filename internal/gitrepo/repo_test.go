@@ -574,6 +574,93 @@ func TestRunTimesOut(t *testing.T) {
 	}
 }
 
+func TestGateWithNoOutputForTheIdleLimitIsKilled(t *testing.T) {
+	r, _ := newRepo(t)
+	pidFile := filepath.Join(t.TempDir(), "gate.pid")
+	start := time.Now()
+	exit, out, err := r.Gate(context.Background(), "", "echo $$ > '"+pidFile+"'; echo started; sleep 30 & sleep 30", core.GateLimits{Timeout: time.Minute, Idle: 300 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Gate returned after %v", elapsed)
+	}
+	if exit != -1 || !strings.Contains(out, "started") || !strings.Contains(out, "no JVM to dump") || !strings.HasSuffix(out, "no output for 300ms") {
+		t.Fatalf("Gate = %d, %q", exit, out)
+	}
+	waitGroupGone(t, waitPID(t, pidFile))
+}
+
+func TestGateWithATinyIdleLimitDoesNotPanic(t *testing.T) {
+	r, _ := newRepo(t)
+	exit, out, err := r.Gate(context.Background(), "", "sleep 30", core.GateLimits{Timeout: time.Minute, Idle: time.Nanosecond})
+	if err != nil || exit != -1 || !strings.HasSuffix(out, "no output for 1ns") {
+		t.Fatalf("Gate = %d, %q, %v", exit, out, err)
+	}
+}
+
+func TestGateThatKeepsPrintingOutlivesTheIdleLimit(t *testing.T) {
+	r, _ := newRepo(t)
+	exit, out, err := r.Gate(context.Background(), "", "for i in 1 2 3 4 5 6; do echo $i; sleep 0.1; done", core.GateLimits{Timeout: time.Minute, Idle: 300 * time.Millisecond})
+	if err != nil || exit != 0 || !strings.Contains(out, "6") {
+		t.Fatalf("Gate = %d, %q, %v", exit, out, err)
+	}
+}
+
+func TestGateWithIdleOffWaitsForTheTimeout(t *testing.T) {
+	r, _ := newRepo(t)
+	exit, out, err := r.Gate(context.Background(), "", "sleep 0.5; echo done", core.GateLimits{Timeout: time.Minute})
+	if err != nil || exit != 0 || strings.TrimSpace(out) != "done" {
+		t.Fatalf("Gate = %d, %q, %v", exit, out, err)
+	}
+}
+
+func TestGateStreamsItsOutputToTheLogWhileItRuns(t *testing.T) {
+	r, _ := newRepo(t)
+	log := filepath.Join(t.TempDir(), "phase-9", "gate.log")
+	done := make(chan string, 1)
+	go func() {
+		_, out, _ := r.Gate(context.Background(), "", "echo first; sleep 30", core.GateLimits{Timeout: time.Second, Log: log})
+		done <- out
+	}()
+	deadline := time.Now().Add(900 * time.Millisecond)
+	for {
+		b, _ := os.ReadFile(log)
+		if strings.Contains(string(b), "first") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("log while running = %q", b)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	out := <-done
+	if !strings.HasSuffix(out, "timed out after 1s; log "+log) {
+		t.Fatalf("output = %q", out)
+	}
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(b); !strings.HasPrefix(got, "$ echo first; sleep 30  ") || !strings.HasSuffix(got, "first\ntimed out after 1s; log "+log+"\n") {
+		t.Fatalf("log = %q", got)
+	}
+}
+
+func TestGateAppendsEachRunToTheLog(t *testing.T) {
+	r, _ := newRepo(t)
+	log := filepath.Join(t.TempDir(), "gate.log")
+	for _, word := range []string{"one", "two"} {
+		if _, _, err := r.Gate(context.Background(), "", "echo "+word, core.GateLimits{Timeout: time.Minute, Log: log}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, _ := os.ReadFile(log)
+	if got := string(b); !strings.Contains(got, "$ echo one") || !strings.Contains(got, "one\n$ echo two") || !strings.HasSuffix(got, "two\n") {
+		t.Fatalf("log = %q", got)
+	}
+}
+
 func waitPID(t *testing.T, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

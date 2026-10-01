@@ -210,7 +210,7 @@ so.
   `codex/gpt-5.6-sol/medium/4h/diff`, reviewers `[claude/opus/medium, ui]` (`ui` = `claude/opus/high`,
   `prompt review-ui`, `requires .claude/skills/test-app/SKILL.md`; `security` = `prompt review-security`, ADR-85), `rounds 3`, `reviewTimeout 45m`;
   fallback plan `codex/gpt-5.6-sol/medium`, implement `claude/opus/medium`;
-  milestone `claude/opus/medium/1h/report`, no review; `land.fixRounds 1`, `land.gateTimeout 30m`, no `land.fix`;
+  milestone `claude/opus/medium/1h/report`, no review; `land.fixRounds 1`, `land.gateTimeout 30m`, `land.gateIdle 10m`, no `land.fix`;
   `unattended.allow [deps, ports, locks, restart, retry, provider]`, applied only with
   `--unattended`;
   `watchdog.maxRestarts 2`; `watchdog.provider claude`, `watchdog.model opus`,
@@ -433,7 +433,9 @@ so.
   worktree on the config's resolved `land.fix` provider, model and effort (the implement row's
   unless `land.fix` names its own), with `GateCommand` and `GateOutput`, `check: diff`, the
   implement row's timeout and its reviewers for one round; the gate command itself runs under
-  `land.gateTimeout` (default 30m); its `ok` commits `r-loop: phase <N> gatefix`, and the
+  `land.gateTimeout` (default 30m) and is killed after `land.gateIdle` (default 10m, `0` off) with
+  no output, after a best-effort `jcmd <pid> Thread.print` of each JVM in its process group; its
+  output streams to `.r-loop/runs/<runID>/phase-<N>/gate.log`; its `ok` commits `r-loop: phase <N> gatefix`, and the
   landing starts again from the merge. A red gate with no fix round left, or a gatefix step that
   does not end `ok`, raises a blocker (Milestone 17) before the phase is blocked.
 - **Land** — in the primary tree: append `merge-intent{phase, branch, base, message}` →
@@ -471,7 +473,7 @@ so.
 - **Banner** — one line per pipeline row and the milestone row, `<step> <provider> <model>
   <effort> <timeout> <check> ← <provenance>`; under a row with a review half, `review rounds <n>
   <reviewTimeout>` and one `reviewer <provider> <model> <effort>` line per reviewer and
-  `fallback <provider> <model> <effort>` per row that has one; `gatefix <provider> <model> <effort>`; `land gateTimeout <duration> ← <provenance>`; watchdog on/off with `<provider> <model>
+  `fallback <provider> <model> <effort>` per row that has one; `gatefix <provider> <model> <effort>`; `land gateTimeout <duration> ← <provenance>`; `land gateIdle <duration|off> ← <provenance>`; watchdog on/off with `<provider> <model>
   <effort>`. Every step,
   reviewer, fallback, gatefix and watchdog line ends `← <provenance>`: one source when its
   provider, model and effort share it, else `provider <src> model <src> effort <src>`. Overrides

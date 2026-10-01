@@ -51,6 +51,8 @@ When the maintainer tells you here to stop, pause or go on, call `stop_run`, `pa
 - After `step started`, read the agent every few minutes with `herdr agent read <name> --source recent-unwrapped --lines 200` and compare what it is doing with the phase's block in the plan.
 - Before calling `signal` with `halt`, confirm the suspected wrong turn with `git -C <worktree> diff <base>`. Use `warn` for anything short of that.
 - Stop watching a step on `step ended`.
+- The driver tells you `land stage phase-<N> <stage>` as it lands a phase, `land stage phase-<N> gate started <command> log <path>` when the gate command starts, and `land ended phase-<N> ok|failed <reason>` when the land is over. The gate runs in the primary tree with no agent; its output streams to the log.
+- While a gate runs, look at it every few minutes: `tail` the log, and when it has gone quiet, find the processes under it with `ps` and take a thread dump of any JVM with `jcmd <pid> Thread.print`. When a test looks stuck, tell the maintainer which one and why. The driver kills a gate that prints nothing for `land.gateIdle` and fails it with a thread dump.
 - When you have lost track of a step or an open id — after a compaction, a restart or a message you missed — call `run_status`, then `step_info` for the step you need, and carry on from what they show.
 
 ## Checking a phase

@@ -161,6 +161,12 @@ func (m Model) panel(w, room int) []string {
 		add(th.Label, fmt.Sprintf("phase %s · watchdog checking the plan · %s", m.checking, m.clock().Sub(m.checkFrom).Truncate(time.Second)))
 	} else if m.landing != "" {
 		add(th.Label, fmt.Sprintf("phase %s · landing · %s · %s", m.landing, m.landStage, m.clock().Sub(m.landFrom).Truncate(time.Second)))
+		if m.landCmd != "" {
+			add(th.Text, field("command", m.landCmd))
+		}
+		if m.landLog != "" {
+			add(th.Text, field("log", m.landLog))
+		}
 	} else if s := m.Live; s != nil {
 		add(th.Text, fmt.Sprintf("PHASE %s · %s", s.Phase, stepName(s)))
 		label := th.Text.Render(fmt.Sprintf("%-10s ", "steps"))

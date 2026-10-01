@@ -83,7 +83,7 @@ func TestDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Steps["milestone"], wantMilestone) {
 		t.Errorf("milestone = %+v", cfg.Steps["milestone"])
 	}
-	wantLand := Land{FixRounds: 1, GateTimeout: 30 * time.Minute, Fix: GateFix{Provider: "claude", Model: "opus", Effort: "medium"}}
+	wantLand := Land{FixRounds: 1, GateTimeout: 30 * time.Minute, GateIdle: 10 * time.Minute, Fix: GateFix{Provider: "claude", Model: "opus", Effort: "medium"}}
 	if cfg.Land != wantLand {
 		t.Errorf("Land = %+v", cfg.Land)
 	}
@@ -275,6 +275,7 @@ func TestZeroOrNegativeTimeoutRejectedWithFileLineAndKey(t *testing.T) {
 	}{
 		{"land zero", "land:\n  gateTimeout: 0s\n", `.r-loop/config.yaml:2: land.gateTimeout: "0s" is not a positive duration`, false},
 		{"home land negative", "land:\n  gateTimeout: -5m\n", `~/.config/r-loop/config.yaml:2: land.gateTimeout: "-5m" is not a positive duration`, true},
+		{"idle negative", "land:\n  gateIdle: -1m\n", `.r-loop/config.yaml:2: land.gateIdle: "-1m" is not a positive duration`, false},
 		{"check zero", "watchdog:\n  checkTimeout: 0\n", `.r-loop/config.yaml:2: watchdog.checkTimeout: "0" is not a positive duration`, false},
 		{"stall negative", "watchdog:\n  stallGrace: -1s\n", `.r-loop/config.yaml:2: watchdog.stallGrace: "-1s" is not a positive duration`, false},
 		{"unblock zero", "watchdog:\n  unblockTimeout: 0s\n", `.r-loop/config.yaml:2: watchdog.unblockTimeout: "0s" is not a positive duration`, false},
@@ -294,6 +295,20 @@ func TestZeroOrNegativeTimeoutRejectedWithFileLineAndKey(t *testing.T) {
 			}
 			d.loadErr(t, tt.want)
 		})
+	}
+}
+
+func TestGateIdleZeroTurnsTheIdleKillOff(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "land:\n  gateIdle: 0s\n")
+
+	cfg := d.load(t)
+
+	if cfg.Land.GateIdle != 0 || cfg.Provenance["land.gateIdle"] != ".r-loop/config.yaml:land.gateIdle" {
+		t.Fatalf("gateIdle = %s from %q", cfg.Land.GateIdle, cfg.Provenance["land.gateIdle"])
+	}
+	if !strings.Contains(Banner(cfg), "land gateIdle off  ← .r-loop/config.yaml:land.gateIdle\n") {
+		t.Fatalf("banner:\n%s", Banner(cfg))
 	}
 }
 
@@ -633,6 +648,7 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 		"milestone  claude  opus  medium  1h  report  ← default",
 		"gatefix claude opus high  ← provider flag:--provider model default effort .r-loop/config.yaml:land.fix.effort",
 		"land gateTimeout 30m  ← default",
+		"land gateIdle 10m  ← default",
 		"override: implement provider claude (flag) replaces codex (.r-loop/config.yaml)",
 		"override: plan model sonnet (flag) replaces opus (default)",
 		"watchdog: claude opus low allow [deps]  ← provider default model default effort .r-loop/config.yaml:watchdog.effort",

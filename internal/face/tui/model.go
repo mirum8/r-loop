@@ -122,6 +122,8 @@ type Model struct {
 	checkFrom  time.Time
 	landing    string
 	landStage  string
+	landCmd    string
+	landLog    string
 	landFrom   time.Time
 	Questions  []Question
 	DogGone    bool
@@ -188,9 +190,9 @@ func (m Model) Apply(ev core.Event) Model {
 	case "land-stage":
 		if m.landing != ev.Phase {
 			m.retire(ev.Phase, "", 0)
-			m.landFrom = ev.At
 		}
-		m.landing, m.landStage, m.Live = ev.Phase, ev.Fields["stage"], nil
+		m.landing, m.landStage, m.landFrom, m.Live = ev.Phase, ev.Fields["stage"], ev.At, nil
+		m.landCmd, m.landLog = ev.Fields["command"], ev.Fields["log"]
 	case "phase-check", "phase-check-timeout", "phase-check-skipped":
 		m.checking = ""
 		m.log(ev, toneDim, "phase check "+checkDetail(ev))
