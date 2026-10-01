@@ -270,7 +270,11 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 		return l.recordHalt(err, firstPhase, firstStep)
 	}
 	slices.SortFunc(l.blocked, ComparePhaseIDs)
-	l.emit(Event{Kind: "halt", Fields: map[string]string{"blocked": joinIDs(l.blocked), "resume": "r-loop resume"}})
+	fields := map[string]string{"blocked": joinIDs(l.blocked), "resume": "r-loop resume"}
+	if firstReason != "" {
+		fields["reason"] = firstReason
+	}
+	l.emit(Event{Kind: "halt", Fields: fields})
 	l.closeReport()
 	l.fire(l.Hooks.OnHalt, "halted", firstPhase, firstStep, firstReason)
 	return first

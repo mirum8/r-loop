@@ -155,13 +155,19 @@ func landedLines(st RunState) []string {
 
 func haltLines(st RunState) []string {
 	var out []string
+	reasons := map[string]bool{}
 	for _, ev := range st.Events {
 		f := ev.Fields
 		switch {
 		case ev.Kind == "human" && f["what"] == "resume":
 			out = nil
+			reasons = map[string]bool{}
 		case ev.Kind == "phase-blocked":
+			reasons[f["reason"]] = true
 			out = append(out, where(ev.Phase, ev.Step)+": "+f["reason"]+place(f))
+		case ev.Kind == "halt" && f["reason"] != "" && !reasons[f["reason"]]:
+			reasons[f["reason"]] = true
+			out = append(out, f["reason"])
 		case ev.Kind == "phase-skipped":
 			out = append(out, skippedLine(ev))
 		case ev.Kind == "aborted":

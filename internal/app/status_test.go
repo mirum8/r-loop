@@ -269,8 +269,30 @@ func TestStatusOfAPausedRunWhoseDriverDiedSaysSo(t *testing.T) {
 
 	f.main("status", "--plain")
 
-	if out := f.out.String(); !strings.HasPrefix(out, "run "+id+" paused (driver pid 999999 not alive — r-loop resume)\n") {
+	if out := f.out.String(); !strings.HasPrefix(out, "run "+id+" paused: lunch (driver pid 999999 not alive — r-loop resume)\n") {
 		t.Fatalf("first line:\n%s", out)
+	}
+}
+
+func TestStatusNamesWhyTheRunHaltedOrPaused(t *testing.T) {
+	for _, c := range []struct {
+		status core.RunStatus
+		reason string
+	}{
+		{core.RunHalted, "stopped by the watchdog: review phase 1"},
+		{core.RunPaused, "lunch"},
+	} {
+		f := newFixture(t)
+		id := f.seedRun(
+			core.Record{Kind: core.RecordRun, Run: core.RunRunning},
+			core.Record{Kind: core.RecordRun, Run: c.status, Reason: c.reason},
+		)
+
+		f.main("status", "--plain")
+
+		if want := "run " + id + " " + string(c.status) + ": " + c.reason + "\n"; !strings.HasPrefix(f.out.String(), want) {
+			t.Errorf("first line, want %q:\n%s", want, f.out.String())
+		}
 	}
 }
 

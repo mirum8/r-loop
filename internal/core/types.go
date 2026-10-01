@@ -189,6 +189,7 @@ type RunState struct {
 	ID, Todo, Branch string
 	Started          time.Time
 	Status           RunStatus
+	Reason           string
 	Steps            map[StepKey]StepState
 	LastStep         *StepKey
 	Landed           []Landing
@@ -231,6 +232,7 @@ func (st *RunState) Apply(rec Record) error {
 		st.Span(*rec.Step, rec.State, rec.At)
 	case RecordRun:
 		st.Status = rec.Run
+		st.Reason = rec.Reason
 	case RecordLanding:
 		if rec.Landing != nil {
 			st.Landed = append(st.Landed, *rec.Landing)

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -252,5 +253,27 @@ func TestAContinueAsThePauseBeginsStillEndsIt(t *testing.T) {
 	}
 	if got := r.calls("Land "); !reflect.DeepEqual(got, []string{"1", "2", "3"}) {
 		t.Errorf("landed %v", got)
+	}
+}
+
+func TestAStopAfterPhaseNamesItsReasonInTheHaltEventAndTheReport(t *testing.T) {
+	r := newLoopRig(t)
+	onLand(r, "1", func() { r.loop.StopRun(StopAfterPhase, "review phase 1", "stop after this phase") })
+
+	if code := r.run(RunOptions{}); code != 5 {
+		t.Fatalf("exit %d, want 5", code)
+	}
+
+	halts := r.events("halt")
+	if len(halts) != 1 || halts[0].Fields["reason"] != "stopped by the watchdog: review phase 1" {
+		t.Errorf("halt events %+v", halts)
+	}
+	st, err := r.store.Load("run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := Report(st, r.loop.Plan)
+	if n := strings.Count(report, "- stopped by the watchdog: review phase 1\n"); n != 1 {
+		t.Errorf("halt reason in the report %d times, want once:\n%s", n, report)
 	}
 }

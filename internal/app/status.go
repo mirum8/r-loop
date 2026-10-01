@@ -156,6 +156,9 @@ func runOrder(id string) string {
 
 func StatusLines(run core.RunState, pl core.Plan, now time.Time, deadPID int) []string {
 	head := fmt.Sprintf("run %s %s", run.ID, run.Status)
+	if (run.Status == core.RunHalted || run.Status == core.RunPaused) && run.Reason != "" {
+		head += ": " + run.Reason
+	}
 	dead := deadPID != 0 && (run.Status == core.RunRunning || run.Status == core.RunPaused)
 	if dead {
 		head += fmt.Sprintf(" (driver pid %d not alive — r-loop resume)", deadPID)
