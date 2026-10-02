@@ -1531,6 +1531,19 @@ func TestReportQuestionsNameTheAnswererCitationAndWaitAndSkipsListAskNonePerStep
 	}
 }
 
+func TestStepVarsCarryTheTriageFindings(t *testing.T) {
+	plan := threePhasePlan()
+	ph := plan.Phases[0]
+	ph.Members, ph.Triage = []string{"1", "4"}, "#1: no lock — approach: take the lock\n#4: stale read — approach: reload"
+	ref := StepRef{Key: StepKey{Run: "run-1", Phase: "1", Kind: "plan", Attempt: 1}, Phase: ph}
+
+	vars := StepVars(ref, plan, "issues.md", "/runs/run-1")
+
+	if vars["TriageNotes"] != ph.Triage || vars["GroupItems"] != "1, 4" {
+		t.Errorf("TriageNotes = %q, GroupItems = %q", vars["TriageNotes"], vars["GroupItems"])
+	}
+}
+
 func TestStepVarsFillsEveryTemplateVariable(t *testing.T) {
 	plan := threePhasePlan()
 	ph := plan.Phases[2]
@@ -1549,7 +1562,7 @@ func TestStepVarsFillsEveryTemplateVariable(t *testing.T) {
 		"RunDir": "/runs/run-1", "AskURL": "", "PhaseWarnings": "", "ItemGate": false, "ReviewedKind": "", "Round": 0, "Rounds": 0,
 		"ReviewCommand": "", "ReviewRan": false, "FindingsPath": "", "ArtifactsDir": "", "RequiredPath": "", "FindingsFiles": []FindingsFile(nil), "PriorFindings": "", "PriorVerdicts": "",
 		"RoundTree": "", "VerdictPath": "", "ReportPath": "", "MilestoneName": "Core", "MilestonePhases": "1, 2, 3, 4",
-		"Addendum": "", "GroupItems": "",
+		"Addendum": "", "GroupItems": "", "TriageNotes": "",
 	}
 	if !reflect.DeepEqual(vars, want) {
 		for k, v := range want {

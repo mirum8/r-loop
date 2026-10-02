@@ -676,7 +676,7 @@ func TestSubmitTriageHandsThePayloadToItsHandlerAndReturnsTheTable(t *testing.T)
 	}})
 	cs := connect(t, s.WatchdogURL())
 	args := map[string]any{
-		"items":  []any{map[string]any{"id": "3", "title": "t", "verdict": "fix", "category": "bug", "confidence": "high", "root_cause_or_scope": "c", "touches": []any{"a.go"}, "risk": "local"}},
+		"items":  []any{map[string]any{"id": "3", "title": "t", "verdict": "fix", "category": "bug", "confidence": "high", "root_cause_or_scope": "c", "approach": "a", "touches": []any{"a.go"}, "risk": "local"}},
 		"groups": []any{map[string]any{"group_id": "G1", "items": []any{"3"}, "subsystem": "store"}},
 	}
 
@@ -690,7 +690,7 @@ func TestSubmitTriageHandsThePayloadToItsHandlerAndReturnsTheTable(t *testing.T)
 		t.Fatalf("accepted = %+v", accepted)
 	}
 	want := core.Triage{
-		Items:  []core.ItemVerdict{{ID: "3", Title: "t", Verdict: "fix", Category: "bug", Confidence: "high", RootCause: "c", Touches: []string{"a.go"}, Risk: "local"}},
+		Items:  []core.ItemVerdict{{ID: "3", Title: "t", Verdict: "fix", Category: "bug", Confidence: "high", RootCause: "c", Approach: "a", Touches: []string{"a.go"}, Risk: "local"}},
 		Groups: []core.Group{{ID: "G1", Items: []string{"3"}, Subsystem: "store"}},
 	}
 	if len(got) != 2 || !reflect.DeepEqual(got[1], want) {

@@ -50,6 +50,7 @@ When the maintainer tells you here to stop, pause or go on, call `stop_run`, `pa
 - The driver tells you `step started phase-<N>/<kind> agent <name> worktree <dir> base <base>` when a step starts, and `step ended phase-<N>/<kind> <state> <reason>` when it ends.
 - After `step started`, read the agent every few minutes with `herdr agent read <name> --source recent-unwrapped --lines 200` and compare what it is doing with the phase's block in the plan.
 - Before calling `signal` with `halt`, confirm the suspected wrong turn with `git -C <worktree> diff <base>`. Use `warn` for anything short of that.
+- A driver `files-outside-plan` warning for a file the step's plan justifies under `## Why this approach` is expected: the planner may choose a better solution than the block proposes. Never halt on it.
 - Stop watching a step on `step ended`.
 - The driver tells you `land stage phase-<N> <stage>` as it lands a phase, `land stage phase-<N> gate started <command> log <path>` when the gate command starts, and `land ended phase-<N> ok|failed <reason>` when the land is over. The gate runs in the primary tree with no agent; its output streams to the log.
 - While a gate runs, look at it every few minutes: `tail` the log, and when it has gone quiet, find the processes under it with `ps` and take a thread dump of any JVM with `jcmd <pid> Thread.print`. When a test looks stuck, tell the maintainer which one and why. The driver kills a gate that prints nothing for `land.gateIdle` and fails it with a thread dump.
@@ -71,14 +72,23 @@ Before the first phase runs, the driver sends `triage plan <plan> phases <ids>.`
   - `build` — it still needs building.
   - `already-done` — the tree already does what the block asks. The `note` cites a `path:line` that exists in the primary tree and shows it is built.
   - `blocked` — it cannot be built yet. The `note` says what is missing.
-- For a backlog, give each item:
+- For a backlog, judge each item from the code before you give it a verdict. A drafted item can be wrong, and its proposed fix is a proposal:
+  - Is the claimed defect real? Trace the path the item describes and check that the code really misbehaves there.
+  - Does the code already do what it asks?
+  - Does it fit the spec and its ADRs, and is it worth doing at all?
+  - Is the fix the item proposes the best one, or does a simpler or more fitting change serve the same outcome?
+- Then give each item:
   - `verdict` — `fix` or `skip`.
-  - `category` — `bug`, `feature`, `chore`, `question`, `docs`, `duplicate`, `stale` or `not-enough-info`.
+  - `category` — `bug`, `feature`, `chore`, `question`, `docs`, `duplicate`, `stale`, `not-a-bug`, `not-relevant` or `not-enough-info`:
+    - `not-a-bug` — the code already behaves as the item wants; its premise is wrong.
+    - `not-relevant` — the outcome the item asks for is ruled out by the spec, its ADRs or the design, or buys nothing.
+  - Judge the outcome the item wants, never the fix it proposes. An item whose proposed fix is ruled out or poor, but whose outcome is real and reachable another way, is a `fix` with your `approach`, not a skip.
   - `confidence` — `low`, `medium` or `high`.
   - `root_cause_or_scope` — the cause of a bug, or the scope of the change.
+  - `approach` — for a fix, the change you judge best, and why when it differs from the fix the item proposes. The planner weighs it and chooses.
   - `touches` — the concrete files a fix changes.
   - `risk` — `cosmetic`, `local` or `deep`. When torn between two, take the higher.
-  - `skip_reason` for a skip. A `stale` or `duplicate` skip cites a `path:line` that exists. An item that duplicates another item in this run is a `fix`, grouped with it.
+  - `skip_reason` for a skip. A `stale`, `duplicate`, `not-a-bug` or `not-relevant` skip cites a `path:line` that exists and shows it. An item that duplicates another item in this run is a `fix`, grouped with it.
 - Then group the backlog's fixes:
   - Group two items only when they overlap — the same file, module or tight subsystem — and their risk is comparable: equal or adjacent tiers. Never put `cosmetic` and `deep` in one group.
   - Fold `cosmetic` and `local` items generously. Fold `deep` items only on real overlap.

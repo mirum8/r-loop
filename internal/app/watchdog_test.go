@@ -843,7 +843,7 @@ func allBuild(text string) core.Triage {
 }
 
 func fixItem(id string) core.ItemVerdict {
-	return core.ItemVerdict{ID: id, Title: "x", Verdict: core.VerdictFix, Category: "bug", Confidence: "high", RootCause: "x", Touches: []string{"x"}, Risk: core.RiskLocal}
+	return core.ItemVerdict{ID: id, Title: "x", Verdict: core.VerdictFix, Category: "bug", Confidence: "high", RootCause: "x", Approach: "x", Touches: []string{"x"}, Risk: core.RiskLocal}
 }
 
 func asksTheMaintainer(text string) bool {

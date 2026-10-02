@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -98,7 +99,7 @@ func triageBacklog() Plan {
 }
 
 func fixItem(id, risk, confidence string) ItemVerdict {
-	return ItemVerdict{ID: id, Title: "item " + id, Verdict: VerdictFix, Category: "bug", Confidence: confidence, RootCause: "cause", Touches: []string{"x.go"}, Risk: risk}
+	return ItemVerdict{ID: id, Title: "item " + id, Verdict: VerdictFix, Category: "bug", Confidence: confidence, RootCause: "cause", Approach: "change " + id, Touches: []string{"x.go"}, Risk: risk}
 }
 
 func backlogTriage() Triage {
@@ -167,6 +168,10 @@ func TestValidateTriageRefuses(t *testing.T) {
 		{"bad confidence", backlog, withItem(0, func(v *ItemVerdict) { v.Confidence = "sure" }), `item 1: confidence "sure" is not one of low, medium, high`},
 		{"bad risk", backlog, withItem(0, func(v *ItemVerdict) { v.Risk = "" }), `item 1: risk "" is not one of cosmetic, local, deep`},
 		{"fix without touches", backlog, withItem(0, func(v *ItemVerdict) { v.Touches = nil }), "item 1: a fix needs touches"},
+		{"fix without approach", backlog, withItem(0, func(v *ItemVerdict) { v.Approach = " " }), "item 1: a fix needs an approach"},
+		{"approach with a newline", backlog, withItem(0, func(v *ItemVerdict) { v.Approach = "a\nb" }), "item 1: approach contains a control character"},
+		{"not-a-bug uncited", backlog, withItem(2, func(v *ItemVerdict) { v.Category, v.SkipReason = "not-a-bug", "the code is right" }), "item 3: a not-a-bug skip needs a path:line in skip_reason that exists: none cited"},
+		{"not-relevant bad citation", backlog, withItem(2, func(v *ItemVerdict) { v.Category, v.SkipReason = "not-relevant", "ruled out by c.go:9" }), "item 3: a not-relevant skip needs a path:line in skip_reason that exists: citation c.go:9"},
 		{"skip without reason", backlog, withItem(2, func(v *ItemVerdict) { v.SkipReason = "" }), "item 3: a skip needs a skip_reason"},
 		{"stale uncited", backlog, withItem(2, func(v *ItemVerdict) { v.SkipReason = "already fixed" }), "item 3: a stale skip needs a path:line in skip_reason that exists: none cited"},
 		{"duplicate bad citation", backlog, withItem(2, func(v *ItemVerdict) { v.Category, v.SkipReason = "duplicate", "same as c.go:4" }), "item 3: a duplicate skip needs a path:line in skip_reason that exists: citation c.go:4"},
@@ -217,6 +222,73 @@ func TestValidateTriageNormalisesGroupRiskAndConfidence(t *testing.T) {
 	}
 }
 
+func TestValidateTriageAcceptsCitedNotABugAndNotRelevantSkips(t *testing.T) {
+	for _, category := range []string{"not-a-bug", "not-relevant"} {
+		tr := backlogTriage()
+		tr.Items[2].Category, tr.Items[2].SkipReason = category, "see a.go:7"
+
+		if _, err := ValidateTriage(triageBacklog(), triageBacklog().Phases, tr, citeAGo); err != nil {
+			t.Errorf("%s: %v", category, err)
+		}
+	}
+}
+
+func TestValidateTriageDerivesGroupFindingsFromItems(t *testing.T) {
+	in := backlogTriage()
+	in.Groups[0].Findings = []ItemFinding{{Item: "9", RootCause: "made up"}}
+
+	got, err := ValidateTriage(triageBacklog(), triageBacklog().Phases, in, citeAGo)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ItemFinding{{Item: "2", RootCause: "cause", Approach: "change 2"}, {Item: "1", RootCause: "cause", Approach: "change 1"}}
+	if !reflect.DeepEqual(got.Groups[0].Findings, want) {
+		t.Errorf("findings = %+v, want %+v", got.Groups[0].Findings, want)
+	}
+	if want := []ItemFinding{{Item: "4", RootCause: "cause", Approach: "change 4"}}; !reflect.DeepEqual(got.Groups[1].Findings, want) {
+		t.Errorf("findings = %+v, want %+v", got.Groups[1].Findings, want)
+	}
+}
+
+func TestGroupBacklogCarriesTriageFindingsToEveryGroupedPhase(t *testing.T) {
+	plan := Plan{Path: "issues.md", Backlog: true, Phases: []Phase{
+		backlogItem("1", "one", "a"),
+		backlogItem("2", "two", "b"),
+		backlogItem("3", "three", "c"),
+	}}
+
+	got := GroupBacklog(plan, []Group{
+		{ID: "g1", Items: []string{"3", "1"}, Subsystem: "store", Findings: []ItemFinding{
+			{Item: "3", RootCause: "no lock", Approach: "take the lock in Save"},
+			{Item: "1", RootCause: "stale read", Approach: "reload after Save"},
+		}},
+		{ID: "g2", Items: []string{"2"}, Subsystem: "face", Findings: []ItemFinding{{Item: "2", RootCause: "wrong colour", Approach: "use the secondary token"}}},
+	})
+
+	if want := "#1: stale read — approach: reload after Save\n#3: no lock — approach: take the lock in Save"; got.Phases[0].Triage != want {
+		t.Errorf("group triage = %q, want %q", got.Phases[0].Triage, want)
+	}
+	if want := "#2: wrong colour — approach: use the secondary token"; got.Phases[1].Triage != want {
+		t.Errorf("single triage = %q, want %q", got.Phases[1].Triage, want)
+	}
+	if got.Phases[1].Members != nil {
+		t.Errorf("a single item became a group: %+v", got.Phases[1])
+	}
+}
+
+func TestRunListGroupsKeepsFindings(t *testing.T) {
+	groups := []Group{{ID: "g1", Items: []string{"1"}, Findings: []ItemFinding{{Item: "1", RootCause: "c", Approach: "a"}}}}
+	data, err := json.Marshal(groups)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := RunListGroups(map[string]string{"groups": string(data)}); !reflect.DeepEqual(got, groups) {
+		t.Errorf("groups = %+v, want %+v", got, groups)
+	}
+}
+
 func TestValidateTriageAcceptsACitedAlreadyDonePhase(t *testing.T) {
 	tr := planTriage()
 	tr.Phases[0] = PhaseVerdict{Phase: "2", Status: VerdictAlreadyDone, Note: "built in c.go:1 and a.go:40-52"}
@@ -249,9 +321,12 @@ func TestApplyGateDropSplitMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Group{
-		{ID: "G1.1", Items: []string{"2"}, Subsystem: "store", Rationale: "same writer", Risk: RiskDeep, Confidence: "medium"},
-		{ID: "G1.2", Items: []string{"1", "5"}, Subsystem: "store", Rationale: "same writer", Risk: RiskLocal, Confidence: "low"},
-		{ID: "G2", Items: []string{"4"}, Subsystem: "face", Risk: RiskCosmetic, Confidence: "high"},
+		{ID: "G1.1", Items: []string{"2"}, Subsystem: "store", Rationale: "same writer", Risk: RiskDeep, Confidence: "medium",
+			Findings: []ItemFinding{{Item: "2", RootCause: "cause", Approach: "change 2"}}},
+		{ID: "G1.2", Items: []string{"1", "5"}, Subsystem: "store", Rationale: "same writer", Risk: RiskLocal, Confidence: "low",
+			Findings: []ItemFinding{{Item: "1", RootCause: "cause", Approach: "change 1"}, {Item: "5", RootCause: "cause", Approach: "change 5"}}},
+		{ID: "G2", Items: []string{"4"}, Subsystem: "face", Risk: RiskCosmetic, Confidence: "high",
+			Findings: []ItemFinding{{Item: "4", RootCause: "cause", Approach: "change 4"}}},
 	}
 	if !reflect.DeepEqual(split.Groups, want) {
 		t.Errorf("split groups =\n%+v\nwant\n%+v", split.Groups, want)
@@ -477,11 +552,13 @@ Why together: same writer
   #1  one
       bug · local risk · high confidence
       Fix:   cause
+      Approach: change 1
       Files: x.go
 
   #2  two
       feature · deep risk · medium confidence
       Fix:   cause
+      Approach: change 2
       Files: x.go
 
 G2 → phase 4 · face · cosmetic risk · high confidence
@@ -489,6 +566,7 @@ G2 → phase 4 · face · cosmetic risk · high confidence
   #4  four
       bug · cosmetic risk · high confidence
       Fix:   cause
+      Approach: change 4
       Files: x.go
 
 Skipped (verification):
@@ -569,7 +647,7 @@ func TestCheckCitationRefusesMaintainerButTheRouterAcceptsIt(t *testing.T) {
 
 func TestBacklogTriageWrapsLongTextAndDropsTheLabelThatRepeatsTheID(t *testing.T) {
 	backlog := Plan{Path: "issues.md", Backlog: true, Phases: []Phase{backlogItem("3", "[#3] Partial index for the batch-claim query", "a")}}
-	fix := ItemVerdict{ID: "3", Verdict: VerdictFix, Category: "feature", Confidence: "high", Risk: RiskLocal, Touches: []string{"V015.sql"},
+	fix := ItemVerdict{ID: "3", Verdict: VerdictFix, Category: "feature", Confidence: "high", Risk: RiskLocal, Touches: []string{"V015.sql"}, Approach: "add the index in a new migration",
 		RootCause: "lockBatch orders by mass_mailing_id with no matching index; a new migration adds a partial expression index WHERE status IN ('NEW', 'FAILED') on message"}
 	tr := Triage{Items: []ItemVerdict{fix}, Groups: []Group{{ID: "g-indexes", Items: []string{"3"}, Subsystem: "migrations"}}}
 	tr, err := ValidateTriage(backlog, backlog.Phases, tr, citeAGo)
@@ -583,6 +661,7 @@ func TestBacklogTriageWrapsLongTextAndDropsTheLabelThatRepeatsTheID(t *testing.T
       feature · local risk · high confidence
       Fix:   lockBatch orders by mass_mailing_id with no matching index; a new migration adds a
              partial expression index WHERE status IN ('NEW', 'FAILED') on message
+      Approach: add the index in a new migration
       Files: V015.sql
 `
 	if !strings.Contains(table, want) {

@@ -86,6 +86,7 @@ func fullVars() map[string]any {
 		"GateOutput":      "FAIL",
 		"Addendum":        "",
 		"GroupItems":      "",
+		"TriageNotes":     "",
 	}
 }
 
@@ -876,7 +877,7 @@ func TestUnattendedIntakeNeverAsks(t *testing.T) {
 
 func TestPlanImplementAndReviewNameTheGroupOnlyWhenSet(t *testing.T) {
 	r := New(t.TempDir())
-	const want = "This phase fixes backlog items 3, 5, 7 with one change. Every member's criteria are obligations, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done."
+	const want = "This phase fixes backlog items 3, 5, 7 with one change. Every member's outcome is an obligation, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done."
 
 	for _, name := range []string{"plan", "implement", "review", "review-plan"} {
 		if strings.Contains(render(t, r, name, fullVars()), "backlog items") {
@@ -884,6 +885,79 @@ func TestPlanImplementAndReviewNameTheGroupOnlyWhenSet(t *testing.T) {
 		}
 		if text := render(t, r, name, with("GroupItems", "3, 5, 7")); !strings.Contains(text, want) {
 			t.Errorf("%s: group paragraph missing:\n%s", name, text)
+		}
+	}
+}
+
+func TestPlanChoosesTheBestSolutionAndSaysWhy(t *testing.T) {
+	r := New(t.TempDir())
+	for _, vars := range []map[string]any{fullVars(), with("ItemGate", true)} {
+		text := render(t, r, "plan", vars)
+		for _, want := range []string{
+			"that is a proposal, not an obligation",
+			"- `## Why this approach` —",
+			"a file outside the phase's `Files:` is justified under `## Why this approach`",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("plan (ItemGate %v) lacks %q", vars["ItemGate"], want)
+			}
+		}
+		if strings.Contains(text, "## The watchdog's triage found") {
+			t.Errorf("triage block without TriageNotes:\n%s", text)
+		}
+	}
+
+	notes := "#3: no lock — approach: take the lock in Save"
+	if text := render(t, r, "plan", with("TriageNotes", notes)); !strings.Contains(text, "## The watchdog's triage found\n\n"+notes+"\n") {
+		t.Errorf("plan lacks the triage notes:\n%s", text)
+	}
+	if text := render(t, r, "plan", with("ItemGate", true)); !strings.Contains(text, "a defect the code does not have") {
+		t.Errorf("plan not-work misses a false defect:\n%s", text)
+	}
+}
+
+func TestStepsAfterThePlanFollowItsApproach(t *testing.T) {
+	r := New(t.TempDir())
+	for _, c := range []struct{ name, want string }{
+		{"review-plan", "**Approach** — for a `status: planned` plan: `## Why this approach` is missing"},
+		{"review-plan", "**Missing** — an open item's outcome,"},
+		{"implement", "Where its `## Why this approach` replaces a means the phase block proposes, follow the plan."},
+		{"review", "A change that reaches an item's outcome another way is not a finding for that reason alone"},
+	} {
+		if text := render(t, r, c.name, fullVars()); !strings.Contains(text, c.want) {
+			t.Errorf("%s lacks %q:\n%s", c.name, c.want, text)
+		}
+	}
+}
+
+func TestReviewersProveOutcomesNotProposedMeans(t *testing.T) {
+	r := New(t.TempDir())
+	const want = "A criterion that prescribes a means — a type, a signature, a mechanism, a file — is proved by a test of the outcome it serves, not of the means. The spec's invariants and ADRs outrank an item's proposed means: never report a change or a plan for avoiding a means they rule out."
+	for _, name := range []string{"review", "review-plan"} {
+		if text := render(t, r, name, with("ItemGate", true)); !strings.Contains(text, want) {
+			t.Errorf("%s lacks the outcome rule:\n%s", name, text)
+		}
+		if strings.Contains(render(t, r, name, fullVars()), want) {
+			t.Errorf("%s carries the criteria rule without ItemGate", name)
+		}
+	}
+}
+
+func TestWatchdogTriageJudgesWhetherAnItemIsReal(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"Is the claimed defect real?",
+		"`not-a-bug` — the code already behaves as the item wants",
+		"`not-relevant` —",
+		"A `stale`, `duplicate`, `not-a-bug` or `not-relevant` skip cites a `path:line` that exists",
+		"`approach` — for a fix, the change you judge best",
+		"justifies under `## Why this approach` is expected",
+		"Judge the outcome the item wants, never the fix it proposes",
+		"is a `fix` with your `approach`, not a skip",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q", want)
 		}
 	}
 }

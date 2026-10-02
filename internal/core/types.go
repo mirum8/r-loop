@@ -29,6 +29,7 @@ type Phase struct {
 	Milestone  int
 	Block      string
 	Members    []string
+	Triage     string
 }
 
 func (p Phase) TickIDs() []string {

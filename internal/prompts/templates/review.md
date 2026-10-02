@@ -7,8 +7,10 @@ The phase:
 {{.PhaseBlock}}
 {{- if .GroupItems}}
 
-This phase fixes backlog items {{.GroupItems}} with one change. Every member's criteria are obligations, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done.
+This phase fixes backlog items {{.GroupItems}} with one change. Every member's outcome is an obligation, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done.
 {{- end}}
+
+The block's items state outcomes; a means they prescribe is a proposal. A change that reaches an item's outcome another way is not a finding for that reason alone: judge whether it delivers the outcome. Drop a native-review finding that only asks for the means an item proposed.
 
 ## Native review
 {{if .ReviewRan}}
@@ -26,7 +28,7 @@ Its open criteria:
 
 {{.Criteria}}
 
-For each criterion, name the test that proves it, and report every criterion no test proves as a finding.
+For each criterion, name the test that proves it, and report every criterion no test proves as a finding. A criterion that prescribes a means — a type, a signature, a mechanism, a file — is proved by a test of the outcome it serves, not of the means. The spec's invariants and ADRs outrank an item's proposed means: never report a change or a plan for avoiding a means they rule out.
 {{- end}}
 {{- if .PriorFindings}}
 

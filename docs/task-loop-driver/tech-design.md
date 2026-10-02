@@ -284,10 +284,16 @@ so.
   status: planned
 
   ## Summary       what the phase does and the approach, in a few lines
+  ## Why this approach   what the phase, its items and the triage proposed; what the plan does and
+                   why that is better, with path:line evidence (prompt-level, not a checked heading)
   ## Changes       per file: create or modify, what changes, which existing code it reuses
   ## Tests         the tests to write first, covering every open item of the phase
   ## Assumptions   choices made without asking, or "none"
   ```
+
+  A phase block and its items state outcomes; a means they prescribe is a proposal the planner
+  weighs against its own options (ADR-88). Spec invariants, ADRs, `Resolved:` lines and `Done when:`
+  stay binding. Reviewers check `## Why this approach`; implement follows the plan over the block.
 
   The driver reads `## Assumptions` after the plan step ends `ok` and emits each list item (never a
   table row, never a `none` item) as an `Event{Kind: "assumption"}`; the run report lists them per phase.
@@ -881,20 +887,22 @@ and the driver validates that argv before anything of a run exists.
   longest path over `Depends on`, and the phases in a cycle.
 - **Types** (`internal/core/triage.go`) — `PhaseVerdict{Phase, Status, Note}` with `Status ∈
   {build, already-done, blocked}` · `ItemVerdict{ID, Title, Verdict, Category, Confidence,
-  RootCause (root_cause_or_scope), Touches []string, Risk, SkipReason}` with `Verdict ∈ {fix, skip}`,
-  `Category ∈ {bug, feature, chore, question, docs, duplicate, stale, not-enough-info}`,
+  RootCause (root_cause_or_scope), Approach, Touches []string, Risk, SkipReason}` with `Verdict ∈ {fix, skip}`,
+  `Category ∈ {bug, feature, chore, question, docs, duplicate, stale, not-a-bug, not-relevant,
+  not-enough-info}`,
   `Confidence ∈ {low, medium, high}`, `Risk ∈ {cosmetic, local, deep}` · `Group{ID (group_id),
-  Items []string, Subsystem, Risk, Rationale, Confidence}` (Risk is the highest member's, Confidence
-  the lowest, both set by the driver) · `Triage{Phases, Items, Groups, Dropped}` ·
+  Items []string, Subsystem, Risk, Rationale, Confidence, Findings []ItemFinding{Item, RootCause,
+  Approach}}` (Risk is the highest member's, Confidence the lowest, Findings each member's cause and
+  approach in group order, all set by the driver) · `Triage{Phases, Items, Groups, Dropped}` ·
   `GateDecision{Decision, Drop []string, Split []Split{Group, Into [][]string}, Merge [][]string,
   MaintainerSaid}` with `Decision ∈ {go, revise, abort}` · `TriageView{Plan, List, Checks,
   Deferrals, Kinds}`.
 - **Functions** — `TriageText(plan, list, ask)` is the request: `triage plan <path> phases <ids>.`
   or `triage backlog <path> items <ids>.`, then whether to ask. `ValidateTriage(plan, list, t,
   cite)` refuses, with the reason: a verdict missing, twice or for an ID not in the list; a value
-  outside its enum; `already-done`, `blocked` without a note; an `already-done` note, or a `stale`
-  or `duplicate` `skip_reason`, citing no `path:line` that `core.CheckCitation` finds in the primary
-  tree; a fix with no `touches`; a skip with no `skip_reason`; a group with no ID, a duplicate ID, no
+  outside its enum; `already-done`, `blocked` without a note; an `already-done` note, or a `stale`,
+  `duplicate`, `not-a-bug` or `not-relevant` `skip_reason`, citing no `path:line` that `core.CheckCitation` finds in the primary
+  tree; a fix with no `touches` or no `approach`; a skip with no `skip_reason`; a group with no ID, a duplicate ID, no
   items, two or more items and no rationale, a skip, or a member in two groups; a group mixing
   `cosmetic` and `deep`; a fix in no group. `ApplyGate(plan, list, t, g)` needs `maintainer_said`;
   a plan takes `drop` only, a backlog `drop` (an item or a group), `split` (parts named
@@ -904,7 +912,9 @@ and the driver validates that argv before anything of a run exists.
   are folded with `GroupBacklog`. `GroupBacklog(plan, groups)` is pure: a group of two or more
   becomes the phase of its lowest member, with `Members`, `Title` `<subsystem> (items <ids>)`,
   `Items` each prefixed `#<id>` and the member blocks joined; `Files` and `Risk` are not taken from
-  `touches`. `RenderTriage(view, *Triage) (summary, table)`; a nil triage is the dry run's table.
+  `touches`. Every group's phase, a one-item group included, gets `Triage`: one line per member,
+  `#<id>: <root cause> — approach: <approach>`, from the group's `Findings`, so it survives resume
+  through the recorded `run-list` groups. `RenderTriage(view, *Triage) (summary, table)`; a nil triage is the dry run's table.
 - **Tools** (watchdog surface, `askmcp.WatchdogHandlers.SubmitTriage/SubmitGate`) —
   `submit_triage{phases?, items?, groups?}` and `submit_gate{decision, drop?, split?, merge?,
   maintainer_said}`, each returning `{accepted, reason?, table?}`; with no triage open, `no triage
@@ -929,8 +939,10 @@ and the driver validates that argv before anything of a run exists.
 - **Faces** — plain prints the `triage` table in full, each `triage-skipped`, and
   `run list: 3 (items 3, 5, 7), 9`; the TUI shows the summary in the feed and, on a `run-list`
   with groups, merges member rows into the group's row. `r-loop status` shows a group as one row.
-- **Groups downstream** — `StepVars.GroupItems` turns on a paragraph in `plan.md`, `implement.md`
-  and `review.md`: every member's criteria are obligations, `## Gate` runs every member's tests,
+- **Groups downstream** — `StepVars.TriageNotes` (the phase's `Triage`) turns on a `## The
+  watchdog's triage found` block in `plan.md`, input the planner weighs, not an order.
+  `StepVars.GroupItems` turns on a paragraph in `plan.md`, `implement.md`
+  and `review.md`: every member's outcome is an obligation, `## Gate` runs every member's tests,
   `status: already-done` holds only when every member is done. The phase check sends a
   `Backlog group: items <ids> fixed by one change` line in place of `Backlog item`.
 

@@ -7,13 +7,15 @@ The phase:
 {{.PhaseBlock}}
 {{- if .GroupItems}}
 
-This phase fixes backlog items {{.GroupItems}} with one change. Every member's criteria are obligations, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done.
+This phase fixes backlog items {{.GroupItems}} with one change. Every member's outcome is an obligation, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done.
 {{- end}}
 
 Judge the plan's proportion in both directions, and report each gap as a finding:
 
-- **Missing** — an open item, a spec invariant, or a reachable edge case or error path the plan does not handle or test. Name the input and where it comes from.
+- **Missing** — an open item's outcome, a spec invariant, or a reachable edge case or error path the plan does not handle or test. Name the input and where it comes from.
 - **Excess** — an element no obligation needs: an interface with one implementation, a config key nobody asked for, a helper or generic type for a single call site, a wrapper that only forwards, handling for a state the types already rule out, a hook for a later phase, code that re-creates what the repository already has. Name the element, say why nothing needs it, and give the simpler replacement that still meets every obligation.
+
+- **Approach** — for a `status: planned` plan: `## Why this approach` is missing; the chosen solution no longer delivers an item's outcome, or breaks a spec invariant, an ADR or a `Resolved:` line; or the code it cites does not support the claim that it beats the proposal. Departing from the proposed means is not a finding by itself.
 
 A simplification that would drop an obligation is not a finding. Taste is not a finding: report excess only when it adds a concept, not when it is written differently than you would. A cut listed under `## Left out` is challenged only with the obligation it breaks.
 {{- if .ItemGate}}
@@ -22,7 +24,7 @@ Its open criteria:
 
 {{.Criteria}}
 
-For each criterion, name the test that proves it in the plan's `## Tests`, and report every criterion no test proves as a finding. When the plan says `status: already-done` or `status: not-work`, open each `path:line` under `## Evidence` instead, and report every criterion the cited code does not show.
+For each criterion, name the test that proves it in the plan's `## Tests`, and report every criterion no test proves as a finding. A criterion that prescribes a means — a type, a signature, a mechanism, a file — is proved by a test of the outcome it serves, not of the means. The spec's invariants and ADRs outrank an item's proposed means: never report a change or a plan for avoiding a means they rule out. When the plan says `status: already-done` or `status: not-work`, open each `path:line` under `## Evidence` instead, and report every criterion the cited code does not show.
 {{- end}}
 {{- if .PriorFindings}}
 

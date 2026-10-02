@@ -33,7 +33,8 @@ const (
 var (
 	phaseStatuses = []string{VerdictBuild, VerdictAlreadyDone, VerdictBlocked}
 	itemVerdicts  = []string{VerdictFix, VerdictSkip}
-	categories    = []string{"bug", "feature", "chore", "question", "docs", "duplicate", "stale", "not-enough-info"}
+	categories    = []string{"bug", "feature", "chore", "question", "docs", "duplicate", "stale", "not-a-bug", "not-relevant", "not-enough-info"}
+	citedSkips    = []string{"stale", "duplicate", "not-a-bug", "not-relevant"}
 	confidences   = []string{"low", "medium", "high"}
 	risks         = []string{RiskCosmetic, RiskLocal, RiskDeep}
 	citedLineRe   = regexp.MustCompile(`[A-Za-z0-9_./-]+:\d+`)
@@ -52,6 +53,7 @@ type ItemVerdict struct {
 	Category   string   `json:"category"`
 	Confidence string   `json:"confidence"`
 	RootCause  string   `json:"root_cause_or_scope"`
+	Approach   string   `json:"approach,omitempty"`
 	Touches    []string `json:"touches,omitempty"`
 	Risk       string   `json:"risk,omitempty"`
 	SkipReason string   `json:"skip_reason,omitempty"`
@@ -78,12 +80,19 @@ type GateDecision struct {
 }
 
 type Group struct {
-	ID         string   `json:"group_id"`
-	Items      []string `json:"items"`
-	Subsystem  string   `json:"subsystem"`
-	Risk       string   `json:"risk,omitempty"`
-	Rationale  string   `json:"rationale,omitempty"`
-	Confidence string   `json:"confidence,omitempty"`
+	ID         string        `json:"group_id"`
+	Items      []string      `json:"items"`
+	Subsystem  string        `json:"subsystem"`
+	Risk       string        `json:"risk,omitempty"`
+	Rationale  string        `json:"rationale,omitempty"`
+	Confidence string        `json:"confidence,omitempty"`
+	Findings   []ItemFinding `json:"findings,omitempty"`
+}
+
+type ItemFinding struct {
+	Item      string `json:"item"`
+	RootCause string `json:"root_cause_or_scope"`
+	Approach  string `json:"approach"`
 }
 
 func RunListGroups(fields map[string]string) []Group {
@@ -108,11 +117,16 @@ func GroupBacklog(p Plan, groups []Group) Plan {
 				ids = append(ids, id)
 			}
 		}
-		if len(ids) < 2 {
+		if len(ids) == 0 {
 			continue
 		}
 		slices.SortFunc(ids, ComparePhaseIDs)
 		head := byID[ids[0]]
+		head.Triage = triageNotes(ids, g.Findings)
+		if len(ids) < 2 {
+			merged[head.ID] = head
+			continue
+		}
 		head.Members = ids
 		head.Title = strings.TrimSpace(fmt.Sprintf("%s (items %s)", g.Subsystem, strings.Join(ids, ", ")))
 		head.Items = nil
@@ -142,6 +156,18 @@ func GroupBacklog(p Plan, groups []Group) Plan {
 		out.Phases = append(out.Phases, ph)
 	}
 	return out
+}
+
+func triageNotes(ids []string, findings []ItemFinding) string {
+	var lines []string
+	for _, id := range ids {
+		i := slices.IndexFunc(findings, func(f ItemFinding) bool { return f.Item == id })
+		if i < 0 {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("#%s: %s — approach: %s", id, findings[i].RootCause, findings[i].Approach))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func TriageText(plan Plan, list []Phase, ask bool) string {
@@ -239,7 +265,7 @@ func validateBacklog(list []Phase, t Triage, cite func(string) string) (Triage, 
 			return Triage{}, fmt.Errorf("group %s holds %d items but gives no rationale", g.ID, len(g.Items))
 		}
 		g.Items = slices.Clone(g.Items)
-		g.Risk, g.Confidence = "", ""
+		g.Risk, g.Confidence, g.Findings = "", "", nil
 		for _, id := range g.Items {
 			v, ok := byID[id]
 			switch {
@@ -253,6 +279,7 @@ func validateBacklog(list []Phase, t Triage, cite func(string) string) (Triage, 
 				return Triage{}, fmt.Errorf("item %s is in groups %s and %s", id, groupOf[id], g.ID)
 			}
 			groupOf[id] = g.ID
+			g.Findings = append(g.Findings, ItemFinding{Item: id, RootCause: v.RootCause, Approach: v.Approach})
 			if g.Risk == "" || slices.Index(risks, v.Risk) > slices.Index(risks, g.Risk) {
 				g.Risk = v.Risk
 			}
@@ -280,7 +307,7 @@ func checkItem(v ItemVerdict, ids []string, seen map[string]ItemVerdict, cite fu
 	if _, dup := seen[v.ID]; dup {
 		return fmt.Errorf("item %s has more than one verdict", v.ID)
 	}
-	if field := controlField([2]string{"root_cause_or_scope", v.RootCause}, [2]string{"touches", strings.Join(v.Touches, " ")}, [2]string{"skip_reason", v.SkipReason}); field != "" {
+	if field := controlField([2]string{"root_cause_or_scope", v.RootCause}, [2]string{"approach", v.Approach}, [2]string{"touches", strings.Join(v.Touches, " ")}, [2]string{"skip_reason", v.SkipReason}); field != "" {
 		return fmt.Errorf("item %s: %s contains a control character", v.ID, field)
 	}
 	for _, f := range []struct {
@@ -302,12 +329,15 @@ func checkItem(v ItemVerdict, ids []string, seen map[string]ItemVerdict, cite fu
 		if len(v.Touches) == 0 {
 			return fmt.Errorf("item %s: a fix needs touches", v.ID)
 		}
+		if strings.TrimSpace(v.Approach) == "" {
+			return fmt.Errorf("item %s: a fix needs an approach", v.ID)
+		}
 		return nil
 	}
 	if strings.TrimSpace(v.SkipReason) == "" {
 		return fmt.Errorf("item %s: a skip needs a skip_reason", v.ID)
 	}
-	if v.Category == "stale" || v.Category == "duplicate" {
+	if slices.Contains(citedSkips, v.Category) {
 		if reason := cited(v.SkipReason, cite); reason != "" {
 			return fmt.Errorf("item %s: a %s skip needs a path:line in skip_reason that exists: %s", v.ID, v.Category, reason)
 		}
@@ -713,6 +743,7 @@ func renderBacklog(v TriageView, t *Triage) (string, string) {
 			writeWrapped(&b, "  #"+Printable(id)+"  ", itemTitle(id, titles[id]))
 			writeWrapped(&b, "      ", fmt.Sprintf("%s · %s risk · %s confidence", it.Category, it.Risk, it.Confidence))
 			writeWrapped(&b, "      Fix:   ", orDash(it.RootCause))
+			writeWrapped(&b, "      Approach: ", orDash(it.Approach))
 			writeWrapped(&b, "      Files: ", filesCell(it.Touches))
 			b.WriteString("\n")
 		}

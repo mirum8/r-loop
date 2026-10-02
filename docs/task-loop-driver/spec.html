@@ -985,8 +985,11 @@ to build on nor safe to discard, and the run stops for a person.</p>
 <p>After the <code>## Resolve first</code> walk and before the first phase, the driver sends the
 watchdog the run list. The watchdog reads each phase — or each backlog item — against the tree and
 submits its verdicts with <code>submit_triage</code>: a phase is <code>build</code>,
-<code>already-done</code> or <code>blocked</code>; an item is a <code>fix</code> in a group or a
-<code>skip</code> with its reason. The driver refuses a submission it cannot check — a verdict
+<code>already-done</code> or <code>blocked</code>; an item is a <code>fix</code> in a group, with
+the approach the watchdog judges best, or a <code>skip</code> with its reason — among them a bug the
+code does not have (<code>not-a-bug</code>) and an ask the spec rules out
+(<code>not-relevant</code>), each citing the code that shows it. The planner later weighs the
+approach as one option; it does not have to follow it (<a href="#adr-88">ADR-88</a>). The driver refuses a submission it cannot check — a verdict
 missing, an <code>already-done</code> citing no <code>path:line</code> that exists, a group mixing
 <code>cosmetic</code> and <code>deep</code> — and says why, and the watchdog submits again. Once it
 accepts, it returns the table it built, which the watchdog prints and puts to the maintainer in its
@@ -3334,7 +3337,7 @@ reliably, or a provider cannot take a typed message while its turn is over.</p>
 
 <div class="adr">
 <h3 id="adr-77">ADR-77 — Before a run starts, the watchdog verifies the run list and the maintainer confirms a table the driver builds</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-53">ADR-53</a>, <a href="#adr-71">ADR-71</a> and <a href="#adr-72">ADR-72</a></p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-53">ADR-53</a>, <a href="#adr-71">ADR-71</a> and <a href="#adr-72">ADR-72</a> · amended 2026-10-02: relevance verdicts and the item approach</p>
 <p><span class="f">Context</span> Before <code>/r:plan-run</code> or <code>/r:issues-fix</code>
 builds anything, the skill-pack checks the plan's shape, verifies the work against the code, and
 shows a summary table for the maintainer to confirm. r-loop ran straight from preflight into the
@@ -3356,8 +3359,18 @@ primary tree and calls <code>submit_triage</code> with one verdict each — for 
 <code>build</code>, <code>already-done</code> or <code>blocked</code>, for an item the
 <code>/r:issues-fix</code> schema and its group (<a href="#adr-78">ADR-78</a>). The driver checks the
 submission and refuses it with the reason, so the watchdog fixes it and submits again: one verdict
-per entry, every value in its enum, and an <code>already-done</code> phase or a <code>stale</code> or
-<code>duplicate</code> item must cite a <code>path:line</code> that exists in the primary tree.
+per entry, every value in its enum, and an <code>already-done</code> phase or a <code>stale</code>,
+<code>duplicate</code>, <code>not-a-bug</code> or <code>not-relevant</code> item must cite a
+<code>path:line</code> that exists in the primary tree. <em>Amended 2026-10-02:</em> a drafted
+backlog is not trusted as written — the watchdog judges whether each item's defect is real, whether
+it fits the spec and is worth doing, and whether its proposed fix is the best one. Two skip
+categories carry those verdicts: <code>not-a-bug</code> (the code already behaves as the item wants)
+and <code>not-relevant</code> (real, but ruled out by the spec, its ADRs or the design, or worth
+nothing). Both judge the outcome the item wants, never the fix it proposes: an item whose proposed
+fix is ruled out but whose outcome is reachable another way is a <code>fix</code>. A <code>fix</code> carries <code>approach</code>, the change the watchdog judges best; the
+driver copies each member's cause and approach into its group's <code>findings</code>, which ride
+on the recorded <code>run-list</code> and reach the plan prompt as input
+(<a href="#adr-88">ADR-88</a>).
 <em>The gate</em>: an accepted submission returns the table the driver rendered — for a plan one
 block per phase (<code>Phase &lt;id&gt; · &lt;title&gt;</code>, then milestone · wave · risk, and
 wrapped <code>Files:</code>, <code>Done when:</code> and <code>Verified:</code> lines), with
@@ -3831,6 +3844,38 @@ rejected: it would bring back exactly the generic messages this decision removes
 gatefix and fix prompts say how to write it. An overridden prompt that omits it fails its steps
 until it asks for one.</p>
 <p><span class="f">Revisit when</span> the project adopts a different commit convention.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-88">ADR-88 — The planner chooses the solution; a phase or item proposes the means</h3>
+<p><span class="f">Status</span> accepted 2026-10-02 · amends <a href="#adr-70">ADR-70</a> and <a href="#adr-77">ADR-77</a></p>
+<p><span class="f">Context</span> The plan prompt took every open item as an obligation, so the
+planner built whatever the item prescribed. A backlog from <code>/r:issues-draft</code> writes its
+proposed fix into the acceptance criteria, and that fix is a drafter's first guess made before
+anyone planned the change; a <code>todo.md</code> block names files and mechanisms the same way.
+Where a simpler or more fitting solution existed, the run still built the proposed one.</p>
+<p><span class="f">Decision</span> A phase block and its items state the outcome to deliver; a
+means they prescribe — a mechanism, a file, a signature, a fix — is a proposal. The planner weighs
+it, and for a backlog item the triage's <code>approach</code>, as options beside its own, and plans
+the best. It writes <code>## Why this approach</code>: what was proposed, what the plan does, and
+why that is better, with <code>path:line</code> evidence. Still binding: spec invariants and ADRs,
+<code>Resolved:</code> lines and a phase's <code>Done when:</code>. Plan reviewers report a missing
+section, a solution that no longer delivers an item's outcome or breaks a binding decision, and a
+claim the cited code does not support; departing from the proposal is not a finding by itself.
+Implement follows the plan over the block's wording; code reviewers judge the outcome, not the
+wording. The plan step's <code>not-work</code> also covers a defect the code does not have and an
+ask the spec rules out. A <code>files-outside-plan</code> warning for a file the plan justifies is
+expected, and the watchdog does not halt on it.</p>
+<p><span class="f">Alternatives</span> The triage picks the solution and the planner follows it —
+rejected: the triage reads the whole backlog at once and goes less deep than a planner exploring one
+phase. A <code>## Deviations</code> list of departures — rejected: it makes the proposal the default
+the plan has to argue against. A driver-checked heading — rejected: a missing explanation is no
+evidence the driver can judge; the reviewers read it.</p>
+<p><span class="f">Consequences</span> A run can build something other than what the plan or the
+backlog literally says; <code>## Why this approach</code> and the review of it are where the
+maintainer sees why. Item tests pin outcomes, so <code>## Gate</code> still proves the item.</p>
+<p><span class="f">Revisit when</span> a landed phase misses what its item or block was for, or
+plans routinely override proposals the maintainer wanted kept.</p>
 </div>
 
 

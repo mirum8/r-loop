@@ -1972,6 +1972,7 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 		"MilestonePhases": msPhases,
 		"Addendum":        "",
 		"GroupItems":      strings.Join(ph.Members, ", "),
+		"TriageNotes":     ph.Triage,
 	}
 }
 
