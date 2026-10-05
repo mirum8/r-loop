@@ -249,8 +249,11 @@ func (c Client) awaitCodexPrompt(agent string) error {
 			trusted = true
 			deadline = time.Now().Add(paneBusyBudget)
 			continue
-		case !asks && strings.Contains(screen, codexBanner):
-			return nil
+		case !asks:
+			ready, err := c.shows(agent, screen, codexBanner)
+			if err != nil || ready {
+				return err
+			}
 		}
 		if time.Now().After(deadline) {
 			if trusted {
@@ -304,7 +307,11 @@ func (c Client) awaitClaudeBanner(agent string) error {
 	deadline := time.Now().Add(paneBusyBudget)
 	for {
 		screen, err := c.Screen(agent)
-		if err != nil || strings.Contains(screen, claudeBanner) {
+		if err != nil {
+			return err
+		}
+		ready, err := c.shows(agent, screen, claudeBanner)
+		if err != nil || ready {
 			return err
 		}
 		if time.Now().After(deadline) {
@@ -312,6 +319,14 @@ func (c Client) awaitClaudeBanner(agent string) error {
 		}
 		time.Sleep(paneBusyBackoff)
 	}
+}
+
+func (c Client) shows(agent, screen, marker string) (bool, error) {
+	if strings.Contains(screen, marker) {
+		return true, nil
+	}
+	history, err := c.Read(agent, 200)
+	return strings.Contains(history, marker), err
 }
 
 func (c Client) awaitUnblocked(agent string) error {

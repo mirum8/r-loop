@@ -1018,3 +1018,63 @@ func TestSendTextToAnAgentWithoutAPaneFails(t *testing.T) {
 	}
 	assertArgv(t, argv(), []string{"agent", "get", "a1"})
 }
+
+const (
+	shortCodexScreen  = "│ model:     gpt-5.5 high   /model to change │\n│ directory: /repo/.r-loop/wt/phase-47        │\n╰─────────────────────────────────────────────╯\n\n  Tip: Use /review to review your changes.\n\n› Ask Codex to do anything\n\n  ? for shortcuts                 100% context left\n"
+	codexHistory      = "╭─────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.155.0)                  │\n│                                             │\n" + shortCodexScreen
+	shortClaudeScreen = "  ⎿ Tip: Use /review to review your changes\n\n❯\n  -- INSERT --\n"
+	claudeHistory     = " ▐▛███▛█   Claude Code v2.1.280\n" + shortClaudeScreen
+)
+
+func withHistory(t *testing.T, c Client, history string) Client {
+	t.Helper()
+	dir := t.TempDir()
+	hist := filepath.Join(dir, "history")
+	if err := os.WriteFile(hist, []byte(history), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\n" +
+		"if [ \"$2\" = read ] && [ \"$5\" = recent-unwrapped ]; then cat \"" + hist + "\"; exit 0; fi\n" +
+		"exec \"" + c.Bin + "\" \"$@\"\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return Client{Bin: bin}
+}
+
+func TestStartFindsCodexsPromptInAShortPaneWhoseBannerScrolledOff(t *testing.T) {
+	shrinkPaneBusyWait(t, 200*time.Millisecond)
+	c, calls := codexBoot(t, []string{newTrustScreen}, []string{shortCodexScreen}, []string{"idle"})
+
+	_, err := withHistory(t, c, codexHistory).Start("w4M:p2", "rv", "codex", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if n := countCalls(calls(), "send-keys", "rv", "enter"); n != 1 {
+		t.Fatalf("enter pressed %d times, calls %q", n, calls())
+	}
+}
+
+func TestStartFailsWhenCodexsBannerIsNeitherOnScreenNorInHistory(t *testing.T) {
+	shrinkPaneBusyWait(t, 50*time.Millisecond)
+	c, _ := codexBoot(t, []string{shortCodexScreen}, nil, []string{"idle"})
+
+	_, err := withHistory(t, c, shortCodexScreen).Start("w4M:p2", "rv", "codex", nil)
+
+	if err == nil || !strings.Contains(err.Error(), "never showed codex's prompt") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestStartFindsClaudesBannerInAShortPaneWhoseBannerScrolledOff(t *testing.T) {
+	shrinkPaneBusyWait(t, 200*time.Millisecond)
+	c, _ := notReadyThenTrusted(t, claudeTrustScreen, shortClaudeScreen)
+
+	_, err := withHistory(t, c, claudeHistory).Start("w8P:p1", "rloop-wd-run-1", "claude", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+}
