@@ -1648,7 +1648,8 @@ func TestAFixRoundSentinelCommitDecidesTheSubjectFinishCommitsUnder(t *testing.T
 	}{
 		{"absent keeps the earlier subject", "", StepOK, "", "feat(core): add the widget store"},
 		{"valid replaces it", "fix(core): guard the widget store against a nil map", StepOK, "", "fix(core): guard the widget store against a nil map"},
-		{"invalid fails the step", "fix(core): phase 3", StepFailed, `sentinel commit: commit subject "fix(core): phase 3" must describe the change, not label the step`, ""},
+		{"a label keeps the earlier subject", "fix(core): phase 3", StepOK, "", "feat(core): add the widget store"},
+		{"too long is cut", "fix(core): guard the widget store against a nil map that a concurrent reader can observe while the writer swaps it", StepOK, "", "fix(core): guard the widget store against a nil map that a concurrent reader can observe while the"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

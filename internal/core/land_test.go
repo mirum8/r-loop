@@ -615,7 +615,7 @@ func TestLandNamesTheMergeAfterTheLatestImplementCommit(t *testing.T) {
 	}
 }
 
-func TestLandWithoutAnImplementCommitIsRefused(t *testing.T) {
+func TestLandWithoutAnImplementCommitNamesTheMergeAfterThePhase(t *testing.T) {
 	e := newLandEnv(t)
 	if err := e.repo.AddWorktree(".r-loop/wt/phase-1", "r-loop/phase-1", "main"); err != nil {
 		t.Fatal(err)
@@ -624,16 +624,14 @@ func TestLandWithoutAnImplementCommitIsRefused(t *testing.T) {
 	if _, err := e.repo.CommitAll(".r-loop/wt/phase-1", "feat(core): add widget 1"); err != nil {
 		t.Fatal(err)
 	}
-	head := e.head()
 
 	_, err := e.gate().Land(context.Background(), phaseOne("true"))
 
-	if !errors.Is(err, core.ErrLanding) || err.Error() != "landing refused: no implement commit to name the merge: no commit subject" {
-		t.Fatalf("err = %v, want ErrLanding", err)
+	if err != nil {
+		t.Fatalf("Land: %v", err)
 	}
-	e.assertUntouched(head)
-	if got := e.store.events(core.EventMergeIntent); len(got) != 0 {
-		t.Fatalf("merge intents = %+v", got)
+	if msg := gitCmd(t, e.root, "log", "-1", "--format=%s"); msg != "chore: First" {
+		t.Errorf("merge subject = %q", msg)
 	}
 }
 

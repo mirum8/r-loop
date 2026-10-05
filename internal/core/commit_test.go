@@ -53,3 +53,46 @@ func TestSubjectCutsAtAWordBoundary(t *testing.T) {
 		t.Fatalf("Subject = %q", got)
 	}
 }
+
+func TestRepairSubject(t *testing.T) {
+	const run = "feat(analyze): detect modules, read findings from sarif and pmd reports, add analyze config and preflight"
+	cases := []struct {
+		name, raw, want string
+		repaired        bool
+	}{
+		{"valid stays", "feat(store): append run state as JSONL", "feat(store): append run state as JSONL", false},
+		{"too long is cut at a word", run, "feat(analyze): detect modules, read findings from sarif and pmd reports, add analyze config and", true},
+		{"one long word keeps the type", "feat(core): " + strings.Repeat("a", 120), "feat(core): " + strings.Repeat("a", 88), true},
+		{"first line only", "fix(core): close the run file\n\nbecause it leaked", "fix(core): close the run file", true},
+		{"surrounding spaces", "  docs: explain the land gate  ", "docs: explain the land gate", true},
+		{"wrong type keeps the words", "feature(store): append run state", "chore: feature(store): append run state", true},
+		{"no type", "append run state as JSONL", "chore: append run state as JSONL", true},
+		{"label uses the fallback", "feat(core): phase 3", "chore: Plan reader", true},
+		{"empty uses the fallback", "", "chore: Plan reader", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, repair := RepairSubject(c.raw, "chore: Plan reader")
+
+			if got != c.want {
+				t.Fatalf("RepairSubject(%q) = %q, want %q", c.raw, got, c.want)
+			}
+			if (repair != "") != c.repaired {
+				t.Fatalf("repair = %q, want repaired %v", repair, c.repaired)
+			}
+			if err := ValidSubject(got); err != nil {
+				t.Fatalf("ValidSubject(%q) = %v", got, err)
+			}
+		})
+	}
+}
+
+func TestRepairSubjectStillCommitsWhenTheFallbackIsUnusable(t *testing.T) {
+	for _, fallback := range []string{"", "chore: plan", "Plan"} {
+		got, repair := RepairSubject("", fallback)
+
+		if err := ValidSubject(got); err != nil || repair == "" {
+			t.Fatalf("RepairSubject(\"\", %q) = %q, %q: %v", fallback, got, repair, err)
+		}
+	}
+}

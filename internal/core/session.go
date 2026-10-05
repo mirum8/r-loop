@@ -70,6 +70,7 @@ type Session struct {
 	owner                            *Session
 	fix                              *fixHalf
 	prompted                         time.Time
+	warnings                         []string
 
 	mu        sync.Mutex
 	ended     bool
@@ -550,13 +551,22 @@ func (m *SessionManager) subject(s *Session, subject string) Outcome {
 	if subject == "" && s.fix != nil && s.Subject != "" {
 		return Outcome{State: StepOK, Session: s}
 	}
-	if err := ValidSubject(subject); err != nil {
-		return m.fail(s, "sentinel commit: "+err.Error())
+	fallback := Subject("chore: ", s.Ref.Phase.Title)
+	if s.fix != nil && s.Subject != "" {
+		fallback = s.Subject
 	}
-	if err := m.event(m.now(), s, Event{Kind: EventCommitSubject, Fields: map[string]string{"attempt": strconv.Itoa(s.Ref.Key.Attempt), "subject": subject}}); err != nil {
+	committed, repair := RepairSubject(subject, fallback)
+	fields := map[string]string{"attempt": strconv.Itoa(s.Ref.Key.Attempt), "subject": committed}
+	if repair != "" {
+		fields["original"], fields["repair"] = subject, repair
+	}
+	if err := m.event(m.now(), s, Event{Kind: EventCommitSubject, Fields: fields}); err != nil {
 		return m.fail(s, "record: "+err.Error())
 	}
-	s.Subject = subject
+	if repair != "" {
+		s.warnings = append(s.warnings, repair)
+	}
+	s.Subject = committed
 	return Outcome{State: StepOK, Session: s}
 }
 
@@ -635,10 +645,11 @@ func (m *SessionManager) Finish(s *Session, out Outcome) Outcome {
 			out.State, out.Reason = StepFailed, "commit: "+err.Error()
 		} else if tree, err := m.Repo.Snapshot(s.Dir); err != nil {
 			out.State, out.Reason = StepFailed, "commit: "+err.Error()
-		} else if err := ValidSubject(s.Subject); err != nil {
-			out.State, out.Reason = StepFailed, "commit: "+err.Error()
 		} else {
-			msg := s.Subject
+			msg, repair := RepairSubject(s.Subject, Subject("chore: ", s.Ref.Phase.Title))
+			if repair != "" {
+				s.warnings = append(s.warnings, repair)
+			}
 			err := m.event(m.now(), s, Event{Kind: EventCommitIntent, Fields: map[string]string{
 				"attempt": strconv.Itoa(key.Attempt), "head": head, "tree": tree, "dir": s.Dir, "message": msg,
 			}})
@@ -648,6 +659,9 @@ func (m *SessionManager) Finish(s *Session, out Outcome) Outcome {
 				out.State, out.Reason = StepFailed, "commit: "+err.Error()
 			}
 		}
+	}
+	if len(s.warnings) > 0 {
+		out.Warning = strings.Join(slices.DeleteFunc(append([]string{out.Warning}, s.warnings...), func(w string) bool { return w == "" }), "; ")
 	}
 	if out.State != StepOK {
 		if err := m.snapshot(s); err != nil {

@@ -174,9 +174,13 @@ so.
   record itself, and an unknown field (an old sentinel's `at`) is ignored. `commit` is required on
   the `ok` sentinel of every step the driver commits (ADR-87): a Conventional Commits subject
   `<type>(<scope>)!: <description>` (types `feat fix docs style refactor perf test build ci chore
-  revert`, one line, ≤ 100 characters, the description not a phase or step label); a missing or
-  malformed one fails the step `sentinel commit: <why>`. A valid one is recorded as
-  `commit-subject{attempt, subject}` before the step goes on; a fix round's sentinel may restate it,
+  revert`, one line, ≤ 100 characters, the description not a phase or step label). A subject never
+  fails a step: the driver repairs a missing or malformed one (`RepairSubject`) — first line only,
+  cut at a word boundary within 100 characters, `chore: ` before a description without a valid
+  type, and `chore: <phase title>` (in a fix round, the earlier subject) when nothing usable is
+  left — and the step's outcome carries a `warning`. The subject is recorded as
+  `commit-subject{attempt, subject}`, plus `original` and `repair` when repaired, before the step
+  goes on; a fix round's sentinel may restate it,
   and a resume into a review round takes the attempt's recorded subject. The author half writes
   `<kind>-a<attempt>.sentinel`; a reviewer `<kind>-rv-<name>-r<round>-a<attempt>.sentinel`;
   the author's verify-and-apply half `<kind>-fix-r<round>-a<attempt>.sentinel`. Agents write the
@@ -451,7 +455,8 @@ so.
   landing starts again from the merge. A red gate with no fix round left, or a gatefix step that
   does not end `ok`, raises a blocker (Milestone 17) before the phase is blocked.
 - **Land** — in the primary tree: take `message` from the phase's latest implement
-  `commit-intent` (none, or not a valid subject → `ErrLanding`, nothing merged); append
+  `commit-intent` (none, or not a valid subject → repaired as a step's is, with
+  `chore: <phase title>` as the fallback; a subject never refuses a landing); append
   `merge-intent{phase, branch, base, message}` →
   `MergeNoFF(r-loop/phase-<N>, <todo>)` (`--no-commit`) → the merged tree
   keeps main's copy of the todo, including when the branch deleted it or a conflict is confined

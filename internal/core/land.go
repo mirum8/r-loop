@@ -183,7 +183,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 		return Landing{}, "", "", err
 	}
 	n := phase.ID
-	message, err := g.mergeMessage(n)
+	message, err := g.mergeMessage(phase)
 	if err != nil {
 		return Landing{}, "", "", err
 	}
@@ -419,20 +419,18 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 	return landing, "", "", nil
 }
 
-func (g *LandGate) mergeMessage(phase string) (string, error) {
+func (g *LandGate) mergeMessage(phase Phase) (string, error) {
 	st, err := g.Store.Load(g.RunID)
 	if err != nil {
 		return "", fmt.Errorf("load run: %w", err)
 	}
 	message := ""
 	for _, e := range st.Events {
-		if e.Kind == EventCommitIntent && e.Phase == phase && e.Step == "implement" {
+		if e.Kind == EventCommitIntent && e.Phase == phase.ID && e.Step == "implement" {
 			message = e.Fields["message"]
 		}
 	}
-	if err := ValidSubject(message); err != nil {
-		return "", fmt.Errorf("%w: no implement commit to name the merge: %v", ErrLanding, err)
-	}
+	message, _ = RepairSubject(message, Subject("chore: ", phase.Title))
 	return message, nil
 }
 

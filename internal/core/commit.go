@@ -48,3 +48,50 @@ func Subject(prefix, text string) string {
 	}
 	return strings.TrimSpace(cut)
 }
+
+const lastResortSubject = "chore: apply the phase's changes"
+
+func RepairSubject(raw, fallback string) (subject, repair string) {
+	verr := ValidSubject(raw)
+	if verr == nil {
+		return raw, ""
+	}
+	subject = repairLine(subjectLine(raw), fallback)
+	if ValidSubject(subject) != nil {
+		subject = fallback
+	}
+	if ValidSubject(subject) != nil {
+		subject = lastResortSubject
+	}
+	return subject, fmt.Sprintf("commit subject repaired (%v): committed %q", verr, subject)
+}
+
+func subjectLine(raw string) string {
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return -1
+			}
+			return r
+		}, line))
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func repairLine(line, fallback string) string {
+	if line == "" || labelOnly.MatchString(line) {
+		return fallback
+	}
+	m := subjectShape.FindStringSubmatch(line)
+	if m == nil {
+		return Subject("chore: ", line)
+	}
+	desc := strings.TrimSpace(m[3])
+	if desc == "" || labelOnly.MatchString(desc) {
+		return fallback
+	}
+	return Subject(line[:len(line)-len(m[3])], desc)
+}

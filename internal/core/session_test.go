@@ -782,12 +782,15 @@ func TestOkSentinelWithEvidenceIsOkAndCommitsOnlyInFinish(t *testing.T) {
 	}
 }
 
-func TestAnOkSentinelWithoutAValidCommitFailsTheStep(t *testing.T) {
+func TestAnOkSentinelWithoutAValidCommitIsRepairedNotFailed(t *testing.T) {
+	const run = "feat(analyze): detect modules, read findings from sarif and pmd reports, add analyze config and preflight"
 	cases := []struct {
-		name, body, reason string
+		name, body, original, subject string
 	}{
-		{"absent", `{"outcome":"ok","reason":"done"}`, "sentinel commit: no commit subject"},
-		{"phase label", `{"outcome":"ok","reason":"done","commit":"feat(core): phase 3"}`, `sentinel commit: commit subject "feat(core): phase 3" must describe the change, not label the step`},
+		{"too long", `{"outcome":"ok","reason":"done","commit":"` + run + `"}`, run, "feat(analyze): detect modules, read findings from sarif and pmd reports, add analyze config and"},
+		{"absent", `{"outcome":"ok","reason":"done"}`, "", "chore: Plan reader"},
+		{"phase label", `{"outcome":"ok","reason":"done","commit":"feat(core): phase 3"}`, "feat(core): phase 3", "chore: Plan reader"},
+		{"two lines", `{"outcome":"ok","reason":"done","commit":"feat(plan): read phases\n\nfrom the todo"}`, "feat(plan): read phases\n\nfrom the todo", "feat(plan): read phases"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -800,14 +803,38 @@ func TestAnOkSentinelWithoutAValidCommitFailsTheStep(t *testing.T) {
 			}
 
 			out := r.sm.Wait(context.Background(), s, &recObserver{})
+			fin := r.sm.Finish(s, out)
 
-			if out.State != StepFailed || out.Reason != c.reason {
-				t.Fatalf("outcome = %+v", out)
+			if out.State != StepOK || fin.State != StepOK {
+				t.Fatalf("outcome = %+v, finish = %+v", out, fin)
 			}
-			if got := r.events("commit-subject"); len(got) != 0 {
-				t.Fatalf("commit-subject events = %+v", got)
+			if !strings.Contains(fin.Warning, c.subject) {
+				t.Fatalf("warning = %q", fin.Warning)
+			}
+			events := r.events("commit-subject")
+			if len(events) != 1 || events[0].Fields["subject"] != c.subject || events[0].Fields["original"] != c.original || events[0].Fields["repair"] == "" {
+				t.Fatalf("commit-subject events = %+v", events)
+			}
+			commits := slices.DeleteFunc(r.shared.Calls(), func(c string) bool { return !strings.HasPrefix(c, "Repo.CommitAll") })
+			if !reflect.DeepEqual(commits, []string{`Repo.CommitAll /repo/.r-loop/wt/phase-3 "` + c.subject + `"`}) {
+				t.Fatalf("commits = %q", commits)
 			}
 		})
+	}
+}
+
+func TestFinishRepairsAMissingSubjectInsteadOfFailing(t *testing.T) {
+	r := newRig(t)
+	s := r.spawn(t, 1)
+
+	fin := r.sm.Finish(s, Outcome{State: StepOK, Session: s})
+
+	if fin.State != StepOK || fin.Warning == "" {
+		t.Fatalf("finish = %+v", fin)
+	}
+	commits := slices.DeleteFunc(r.shared.Calls(), func(c string) bool { return !strings.HasPrefix(c, "Repo.CommitAll") })
+	if !reflect.DeepEqual(commits, []string{`Repo.CommitAll /repo/.r-loop/wt/phase-3 "chore: Plan reader"`}) {
+		t.Fatalf("commits = %q", commits)
 	}
 }
 

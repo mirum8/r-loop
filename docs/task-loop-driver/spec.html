@@ -3817,7 +3817,7 @@ session to type into.</p>
 
 <div class="adr">
 <h3 id="adr-87">ADR-87 — Driver commits follow Conventional Commits and name the change</h3>
-<p><span class="f">Status</span> accepted 2026-10-01</p>
+<p><span class="f">Status</span> accepted 2026-10-01 · amended 2026-10-05 — a commit subject never fails a step or a landing: run <code>20261005-175851</code> failed a finished implement step on a 108-character subject and spent a retry and the maintainer's answer to rewrite one line. The driver now repairs a missing or malformed subject itself — the first line only, cut at a word boundary within 100 characters, <code>chore: </code> before a description with no valid type, and <code>chore: &lt;phase title&gt;</code> (in a fix round, the earlier subject) when nothing usable is left — records the original beside what it committed, and shows the repair as a warning. The land merge repairs the same way instead of refusing a phase</p>
 <p><span class="f">Context</span> The driver wrote <code>r-loop: phase &lt;N&gt; &lt;kind&gt;</code>
 for each step and <code>phase &lt;N&gt;: &lt;title&gt;</code> for the land merge. Both reach the base
 branch, and neither says what changed: a phase number means nothing once the plan is done, and the
