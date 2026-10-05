@@ -3878,6 +3878,64 @@ maintainer sees why. Item tests pin outcomes, so <code>## Gate</code> still prov
 plans routinely override proposals the maintainer wanted kept.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-89">ADR-89 — Static analysis is a reviewer the driver runs itself</h3>
+<p><span class="f">Status</span> accepted 2026-10-05</p>
+<p><span class="f">Context</span> Every reviewer is a model reading the change. None runs a static
+analyzer, so what staticcheck, SpotBugs or gosec find mechanically is found only when a model
+happens to notice it. A reviewer told to run the analyzers in its pane would report what it says
+they printed, which the driver cannot check (<em>Determinism</em>, Part 3). SonarQube was weighed
+and set aside: it needs a server and a token, its Community Edition analyzes one branch and so
+cannot isolate a phase's change, and its Go analysis is shallower than staticcheck's.</p>
+<p><span class="f">Decision</span> The driver runs local analyzers in every review round of a step
+whose check is <code>diff</code> — implement and gatefix — beside the reviewer panes, as one more
+reviewer named <code>static</code> that has no pane, provider or model. It works with no
+configuration and nothing installed beyond what the project already builds with: the project's own
+toolchain fetches the analyzers, at versions pinned in the binary, and caches them. The driver
+detects each module by its marker file and runs only the toolchains of the modules the change
+touches. <code>go.mod</code>: <code>go run</code> runs <code>golangci-lint</code> (with
+<code>gosec</code> added when the repository has no <code>.golangci.yml</code>) and, when
+<code>go.mod</code> or <code>go.sum</code> changed, <code>govulncheck</code>. <code>pom.xml</code>:
+Maven — <code>mvnw</code> when present, else <code>mvn</code> — compiles and runs the PMD and
+SpotBugs plugins by their coordinates, with find-sec-bugs, so the pom is not touched.
+<code>build.gradle(.kts)</code>: Gradle — <code>gradlew</code>, else <code>gradle</code> — runs
+with an init script embedded in the binary that applies <code>pmd</code> and SpotBugs with
+find-sec-bugs to every Java project; the build files are not touched. The plugins never fail the
+build on a finding, a pom or build script that already configures them keeps its configuration, and
+the build knows the classpath. Semgrep runs over every changed file when it is on
+<code>PATH</code>; preflight says so either way. The driver reads the reports — SARIF, and PMD's
+XML — keeps only results on a line the change adds or modifies, or in an untracked file —
+<code>govulncheck</code>'s are kept whole — and writes them as <code>static</code>'s findings file,
+at most 50, the rest counted in one last finding. From there they are ordinary findings: the step's
+session judges each one and fixes the real P1/P2, and a rule hit is not a defect by itself. A
+non-zero exit is a failed analysis, never a finding. Preflight exits 2 only when a detected
+language's own toolchain — <code>go</code>, or Maven or Gradle with a JDK — is missing.
+<code>analyze.enabled: false</code> turns the reviewer off and <code>analyze.timeout</code> bounds
+a round's analysis; nothing else is configured. A run that fails — a build or tool error, a missing
+report, the timeout — raises a <code>reviewer</code> blocker (<a href="#adr-82">ADR-82</a>) with
+actions retry, skip, block and stop. Detecting, running and filtering live in an adapter behind a
+core port; core sees findings only.</p>
+<p><span class="f">Alternatives</span> A prompt reviewer that runs the tools in its pane — rejected:
+see Context, and it pays for a model to run a command. Standalone CLIs (PMD, SpotBugs, the
+find-sec-bugs jar, golangci-lint) installed on the machine — rejected: each machine needs setup
+before its first run, and SpotBugs needs a classpath the build already knows. A failing analyzer in
+the land gate — rejected for now: every hit would block landing, false positives included, and fixes
+would arrive after the last review round. A new <code>analyze</code> step kind — rejected: a
+reviewer already has rounds, findings and a verdict (<a href="#adr-85">ADR-85</a>'s reasoning).
+SonarQube — rejected: see Context. Semgrep alone — rejected: it matches patterns in one file and
+misses what type- and data-flow analysis finds. Per-language command overrides — rejected until a
+project needs one.</p>
+<p><span class="f">Consequences</span> The first round on a machine downloads the analyzers through
+the Go module proxy, Maven Central or the Gradle plugin portal; later rounds use the caches. A Java
+round pays for a compile. A Gradle too old for the pinned SpotBugs plugin fails the analysis, which
+raises a blocker. Semgrep adds its rules only where it is installed. A language with no toolchain,
+such as Kotlin, gets Semgrep only. Findings on lines the change did not touch, including those it
+newly causes elsewhere, are not reported.</p>
+<p><span class="f">Revisit when</span> the step sessions routinely dismiss most <code>static</code>
+findings, a project needs analysis to block landing, or a SonarQube server with branch analysis is
+in use.</p>
+</div>
+
 
 
 
@@ -4047,6 +4105,10 @@ land:
   gateIdle: 10m               # kill it after this long with no output, thread dump first; 0 = off
   fix:                        # the gatefix session; absent = the implement row (ADR-68)
     effort: high
+
+analyze:                      # the static reviewer on implement and gatefix; works unconfigured (ADR-89)
+  enabled: true
+  timeout: 15m                # one round's analysis, all languages, a Java compile included
 
 watchdog:                     # always on; the run's LLM (ADR-71)
   provider: claude

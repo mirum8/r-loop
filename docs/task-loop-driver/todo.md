@@ -36,6 +36,10 @@ ADR-81 and ADR-82 added Milestone 17, Phases 43–46: a plan is reviewed by a pr
 reviews code with its own `/review` typed into its pane, and anything that goes off plan — a failed
 step or reviewer, a land error, a gate fix, the gate probe, a milestone report — becomes a blocker
 the watchdog clears within what it is authorised to do, or asks the maintainer about.
+ADR-89 added Milestone 18, Phases 47–49: the driver runs local static analyzers — golangci-lint and
+govulncheck through `go run`, PMD and SpotBugs with find-sec-bugs through Maven or Gradle, Semgrep
+when installed — picked by the languages the change touches, with no configuration, as a `static`
+reviewer in every round of implement and gatefix.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -70,6 +74,9 @@ the watchdog clears within what it is authorised to do, or asks the maintainer a
 - Wave 28: Phase 44
 - Wave 29: Phase 45
 - Wave 30: Phase 46
+- Wave 31: Phase 47
+- Wave 32: Phase 48
+- Wave 33: Phase 49
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -756,6 +763,52 @@ Contracts: `tech-design.md#milestone-17-reviews-and-blockers`
 - [x] before the run halts on the question invariant, a panic in the land, the question server or the signal handler, or a `record:` failure, the driver posts `run halting: <reason>` through `Watchdog.Post` without waiting; failures before the watchdog starts stay process exits
 - [x] one test per source proves it raises a blocker and that each of its actions works end to end with fakes: a merge conflict retried after the fix lands, a red gate blocked, a reviewer skipped on the maintainer's reply, a gatefix switched, a milestone report retried
 - [x] the tests that pinned "block at once" or the remedy window now raise a blocker, then block on `block` or on the timeout; `app/watchdog_test.go` proves a wired run sends a land blocker to the watchdog and a `run halting:` post before a record halt
+**Done when:** `go test -race ./...` is green.
+
+## Milestone 18 — Static analysis
+Contracts: `tech-design.md#milestone-18-static-analysis`
+
+### Phase 47 — Detection, findings from reports, config and preflight
+**Implements:** Review each phase with every configured reviewer
+**Depends on:** Phase 46
+**Files:** `internal/core/ports.go` (modify) · `internal/core/fakes_test.go` (modify) · `internal/analyze/detect.go` (new) · `internal/analyze/lines.go` (new) · `internal/analyze/sarif.go` (new) · `internal/analyze/pmdxml.go` (new) · `internal/analyze/detect_test.go` (new) · `internal/analyze/lines_test.go` (new) · `internal/analyze/sarif_test.go` (new) · `internal/analyze/pmdxml_test.go` (new) · `internal/config/reader.go` (modify) · `internal/config/defaults.yaml` (modify) · `internal/config/reader_test.go` (modify) · `internal/app/preflight.go` (modify) · `internal/app/app_test.go` (modify) · `README.md` (modify)
+**Risk:** none
+- [ ] `core.Analyzer` is a port: `Analyze(ctx context.Context, dir string) (Analysis, error)` with `Analysis{Findings []Finding; Command string}`; `Command` names what ran (`golangci-lint, semgrep`); the core fake returns scripted results and errors
+- [ ] `analyze.Detect(root)` walks the tree, skipping `.git`, `.r-loop`, `vendor`, `node_modules` and `testdata`, and returns each module: `go` for a `go.mod` directory; `maven` for a `pom.xml` directory and `gradle` for a `build.gradle(.kts)` directory, each with its build root — the outermost `pom.xml` or `settings.gradle(.kts)` directory above it — and its runner: `mvnw`/`gradlew` at the build root, else `mvn`/`gradle` on `PATH`
+- [ ] the changed set is `git diff -U0 HEAD` plus untracked files, run in `dir`; each changed file maps to its nearest module, and only those modules' toolchains run; a change with no `.go` or `.java` file runs no language toolchain
+- [ ] every SARIF result and PMD XML violation becomes a `Finding` only when its start line is one `git diff -U0 HEAD` adds or modifies, or its file is untracked; `govulncheck`'s are kept whole; ids are `s1…sN`, `Title` is `<tool>/<rule>: <message's first line>`, `Detail` is the level, the full message and `path:line`, `Files` the path relative to `dir`; beyond 50, one last finding names how many more by tool and rule
+- [ ] config: `analyze.enabled` (default `true`) and `analyze.timeout` (default `15m`), with provenance, unknown keys rejected (exit 2); `README.md` lists them and says the analyzers need no install
+- [ ] preflight, when `analyze.enabled`, detects the primary tree's languages and exits 2 when one's toolchain is missing — `go` for Go; the runner and `java` for Maven or Gradle — naming it; it prints `static: <languages>[, semgrep]` or `static: <languages> (semgrep not installed)`
+- [ ] `detect_test.go` proves module, build-root and runner detection in a Go repo, a multi-module Maven repo with and without `mvnw` and a Gradle repo, and the skipped directories; `lines_test.go` proves the changed-line set from a real `git diff -U0` including a new untracked file; `sarif_test.go` and `pmdxml_test.go` prove parsing, the filter, the govulncheck exception, the id and title format and the cap; `app_test.go` proves the preflight exit and the printed line
+**Done when:** `go test -race ./internal/analyze/... ./internal/config/... ./internal/app/...` is green and `grep -n "^analyze:" internal/config/defaults.yaml` prints the line.
+
+### Phase 48 — The toolchains: Go, Maven, Gradle and Semgrep
+**Implements:** Review each phase with every configured reviewer
+**Depends on:** Phase 47
+**Files:** `internal/analyze/versions.go` (new) · `internal/analyze/run.go` (new) · `internal/analyze/init.gradle` (new) · `internal/analyze/run_test.go` (new)
+**Risk:** none
+- [ ] `versions.go` pins every analyzer the adapter fetches — golangci-lint, govulncheck, maven-pmd-plugin, spotbugs-maven-plugin, the SpotBugs Gradle plugin, find-sec-bugs — at the newest release when this phase is built
+- [ ] Go, in each touched module: `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@<v> run --issues-exit-code=0 --output.sarif.path=<out>/golangci-<n>.sarif`, with `--enable=gosec` when the module and its parents have no `.golangci.y(a)ml`/`.golangci.toml`; when its `go.mod` or `go.sum` changed, `go run golang.org/x/vuln/cmd/govulncheck@<v> -format sarif ./...`
+- [ ] Maven, once at the build root for the touched modules (`-pl <modules> -am`): `<runner> -q -B -DskipTests compile` then `org.apache.maven.plugins:maven-pmd-plugin:<v>:pmd` and `com.github.spotbugs:spotbugs-maven-plugin:<v>:spotbugs` with `-Dspotbugs.sarifOutput=true` and `-Dspotbugs.pluginList=<find-sec-bugs jar>`, the jar fetched once with `dependency:copy` into the user cache directory's `r-loop/analyze`; each module's `target/pmd.xml` and `target/spotbugsSarif.json` are read
+- [ ] Gradle, once at the build root: `<runner> -q --init-script <embedded init.gradle> <:module:pmdMain :module:spotbugsMain for each touched module>`; the init script adds the SpotBugs plugin to its classpath from the Gradle plugin portal and, for every project with the `java` plugin, applies `pmd` and SpotBugs with `ignoreFailures = true`, the SARIF report on and find-sec-bugs in `spotbugsPlugins`; each module's `build/reports/pmd/main.xml` and `build/reports/spotbugs/main.sarif` are read
+- [ ] a pom or build script that already configures PMD or SpotBugs keeps its configuration; no build file is written
+- [ ] Semgrep runs when `semgrep` is on `PATH`: `semgrep scan --metrics=off --sarif --output <out>/semgrep.sarif` over the changed files, with `--config` the repository's `.semgrep.yml` or `.semgrep/` when present, else `p/default`
+- [ ] a non-zero exit, a report that is missing or does not parse, or the whole analysis outliving `analyze.timeout` fails the analysis with the tool's name and its output's last 4096 bytes
+- [ ] `run_test.go` proves, with stub `go`, `mvn`, `gradle` and `semgrep` on `PATH`, the command lines each module kind runs, `-pl` for touched Maven modules, the `gosec` rule, the cached find-sec-bugs jar fetched once, Semgrep run only when present, the reports read from each module, and each failure with its message
+**Done when:** `go test -race ./internal/analyze/...` is green.
+
+### Phase 49 — The `static` reviewer in every review round
+**Implements:** Review each phase with every configured reviewer · Leave a run to finish on its own
+**Depends on:** Phase 48
+**Files:** `internal/core/review.go` (modify) · `internal/core/session.go` (modify) · `internal/core/review_test.go` (modify) · `internal/core/blockers_test.go` (modify) · `internal/prompts/templates/fix.md` (modify) · `internal/prompts/render_test.go` (modify) · `internal/app/wire.go` (modify) · `internal/app/app_test.go` (modify)
+**Risk:** concurrency
+- [ ] `ReviewHalf` takes an `Analyzer` (nil = no `static` reviewer); for a step whose check is `diff`, each round runs `Analyze(ctx, worker.Dir)` in its own goroutine beside the reviewer panes, and the round joins on it with them
+- [ ] its findings go to `<kind>-findings-static-r<N>.json` in the step's run folder, `reviewer: static`, in the findings format, and a `review-find{round, reviewer: static, state, findings, command: analyze <Command>}` event is recorded; a step with no other reviewers still runs the round
+- [ ] the fix half's `FindingsFiles` include `static`'s file, the verdict must answer its ids like any reviewer's, the next round's prior findings include it, and a resume into round N rebuilds the earlier rounds' paths with `static` among the reviewer ids
+- [ ] an `Analyze` error raises a `reviewer` blocker on `phase-<N>/<kind>-rv-static` with actions retry (analyze again for this round), skip (`reviewer-skipped{step, reviewer: static, reason}`), block and stop; with no raiser it fails the step as a reviewer failure does
+- [ ] `fix.md` says that `static`'s findings come from analyzers, that a rule hit is not a defect by itself, and that a false positive is `not-real` with the `path:line` that shows it
+- [ ] `app` wires `analyze.New(cfg)` into `ReviewHalf` when `analyze.enabled`, and nil otherwise
+- [ ] `review_test.go` proves, with the fake analyzer: findings reach the fix half and the verdict check, zero findings leave a clean round clean, the analysis runs beside the panes, plan steps never run it, a resumed round includes `static`'s earlier files; `blockers_test.go` proves retry and skip; `render_test.go` proves the `fix.md` wording; `app_test.go` proves the wiring for both settings
 **Done when:** `go test -race ./...` is green.
 
 ## Open questions

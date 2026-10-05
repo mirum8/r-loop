@@ -1172,3 +1172,50 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
   `blocker-resolved`, with a feed line for each; amber stays only on `watchdog-waiting`. The plain
   face prints both events as lines. The run report and `r-loop status` list one line per blocker:
   `b<n> phase-<N>/<step> (<source>): <reason> → <action> (<by>)`, `open` while unresolved.
+
+## Milestone 18 — Static analysis
+
+ADR-89. The driver runs local analyzers as a `static` reviewer in every review round of a step whose
+check is `diff`, beside the reviewer panes; core sees only findings. It needs no configuration and
+nothing installed beyond the project's own toolchain.
+
+- **Port** — `core.Analyzer.Analyze(ctx context.Context, dir string) (Analysis, error)`,
+  `Analysis{Findings []Finding; Command string}`. `Command` lists the tools that ran, comma
+  separated. `ReviewHalf.Analyzer` nil means no `static` reviewer.
+- **Detection** — `analyze.Detect(root)`; skipped directories `.git`, `.r-loop`, `vendor`,
+  `node_modules`, `testdata`. A module is `{Kind: go|maven|gradle, Dir, BuildRoot, Runner}`;
+  `BuildRoot` is the outermost `pom.xml` or `settings.gradle(.kts)` directory above it, `Runner`
+  `mvnw`/`gradlew` at the build root when present, else `mvn`/`gradle`. Changed files are
+  `git diff -U0 HEAD` plus `git ls-files --others --exclude-standard`, each mapped to its nearest
+  module.
+- **Versions** — `internal/analyze/versions.go` pins golangci-lint, govulncheck,
+  maven-pmd-plugin, spotbugs-maven-plugin, the SpotBugs Gradle plugin and find-sec-bugs.
+- **Go** — per touched module, `go run …/golangci-lint@<v> run --issues-exit-code=0
+  --output.sarif.path=…`, plus `--enable=gosec` when no `.golangci.*` config applies;
+  `go run golang.org/x/vuln/cmd/govulncheck@<v> -format sarif ./...` when `go.mod`/`go.sum` changed.
+- **Maven** — at the build root, `-pl <touched> -am`: `<runner> -q -B -DskipTests compile
+  org.apache.maven.plugins:maven-pmd-plugin:<v>:pmd
+  com.github.spotbugs:spotbugs-maven-plugin:<v>:spotbugs -Dspotbugs.sarifOutput=true
+  -Dspotbugs.pluginList=<jar>`; the find-sec-bugs jar is fetched once by `dependency:copy` into
+  `<user cache dir>/r-loop/analyze`. Reports: `target/pmd.xml`, `target/spotbugsSarif.json`.
+- **Gradle** — at the build root, `<runner> -q --init-script <init.gradle> :m:pmdMain
+  :m:spotbugsMain …`. The embedded init script puts the SpotBugs plugin on its classpath from the
+  plugin portal and, under `plugins.withId('java')`, applies `pmd` and SpotBugs with
+  `ignoreFailures = true`, the SARIF report required and find-sec-bugs in `spotbugsPlugins`.
+  Reports: `build/reports/pmd/main.xml`, `build/reports/spotbugs/main.sarif`. Existing PMD or
+  SpotBugs configuration in a build is kept; no build file is written.
+- **Semgrep** — only when on `PATH`: `semgrep scan --metrics=off --sarif` over the changed files,
+  `--config` the repo's `.semgrep.yml`/`.semgrep/`, else `p/default`.
+- **Failure** — a non-zero exit, a missing or unparsable report, or `analyze.timeout` exceeded
+  fails the analysis with the tool's name and the last 4096 bytes of its output.
+- **Findings** — a SARIF result or PMD XML violation is kept when its start line is added or
+  modified in the diff, or its file is untracked; `govulncheck`'s are kept whole. `ID` `s<n>`,
+  `Title` `<tool>/<rule>: <first line>`, `Detail` level, message and `path:line`, `Files` the path
+  relative to `dir`. At most 50; a 51st finding names how many more, by tool and rule.
+- **In the round** — written to `<kind>-findings-static-r<N>.json`, `reviewer: static`; event
+  `review-find{round, reviewer: static, state, findings, command: analyze <Command>}`. It joins
+  the fix half's `FindingsFiles`, the prior findings of the next round and resume's rebuilt paths.
+  An error raises a `reviewer` blocker on `<kind>-rv-static`, actions `retry, skip, block, stop`.
+- **Config** — `analyze.enabled` (`true`) and `analyze.timeout` (`15m`), nothing else. Preflight,
+  when enabled, exits 2 naming a detected language's missing toolchain (`go`; the runner and
+  `java`), and prints `static: <languages>[, semgrep]` or `… (semgrep not installed)`.
