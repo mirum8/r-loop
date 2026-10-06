@@ -554,9 +554,16 @@ func busyThenStarted(t *testing.T, failures int) (Client, string) {
 
 func shrinkPaneBusyWait(t *testing.T, budget time.Duration) {
 	t.Helper()
-	oldBudget, oldBackoff := paneBusyBudget, paneBusyBackoff
-	paneBusyBudget, paneBusyBackoff = budget, time.Millisecond
-	t.Cleanup(func() { paneBusyBudget, paneBusyBackoff = oldBudget, oldBackoff })
+	oldBudget, oldBackoff, oldSettle := paneBusyBudget, paneBusyBackoff, trustSettle
+	paneBusyBudget, paneBusyBackoff, trustSettle = budget, time.Millisecond, 0
+	t.Cleanup(func() { paneBusyBudget, paneBusyBackoff, trustSettle = oldBudget, oldBackoff, oldSettle })
+}
+
+func shrinkTrustSettle(t *testing.T, settle time.Duration) {
+	t.Helper()
+	old := trustSettle
+	trustSettle = settle
+	t.Cleanup(func() { trustSettle = old })
 }
 
 func TestStartRetriesWhilePaneShellIsNotReady(t *testing.T) {
@@ -696,7 +703,7 @@ func codexBoot(t *testing.T, before, after, states []string) (Client, func() [][
 		"start) printf '%s' '{\"result\":{\"agent\":{\"name\":\"'\"$3\"'\",\"pane_id\":\"'\"$7\"'\",\"agent_status\":\"idle\"}}}' ;;\n" +
 		"send-keys) touch \"" + entered + "\"; printf '%s' '{\"result\":{\"type\":\"ok\"}}' ;;\n" +
 		"read) if [ -e \"" + entered + "\" ]; then " + next("afters", "after", len(after)) + "; else " + next("befores", "before", len(before)) + "; fi; cat \"$f\" ;;\n" +
-		"get) " + next("gets", "state", len(states)) + "; printf '%s' '{\"result\":{\"agent\":{\"agent_status\":\"'\"$(cat \"$f\")\"'\"}}}' ;;\n" +
+		"get) " + next("gets", "state", len(states)) + "; read s q < \"$f\"; printf '%s' '{\"result\":{\"agent\":{\"agent_status\":\"'$s'\",\"state_change_seq\":'${q:-0}'}}}' ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -778,6 +785,63 @@ func TestStartFailsWhenCodexNeverSettlesIdle(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("Start succeeded while codex was still working")
+	}
+}
+
+func TestStartWaitsForClaudeToSettleAfterItsTrustDialog(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	shrinkTrustSettle(t, 700*time.Millisecond)
+	c, calls := codexBoot(t, []string{claudeTrustScreen}, []string{claudeReadyScreen}, []string{"idle 2", "idle 3", "working 4", "idle 5"})
+	began := time.Now()
+
+	_, err := c.Start("w8P:p1", "wd", "claude", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if elapsed := time.Since(began); elapsed < trustSettle {
+		t.Fatalf("Start returned %s after the trust answer, want at least %s", elapsed, trustSettle)
+	}
+	if n := countCalls(calls(), "get", "wd"); n < 5 {
+		t.Fatalf("agent get called %d times, want Start to wait past the re-init into a stable idle", n)
+	}
+}
+
+func TestStartWaitsAQuietWindowAfterTheTrustAnswerEvenWhenHerdrSeqNeverMoves(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	shrinkTrustSettle(t, 700*time.Millisecond)
+	c, calls := codexBoot(t, []string{claudeTrustScreen}, []string{claudeReadyScreen}, []string{"idle 7"})
+	began := time.Now()
+
+	_, err := c.Start("w8P:p1", "wd", "claude", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if elapsed := time.Since(began); elapsed < trustSettle {
+		t.Fatalf("Start returned %s after the trust answer, want at least %s", elapsed, trustSettle)
+	}
+	if n := countCalls(calls(), "get", "wd"); n < 2 {
+		t.Fatalf("agent get called %d times, calls %q", n, calls())
+	}
+}
+
+func TestStartWithoutATrustDialogReturnsOnTheFirstIdle(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	shrinkTrustSettle(t, 10*time.Second)
+	c, calls := codexBoot(t, []string{claudeReadyScreen}, nil, []string{"idle 1", "idle 2"})
+	began := time.Now()
+
+	_, err := c.Start("w8P:p1", "wd", "claude", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if elapsed := time.Since(began); elapsed > 2*time.Second {
+		t.Fatalf("Start took %s on a trusted directory", elapsed)
+	}
+	if n := countCalls(calls(), "get", "wd"); n != 1 {
+		t.Fatalf("agent get called %d times, calls %q", n, calls())
 	}
 }
 

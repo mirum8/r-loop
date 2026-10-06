@@ -25,6 +25,7 @@ var (
 	submitTimeout   = 10 * time.Second
 	paneBusyBudget  = 20 * time.Second
 	paneBusyBackoff = 250 * time.Millisecond
+	trustSettle     = 1500 * time.Millisecond
 )
 
 type Error struct {
@@ -290,15 +291,35 @@ func (c Client) trustDialog(agent string) ([]string, bool, error) {
 
 func (c Client) awaitReady(agent string) error {
 	answered := false
+	var quietSince time.Time
+	var quietSeq int64
 	deadline := time.Now().Add(paneBusyBudget)
 	for {
 		var asks bool
+		var st core.AgentState
 		if answered {
 			screen, err := c.Screen(agent)
 			if err != nil {
 				return err
 			}
 			_, asks = asksTrust(screen)
+			if !asks {
+				var seq int64
+				if st, seq, err = c.StateSeq(agent); err != nil {
+					return err
+				}
+				switch {
+				case st != core.AgentIdle && st != core.AgentDone:
+					quietSince = time.Time{}
+				case quietSince.IsZero() || seq != quietSeq:
+					quietSince, quietSeq = time.Now(), seq
+				}
+				if !quietSince.IsZero() && time.Since(quietSince) >= trustSettle {
+					return nil
+				}
+			} else {
+				quietSince = time.Time{}
+			}
 		} else {
 			keys, ok, err := c.trustDialog(agent)
 			if err != nil {
@@ -312,10 +333,6 @@ func (c Client) awaitReady(agent string) error {
 				deadline = time.Now().Add(paneBusyBudget)
 				continue
 			}
-		}
-		var st core.AgentState
-		if !asks {
-			var err error
 			if st, err = c.State(agent); err != nil {
 				return err
 			}

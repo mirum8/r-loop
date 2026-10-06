@@ -105,7 +105,9 @@ so.
     folder" (`down`, `enter`), codex's "Trust this folder?" or "Do you trust the contents of this
     directory?" (`enter`) — found on the visible screen or in the last 200 lines of history,
     matched ignoring whitespace, gets its keys once; the agent is ready when no dialog is visible
-    and herdr reports it `idle` or `done`. No banner is read, and no key is pressed on a blocked
+    and herdr reports it `idle` or `done` — after a trust answer, idle with an unchanged
+    `state_change_seq` for 1.5 s, since herdr reports claude idle while it re-initialises and a
+    prompt typed then is lost. No banner is read, and no key is pressed on a blocked
     screen it does not recognise: that fails `herdr: agent <name> never became ready (state S)`
     when the budget runs out (spec ADR-90; the driver arranging trust for the sessions it
     opens, spec ADR-1) · `Prompt(agent, text string, wait
