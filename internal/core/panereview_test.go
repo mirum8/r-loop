@@ -433,3 +433,32 @@ func TestAPaneReviewIgnoresAFinishInHistoryFromBeforeItsStart(t *testing.T) {
 		t.Fatalf("outcome = %+v", out)
 	}
 }
+
+func TestAPaneReviewInANarrowPaneWhoseMarkersWrapStillFinishes(t *testing.T) {
+	fastPaneReview(t)
+	r, _ := paneReviewRig(t, scripted(
+		"› /review Review\nthe current code\nchanges",
+		">> Code review\nstarted: Review\nthe current code\nchanges <<\n• Working",
+		">> Code review\nstarted: Review\nthe current code\nchanges <<\n\n<< Code review\nfinished >>",
+	), Reviewer{Provider: "codex"})
+	r.worker.Ref.Kind.Row.ReviewTimeout = time.Second
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if len(r.reviews) != 1 || r.reviews[0]["ReviewRan"] != true {
+		t.Fatalf("reviews = %+v", r.reviews)
+	}
+}
+
+func TestAWrappedReviewFailureInANarrowPaneStillFails(t *testing.T) {
+	r, _ := paneReviewRig(t, scripted(">> Code review\nstarted: x <<\n■ Review was\ninterrupted."), Reviewer{Provider: "codex"})
+
+	out := r.run()
+
+	if out.State != StepFailed || !strings.HasPrefix(out.Reason, "reviewer codex: review failed: ") {
+		t.Fatalf("outcome = %+v", out)
+	}
+}

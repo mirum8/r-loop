@@ -96,9 +96,8 @@ func (h ReviewHalf) runPaneReview(ctx context.Context, s *Session, a ProviderArg
 }
 
 func (h ReviewHalf) submit(ctx context.Context, agent string, a ProviderArgs) (int, error) {
-	text := strings.Join(strings.Fields(a.Review), "")
-	typed := func(screen string) bool { return strings.Contains(strings.Join(strings.Fields(screen), ""), text) }
-	started := func(screen string) bool { return strings.Contains(screen, a.ReviewStart) }
+	typed := func(screen string) bool { return shows(screen, a.Review) }
+	started := func(screen string) bool { return shows(screen, a.ReviewStart) }
 	screen, shown, err := h.pollScreen(ctx, agent, paneReviewTypedWait, func(screen string) bool { return typed(screen) || started(screen) })
 	if err != nil {
 		return 0, err
@@ -130,7 +129,7 @@ func (h ReviewHalf) awaitPane(ctx context.Context, s *Session, a ProviderArgs) e
 func (h ReviewHalf) awaitScreen(ctx context.Context, agent, marker, after string, limit time.Duration, what string) error {
 	var gone error
 	_, seen, err := h.pollScreen(ctx, agent, limit, func(screen string) bool {
-		if strings.Contains(screen, marker) {
+		if shows(screen, marker) {
 			return true
 		}
 		recent, err := h.Sessions.Host.Read(agent, paneReviewHistory)
@@ -138,8 +137,9 @@ func (h ReviewHalf) awaitScreen(ctx context.Context, agent, marker, after string
 			gone = fmt.Errorf("review: agent gone: %w", err)
 			return true
 		}
-		i := strings.LastIndex(recent, marker)
-		return i >= 0 && (after == "" || i > strings.LastIndex(recent, after))
+		recent = squash(recent)
+		i := strings.LastIndex(recent, squash(marker))
+		return i >= 0 && (after == "" || i > strings.LastIndex(recent, squash(after)))
 	})
 	if err != nil {
 		return err
@@ -165,7 +165,7 @@ func (h ReviewHalf) pollScreen(ctx context.Context, agent string, limit time.Dur
 			return "", false, fmt.Errorf("review: agent gone: %w", err)
 		}
 		for _, f := range paneReviewFailures {
-			if strings.Contains(screen, f) {
+			if shows(screen, f) {
 				return screen, false, &paneStuck{"review failed: " + f}
 			}
 		}
@@ -182,3 +182,7 @@ func (h ReviewHalf) pollScreen(ctx context.Context, agent string, limit time.Dur
 		}
 	}
 }
+
+func squash(s string) string { return strings.Join(strings.Fields(s), "") }
+
+func shows(screen, marker string) bool { return strings.Contains(squash(screen), squash(marker)) }
