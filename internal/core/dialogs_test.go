@@ -730,3 +730,61 @@ func TestADialogWhoseStateMovedOnIsNotAnswered(t *testing.T) {
 		t.Errorf("keys %q", r.sent())
 	}
 }
+
+func (r *dialogRig) agentPrompts(agent string) []string {
+	var out []string
+	for _, c := range r.shared.Calls() {
+		if strings.HasPrefix(c, "SessionHost.Prompt "+agent+" ") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func TestADeclinedDialogTellsTheAskingAgentToFinishAnotherWayOnceItSettles(t *testing.T) {
+	r := newDialogRig(t)
+	r.serve(t)
+	r.raise(t, r.s)
+	r.waitDog(t, 1)
+
+	if d, reason := r.router.AnswerDialog("d1", []string{"esc"}, "decline", ""); d != decisionAuthorised {
+		t.Fatalf("answer %s %q", d, reason)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := r.agentPrompts(dialogAgent); len(got) != 0 {
+		t.Fatalf("typed into a blocked pane: %q", got)
+	}
+	r.dhost.set(dialogAgent, AgentIdle, "Interrupted · What should Claude do instead?")
+
+	waitFor(t, func() bool { return len(r.agentPrompts(dialogAgent)) > 0 })
+	want := "SessionHost.Prompt " + dialogAgent + " " + strconv.Quote(declinedMessage("d1")) + " false 0s"
+	if got := r.agentPrompts(dialogAgent); !reflect.DeepEqual(got, []string{want}) {
+		t.Errorf("prompts %q", got)
+	}
+	calls := r.shared.Calls()
+	if keys, typed := indexOf(calls, "SessionHost.SendKeys "+dialogAgent+" esc"), indexOf(calls, "SessionHost.Prompt "+dialogAgent); keys < 0 || typed < keys {
+		t.Errorf("esc at %d, follow-up at %d", keys, typed)
+	}
+	waitFor(t, func() bool { return len(r.events("note")) > 0 })
+	evs := r.events("note")
+	if len(evs) != 1 || evs[0].Phase != "2" || evs[0].Step != "implement" || evs[0].Fields["reason"] != "dialog d1 declined: told "+dialogAgent+" to finish another way" {
+		t.Errorf("notes %+v", evs)
+	}
+}
+
+func TestADialogAnsweredUnderARuleTypesNoFollowUp(t *testing.T) {
+	r := newDialogRig(t)
+	r.serve(t)
+	r.raise(t, r.s)
+	r.waitDog(t, 1)
+
+	if d, reason := r.router.AnswerDialog("d1", []string{"1"}, dialogRule, ""); d != decisionAuthorised {
+		t.Fatalf("answer %s %q", d, reason)
+	}
+	r.dhost.set(dialogAgent, AgentIdle, "")
+	time.Sleep(30 * time.Millisecond)
+
+	if got := r.agentPrompts(dialogAgent); len(got) != 0 {
+		t.Errorf("prompts %q", got)
+	}
+}

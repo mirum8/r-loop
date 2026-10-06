@@ -140,10 +140,55 @@ func (l *RunLoop) DeliverKeys(id string, keys []string, by, rule string) error {
 			}
 			l.screens[open.agent] = q.Text
 			l.mu.Unlock()
+			if rule == declineRule {
+				go l.declined(open)
+			}
 		}
 		l.release(open.s)
 	})
 	return err
+}
+
+func declinedMessage(id string) string {
+	return fmt.Sprintf("r-loop: the watchdog declined that request (dialog %s). Do not retry it; finish your task another way, or write a failed sentinel naming what you needed.", id)
+}
+
+func (l *RunLoop) declined(open openAsk) {
+	q := open.q
+	defer func() {
+		if r := recover(); r != nil {
+			ev, _ := panicked(q.Step.Phase, q.Step.Kind, "decline follow-up "+q.ID, r)
+			quietly(func() { l.emit(ev) })
+		}
+	}()
+	poll := l.Sessions.Poll
+	if poll <= 0 {
+		poll = defaultPoll
+	}
+	for {
+		state, err := l.Sessions.Host.State(open.agent)
+		if err == nil && state == AgentGone {
+			return
+		}
+		var typeErr error
+		sent := false
+		if !open.s.live(func() {
+			if err != nil || state == AgentWorking || state == AgentBlocked {
+				return
+			}
+			if typeErr = l.Sessions.Host.Prompt(open.agent, declinedMessage(q.ID), false, 0); typeErr == nil {
+				sent = true
+				l.emit(Event{Kind: "note", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": fmt.Sprintf("dialog %s declined: told %s to finish another way", q.ID, open.agent)}})
+			}
+		}) || sent {
+			return
+		}
+		if typeErr != nil && !blocked(typeErr) {
+			l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": fmt.Sprintf("decline follow-up for dialog %s not typed: %s", q.ID, typeErr)}})
+			return
+		}
+		time.Sleep(poll)
+	}
 }
 
 func (l *RunLoop) pressKeys(id, agent string, keys []string) error {

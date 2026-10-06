@@ -3500,7 +3500,7 @@ write somewhere other than its worktree and its phase's run folder.</p>
 
 <div class="adr">
 <h3 id="adr-80">ADR-80 — An in-pane dialog goes to the watchdog; the driver presses its keys</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-61">ADR-61</a>, <a href="#adr-62">ADR-62</a>, <a href="#adr-73">ADR-73</a> and <a href="#adr-76">ADR-76</a> · amended by <a href="#adr-82">ADR-82</a> — a blocker is a question of kind <code>blocker</code> on the same path, and its <code>keys</code> action is authorised as a dialog answer is</p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-61">ADR-61</a>, <a href="#adr-62">ADR-62</a>, <a href="#adr-73">ADR-73</a> and <a href="#adr-76">ADR-76</a> · amended by <a href="#adr-82">ADR-82</a> — a blocker is a question of kind <code>blocker</code> on the same path, and its <code>keys</code> action is authorised as a dialog answer is · amended 2026-10-06 — after a decline's esc is pressed, the driver types a short follow-up into the pane that asked, once the agent has settled out of <code>working</code> and <code>blocked</code>, the way it types an answer (<a href="#adr-76">ADR-76</a>): the request was declined, do not retry it, finish another way or write a failed sentinel naming what was needed; recorded as a <code>note</code>. Both CLIs treat esc as "interrupt and wait for input", so without it every decline cost a stall and a nudge. A rule or maintainer answer lets the tool run and types nothing</p>
 <p><span class="f">Context</span> A step or reviewer agent can stop on a dialog of its own CLI: an
 approval to run a command or write a file, or a menu of choices. herdr reports the agent
 <code>blocked</code>. The driver counted that as quiet, typed the nudge after

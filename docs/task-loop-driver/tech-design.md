@@ -1058,6 +1058,13 @@ ADR-80.
   `DeliverKeys`; its refusal is the call's. `DeliverKeys` presses the keys one at a time and, before
   each key after the first, checks the agent is still `blocked`; if not, it stops, warns with the
   dialog and the keys not pressed, and refuses; the answer stays recorded.
+  After a `decline`'s esc is pressed, `DeliverKeys` starts a follow-up that waits for the agent to
+  leave `working` and `blocked` and types `r-loop: the watchdog declined that request (dialog <id>).
+  Do not retry it; finish your task another way, or write a failed sentinel naming what you needed.`
+  into the pane that asked (as an `ask_watchdog` answer is typed), then emits
+  `note{reason: dialog <id> declined: told <agent> to finish another way}`; it stops when the agent
+  is gone or the step ends, and warns when the text cannot be typed. A rule or maintainer answer
+  types nothing.
 - **Events** — `dialog{id, agent}` (with `text`), `dialog-answered{id, keys, by, rule}`,
   `dialog-closed{id, reason}`. The report and `r-loop status` list one line per dialog:
   `<id> phase-<N>/<kind>: dialog → <keys> (<by>, <rule>)`.
