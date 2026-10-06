@@ -97,7 +97,7 @@ func TestReviewRunsTheNativeCommandFirstAndKeepsItsOutput(t *testing.T) {
 			vars["ReviewedKind"] = kind
 			vars["ReviewCommand"] = "codex exec review --uncommitted -o /runs/r1/phase-7/implement-rv-codex-r1/native-review.txt"
 			got := render(t, New(t.TempDir()), "review", vars)
-			for _, want := range []string{"## Native review", "    " + vars["ReviewCommand"].(string) + "\n", "/runs/r1/phase-7/implement-rv-ui-r1/native-review.txt", "never review by hand", "write a failed sentinel whose reason names the command"} {
+			for _, want := range []string{"## Native review", "    " + vars["ReviewCommand"].(string) + "\n", "/runs/r1/phase-7/implement-rv-ui-r1/native-review.txt", "never review by hand", "write a failed sentinel whose reason names the command", "inside the folder `/runs/r1/phase-7/implement-rv-ui-r1/`, not beside the `.sentinel` file", "save the text of its `<result>` verbatim; never read its `<output-file>`"} {
 				if !strings.Contains(got, want) {
 					t.Errorf("prompt lacks %q:\n%s", want, got)
 				}

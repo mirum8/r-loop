@@ -283,13 +283,14 @@ func TestFindingsCheckRequiresTheNativeOutputWhenNamed(t *testing.T) {
 	const native = "implement-rv-codex-r1/native-review.txt"
 	const body = `{"reviewer":"codex","findings":[]}`
 	for _, tc := range []struct {
-		name, output  string
-		named, wantOK bool
+		name, output string
+		named        bool
+		want         string
 	}{
-		{"absent", "", true, false},
-		{"blank", "\n\t ", true, false},
-		{"present", "P1: nil map", true, true},
-		{"unnamed", "", false, true},
+		{"absent", "", true, "native review `codex exec review` left no output at implement-rv-codex-r1/native-review.txt"},
+		{"blank", "\n\t ", true, "native review `codex exec review` produced no output"},
+		{"present", "P1: nil map", true, ""},
+		{"unnamed", "", false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := findingsCtx(body)
@@ -302,14 +303,37 @@ func TestFindingsCheckRequiresTheNativeOutputWhenNamed(t *testing.T) {
 				ctx.NativeOutput, ctx.ReviewCommand = native, "codex exec review"
 			}
 			ok, missing := runCheck(t, "findings", ctx)
-			want := ""
-			if !tc.wantOK {
-				want = "native review `codex exec review` produced no output"
-			}
-			if ok != tc.wantOK || missing != want {
+			if ok != (tc.want == "") || missing != tc.want {
 				t.Fatalf("ok = %v, missing = %q", ok, missing)
 			}
 		})
+	}
+}
+
+func TestFindingsCheckPassesOnANativeReviewThatFoundNothing(t *testing.T) {
+	const body = `{"reviewer":"codex","findings":[]}`
+	ctx := findingsCtx(body)
+	ctx.FS = fstest.MapFS{findingsPath: {Data: []byte(body)}, "implement-rv-codex-r1/native-review.txt": {Data: []byte("(none)")}}
+	ctx.NativeOutput, ctx.ReviewCommand = "implement-rv-codex-r1/native-review.txt", "codex exec review"
+
+	ok, missing := runCheck(t, "findings", ctx)
+
+	if !ok || missing != "" {
+		t.Fatalf("ok = %v, missing = %q", ok, missing)
+	}
+}
+
+func TestFindingsCheckNamesANativeOutputLeftInThePhaseFolderWithoutAcceptingIt(t *testing.T) {
+	const body = `{"reviewer":"codex","findings":[]}`
+	ctx := findingsCtx(body)
+	ctx.FS = fstest.MapFS{findingsPath: {Data: []byte(body)}, "native-review.txt": {Data: []byte("(none)\n")}}
+	ctx.NativeOutput, ctx.ReviewCommand = "implement-rv-codex-r1/native-review.txt", "codex exec review"
+
+	ok, missing := runCheck(t, "findings", ctx)
+
+	want := "native review `codex exec review` left no output at implement-rv-codex-r1/native-review.txt, found one at native-review.txt in the phase folder instead"
+	if ok || missing != want {
+		t.Fatalf("ok = %v, missing = %q", ok, missing)
 	}
 }
 

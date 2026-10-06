@@ -14,13 +14,13 @@ The block's items state outcomes; a means they prescribe is a proposal. A change
 
 ## Native review
 {{if .ReviewRan}}
-The native review `{{.ReviewCommand}}` already ran in this session; its results are the review output above in your conversation. Save that output verbatim to `{{.ArtifactsDir}}/native-review.txt`, then base your findings on it.
+The native review `{{.ReviewCommand}}` already ran in this session; its results are the review output above in your conversation. Save that output verbatim to `{{.ArtifactsDir}}/native-review.txt`, then base your findings on it. That file goes inside the folder `{{.ArtifactsDir}}/`, not beside the `.sentinel` file of nearly the same name.
 {{- else}}
 Your first action is to run this command, exactly as written:
 
     {{.ReviewCommand}}
 
-A command that starts with `/` is a slash command: invoke it as the slash command or skill of that name. Anything else is a shell command: run it in `{{.Worktree}}` with your shell tool. Its raw output must end up in `{{.ArtifactsDir}}/native-review.txt`. A command that writes that file itself leaves it as written; otherwise save the command's full report there verbatim. When the command cannot run — it is not found, is not available in this session, is refused a permission or network access, or exits with an error — never review by hand instead: write a failed sentinel whose reason names the command and the error. The driver fails a reviewer whose `native-review.txt` is missing or empty. Base your findings on that output.
+A command that starts with `/` is a slash command: invoke it as the slash command or skill of that name. Anything else is a shell command: run it in `{{.Worktree}}` with your shell tool. Its raw output must end up in `{{.ArtifactsDir}}/native-review.txt`: inside the folder `{{.ArtifactsDir}}/`, not beside the `.sentinel` file of nearly the same name. A command that writes that file itself leaves it as written; otherwise save the command's full report there verbatim. A slash command that forks into the background reports through a task notification: wait for it and save the text of its `<result>` verbatim; never read its `<output-file>`, which is a transcript, not the report. When the command cannot run — it is not found, is not available in this session, is refused a permission or network access, or exits with an error — never review by hand instead: write a failed sentinel whose reason names the command and the error. The driver fails a reviewer whose `{{.ArtifactsDir}}/native-review.txt` is missing or empty; a `native-review.txt` anywhere else does not count. Base your findings on that output.
 {{- end}}
 {{- if .ItemGate}}
 
@@ -57,5 +57,5 @@ Convert what you report into `{{.FindingsPath}}` as:
 
 where `<name>` is your reviewer name — the `<name>` in the findings file name `<kind>-findings-<name>-r<round>.json` — `<round>` is {{.Round}} and `<n>` is numbered from 1. Every id is unique within the file and starts with `<name>-r{{.Round}}-`: the step agent answers each id exactly once in its verdict file, and the driver checks the two against each other. `title`, `detail` and `files` are required on every finding. With nothing to report, write an empty `findings` list.
 
-Change no file in `{{.Worktree}}`.
+Change no file in `{{.Worktree}}`. Before you write the sentinel, `{{.ArtifactsDir}}/native-review.txt` must hold the native review's output.
 {{if or (eq .ReviewedKind "gatefix") (eq .ReviewedKind "gate") (eq .ReviewedKind "milestone")}}{{template "outcome" .}}{{else}}{{template "sentinel" .}}{{end}}

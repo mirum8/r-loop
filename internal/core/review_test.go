@@ -252,11 +252,14 @@ func TestNativeReviewCommandPointsAtTheOutputFileInItsArtifactsDir(t *testing.T)
 }
 
 func TestNativeReviewerWithoutOutputFailsTheStepNamingTheCommand(t *testing.T) {
-	for _, tc := range []string{"missing", "blank"} {
-		t.Run(tc, func(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"missing", "reviewer codex: evidence missing: native review `/codex-review` left no output at implement-rv-codex-r1-a1/native-review.txt"},
+		{"blank", "reviewer codex: evidence missing: native review `/codex-review` produced no output"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			r := newReviewRig(t, Reviewer{Provider: "codex"})
 			r.behave = func(vars map[string]any) {
-				if tc == "blank" {
+				if tc.name == "blank" {
 					if err := os.WriteFile(filepath.Join(vars["ArtifactsDir"].(string), "native-review.txt"), []byte("  \n"), 0o644); err != nil {
 						t.Fatal(err)
 					}
@@ -264,7 +267,7 @@ func TestNativeReviewerWithoutOutputFailsTheStepNamingTheCommand(t *testing.T) {
 				writeFindings(t, vars, "ok", 0)
 			}
 			out := r.run()
-			if out.State != StepFailed || out.Reason != "reviewer codex: evidence missing: native review `/codex-review` produced no output" {
+			if out.State != StepFailed || out.Reason != tc.want {
 				t.Fatalf("outcome = %+v", out)
 			}
 			if f := r.events("review-find"); len(f) != 1 || f[0].Fields["state"] != "failed" {
@@ -281,8 +284,28 @@ func TestClaudeReviewerWithoutOutputFailsTheSameWay(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "claude"})
 	r.behave = func(vars map[string]any) { writeFindings(t, vars, "ok", 0) }
 	out := r.run()
-	if out.State != StepFailed || out.Reason != "reviewer claude: evidence missing: native review `/claude-review` produced no output" {
+	if out.State != StepFailed || out.Reason != "reviewer claude: evidence missing: native review `/claude-review` left no output at implement-rv-claude-r1-a1/native-review.txt" {
 		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestNativeOutputWrittenBesideTheFindingsFileIsReportedAsMisplacedNotAsNoOutput(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) {
+		misplaced := filepath.Join(filepath.Dir(vars["FindingsPath"].(string)), "native-review.txt")
+		if err := os.WriteFile(misplaced, []byte("(none)\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		writeFindings(t, vars, "ok", 0)
+	}
+
+	out := r.run()
+
+	if out.State != StepFailed {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if strings.Contains(out.Reason, "produced no output") || !strings.Contains(out.Reason, filepath.Join("implement-rv-claude-r1-a1", "native-review.txt")) {
+		t.Fatalf("reason = %q, want it to name the missing implement-rv-claude-r1-a1/native-review.txt", out.Reason)
 	}
 }
 
@@ -324,7 +347,7 @@ func TestARetriedAttemptCannotPassOnAnEarlierAttemptsNativeOutput(t *testing.T) 
 	}
 	r.behave = func(vars map[string]any) { writeFindings(t, vars, "ok", 0) }
 	out := r.run()
-	if out.State != StepFailed || out.Reason != "reviewer codex: evidence missing: native review `/codex-review` produced no output" {
+	if out.State != StepFailed || out.Reason != "reviewer codex: evidence missing: native review `/codex-review` left no output at implement-rv-codex-r1-a2/native-review.txt" {
 		t.Fatalf("outcome = %+v", out)
 	}
 	if got := r.reviews[0]["ArtifactsDir"]; got != filepath.Join(r.runDir, "phase-3", "implement-rv-codex-r1-a2") {
@@ -575,7 +598,7 @@ func TestAnExplicitPromptWinsOnAPlanRow(t *testing.T) {
 	if len(r.reviews) != 1 || r.reviews[0]["prompt"] != "review" {
 		t.Fatalf("reviews = %+v", r.reviews)
 	}
-	if out.State != StepFailed || out.Reason != "reviewer claude: evidence missing: native review `/claude-review` produced no output" {
+	if out.State != StepFailed || out.Reason != "reviewer claude: evidence missing: native review `/claude-review` left no output at plan-rv-claude-r1-a1/native-review.txt" {
 		t.Fatalf("outcome = %+v", out)
 	}
 }
@@ -1559,7 +1582,7 @@ func TestARetriedReviewerCannotPassOnTheFailedTrysNativeReport(t *testing.T) {
 	if out.State != StepFailed || len(obs.blockers) != 2 {
 		t.Fatalf("outcome = %+v, blockers %+v", out, obs.blockers)
 	}
-	if obs.blockers[1].Reason != "reviewer codex: evidence missing: native review `/codex-review` produced no output" {
+	if obs.blockers[1].Reason != "reviewer codex: evidence missing: native review `/codex-review` left no output at implement-rv-codex-r1-a1/native-review.txt" {
 		t.Fatalf("second blocker = %q", obs.blockers[1].Reason)
 	}
 }

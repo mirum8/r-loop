@@ -333,7 +333,14 @@ func findingsCheck(ctx EvidenceContext) (bool, string) {
 	}
 	if ctx.NativeOutput != "" {
 		data, err := fs.ReadFile(ctx.FS, ctx.NativeOutput)
-		if err != nil || strings.TrimSpace(string(data)) == "" {
+		if err != nil {
+			missing := "native review `" + ctx.ReviewCommand + "` left no output at " + ctx.NativeOutput
+			if _, err := fs.Stat(ctx.FS, path.Join(path.Dir(path.Dir(ctx.NativeOutput)), path.Base(ctx.NativeOutput))); err == nil {
+				missing += ", found one at " + path.Base(ctx.NativeOutput) + " in the phase folder instead"
+			}
+			return false, missing
+		}
+		if strings.TrimSpace(string(data)) == "" {
 			return false, "native review `" + ctx.ReviewCommand + "` produced no output"
 		}
 	}

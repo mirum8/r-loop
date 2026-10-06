@@ -322,6 +322,14 @@ so.
   `failed(backstop)`. The driver never kills a session: a failed step's session is left
   standing. For a step with a review
   half the same rule applies per half and per round.
+- **Turn end** — a half ends when its session's `ok` sentinel exists **and** its turn has ended:
+  after reading an `ok` sentinel the driver keeps polling until herdr reports the agent
+  `idle`/`done`/`gone` (or `State` errors), and only then judges it, so an edit made after the
+  sentinel in the same turn lands before the evidence check and the next round's snapshot. The wait
+  is bounded by `watchdog.stallGrace` from the sentinel's first sighting; at the bound the sentinel
+  is judged anyway and `Event{Kind: "turn-overran-sentinel"}` is recorded. A `blocked` agent's
+  dialog is handled as usual while waiting; no stall, nudge or backstop runs in the wait. A
+  `failed` sentinel is judged at once. Reviewers' sessions wait the same way.
 - **Nudge** — fixed text in `internal/core`, never model output: `r-loop: no sentinel and no
   activity for <grace>. If your work is done, write the sentinel now. If you are blocked, call
   ask_watchdog, or write a failed sentinel with the reason.` — `call ask_watchdog, or` only when the
@@ -536,7 +544,7 @@ so.
   template — `TemplateFor(reviewed kind)`: `plan` reviewers get `review-plan`, which runs no native
   command; (3) join on every reviewer sentinel; a `failed` or `stalled` reviewer, a failed pane
   review, or a reviewer whose evidence below is missing raises a reviewer blocker naming it
-  (Milestone 17; before it, the step failed); every findings file must pass the `findings` check; a native reviewer's `<ArtifactsDir>/native-review.txt` must exist and be non-empty, else ``evidence missing: native review `<cmd>` produced no output``; then
+  (Milestone 17; before it, the step failed); every findings file must pass the `findings` check; a native reviewer's `<ArtifactsDir>/native-review.txt` must exist, else ``evidence missing: native review `<cmd>` left no output at <kind>-rv-<name>-r<n>-a<k>/native-review.txt`` (plus ``, found one at native-review.txt in the phase folder instead`` when one sits there; it is never accepted), and be non-empty, else ``evidence missing: native review `<cmd>` produced no output``; then
   `TreeDiff(RoundTree, Snapshot(worktree))` must be empty, else `failed(reviewer modified the
   tree: <paths>)`; (4) no findings in any file → the review half ends clean; (5) prompt the author
   with the `fix` template; join on its sentinel; run the `verdict` check against `RoundTree`, then
