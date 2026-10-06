@@ -29,6 +29,7 @@ PROBE="$HOME/r-loop-dialog-probe-$RAND.txt"
 RULE="approve writing the file $PROBE"
 "$ROOT/testdata/sandbox/make-sandbox.sh" "$S" > /dev/null || exit 1
 cd "$S" || exit 1
+[ -z "${PRETRUST:-}" ] || bash "$ROOT/.claude/skills/test-app/e2e/pretrust.sh" "$S" || exit 1
 echo "sandbox $S"
 echo "out     $OUT"
 echo "probe   $PROBE"

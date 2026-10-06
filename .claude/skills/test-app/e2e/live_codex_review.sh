@@ -18,6 +18,7 @@ fail() { echo "FAIL $1"; fails=$((fails + 1)); }
 
 S=$("$ROOT/testdata/sandbox/make-sandbox.sh") || exit 1
 cd "$S" || exit 1
+[ -z "${PRETRUST:-}" ] || bash "$ROOT/.claude/skills/test-app/e2e/pretrust.sh" "$S" || exit 1
 S=$(pwd -P)
 echo "sandbox $S"
 echo "out     $OUT"
