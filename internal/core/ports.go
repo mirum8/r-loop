@@ -43,6 +43,7 @@ type SessionHost interface {
 	Start(pane, name, kind string, args []string) (Agent, error)
 	Prompt(agent, text string, wait bool, timeout time.Duration) error
 	State(agent string) (AgentState, error)
+	StateSeq(agent string) (AgentState, int64, error)
 	AgentPane(agent string) (string, error)
 	Read(agent string, lines int) (string, error)
 	Screen(agent string) (string, error)
@@ -51,7 +52,9 @@ type SessionHost interface {
 	Interrupt(agent string) error
 	Close(workspaceID string) error
 	Tag(workspaceID string, tokens map[string]string) error
-	Split(pane, direction, cwd string, env map[string]string) (string, error)
+	Split(pane, direction, cwd string, ratio float64, env map[string]string) (string, error)
+	PaneSize(pane string) (cols, rows int, err error)
+	OpenTab(workspace string, spec OpenSpec) (string, error)
 	ClosePane(pane string) error
 }
 

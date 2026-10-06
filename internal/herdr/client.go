@@ -147,14 +147,18 @@ func envFlags(env map[string]string) []string {
 	return flags
 }
 
-func (c Client) Split(pane, direction, cwd string, env map[string]string) (string, error) {
+func (c Client) Split(pane, direction, cwd string, ratio float64, env map[string]string) (string, error) {
 	args := []string{"pane", "split"}
 	if pane == "" {
 		args = append(args, "--current")
 	} else {
 		args = append(args, "--pane", pane)
 	}
-	args = append(args, "--direction", direction, "--cwd", cwd)
+	args = append(args, "--direction", direction)
+	if ratio != 0 {
+		args = append(args, "--ratio", strconv.FormatFloat(ratio, 'f', -1, 64))
+	}
+	args = append(args, "--cwd", cwd)
 	args = append(args, envFlags(env)...)
 	args = append(args, "--no-focus")
 	var out struct {
@@ -170,12 +174,55 @@ func (c Client) Split(pane, direction, cwd string, env map[string]string) (strin
 	return out.Result.Pane.ID, nil
 }
 
+func (c Client) PaneSize(pane string) (int, int, error) {
+	var out struct {
+		Result struct {
+			Layout struct {
+				Panes []struct {
+					ID   string `json:"pane_id"`
+					Rect struct {
+						Width  int `json:"width"`
+						Height int `json:"height"`
+					} `json:"rect"`
+				} `json:"panes"`
+			} `json:"layout"`
+		} `json:"result"`
+	}
+	if err := c.call(&out, "pane", "layout", "--pane", pane); err != nil {
+		return 0, 0, err
+	}
+	for _, p := range out.Result.Layout.Panes {
+		if p.ID == pane {
+			return p.Rect.Width, p.Rect.Height, nil
+		}
+	}
+	return 0, 0, fmt.Errorf("herdr: pane %s is not in its own layout", pane)
+}
+
+func (c Client) OpenTab(workspace string, spec core.OpenSpec) (string, error) {
+	args := []string{"tab", "create", "--workspace", workspace, "--cwd", spec.CWD, "--label", spec.Label}
+	args = append(args, envFlags(spec.Env)...)
+	args = append(args, "--no-focus")
+	var out struct {
+		Result struct {
+			RootPane struct {
+				ID string `json:"pane_id"`
+			} `json:"root_pane"`
+		} `json:"result"`
+	}
+	if err := c.call(&out, args...); err != nil {
+		return "", err
+	}
+	return out.Result.RootPane.ID, nil
+}
+
 type agentResult struct {
 	Result struct {
 		Agent struct {
 			Name   string `json:"name"`
 			Pane   string `json:"pane_id"`
 			Status string `json:"agent_status"`
+			Seq    int64  `json:"state_change_seq"`
 		} `json:"agent"`
 	} `json:"result"`
 }
@@ -191,164 +238,103 @@ func (c Client) Start(pane, name, kind string, args []string) (core.Agent, error
 			time.Sleep(paneBusyBackoff)
 			continue
 		}
-		if errors.As(err, &herr) && herr.Code == "agent_not_ready" && kind == "codex" {
+		if errors.As(err, &herr) && herr.Code == "agent_not_ready" {
 			out.Result.Agent.Name, out.Result.Agent.Pane = name, pane
 			break
-		}
-		if errors.As(err, &herr) && herr.Code == "agent_not_ready" && kind == "claude" {
-			screen, serr := c.Screen(name)
-			if serr != nil {
-				return core.Agent{}, serr
-			}
-			accepted, terr := c.trustClaude(name, screen)
-			if terr != nil {
-				return core.Agent{}, terr
-			}
-			if !accepted {
-				return core.Agent{}, err
-			}
-			return core.Agent{Name: name, Pane: pane}, nil
 		}
 		if err != nil {
 			return core.Agent{}, err
 		}
 		break
 	}
-	if kind == "codex" {
-		if err := c.awaitCodexPrompt(name); err != nil {
-			return core.Agent{}, err
-		}
-		if err := c.awaitSettled(name); err != nil {
-			return core.Agent{}, err
-		}
-	} else {
-		screen, err := c.Screen(name)
-		if err != nil {
-			return core.Agent{}, err
-		}
-		if _, err := c.trustClaude(name, screen); err != nil {
-			return core.Agent{}, err
-		}
-		if _, err := c.acceptTrust(name, screen, codexTrustQuestion, "enter"); err != nil {
-			return core.Agent{}, err
-		}
+	if err := c.awaitReady(name); err != nil {
+		return core.Agent{}, err
 	}
 	return core.Agent{Name: out.Result.Agent.Name, Pane: out.Result.Agent.Pane}, nil
 }
 
-func (c Client) trustClaude(agent, screen string) (bool, error) {
-	accepted, err := c.acceptTrust(agent, screen, claudeTrustAnswer, "down", "enter")
-	if err != nil || !accepted {
-		return accepted, err
-	}
-	if err := c.awaitClaudeBanner(agent); err != nil {
-		return true, err
-	}
-	return true, c.awaitUnblocked(agent)
+var trustDialogs = []struct {
+	marker string
+	keys   []string
+}{
+	{"Yes, I trust this folder", []string{"down", "enter"}},
+	{"Trust this folder?", []string{"enter"}},
+	{"Do you trust the contents of this directory?", []string{"enter"}},
 }
 
-const (
-	codexTrustQuestion = "Do you trust the contents of this directory?"
-	codexTrustFolder   = "Trust this folder?"
-	codexBanner        = ">_ OpenAI Codex"
-	claudeTrustAnswer  = "Yes, I trust this folder"
-	claudeBanner       = "Claude Code v"
-)
-
-func (c Client) awaitCodexPrompt(agent string) error {
-	trusted := false
-	deadline := time.Now().Add(paneBusyBudget)
-	for {
-		screen, err := c.Screen(agent)
-		if err != nil {
-			return err
+func asksTrust(text string) ([]string, bool) {
+	for _, d := range trustDialogs {
+		if contains(text, d.marker) {
+			return d.keys, true
 		}
-		asks := contains(screen, codexTrustQuestion) || contains(screen, codexTrustFolder)
-		switch {
-		case asks && !trusted:
-			if err := c.SendKeys(agent, "enter"); err != nil {
-				return err
-			}
-			trusted = true
-			deadline = time.Now().Add(paneBusyBudget)
-			continue
-		case !asks:
-			ready, err := c.shows(agent, screen, codexBanner)
-			if err != nil || ready {
-				return err
-			}
-		}
-		if time.Now().After(deadline) {
-			if trusted {
-				return fmt.Errorf("herdr: agent %s never showed codex's prompt after the trust dialog", agent)
-			}
-			return fmt.Errorf("herdr: agent %s never showed codex's prompt", agent)
-		}
-		time.Sleep(paneBusyBackoff)
 	}
+	return nil, false
 }
 
-func (c Client) awaitSettled(agent string) error {
-	deadline := time.Now().Add(paneBusyBudget)
-	for {
-		st, err := c.State(agent)
-		if err != nil || st == core.AgentIdle || st == core.AgentDone {
-			return err
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("herdr: agent %s never settled after start", agent)
-		}
-		time.Sleep(paneBusyBackoff)
+func (c Client) trustDialog(agent string) ([]string, bool, error) {
+	screen, err := c.Screen(agent)
+	if err != nil {
+		return nil, false, err
 	}
-}
-
-func (c Client) acceptTrust(agent, screen, marker string, keys ...string) (bool, error) {
-	asks := func() (bool, error) {
-		screen, err := c.Screen(agent)
-		return contains(screen, marker), err
-	}
-	if !contains(screen, marker) {
-		return false, nil
-	}
-	if err := c.SendKeys(agent, keys...); err != nil {
-		return true, err
-	}
-	deadline := time.Now().Add(paneBusyBudget)
-	for {
-		if ask, err := asks(); err != nil || !ask {
-			return true, err
-		}
-		if time.Now().After(deadline) {
-			return true, fmt.Errorf("herdr: agent %s still asks to trust its directory", agent)
-		}
-		time.Sleep(paneBusyBackoff)
-	}
-}
-
-func (c Client) awaitClaudeBanner(agent string) error {
-	deadline := time.Now().Add(paneBusyBudget)
-	for {
-		screen, err := c.Screen(agent)
-		if err != nil {
-			return err
-		}
-		ready, err := c.shows(agent, screen, claudeBanner)
-		if err != nil || ready {
-			return err
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("herdr: agent %s never showed claude's prompt after the trust dialog", agent)
-		}
-		time.Sleep(paneBusyBackoff)
-	}
-}
-
-func (c Client) shows(agent, screen, marker string) (bool, error) {
-	if contains(screen, marker) {
-		return true, nil
+	if keys, ok := asksTrust(screen); ok {
+		return keys, true, nil
 	}
 	history, err := c.Read(agent, 200)
-	return contains(history, marker), err
+	if err != nil {
+		return nil, false, err
+	}
+	keys, ok := asksTrust(history)
+	return keys, ok, nil
+}
+
+func (c Client) awaitReady(agent string) error {
+	answered := false
+	deadline := time.Now().Add(paneBusyBudget)
+	for {
+		var asks bool
+		if answered {
+			screen, err := c.Screen(agent)
+			if err != nil {
+				return err
+			}
+			_, asks = asksTrust(screen)
+		} else {
+			keys, ok, err := c.trustDialog(agent)
+			if err != nil {
+				return err
+			}
+			if ok {
+				if err := c.SendKeys(agent, keys...); err != nil {
+					return err
+				}
+				answered = true
+				deadline = time.Now().Add(paneBusyBudget)
+				continue
+			}
+		}
+		var st core.AgentState
+		if !asks {
+			var err error
+			if st, err = c.State(agent); err != nil {
+				return err
+			}
+			if st == core.AgentIdle || st == core.AgentDone {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			switch {
+			case asks:
+				return fmt.Errorf("herdr: agent %s still asks to trust its directory", agent)
+			case answered && st == core.AgentBlocked:
+				return fmt.Errorf("herdr: agent %s stays blocked after the trust dialog", agent)
+			case answered:
+				return fmt.Errorf("herdr: agent %s never became ready after the trust dialog (state %s)", agent, st)
+			}
+			return fmt.Errorf("herdr: agent %s never became ready (state %s)", agent, st)
+		}
+		time.Sleep(paneBusyBackoff)
+	}
 }
 
 func contains(text, marker string) bool {
@@ -362,20 +348,6 @@ func squash(s string) string {
 		}
 		return r
 	}, s)
-}
-
-func (c Client) awaitUnblocked(agent string) error {
-	deadline := time.Now().Add(paneBusyBudget)
-	for {
-		st, err := c.State(agent)
-		if err != nil || st != core.AgentBlocked {
-			return err
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("herdr: agent %s stays blocked after the trust dialog", agent)
-		}
-		time.Sleep(paneBusyBackoff)
-	}
 }
 
 func (c Client) Prompt(agent, text string, wait bool, timeout time.Duration) error {
@@ -410,20 +382,26 @@ func (c Client) PromptContext(ctx context.Context, agent, text string, wait bool
 }
 
 func (c Client) State(agent string) (core.AgentState, error) {
+	st, _, err := c.StateSeq(agent)
+	return st, err
+}
+
+func (c Client) StateSeq(agent string) (core.AgentState, int64, error) {
 	var out agentResult
 	err := c.call(&out, "agent", "get", agent)
 	var herr Error
 	if errors.As(err, &herr) && strings.HasSuffix(herr.Code, "not_found") {
-		return core.AgentGone, nil
+		return core.AgentGone, 0, nil
 	}
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
+	seq := out.Result.Agent.Seq
 	switch s := core.AgentState(out.Result.Agent.Status); s {
 	case core.AgentIdle, core.AgentWorking, core.AgentBlocked, core.AgentDone:
-		return s, nil
+		return s, seq, nil
 	}
-	return core.AgentUnknown, nil
+	return core.AgentUnknown, seq, nil
 }
 
 func (c Client) AgentPane(agent string) (string, error) {

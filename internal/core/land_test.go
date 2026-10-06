@@ -1342,7 +1342,14 @@ func (h *reportHost) Interrupt(agent string) error {
 func (h *reportHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
 func (h *reportHost) Close(workspaceID string) error                         { return nil }
 func (h *reportHost) ClosePane(pane string) error                            { return nil }
-func (h *reportHost) Split(pane, direction, cwd string, env map[string]string) (string, error) {
+func (h *reportHost) Split(pane, direction, cwd string, ratio float64, env map[string]string) (string, error) {
+	return "", nil
+}
+func (h *reportHost) StateSeq(agent string) (core.AgentState, int64, error) {
+	return core.AgentWorking, 0, nil
+}
+func (h *reportHost) PaneSize(pane string) (int, int, error) { return 200, 60, nil }
+func (h *reportHost) OpenTab(workspace string, spec core.OpenSpec) (string, error) {
 	return "", nil
 }
 

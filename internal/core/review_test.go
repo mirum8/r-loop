@@ -617,8 +617,8 @@ type splitFailHost struct {
 	splits int
 }
 
-func (h *splitFailHost) Split(pane, direction, cwd string, env map[string]string) (string, error) {
-	p, _ := h.scriptedHost.Split(pane, direction, cwd, env)
+func (h *splitFailHost) Split(pane, direction, cwd string, ratio float64, env map[string]string) (string, error) {
+	p, _ := h.scriptedHost.Split(pane, direction, cwd, ratio, env)
 	h.splits++
 	if h.splits == h.failOn {
 		return "", fmt.Errorf("pane_not_found")

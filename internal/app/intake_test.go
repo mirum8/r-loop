@@ -105,7 +105,14 @@ func (h *intakeHost) SendKeys(agent string, keys ...string) error            { r
 func (h *intakeHost) SendText(agent, text string) error                      { return nil }
 func (h *intakeHost) Interrupt(agent string) error                           { return nil }
 func (h *intakeHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
-func (h *intakeHost) Split(pane, direction, cwd string, env map[string]string) (string, error) {
+func (h *intakeHost) Split(pane, direction, cwd string, ratio float64, env map[string]string) (string, error) {
+	return "", nil
+}
+func (h *intakeHost) StateSeq(agent string) (core.AgentState, int64, error) {
+	return core.AgentWorking, 0, nil
+}
+func (h *intakeHost) PaneSize(pane string) (int, int, error) { return 200, 60, nil }
+func (h *intakeHost) OpenTab(workspace string, spec core.OpenSpec) (string, error) {
 	return "", nil
 }
 func (h *intakeHost) ClosePane(pane string) error { return nil }

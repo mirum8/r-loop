@@ -61,6 +61,9 @@ type fakeSessionHost struct {
 	Started map[string]OpenSpec
 	roots   map[string]OpenSpec
 	States  map[string]AgentState
+	Seqs    map[string]int64
+	Sizes   map[string][2]int
+	Tabs    []OpenSpec
 	Panes   map[string]string
 	Screens map[string]string
 	Err     error
@@ -104,6 +107,15 @@ func (f *fakeSessionHost) State(agent string) (AgentState, error) {
 		return s, f.Err
 	}
 	return AgentUnknown, f.Err
+}
+
+func (f *fakeSessionHost) StateSeq(agent string) (AgentState, int64, error) {
+	f.record("SessionHost.StateSeq %s", agent)
+	s, ok := f.States[agent]
+	if !ok {
+		s = AgentUnknown
+	}
+	return s, f.Seqs[agent], f.Err
 }
 
 func (f *fakeSessionHost) AgentPane(agent string) (string, error) {
@@ -151,11 +163,31 @@ func (f *fakeSessionHost) ClosePane(pane string) error {
 	return f.Err
 }
 
-func (f *fakeSessionHost) Split(pane, direction, cwd string, env map[string]string) (string, error) {
+func (f *fakeSessionHost) Split(pane, direction, cwd string, ratio float64, env map[string]string) (string, error) {
 	f.record("SessionHost.Split %s %s %s", pane, direction, cwd)
 	f.Splits = append(f.Splits, env)
 	f.next++
 	return fmt.Sprintf("pane-%d", f.next), f.Err
+}
+
+func (f *fakeSessionHost) PaneSize(pane string) (int, int, error) {
+	f.record("SessionHost.PaneSize %s", pane)
+	if size, ok := f.Sizes[pane]; ok {
+		return size[0], size[1], f.Err
+	}
+	return 200, 60, f.Err
+}
+
+func (f *fakeSessionHost) OpenTab(workspace string, spec OpenSpec) (string, error) {
+	f.record("SessionHost.OpenTab %s %s %s %v", workspace, spec.CWD, spec.Label, spec.Env)
+	f.Tabs = append(f.Tabs, spec)
+	f.next++
+	pane := fmt.Sprintf("pane-%d", f.next)
+	if f.roots == nil {
+		f.roots, f.Started = map[string]OpenSpec{}, map[string]OpenSpec{}
+	}
+	f.roots[pane] = spec
+	return pane, f.Err
 }
 
 type fakeRepo struct {

@@ -143,8 +143,15 @@ func (h *simHost) Interrupt(agent string) error                           { retu
 func (h *simHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
 func (h *simHost) Close(workspaceID string) error                         { return nil }
 func (h *simHost) ClosePane(pane string) error                            { return nil }
-func (h *simHost) Split(pane, direction, cwd string, env map[string]string) (string, error) {
+func (h *simHost) Split(pane, direction, cwd string, ratio float64, env map[string]string) (string, error) {
 	return pane + "-split", nil
+}
+func (h *simHost) StateSeq(agent string) (core.AgentState, int64, error) {
+	return core.AgentWorking, 0, nil
+}
+func (h *simHost) PaneSize(pane string) (int, int, error) { return 200, 60, nil }
+func (h *simHost) OpenTab(workspace string, spec core.OpenSpec) (string, error) {
+	return "", nil
 }
 
 func (h *simHost) promptedAgents() []string {

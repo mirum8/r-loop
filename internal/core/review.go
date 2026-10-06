@@ -319,7 +319,7 @@ func (h ReviewHalf) place(worker *Session, runs []*reviewerRun, i int, rd review
 			break
 		}
 	}
-	pane, err := sm.Host.Split(target, direction, worker.Dir, map[string]string{
+	pane, err := sm.Host.Split(target, direction, worker.Dir, 0, map[string]string{
 		"R_LOOP_RUN":      worker.Ref.Key.Run,
 		"R_LOOP_PHASE":    worker.Ref.Key.Phase,
 		"R_LOOP_STEP":     worker.Ref.Key.Kind,

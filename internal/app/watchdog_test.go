@@ -377,9 +377,18 @@ func (h *dogHost) ClosePane(pane string) error {
 	h.record("ClosePane %s", pane)
 	return nil
 }
-func (h *dogHost) Split(pane, direction, cwd string, env map[string]string) (string, error) {
+func (h *dogHost) Split(pane, direction, cwd string, ratio float64, env map[string]string) (string, error) {
 	h.record("Split %q %s %s", pane, direction, cwd)
 	return "wd-pane", nil
+}
+func (h *dogHost) StateSeq(agent string) (core.AgentState, int64, error) {
+	st, err := h.State(agent)
+	return st, 0, err
+}
+func (h *dogHost) PaneSize(pane string) (int, int, error) { return 200, 60, nil }
+func (h *dogHost) OpenTab(workspace string, spec core.OpenSpec) (string, error) {
+	h.record("OpenTab %s %s %s", workspace, spec.CWD, spec.Label)
+	return "wd-tab-pane", nil
 }
 
 func (h *dogHost) prompted(prefix string) bool {

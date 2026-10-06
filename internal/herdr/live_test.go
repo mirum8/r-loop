@@ -64,7 +64,7 @@ func TestLiveHerdr(t *testing.T) {
 		"R_LOOP_STEP":     "implement",
 		"R_LOOP_REVIEWER": "claude",
 	}
-	pane, err := c.Split(ws.RootPane, "right", dir, reviewerEnv)
+	pane, err := c.Split(ws.RootPane, "right", dir, 0, reviewerEnv)
 	if err != nil || pane == "" || pane == ws.RootPane {
 		t.Fatalf("Split: %q, %v", pane, err)
 	}
@@ -84,7 +84,7 @@ func TestLiveHerdr(t *testing.T) {
 		time.Sleep(250 * time.Millisecond)
 	}
 
-	extra, err := c.Split(ws.RootPane, "down", dir, nil)
+	extra, err := c.Split(ws.RootPane, "down", dir, 0, nil)
 	if err != nil {
 		t.Fatalf("Split: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestLiveHerdr(t *testing.T) {
 	if err := c.ClosePane(pane); err != nil {
 		t.Fatalf("ClosePane of first reviewer: %v", err)
 	}
-	nextPane, err := c.Split(ws.RootPane, "right", dir, reviewerEnv)
+	nextPane, err := c.Split(ws.RootPane, "right", dir, 0, reviewerEnv)
 	if err != nil || nextPane == "" || nextPane == pane {
 		t.Fatalf("Split fresh reviewer pane: %q, %v", nextPane, err)
 	}

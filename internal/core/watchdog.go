@@ -107,7 +107,7 @@ func (d *Watchdog) Start(ctx context.Context) error {
 
 func (d *Watchdog) open() (string, string, error) {
 	if d.Pane != "" {
-		pane, err := d.Host.Split(d.Pane, "right", d.Root, nil)
+		pane, err := d.Host.Split(d.Pane, "right", d.Root, 0, nil)
 		if err != nil {
 			return "", "", fmt.Errorf("split: %w", err)
 		}

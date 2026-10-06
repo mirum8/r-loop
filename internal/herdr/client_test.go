@@ -85,7 +85,7 @@ func TestOpenCreatesWorkspaceAndParsesIDs(t *testing.T) {
 func TestSplitByPaneID(t *testing.T) {
 	c, argv := fake(t, `{"id":"cli:pane:split","result":{"pane":{"pane_id":"w3A:p2","workspace_id":"w3A"},"type":"pane_info"}}`)
 
-	pane, err := c.Split("w3A:p1", "right", "/repo/wt", nil)
+	pane, err := c.Split("w3A:p1", "right", "/repo/wt", 0, nil)
 
 	if err != nil || pane != "w3A:p2" {
 		t.Fatalf("got %q, %v", pane, err)
@@ -95,7 +95,7 @@ func TestSplitByPaneID(t *testing.T) {
 
 func TestSplitPassesEnvAsSortedEnvFlagsBeforeNoFocus(t *testing.T) {
 	c, argv := fake(t, `{"id":"cli:pane:split","result":{"pane":{"pane_id":"w3A:p2","workspace_id":"w3A"},"type":"pane_info"}}`)
-	pane, err := c.Split("w3A:p1", "right", "/repo/wt", map[string]string{"R_LOOP_STEP": "implement", "R_LOOP_RUN": "r1"})
+	pane, err := c.Split("w3A:p1", "right", "/repo/wt", 0, map[string]string{"R_LOOP_STEP": "implement", "R_LOOP_RUN": "r1"})
 	if err != nil || pane != "w3A:p2" {
 		t.Fatalf("got %q, %v", pane, err)
 	}
@@ -105,7 +105,7 @@ func TestSplitPassesEnvAsSortedEnvFlagsBeforeNoFocus(t *testing.T) {
 func TestSplitCurrentPaneWhenPaneIsEmpty(t *testing.T) {
 	c, argv := fake(t, `{"id":"cli:pane:split","result":{"pane":{"pane_id":"w3A:p3"},"type":"pane_info"}}`)
 
-	pane, err := c.Split("", "down", "/repo", nil)
+	pane, err := c.Split("", "down", "/repo", 0, nil)
 
 	if err != nil || pane != "w3A:p3" {
 		t.Fatalf("got %q, %v", pane, err)
@@ -127,16 +127,18 @@ func TestStartRunsAgentStartWithArgsAfterDashes(t *testing.T) {
 	assertCalls(t, calls(), [][]string{
 		{"agent", "start", "phase-3-implement", "--kind", "claude", "--pane", "w3A:p2", "--", "--model", "haiku"},
 		{"agent", "read", "phase-3-implement", "--source", "visible"},
+		{"agent", "read", "phase-3-implement", "--source", "recent-unwrapped", "--lines", "200"},
+		{"agent", "get", "phase-3-implement"},
 	})
 }
 
 func TestStartDoesNotRetryAgentStartWhenCodexNeverGetsReady(t *testing.T) {
 	shrinkPaneBusyWait(t, 50*time.Millisecond)
-	c, calls := notReadyThenTrusted(t, "", "")
+	c, calls := notReadyThenTrustedBlocked(t, "", "", "blocked", 1<<30)
 
 	_, err := c.Start("w3A:p2", "x", "codex", nil)
 
-	if err == nil || !strings.Contains(err.Error(), "never showed codex's prompt") {
+	if err == nil || !strings.Contains(err.Error(), "herdr: agent x never became ready") {
 		t.Fatalf("got %v", err)
 	}
 	if n := countCalls(calls(), "start", "x", "--kind", "codex", "--pane", "w3A:p2", "--"); n != 1 {
@@ -507,7 +509,7 @@ func TestExitOneWithoutJSONKeepsStderr(t *testing.T) {
 func TestUnparsableStdoutIsAnError(t *testing.T) {
 	c, _ := fake(t, "not json")
 
-	if _, err := c.Split("w3A:p1", "right", "/repo", nil); err == nil {
+	if _, err := c.Split("w3A:p1", "right", "/repo", 0, nil); err == nil {
 		t.Fatal("want error")
 	}
 }
@@ -535,6 +537,7 @@ func busyThenStarted(t *testing.T, failures int) (Client, string) {
 	bin := filepath.Join(dir, "herdr")
 	script := "#!/bin/sh\n" +
 		"if [ \"$2\" = read ]; then exit 0; fi\n" +
+		"if [ \"$2\" = get ]; then printf '%s' '{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'; exit 0; fi\n" +
 		"n=$(cat \"" + count + "\" 2>/dev/null || echo 0)\n" +
 		"n=$((n+1))\n" +
 		"echo $n > \"" + count + "\"\n" +
@@ -727,7 +730,7 @@ func TestStartAnswersCodexsTrustThisFolderDialog(t *testing.T) {
 
 func TestStartWaitsForCodexsTrustDialogToBeDrawn(t *testing.T) {
 	shrinkPaneBusyWait(t, 5*time.Second)
-	c, calls := codexBoot(t, []string{"", "", newTrustScreen}, []string{chatScreen}, []string{"idle"})
+	c, calls := codexBoot(t, []string{"", "", newTrustScreen}, []string{chatScreen}, []string{"unknown", "idle"})
 
 	_, err := c.Start("w4M:p2", "rv", "codex", nil)
 
@@ -767,17 +770,6 @@ func TestStartAcceptsCodexSettlingDoneAfterItsTrustDialog(t *testing.T) {
 	}
 }
 
-func TestStartFailsWhenCodexNeverDrawsItsPrompt(t *testing.T) {
-	shrinkPaneBusyWait(t, 50*time.Millisecond)
-	c, _ := codexBoot(t, []string{""}, nil, []string{"idle"})
-
-	_, err := c.Start("w4M:p2", "rv", "codex", nil)
-
-	if err == nil {
-		t.Fatal("Start succeeded without codex's prompt on screen")
-	}
-}
-
 func TestStartFailsWhenCodexNeverSettlesIdle(t *testing.T) {
 	shrinkPaneBusyWait(t, 50*time.Millisecond)
 	c, _ := codexBoot(t, []string{chatScreen}, nil, []string{"working"})
@@ -805,10 +797,10 @@ const claudeReadyScreen = " ▐▛███▛█   Claude Code v2.1.280\n❯\n 
 const claudeTrustScreen = " Accessing workspace:\n /repo\n Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team).\n Claude Code'll be able to read, edit, and execute files here.\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel\n"
 
 func notReadyThenTrusted(t *testing.T, before, after string) (Client, func() [][]string) {
-	return notReadyThenTrustedBlocked(t, before, after, 0)
+	return notReadyThenTrustedBlocked(t, before, after, "blocked", 0)
 }
 
-func notReadyThenTrustedBlocked(t *testing.T, before, after string, blockedGets int) (Client, func() [][]string) {
+func notReadyThenTrustedBlocked(t *testing.T, before, after, early string, earlyGets int) (Client, func() [][]string) {
 	t.Helper()
 	dir := t.TempDir()
 	gets := filepath.Join(dir, "gets")
@@ -826,7 +818,7 @@ func notReadyThenTrustedBlocked(t *testing.T, before, after string, blockedGets 
 		"case \"$2\" in\n" +
 		"start) printf '%s' '{\"error\":{\"code\":\"agent_not_ready\",\"message\":\"agent '\"$3\"' is blocked during startup and is not ready for prompts\"}}' >&2; exit 1 ;;\n" +
 		"send-keys) if [ \"$4\" = enter ]; then touch \"" + entered + "\"; fi; printf '%s' '{\"result\":{\"type\":\"ok\"}}' ;;\n" +
-		"get) n=$(cat \"" + gets + "\" 2>/dev/null || echo 0); n=$((n+1)); echo $n > \"" + gets + "\"; if [ $n -le " + strconv.Itoa(blockedGets) + " ]; then s=blocked; else s=idle; fi; printf '%s' '{\"result\":{\"agent\":{\"agent_status\":\"'$s'\"}}}' ;;\n" +
+		"get) n=$(cat \"" + gets + "\" 2>/dev/null || echo 0); n=$((n+1)); echo $n > \"" + gets + "\"; if [ $n -le " + strconv.Itoa(earlyGets) + " ]; then s=" + early + "; else s=idle; fi; printf '%s' '{\"result\":{\"agent\":{\"agent_status\":\"'$s'\"}}}' ;;\n" +
 		"read) if [ -e \"" + entered + "\" ]; then cat \"" + filepath.Join(dir, "after") + "\"; else cat \"" + filepath.Join(dir, "before") + "\"; fi ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -863,25 +855,27 @@ func TestStartAcceptsClaudesTrustDialogThatHerdrReportsNotReady(t *testing.T) {
 		{"agent", "send-keys", "rloop-wd-run-1", "down"},
 		{"agent", "send-keys", "rloop-wd-run-1", "enter"},
 		{"agent", "read", "rloop-wd-run-1", "--source", "visible"},
-		{"agent", "read", "rloop-wd-run-1", "--source", "visible"},
 		{"agent", "get", "rloop-wd-run-1"},
 	})
 }
 
-func TestStartStillFailsWhenAnAgentIsNotReadyForAnotherReason(t *testing.T) {
-	shrinkPaneBusyWait(t, 20*time.Millisecond)
-	c, calls := notReadyThenTrusted(t, "  ✨ Update available!\n› 1. Update now\n  2. Skip\n", "")
+func TestStartNeverPressesKeysOnAnUnrecognisedBlockedScreen(t *testing.T) {
+	for _, kind := range []string{"claude", "codex"} {
+		t.Run(kind, func(t *testing.T) {
+			shrinkPaneBusyWait(t, 50*time.Millisecond)
+			c, calls := notReadyThenTrustedBlocked(t, "  ✨ Update available!\n› 1. Update now\n  2. Skip\n", "", "blocked", 1<<30)
 
-	_, err := c.Start("w8P:p1", "a1", "claude", nil)
+			_, err := c.Start("w8P:p1", "a1", kind, nil)
 
-	var herr Error
-	if !errors.As(err, &herr) || herr.Code != "agent_not_ready" {
-		t.Fatalf("got %#v", err)
-	}
-	for _, call := range calls() {
-		if call[1] == "send-keys" {
-			t.Fatalf("pressed keys on an unknown startup screen: %q", call)
-		}
+			if err == nil || !strings.Contains(err.Error(), "herdr: agent a1 never became ready") {
+				t.Fatalf("got %v", err)
+			}
+			for _, call := range calls() {
+				if call[1] == "send-keys" {
+					t.Fatalf("pressed keys on an unknown startup screen: %q", call)
+				}
+			}
+		})
 	}
 }
 
@@ -898,7 +892,7 @@ func TestStartFailsWhenClaudesTrustDialogDoesNotClear(t *testing.T) {
 
 func TestStartWaitsUntilHerdrNoLongerReportsTheTrustedClaudeBlocked(t *testing.T) {
 	shrinkPaneBusyWait(t, 5*time.Second)
-	c, calls := notReadyThenTrustedBlocked(t, claudeTrustScreen, claudeReadyScreen, 2)
+	c, calls := notReadyThenTrustedBlocked(t, claudeTrustScreen, claudeReadyScreen, "blocked", 2)
 
 	if _, err := c.Start("w8P:p1", "rloop-wd-run-1", "claude", nil); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -920,7 +914,7 @@ func TestStartWaitsUntilHerdrNoLongerReportsTheTrustedClaudeBlocked(t *testing.T
 
 func TestStartFailsWhenTheTrustedClaudeStaysBlocked(t *testing.T) {
 	shrinkPaneBusyWait(t, 20*time.Millisecond)
-	c, _ := notReadyThenTrustedBlocked(t, claudeTrustScreen, claudeReadyScreen, 1<<30)
+	c, _ := notReadyThenTrustedBlocked(t, claudeTrustScreen, claudeReadyScreen, "blocked", 1<<30)
 
 	_, err := c.Start("w8P:p1", "a1", "claude", nil)
 
@@ -929,54 +923,26 @@ func TestStartFailsWhenTheTrustedClaudeStaysBlocked(t *testing.T) {
 	}
 }
 
-func TestStartWaitsForClaudesBannerAfterItsTrustDialog(t *testing.T) {
+func TestStartWaitsForClaudeToComeBackAfterItsTrustDialog(t *testing.T) {
 	shrinkPaneBusyWait(t, 5*time.Second)
-	dir := t.TempDir()
-	log := filepath.Join(dir, "calls")
-	state := filepath.Join(dir, "state")
-	screens := []string{claudeTrustScreen, "/repo claude --model sonnet\n", "/repo claude --model sonnet\n", " ▐▛███▛█   Claude Code v2.1.280\n❯\n  -- INSERT --\n"}
-	for i, s := range screens {
-		if err := os.WriteFile(filepath.Join(dir, "screen"+strconv.Itoa(i)), []byte(s), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	bin := filepath.Join(dir, "herdr")
-	script := "#!/bin/sh\n" +
-		"printf '%s\\0' \"$@\" >> \"" + log + "\"\n" +
-		"printf '\\n' >> \"" + log + "\"\n" +
-		"n=$(cat \"" + state + "\" 2>/dev/null || echo 0)\n" +
-		"case \"$2\" in\n" +
-		"start) printf '%s' '{\"error\":{\"code\":\"agent_not_ready\",\"message\":\"blocked during startup\"}}' >&2; exit 1 ;;\n" +
-		"send-keys) if [ \"$4\" = enter ]; then echo 1 > \"" + state + "\"; fi; printf '%s' '{\"result\":{\"type\":\"ok\"}}' ;;\n" +
-		"get) printf '%s' '{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}' ;;\n" +
-		"read) cat \"" + dir + "/screen$n\"; if [ $n -gt 0 ] && [ $n -lt 3 ]; then echo $((n+1)) > \"" + state + "\"; fi ;;\n" +
-		"esac\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	c := Client{Bin: bin}
+	c, calls := notReadyThenTrustedBlocked(t, claudeTrustScreen, "/repo claude --model sonnet\n", "unknown", 2)
 
 	if _, err := c.Start("w8P:p1", "rloop-wd-run-1", "claude", nil); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	screen, err := c.exec("agent", "read", "rloop-wd-run-1", "--source", "visible")
-	if err != nil || !strings.Contains(string(screen), "Claude Code v") {
-		t.Fatalf("Start returned before claude drew its prompt; screen now %q, %v", screen, err)
-	}
-	data, _ := os.ReadFile(state)
-	if strings.TrimSpace(string(data)) != "3" {
-		t.Fatalf("Start returned while claude was still restarting (state %q)", data)
+	if n := countCalls(calls(), "get", "rloop-wd-run-1"); n != 3 {
+		t.Fatalf("agent get called %d times, want Start to wait through 2 unknown states until idle", n)
 	}
 }
 
-func TestStartFailsWhenClaudeNeverShowsItsBannerAfterItsTrustDialog(t *testing.T) {
+func TestStartFailsWhenClaudeNeverBecomesReadyAfterItsTrustDialog(t *testing.T) {
 	shrinkPaneBusyWait(t, 20*time.Millisecond)
-	c, _ := notReadyThenTrusted(t, claudeTrustScreen, "/repo claude --model sonnet\n")
+	c, _ := notReadyThenTrustedBlocked(t, claudeTrustScreen, "/repo claude --model sonnet\n", "unknown", 1<<30)
 
 	_, err := c.Start("w8P:p1", "a1", "claude", nil)
 
-	if err == nil || err.Error() != "herdr: agent a1 never showed claude's prompt after the trust dialog" {
+	if err == nil || !strings.Contains(err.Error(), "herdr: agent a1 never became ready after the trust dialog") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -1021,13 +987,6 @@ func TestSendTextToAnAgentWithoutAPaneFails(t *testing.T) {
 	assertArgv(t, argv(), []string{"agent", "get", "a1"})
 }
 
-const (
-	shortCodexScreen  = "│ model:     gpt-5.5 high   /model to change │\n│ directory: /repo/.r-loop/wt/phase-47        │\n╰─────────────────────────────────────────────╯\n\n  Tip: Use /review to review your changes.\n\n› Ask Codex to do anything\n\n  ? for shortcuts                 100% context left\n"
-	codexHistory      = "╭─────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.155.0)                  │\n│                                             │\n" + shortCodexScreen
-	shortClaudeScreen = "  ⎿ Tip: Use /review to review your changes\n\n❯\n  -- INSERT --\n"
-	claudeHistory     = " ▐▛███▛█   Claude Code v2.1.280\n" + shortClaudeScreen
-)
-
 func withHistory(t *testing.T, c Client, history string) Client {
 	t.Helper()
 	dir := t.TempDir()
@@ -1043,42 +1002,6 @@ func withHistory(t *testing.T, c Client, history string) Client {
 		t.Fatal(err)
 	}
 	return Client{Bin: bin}
-}
-
-func TestStartFindsCodexsPromptInAShortPaneWhoseBannerScrolledOff(t *testing.T) {
-	shrinkPaneBusyWait(t, 200*time.Millisecond)
-	c, calls := codexBoot(t, []string{newTrustScreen}, []string{shortCodexScreen}, []string{"idle"})
-
-	_, err := withHistory(t, c, codexHistory).Start("w4M:p2", "rv", "codex", nil)
-
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	if n := countCalls(calls(), "send-keys", "rv", "enter"); n != 1 {
-		t.Fatalf("enter pressed %d times, calls %q", n, calls())
-	}
-}
-
-func TestStartFailsWhenCodexsBannerIsNeitherOnScreenNorInHistory(t *testing.T) {
-	shrinkPaneBusyWait(t, 50*time.Millisecond)
-	c, _ := codexBoot(t, []string{shortCodexScreen}, nil, []string{"idle"})
-
-	_, err := withHistory(t, c, shortCodexScreen).Start("w4M:p2", "rv", "codex", nil)
-
-	if err == nil || !strings.Contains(err.Error(), "never showed codex's prompt") {
-		t.Fatalf("got %v", err)
-	}
-}
-
-func TestStartFindsClaudesBannerInAShortPaneWhoseBannerScrolledOff(t *testing.T) {
-	shrinkPaneBusyWait(t, 200*time.Millisecond)
-	c, _ := notReadyThenTrusted(t, claudeTrustScreen, shortClaudeScreen)
-
-	_, err := withHistory(t, c, claudeHistory).Start("w8P:p1", "rloop-wd-run-1", "claude", nil)
-
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
 }
 
 func wrapAt(screen string, width int) string {
@@ -1150,5 +1073,174 @@ func TestStartAnswersClaudesTrustDialogWrappedInANarrowPaneThatHerdrReportsNotRe
 	}
 	if countCalls(calls(), "send-keys", "rloop-wd-run-1", "down") != 1 || countCalls(calls(), "send-keys", "rloop-wd-run-1", "enter") != 1 {
 		t.Fatalf("trust dialog not answered, calls %q", calls())
+	}
+}
+
+const narrowClaudeScreen = " ▐▛███\n▝▜████\n ▝▝\n──────\n❯ Try…"
+
+func noKeys(t *testing.T, calls [][]string) {
+	t.Helper()
+	for _, call := range calls {
+		if call[1] == "send-keys" {
+			t.Fatalf("pressed keys: %q", call)
+		}
+	}
+}
+
+func TestStartIsReadyWhenHerdrSaysIdleWithNoBannerAnywhere(t *testing.T) {
+	for _, kind := range []string{"claude", "codex"} {
+		t.Run(kind, func(t *testing.T) {
+			shrinkPaneBusyWait(t, 50*time.Millisecond)
+			c, calls := codexBoot(t, []string{narrowClaudeScreen}, nil, []string{"idle"})
+
+			agent, err := c.Start("w8P:p1", "rloop-wd-run-1", kind, nil)
+
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			if agent != (core.Agent{Name: "rloop-wd-run-1", Pane: "w8P:p1"}) {
+				t.Fatalf("agent %+v", agent)
+			}
+			noKeys(t, calls())
+		})
+	}
+}
+
+func TestStartTreatsAgentNotReadyAsStarted(t *testing.T) {
+	for _, kind := range []string{"claude", "codex"} {
+		t.Run(kind, func(t *testing.T) {
+			shrinkPaneBusyWait(t, 5*time.Second)
+			c, calls := notReadyThenTrustedBlocked(t, narrowClaudeScreen, narrowClaudeScreen, "working", 2)
+
+			agent, err := c.Start("w8P:p1", "rloop-wd-run-1", kind, nil)
+
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			if agent != (core.Agent{Name: "rloop-wd-run-1", Pane: "w8P:p1"}) {
+				t.Fatalf("agent %+v", agent)
+			}
+			noKeys(t, calls())
+		})
+	}
+}
+
+func TestStartAnswersClaudesTrustDialogFoundOnlyInHistory(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := notReadyThenTrusted(t, "   Enter to confirm · Esc to cancel\n", narrowClaudeScreen)
+
+	_, err := withHistory(t, c, claudeTrustScreen).Start("w8P:p1", "rloop-wd-run-1", "claude", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if countCalls(calls(), "send-keys", "rloop-wd-run-1", "down") != 1 || countCalls(calls(), "send-keys", "rloop-wd-run-1", "enter") != 1 {
+		t.Fatalf("trust dialog not answered, calls %q", calls())
+	}
+}
+
+func TestStartAnswersCodexsTrustDialogFoundOnlyInHistory(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := codexBoot(t, []string{"› 1. Trust and continue\n  2. Quit\n"}, []string{narrowClaudeScreen}, []string{"blocked", "idle"})
+
+	_, err := withHistory(t, c, newTrustScreen).Start("w4M:p2", "rv", "codex", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if n := countCalls(calls(), "send-keys", "rv", "enter"); n != 1 {
+		t.Fatalf("enter pressed %d times, calls %q", n, calls())
+	}
+}
+
+func TestStartAnswersClaudesTrustDialogWrappedAtNineColumns(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := scripted(t, wrapAt(claudeTrustScreen, 9), narrowClaudeScreen)
+
+	_, err := c.Start("w8P:p1", "rloop-wd-run-1", "claude", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if countCalls(calls(), "send-keys", "rloop-wd-run-1", "down") != 1 || countCalls(calls(), "send-keys", "rloop-wd-run-1", "enter") != 1 {
+		t.Fatalf("trust dialog not answered, calls %q", calls())
+	}
+}
+
+func TestStartAnswersCodexsTrustDialogWrappedAtNineColumns(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := codexBoot(t, []string{wrapAt(newTrustScreen, 9)}, []string{narrowClaudeScreen}, []string{"blocked", "idle"})
+
+	_, err := c.Start("w4M:p2", "rv", "codex", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if n := countCalls(calls(), "send-keys", "rv", "enter"); n != 1 {
+		t.Fatalf("enter pressed %d times, calls %q", n, calls())
+	}
+}
+
+func TestSplitPassesRatioWhenSet(t *testing.T) {
+	c, argv := fake(t, `{"id":"cli:pane:split","result":{"pane":{"pane_id":"w3A:p4","workspace_id":"w3A"},"type":"pane_info"}}`)
+
+	pane, err := c.Split("w3A:p2", "down", "/repo/wt", 0.5, nil)
+
+	if err != nil || pane != "w3A:p4" {
+		t.Fatalf("got %q, %v", pane, err)
+	}
+	assertArgv(t, argv(), []string{"pane", "split", "--pane", "w3A:p2", "--direction", "down", "--ratio", "0.5", "--cwd", "/repo/wt", "--no-focus"})
+}
+
+const layoutJSON = `{"id":"cli:pane:layout","result":{"layout":{"area":{"height":52,"width":156,"x":0,"y":0},"focused_pane_id":"wJH:p1","panes":[{"focused":true,"pane_id":"wJH:p1","rect":{"height":52,"width":39,"x":0,"y":0}},{"focused":false,"pane_id":"wJH:p2","rect":{"height":36,"width":117,"x":39,"y":0}},{"focused":false,"pane_id":"wJH:p4","rect":{"height":16,"width":117,"x":39,"y":36}}],"splits":[],"tab_id":"wJH:t1","workspace_id":"wJH","zoomed":false},"type":"pane_layout"}}`
+
+func TestPaneSizeReadsThePanesRectFromItsTabsLayout(t *testing.T) {
+	c, argv := fake(t, layoutJSON)
+
+	cols, rows, err := c.PaneSize("wJH:p4")
+
+	if err != nil || cols != 117 || rows != 16 {
+		t.Fatalf("got %dx%d, %v", cols, rows, err)
+	}
+	assertArgv(t, argv(), []string{"pane", "layout", "--pane", "wJH:p4"})
+}
+
+func TestPaneSizeOfAPaneMissingFromTheLayoutIsAnError(t *testing.T) {
+	c, _ := fake(t, layoutJSON)
+
+	if _, _, err := c.PaneSize("wJH:p9"); err == nil || !strings.Contains(err.Error(), "wJH:p9") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestOpenTabCreatesATabInTheWorkspaceAndReturnsItsRootPane(t *testing.T) {
+	c, argv := fake(t, `{"id":"cli:tab:create","result":{"root_pane":{"agent_status":"unknown","cwd":"/private/tmp","pane_id":"wJH:p3","tab_id":"wJH:t2","workspace_id":"wJH"},"tab":{"label":"probe-tab","number":2,"pane_count":1,"tab_id":"wJH:t2","workspace_id":"wJH"},"type":"tab_created"}}`)
+
+	pane, err := c.OpenTab("wJH", core.OpenSpec{CWD: "/repo", Label: "◆ watchdog", Env: map[string]string{"R_LOOP_RUN": "r1", "A": "b"}})
+
+	if err != nil || pane != "wJH:p3" {
+		t.Fatalf("got %q, %v", pane, err)
+	}
+	assertArgv(t, argv(), []string{"tab", "create", "--workspace", "wJH", "--cwd", "/repo", "--label", "◆ watchdog", "--env", "A=b", "--env", "R_LOOP_RUN=r1", "--no-focus"})
+}
+
+func TestStateSeqReadsTheStatusAndStateChangeSeq(t *testing.T) {
+	c, argv := fake(t, `{"id":"cli:agent:get","result":{"agent":{"agent":"claude","agent_status":"blocked","name":"a1","pane_id":"w2X:p1","revision":34,"state_change_seq":2348},"type":"agent_info"}}`)
+
+	st, seq, err := c.StateSeq("a1")
+
+	if err != nil || st != core.AgentBlocked || seq != 2348 {
+		t.Fatalf("got %q %d, %v", st, seq, err)
+	}
+	assertArgv(t, argv(), []string{"agent", "get", "a1"})
+}
+
+func TestStateSeqOfMissingAgentIsGone(t *testing.T) {
+	c, _ := fakeExit(t, "", `{"error":{"code":"agent_not_found","message":"agent target a1 not found"},"id":"cli:agent:get"}`, 1)
+
+	st, seq, err := c.StateSeq("a1")
+
+	if err != nil || st != core.AgentGone || seq != 0 {
+		t.Fatalf("got %q %d, %v", st, seq, err)
 	}
 }
