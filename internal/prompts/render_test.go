@@ -514,7 +514,7 @@ func TestPlanListsPhaseWarningsOnlyWhenSet(t *testing.T) {
 func TestPlanNamesItsStructure(t *testing.T) {
 	text := render(t, New(t.TempDir()), "plan", fullVars())
 
-	for _, want := range []string{"status: planned", "## Summary", "## Changes", "## Tests", "## Assumptions", "- [ ] render prompts", "/wt/phase-7"} {
+	for _, want := range []string{"status: planned", "## Summary", "## Changes", "## Tests", "## Assumptions", "- [ ] render prompts", "/wt/phase-7", "one test per list item or table row"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("plan missing %q", want)
 		}
