@@ -191,8 +191,8 @@ case "$MODE" in
       grep -q 'no response to nudge' "$EV" && fail "stalled: no response to nudge present" || ok "no 'no response to nudge'"
     fi
     grep -q 'watchdog · d1' "$OUT/frames/dialog-120x40.txt" 2>/dev/null && ok "TUI row shows 'watchdog · d1' at 120x40" || fail "no 'watchdog · d1' in the dialog frame (frame may have been taken after it closed)"
-    grep -q -i 'dialog' "$OUT/status.txt" && ok "status --plain lists the dialog: $(grep -i dialog "$OUT/status.txt" | head -2 | tr '\n' ' ')" || fail "status --plain has no dialog line"
-    grep -q -i 'dialog' "$OUT/report.md" 2>/dev/null && ok "report.md lists the dialog: $(grep -i dialog "$OUT/report.md" | head -2 | tr '\n' ' ')" || fail "report.md has no dialog line"
+    grep -q '^d1 phase-1/implement: dialog → ' "$OUT/status.txt" && ok "status --plain lists the dialog: $(grep 'dialog → ' "$OUT/status.txt" | head -2 | tr '\n' ' ')" || fail "status --plain has no 'd1 phase-1/implement: dialog →' line"
+    grep -q '^- d1 phase-1/implement: dialog → ' "$OUT/report.md" 2>/dev/null && ok "report.md lists the dialog: $(grep 'dialog → ' "$OUT/report.md" | head -2 | tr '\n' ' ')" || fail "report.md has no '- d1 phase-1/implement: dialog →' line"
     ;;
 esac
 python3 "$ROOT/.claude/skills/test-app/e2e/native_review_check.py" "$S" "$RUN" > "$OUT/native-review-check.txt"; nrc=$?
