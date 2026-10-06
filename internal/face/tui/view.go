@@ -186,6 +186,10 @@ func (m Model) panel(w, room int) []string {
 			}
 			add(th.Text, field("backstop", backstop))
 		}
+	} else if i := slices.IndexFunc(m.Questions, func(q Question) bool { return q.Blocker }); i >= 0 {
+		s := &Step{Phase: m.Questions[i].Phase, Kind: m.Questions[i].Step}
+		add(th.Text, fmt.Sprintf("PHASE %s · %s", s.Phase, s.Kind))
+		add(th.Text, field("waiting", m.waiting(s)))
 	} else {
 		add(th.Label, "no step running")
 	}

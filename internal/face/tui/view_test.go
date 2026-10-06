@@ -368,6 +368,34 @@ func TestTheLandingLineGoesWhenTheLandingBlocks(t *testing.T) {
 	}
 }
 
+func TestALandBlockerShowsOnItsPhaseUntilResolved(t *testing.T) {
+	m := newModel(nil)
+	m.Now = at(10)
+	m = m.Apply(core.Event{At: at(2), Kind: "phase-start", Phase: "1"})
+	m = m.Apply(core.Event{At: at(2), Kind: "land-stage", Phase: "1", Step: "land", Fields: map[string]string{"phase": "1", "stage": "gate", "command": "go test ./..."}})
+	m = m.Apply(core.Event{At: at(3), Kind: "blocked-on", Phase: "1", Step: "land", Fields: map[string]string{"id": "b1", "source": "land", "phase": "1", "step": "land", "reason": "gate failed"}})
+
+	for _, w := range []int{120, 70} {
+		m.Width = w
+		view := ansi.Strip(m.View())
+		fits(t, m.View(), w, 40)
+		for _, want := range []string{"PHASE 1 · land", "waiting    watchdog · b1 · 7m0s"} {
+			if !strings.Contains(view, want) {
+				t.Errorf("width %d: missing %q in\n%s", w, want, view)
+			}
+		}
+		if strings.Contains(view, "no step running") {
+			t.Errorf("width %d: blocked phase reads as idle:\n%s", w, view)
+		}
+	}
+
+	m = m.Apply(core.Event{At: at(4), Kind: "blocker-resolved", Phase: "1", Step: "land", Fields: map[string]string{"id": "b1", "action": "block", "by": "watchdog", "source": "land"}})
+
+	if view := ansi.Strip(m.View()); strings.Contains(view, "watchdog · b1") || !strings.Contains(view, "no step running") {
+		t.Fatalf("resolved blocker still shown:\n%s", view)
+	}
+}
+
 func TestTheReviewBlockShowsEachRoundOnOneLine(t *testing.T) {
 	m := newModel(reviewed())
 	m.Now = at(50)
