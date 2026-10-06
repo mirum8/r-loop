@@ -135,6 +135,16 @@ EOF
   [ "$r" = 0 ] || fails=$((fails + 1))
 }
 
+wait_long() {
+  wl_end=$(( $(date +%s) + $2 ))
+  while :; do
+    "$TUI" wait-for "$H" "$1" --timeout 120 2> "$OUT/wait.err"; wl_rc=$?
+    [ "$wl_rc" = 6 ] && [ "$(date +%s)" -lt "$wl_end" ] && continue
+    [ "$wl_rc" = 0 ] || cat "$OUT/wait.err" >&2
+    return "$wl_rc"
+  done
+}
+
 "$TUI" wait-for "$H" 'AGENTS' --timeout 180; rc=$?
 if [ "$rc" = 0 ]; then
   sleep 1
@@ -143,7 +153,7 @@ else
   fail "wait-for AGENTS rc=$rc"
 fi
 
-"$TUI" wait-for "$H" '(●|✓|×) r1 ' --timeout 600; rc=$?
+wait_long '(●|✓|×) r1 ' 600; rc=$?
 if [ "$rc" = 0 ]; then
   sleep 1
   cap review-120x40 ansi && check review-120x40 120 40
@@ -158,8 +168,8 @@ else
   fail "wait-for r1 rc=$rc"
 fi
 
-"$TUI" wait-for "$H" '(●|✓|×) implement' --timeout 900 > /dev/null 2>&1
-"$TUI" wait-for "$H" '([0-9]+ findings?|(✓|×) r1  )' --timeout 900; rc=$?
+wait_long '(●|✓|×) implement' 900 > /dev/null 2>&1
+wait_long '([0-9]+ findings?|(✓|×) r1  )' 900; rc=$?
 [ "$rc" = 0 ] || echo "NOTE wait-for findings/folded r1 rc=$rc"
 sleep 1
 cap moved-on-120x40 ansi && check moved-on-120x40 120 40

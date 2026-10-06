@@ -207,6 +207,10 @@ else
   fi
 fi
 
+python3 "$ROOT/.claude/skills/test-app/e2e/native_review_check.py" "$S" "$RD" > "$OUT/native-review-check.txt"; nrc=$?
+sed 's/^/        /' "$OUT/native-review-check.txt"
+[ "$nrc" = 0 ] && ok "claude reviewers' native-review.txt checks" || fail "claude reviewers' native-review.txt checks: $(grep '^FAIL' "$OUT/native-review-check.txt" | tr '\n' ' ')"
+
 landed=$(grep '"Kind":"landed"' "$EV" | head -1)
 [ -n "$landed" ] && ok "phase landed: ${landed:0:200}" || fail "no landed event"
 

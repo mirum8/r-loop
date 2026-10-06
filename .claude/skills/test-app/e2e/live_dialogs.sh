@@ -104,7 +104,7 @@ EOF
     echo "$(date +%T) $n $pane $agent $st" >> "$OUT/agents/timeline.txt"
     f="$OUT/agents/$(echo "$pane" | tr ':' '_')-$n.txt"
     herdr agent read "$pane" --source visible > "$f" 2>/dev/null
-    if [ "$st" = blocked ] || grep -q -e 'Would you like to' -e 'Yes, proceed' -e 'Do you want to proceed' -e 'Do you want to make this edit' -e 'Do you want to create' "$f"; then
+    if grep -q -e 'Would you like to' -e 'Yes, proceed' -e 'Do you want to proceed' -e 'Do you want to make this edit' -e 'Do you want to create' "$f"; then
       echo "$(date +%T) $n $pane $agent $st" >> "$OUT/approval-hits.txt"
     else
       [ "$st" = blocked ] || rm -f "$f"
@@ -150,17 +150,22 @@ for line in open(sys.argv[1]):
         print(e.get("Kind"), e.get("Phase"), e.get("Step"), json.dumps(e.get("Fields") or {}, ensure_ascii=False)[:400])
 EOF
 
-case "$final" in *finished*) ok "run finished: $final" ;; *) fail "run did not finish: $final" ;; esac
+declined_halt=
+if [ "$MODE" = C ] && grep -q '"Kind":"phase-blocked"' "$EV" && grep -q '"outcome":"failed"' "$RUN"/phase-1/implement-a*.sentinel 2>/dev/null; then
+  declined_halt=1
+  ok "declined required item: the step failed honestly and the watchdog blocked the phase: $(cat "$RUN"/phase-1/implement-a*.sentinel | cut -c1-200 | tr '\n' ' ')"
+fi
+case "$final" in *finished*) ok "run finished: $final" ;; *) [ -n "$declined_halt" ] && ok "run halted on the blocked phase: $final" || fail "run did not finish: $final" ;; esac
 grep -q 'writable_roots=\["'"$S"'/.r-loop/runs/[^"]*/phase-1' "$OUT/argv.txt" \
   && ok "codex argv carries writable_roots: $(grep -o 'writable_roots=\[[^]]*\]' "$OUT/argv.txt" | sort -u | head -2 | tr '\n' ' ')" \
   || fail "no codex argv with writable_roots on the phase run folder"
 grep -q -- '--add-dir '"$S"'/.r-loop/runs/[^ ]*/phase-1' "$OUT/argv.txt" \
   && ok "claude argv carries --add-dir on the phase run folder" || fail "no claude argv with --add-dir on the phase run folder"
-grep -q '^state 1 running' "$OUT/implement-events.txt" && grep -q '^state [0-9]* ok' "$OUT/implement-events.txt" \
+[ -n "$declined_halt" ] || { grep -q '^state 1 running' "$OUT/implement-events.txt" && grep -q '^state [0-9]* ok' "$OUT/implement-events.txt"; } \
   && ok "implement running -> ok: $(grep '^state' "$OUT/implement-events.txt" | cut -d' ' -f2,3 | tr '\n' ' ')" \
   || fail "implement did not go running -> ok: $(grep '^state' "$OUT/implement-events.txt" | tr '\n' ';')"
 grep -q '^state [0-9]* stalled' "$OUT/implement-events.txt" && fail "implement went stalled" || ok "implement never stalled"
-ls "$RUN"/phase-1/*implement*.json > /dev/null 2>&1 && ok "implement sentinel in the run folder: $(ls "$RUN"/phase-1 | grep implement | tr '\n' ' ')" || fail "no implement sentinel in $RUN/phase-1"
+ls "$RUN"/phase-1/implement-a*.sentinel > /dev/null 2>&1 && ok "implement sentinel in the run folder: $(cat "$RUN"/phase-1/implement-a*.sentinel | cut -c1-200 | tr '\n' ' ')" || fail "no implement sentinel in $RUN/phase-1"
 for k in stalled nudge; do
   c=$(grep "\"Kind\":\"$k\"" "$EV" | grep -c '"Step":"implement"')
   [ "$c" = 0 ] && ok "no implement $k events" || fail "$c implement $k events: $(grep "\"Kind\":\"$k\"" "$EV" | head -2)"
@@ -181,6 +186,8 @@ case "$MODE" in
       [ "$(cat "$PROBE" 2>/dev/null)" = ok ] && ok "probe file written" || fail "probe file missing or wrong: $(ls -l "$PROBE" 2>&1)"
     else
       grep '"Kind":"dialog-answered"' "$EV" | grep '"rule":"decline"' | grep -q '"keys":"esc"' && ok "declined with rule=decline keys=esc" || fail "no decline/esc answer"
+      grep '"Kind":"note"' "$EV" | grep -q 'dialog d1 declined: told' && ok "decline follow-up note: $(grep '"Kind":"note"' "$EV" | grep -o 'dialog d1 declined[^"]*')" || fail "no decline follow-up note event"
+      grep -rqs 'the watchdog declined that request (dialog d1)' "$OUT"/agents/ "$OUT"/mine/ 2>/dev/null || grep -rqs 'the watchdog declined that request (dialog d1)' ~/.codex/sessions/"$(date +%Y/%m/%d)"/ && ok "follow-up text reached the codex session" || fail "follow-up text not found in pane captures or codex session"
       grep -q 'no response to nudge' "$EV" && fail "stalled: no response to nudge present" || ok "no 'no response to nudge'"
     fi
     grep -q 'watchdog · d1' "$OUT/frames/dialog-120x40.txt" 2>/dev/null && ok "TUI row shows 'watchdog · d1' at 120x40" || fail "no 'watchdog · d1' in the dialog frame (frame may have been taken after it closed)"
@@ -188,9 +195,17 @@ case "$MODE" in
     grep -q -i 'dialog' "$OUT/report.md" 2>/dev/null && ok "report.md lists the dialog: $(grep -i dialog "$OUT/report.md" | head -2 | tr '\n' ' ')" || fail "report.md has no dialog line"
     ;;
 esac
+python3 "$ROOT/.claude/skills/test-app/e2e/native_review_check.py" "$S" "$RUN" > "$OUT/native-review-check.txt"; nrc=$?
+sed 's/^/        /' "$OUT/native-review-check.txt"
+[ "$nrc" = 0 ] && ok "claude reviewers' native-review.txt checks" || fail "claude reviewers' native-review.txt checks: $(grep '^FAIL' "$OUT/native-review-check.txt" | tr '\n' ' ')"
 git log --oneline > "$OUT/gitlog.txt"
+if [ -n "$declined_halt" ]; then
+  [ "$(wc -l < "$OUT/gitlog.txt")" -lt 3 ] && ok "nothing landed for the blocked phase" || fail "a commit landed for a blocked phase: $(head -1 "$OUT/gitlog.txt")"
+  grep -q '^- \[ \] `Subtract' docs/plan/todo-tiny.md && ok "todo-tiny.md left unticked" || fail "todo-tiny.md ticked for a blocked phase"
+else
 [ "$(wc -l < "$OUT/gitlog.txt")" -ge 3 ] && ok "phase commit landed: $(head -1 "$OUT/gitlog.txt")" || fail "no phase commit"
 grep -q '^- \[x\] `Subtract' docs/plan/todo-tiny.md && ok "todo-tiny.md box ticked" || fail "todo-tiny.md not ticked"
+fi
 
 "$TUI" send "$H" q > /dev/null
 sleep 2

@@ -67,6 +67,25 @@ trap '"$TUI" stop "$H" > /dev/null 2>&1' EXIT
 echo "handle  $H"
 cp "$("$TUI" capture "$H")" "$OUT/frames/start-120x40.txt"
 
+(
+  while "$TUI" status "$H" 2>/dev/null | grep -q '^running'; do
+    EV=$(ls .r-loop/runs/*/events.jsonl 2>/dev/null | head -1)
+    if [ ! -f "$OUT/frames/blocker-120x40.txt" ] && [ -n "$EV" ] && grep -q '"Kind":"blocked-on"' "$EV"; then
+      sleep 0.3
+      cp "$("$TUI" capture "$H")" "$OUT/frames/blocker-120x40.txt"
+      cp "$("$TUI" capture "$H" --ansi)" "$OUT/frames/blocker-120x40.ansi"
+      "$BIN" status --plain > "$OUT/status-open.txt" 2>&1
+    fi
+    if [ -n "$EV" ] && grep '"Kind":"blocked-on"' "$EV" | grep -q '"source":"land"'; then
+      sleep 0.3
+      cp "$("$TUI" capture "$H")" "$OUT/frames/land-blocker-120x40.txt"
+      break
+    fi
+    sleep 0.2
+  done
+) &
+blocker_watch=$!
+
 start=$(date +%s)
 n=0
 final=""
@@ -101,13 +120,6 @@ EOF
       review_framed=1
       cp "$("$TUI" capture "$H")" "$OUT/frames/review-running-120x40.txt"
     fi
-    if [ -z "$blocker_framed" ] && grep -q '"Kind":"blocked-on"' "$EV"; then
-      blocker_framed=1
-      sleep 1
-      cp "$("$TUI" capture "$H")" "$OUT/frames/blocker-120x40.txt"
-      cp "$("$TUI" capture "$H" --ansi)" "$OUT/frames/blocker-120x40.ansi"
-      "$BIN" status --plain > "$OUT/status-open.txt" 2>&1
-    fi
   fi
   [ $((n % 4)) = 1 ] || { sleep 3; continue; }
   "$BIN" status --plain > "$OUT/status.txt" 2>&1
@@ -119,6 +131,7 @@ EOF
   [ $(( $(date +%s) - start )) -lt "$LIMIT" ] || { final="timeout after ${LIMIT}s"; break; }
   sleep 3
 done
+kill "$blocker_watch" 2>/dev/null
 echo "end     $final ($(( $(date +%s) - start ))s)"
 sleep 5
 cp "$("$TUI" capture "$H")" "$OUT/frames/end-120x40.txt"
@@ -191,6 +204,11 @@ case "$MODE" in
     grep -q '^b[0-9]* phase-1/.*→' "$OUT/status.txt" && ok "status lists: $(grep '^b[0-9]* phase-1/' "$OUT/status.txt" | sed 's/: .*→/ … →/' | tr '\n' ';')" || fail "status has no bN line"
     grep -q 'b[0-9]* phase-1/.*→' "$OUT/report.md" 2>/dev/null && ok "report lists: $(grep 'b[0-9]* phase-1/.*→' "$OUT/report.md" | tr '\n' ';')" || fail "report.md has no bN line"
     grep -q 'watchdog · b1' "$OUT/frames/blocker-120x40.txt" 2>/dev/null && ok "TUI row shows 'watchdog · b1' while open" || fail "no 'watchdog · b1' in the blocker frame"
+    if [ "$MODE" = C ]; then
+      lb=$(ev blocked-on | grep '"source":"land"' | head -1 | grep -o '"id":"b[0-9]*"' | cut -d'"' -f4)
+      grep -q 'PHASE 1 · land' "$OUT/frames/land-blocker-120x40.txt" 2>/dev/null && ok "land blocker frame heads 'PHASE 1 · land'" || fail "no 'PHASE 1 · land' in the land blocker frame"
+      grep -q "waiting    watchdog · $lb" "$OUT/frames/land-blocker-120x40.txt" 2>/dev/null && ok "land blocker frame shows 'waiting    watchdog · $lb'" || fail "no 'waiting    watchdog · $lb' in the land blocker frame"
+    fi
     [ "$stalled_workers" = 0 ] && ok "no stalled step state" || fail "$stalled_workers stalled step states"
     last=$(ev blocker-resolved | tail -1 | grep -o '"action":"[^"]*"' | cut -d'"' -f4)
     case "$last" in
