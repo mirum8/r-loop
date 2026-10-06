@@ -1348,7 +1348,9 @@ func (h *reportHost) Split(pane, direction, cwd string, ratio float64, env map[s
 func (h *reportHost) StateSeq(agent string) (core.AgentState, int64, error) {
 	return core.AgentWorking, 0, nil
 }
-func (h *reportHost) PaneSize(pane string) (int, int, error) { return 200, 60, nil }
+func (h *reportHost) PaneInfo(pane string) (core.PaneInfo, error) {
+	return core.PaneInfo{Workspace: "ws", Cols: 200, Rows: 60}, nil
+}
 func (h *reportHost) OpenTab(workspace string, spec core.OpenSpec) (string, error) {
 	return "", nil
 }

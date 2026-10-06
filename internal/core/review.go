@@ -194,6 +194,12 @@ type reviewerRun struct {
 	fail     *reviewerFail
 	findings int
 	skipped  bool
+	tab      bool
+}
+
+type slot struct {
+	pane, direction string
+	ratio           float64
 }
 
 type reviewerFail struct {
@@ -255,9 +261,25 @@ func (h ReviewHalf) open(ctx context.Context, worker *Session, rows []Reviewer, 
 		r.fail, r.out = f, sm.fail(r.s, f.reason)
 		return Outcome{}
 	}
+	room := h.columnRoom(worker, len(rows))
+	var col int
+	var last string
 	for i, rv := range rows {
 		runs[i] = &reviewerRun{rv: rv, required: required[i], args: args[i], url: urls[i], s: h.reviewer(worker, rv, required[i], args[i], urls[i], rd)}
-		if f := h.place(worker, runs, i, rd); f != nil {
+		var at slot
+		switch {
+		case col >= room:
+		case last == "":
+			at = slot{pane: worker.Pane, direction: "right"}
+		default:
+			at = slot{pane: last, direction: "down", ratio: 1 / float64(room-col+1)}
+		}
+		f := h.place(worker, runs[i], at, rd)
+		if f == nil && !runs[i].tab {
+			last = runs[i].s.Pane
+			col++
+		}
+		if f != nil {
 			if out := failed(runs[i], f); out.State == StepFailed {
 				return nil, out
 			}
@@ -303,28 +325,55 @@ func (h ReviewHalf) open(ctx context.Context, worker *Session, rows []Reviewer, 
 	return runs, Outcome{}
 }
 
-func (h ReviewHalf) place(worker *Session, runs []*reviewerRun, i int, rd reviewRound) *reviewerFail {
+func (h ReviewHalf) columnRoom(worker *Session, n int) int {
+	info, ok := paneFits(h.Sessions.Host, worker.Pane, "right", 0)
+	if !ok {
+		return 0
+	}
+	return min(n, info.Rows/minPaneRows)
+}
+
+func (h ReviewHalf) replaceSlot(worker *Session, runs []*reviewerRun, i int) slot {
+	if runs[i].tab {
+		return slot{}
+	}
+	at, tallest := slot{pane: worker.Pane, direction: "right"}, 0
+	for j, o := range runs {
+		if j == i || o == nil || o.skipped || o.tab || o.s.Pane == "" {
+			continue
+		}
+		if info, err := h.Sessions.Host.PaneInfo(o.s.Pane); err == nil && info.Rows > tallest {
+			at, tallest = slot{pane: o.s.Pane, direction: "down", ratio: 0.5}, info.Rows
+		}
+	}
+	return at
+}
+
+func (h ReviewHalf) place(worker *Session, r *reviewerRun, at slot, rd reviewRound) *reviewerFail {
 	sm := h.Sessions
-	r := runs[i]
 	id := r.rv.ID()
 	name, err := sm.freeAgent(worker.Ref.Key, "-rv-"+id, agentSuffix(rd.n, worker.Ref.Key.Attempt))
 	if err != nil {
 		return &reviewerFail{reason: "reviewer " + id + ": " + err.Error()}
 	}
 	r.s.Agent = name
-	target, direction := worker.Pane, "right"
-	for j := len(runs) - 1; j >= 0; j-- {
-		if o := runs[j]; j != i && o != nil && !o.skipped && o.s.Pane != "" {
-			target, direction = o.s.Pane, "down"
-			break
-		}
-	}
-	pane, err := sm.Host.Split(target, direction, worker.Dir, 0, map[string]string{
+	env := map[string]string{
 		"R_LOOP_RUN":      worker.Ref.Key.Run,
 		"R_LOOP_PHASE":    worker.Ref.Key.Phase,
 		"R_LOOP_STEP":     worker.Ref.Key.Kind,
 		"R_LOOP_REVIEWER": id,
-	})
+	}
+	var pane string
+	r.tab = at.pane == ""
+	if !r.tab {
+		_, fits := paneFits(sm.Host, at.pane, at.direction, at.ratio)
+		r.tab = !fits
+	}
+	if r.tab {
+		pane, err = sm.Host.OpenTab(worker.Workspace, OpenSpec{CWD: worker.Dir, Label: stepLabel(sm.Label, reviewerKey(worker.Ref.Key, id)), Env: env})
+	} else {
+		pane, err = sm.Host.Split(at.pane, at.direction, worker.Dir, at.ratio, env)
+	}
 	if err != nil {
 		return &reviewerFail{reason: "reviewer " + id + ": " + err.Error()}
 	}
@@ -517,8 +566,9 @@ func (h ReviewHalf) reopen(ctx context.Context, worker *Session, runs []*reviewe
 	if err := os.Remove(filepath.Join(s.Ref.Vars["ArtifactsDir"].(string), "native-review.txt")); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fail("reviewer " + s.Reviewer + ": " + err.Error())
 	}
+	at := h.replaceSlot(worker, runs, i)
 	r.s, r.fail = s, nil
-	if f := h.place(worker, runs, i, rd); f != nil {
+	if f := h.place(worker, r, at, rd); f != nil {
 		return fail(f.reason)
 	}
 	h.adopt(worker, runs)

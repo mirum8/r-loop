@@ -306,6 +306,7 @@ func TestWatchdogStartSplitsThenStartsThenPromptsWithoutWait(t *testing.T) {
 
 	want := []string{
 		"SessionHost.AgentPane " + dogName,
+		"SessionHost.PaneInfo driver-pane",
 		"SessionHost.Split driver-pane right /repo",
 		"SessionHost.Start pane-1 " + dogName + " claude [--model sonnet --effort low --mcp-config /run/wd.json]",
 		`SessionHost.Prompt ` + dogName + ` "watch the run" false 0s`,
@@ -343,7 +344,7 @@ func TestWatchdogWithoutModelAndEffortStartsWithNoSuchArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := host.Calls()[2]; got != "SessionHost.Start pane-1 "+dogName+" codex []" {
+	if got := host.Calls()[3]; got != "SessionHost.Start pane-1 "+dogName+" codex []" {
 		t.Errorf("start %q", got)
 	}
 }
@@ -387,6 +388,7 @@ func TestWatchdogStartClosesTheStaleWatchdogOfADeadDriverFirst(t *testing.T) {
 	want := []string{
 		"SessionHost.AgentPane " + dogName,
 		"SessionHost.ClosePane old-pane",
+		"SessionHost.PaneInfo driver-pane",
 		"SessionHost.Split driver-pane right /repo",
 		"SessionHost.Start pane-1 " + dogName + " claude []",
 		`SessionHost.Prompt ` + dogName + ` "watch the run" false 0s`,
@@ -416,7 +418,7 @@ func TestWatchdogStartRecordsItselfBeforeItOpensAPane(t *testing.T) {
 	}
 
 	calls := shared.Calls()
-	if len(calls) < 3 || calls[1] != "Store.Append run-1 event" || calls[2] != "SessionHost.Split driver-pane right /repo" {
+	if len(calls) < 3 || calls[1] != "Store.Append run-1 event" || calls[3] != "SessionHost.Split driver-pane right /repo" {
 		t.Fatalf("calls %q", calls)
 	}
 	if rec := store.Records["run-1"][0]; rec.Event.Kind != "watchdog-start" {
@@ -1401,5 +1403,132 @@ func TestAFailedFocusIsAWarningNotAnError(t *testing.T) {
 
 	if want := []string{"watchdog-waiting", "warning"}; !reflect.DeepEqual(emittedKinds(face), want) {
 		t.Fatalf("emitted %v, want %v", emittedKinds(face), want)
+	}
+}
+
+func placedEvent(t *testing.T, store *fakeStore) map[string]string {
+	t.Helper()
+	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event.Kind == "watchdog-placed" {
+			return rec.Event.Fields
+		}
+	}
+	t.Fatalf("no watchdog-placed in %+v", store.Records["run-1"])
+	return nil
+}
+
+func TestWatchdogSplitsBesideTheDriverWhenBothHalvesAreBigEnough(t *testing.T) {
+	for name, size := range map[string][2]int{"smallest": {120, 15}, "wide": {130, 60}} {
+		t.Run(name, func(t *testing.T) {
+			host := &fakeSessionHost{Sizes: map[string][2]int{"driver-pane": size}}
+			store := &fakeStore{}
+			dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+
+			if err := dog.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+
+			want := []string{
+				"SessionHost.AgentPane " + dogName,
+				"SessionHost.PaneInfo driver-pane",
+				"SessionHost.Split driver-pane right /repo",
+				"SessionHost.Start pane-1 " + dogName + " claude []",
+				`SessionHost.Prompt ` + dogName + ` "watch the run" false 0s`,
+			}
+			if got := host.Calls(); !reflect.DeepEqual(got, want) {
+				t.Errorf("calls\n got %q\nwant %q", got, want)
+			}
+			if got := placedEvent(t, store); !reflect.DeepEqual(got, map[string]string{"placed": "split", "pane": "pane-1"}) {
+				t.Errorf("placed %v", got)
+			}
+		})
+	}
+}
+
+func TestWatchdogOpensATabInTheDriversWorkspaceWhenTheSplitWouldBeTooSmall(t *testing.T) {
+	for name, size := range map[string][2]int{"narrow": {119, 60}, "short": {200, 14}} {
+		t.Run(name, func(t *testing.T) {
+			host := &fakeSessionHost{Sizes: map[string][2]int{"driver-pane": size}, PaneWS: map[string]string{"driver-pane": "wD"}}
+			store := &fakeStore{}
+			dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+			dog.Label = "api"
+
+			if err := dog.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if err := dog.Stop(); err != nil {
+				t.Fatal(err)
+			}
+
+			want := []string{
+				"SessionHost.AgentPane " + dogName,
+				"SessionHost.PaneInfo driver-pane",
+				"SessionHost.OpenTab wD /repo ◆ api watchdog map[]",
+				"SessionHost.Start pane-1 " + dogName + " claude []",
+				`SessionHost.Prompt ` + dogName + ` "watch the run" false 0s`,
+				"SessionHost.ClosePane pane-1",
+			}
+			if got := host.Calls(); !reflect.DeepEqual(got, want) {
+				t.Errorf("calls\n got %q\nwant %q", got, want)
+			}
+			if got := placedEvent(t, store); !reflect.DeepEqual(got, map[string]string{"placed": "tab", "pane": "pane-1"}) {
+				t.Errorf("placed %v", got)
+			}
+		})
+	}
+}
+
+func TestWatchdogOpensItsOwnWorkspaceWhenNoTabCanBeOpened(t *testing.T) {
+	host := &fakeSessionHost{Sizes: map[string][2]int{"driver-pane": {100, 60}}, TabErr: errors.New("herdr: workspace_not_found")}
+	store := &fakeStore{}
+	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+
+	if err := dog.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"SessionHost.AgentPane " + dogName,
+		"SessionHost.PaneInfo driver-pane",
+		"SessionHost.OpenTab ws-of-driver-pane /repo ◆ watchdog map[]",
+		"SessionHost.Open /repo ◆ watchdog map[]",
+		"SessionHost.Tag ws-1 map[rloop:◆ run run-1]",
+		"SessionHost.Start pane-1 " + dogName + " claude []",
+		`SessionHost.Prompt ` + dogName + ` "watch the run" false 0s`,
+		"SessionHost.Close ws-1",
+	}
+	if got := host.Calls(); !reflect.DeepEqual(got, want) {
+		t.Errorf("calls\n got %q\nwant %q", got, want)
+	}
+	if got := placedEvent(t, store); !reflect.DeepEqual(got, map[string]string{"placed": "workspace", "pane": "pane-1"}) {
+		t.Errorf("placed %v", got)
+	}
+}
+
+func TestWatchdogWhoseDriverPaneCannotBeMeasuredOpensItsOwnWorkspace(t *testing.T) {
+	host := &fakeSessionHost{InfoErr: errors.New("herdr: pane_not_found")}
+	store := &fakeStore{}
+	dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+
+	if err := dog.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"SessionHost.AgentPane " + dogName,
+		"SessionHost.PaneInfo driver-pane",
+		"SessionHost.Open /repo ◆ watchdog map[]",
+		"SessionHost.Tag ws-1 map[rloop:◆ run run-1]",
+		"SessionHost.Start pane-1 " + dogName + " claude []",
+		`SessionHost.Prompt ` + dogName + ` "watch the run" false 0s`,
+	}
+	if got := host.Calls(); !reflect.DeepEqual(got, want) {
+		t.Errorf("calls\n got %q\nwant %q", got, want)
+	}
+	if got := placedEvent(t, store); got["placed"] != "workspace" {
+		t.Errorf("placed %v", got)
 	}
 }

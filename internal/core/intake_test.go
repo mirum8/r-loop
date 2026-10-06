@@ -47,7 +47,7 @@ func TestIntakeInsideHerdrSplitsBesideTheDriverAndClosesThePane(t *testing.T) {
 	}
 
 	calls := host.Calls()
-	if calls[0] != "SessionHost.Split driver-pane right /repo" || calls[len(calls)-1] != "SessionHost.ClosePane pane-1" {
+	if calls[1] != "SessionHost.Split driver-pane right /repo" || calls[len(calls)-1] != "SessionHost.ClosePane pane-1" {
 		t.Fatalf("calls %q", calls)
 	}
 	if len(host.Splits) != 1 || host.Splits[0] != nil {
@@ -103,5 +103,62 @@ func TestALabelledIntakeOpensALabelledWorkspace(t *testing.T) {
 
 	if got := host.Opened[0].Label; got != "◆ test intake" {
 		t.Fatalf("label = %q", got)
+	}
+}
+
+func TestIntakeOpensATabInTheDriversWorkspaceWhenTheSplitWouldBeTooSmallAndClosesIt(t *testing.T) {
+	host := &fakeSessionHost{Sizes: map[string][2]int{"driver-pane": {100, 40}}, PaneWS: map[string]string{"driver-pane": "wD"}}
+	accepted := make(chan []string, 1)
+	accepted <- []string{"todo.md"}
+
+	if _, err := newIntake(host, "driver-pane").Run(context.Background(), accepted); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"SessionHost.PaneInfo driver-pane",
+		"SessionHost.OpenTab wD /repo ◆ intake map[]",
+		"SessionHost.Start pane-1 rloop-intake-42 codex [-c model=gpt-5.6-mini]",
+		`SessionHost.Prompt rloop-intake-42 "parse this" false 0s`,
+		"SessionHost.ClosePane pane-1",
+	}
+	if got := host.Calls(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("calls:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestIntakeOpensItsOwnWorkspaceWhenItsDriverPaneCannotBeMeasured(t *testing.T) {
+	host := &fakeSessionHost{InfoErr: errors.New("herdr: pane_not_found")}
+	accepted := make(chan []string, 1)
+	accepted <- []string{"todo.md"}
+
+	if _, err := newIntake(host, "driver-pane").Run(context.Background(), accepted); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"SessionHost.PaneInfo driver-pane",
+		"SessionHost.Open /repo ◆ intake map[]",
+		"SessionHost.Start pane-1 rloop-intake-42 codex [-c model=gpt-5.6-mini]",
+		`SessionHost.Prompt rloop-intake-42 "parse this" false 0s`,
+		"SessionHost.Close ws-1",
+	}
+	if got := host.Calls(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("calls:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestIntakeOpensItsOwnWorkspaceWhenNoTabCanBeOpened(t *testing.T) {
+	host := &fakeSessionHost{Sizes: map[string][2]int{"driver-pane": {100, 40}}, TabErr: errors.New("herdr: workspace_not_found")}
+	accepted := make(chan []string, 1)
+	accepted <- []string{"todo.md"}
+
+	if _, err := newIntake(host, "driver-pane").Run(context.Background(), accepted); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := host.Calls()
+	if calls[2] != "SessionHost.Open /repo ◆ intake map[]" || calls[len(calls)-1] != "SessionHost.Close ws-1" {
+		t.Fatalf("calls %q", calls)
 	}
 }

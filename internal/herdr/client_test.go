@@ -1194,21 +1194,21 @@ func TestSplitPassesRatioWhenSet(t *testing.T) {
 
 const layoutJSON = `{"id":"cli:pane:layout","result":{"layout":{"area":{"height":52,"width":156,"x":0,"y":0},"focused_pane_id":"wJH:p1","panes":[{"focused":true,"pane_id":"wJH:p1","rect":{"height":52,"width":39,"x":0,"y":0}},{"focused":false,"pane_id":"wJH:p2","rect":{"height":36,"width":117,"x":39,"y":0}},{"focused":false,"pane_id":"wJH:p4","rect":{"height":16,"width":117,"x":39,"y":36}}],"splits":[],"tab_id":"wJH:t1","workspace_id":"wJH","zoomed":false},"type":"pane_layout"}}`
 
-func TestPaneSizeReadsThePanesRectFromItsTabsLayout(t *testing.T) {
+func TestPaneInfoReadsThePanesRectAndWorkspaceFromItsTabsLayout(t *testing.T) {
 	c, argv := fake(t, layoutJSON)
 
-	cols, rows, err := c.PaneSize("wJH:p4")
+	info, err := c.PaneInfo("wJH:p4")
 
-	if err != nil || cols != 117 || rows != 16 {
-		t.Fatalf("got %dx%d, %v", cols, rows, err)
+	if err != nil || info != (core.PaneInfo{Workspace: "wJH", Cols: 117, Rows: 16}) {
+		t.Fatalf("got %+v, %v", info, err)
 	}
 	assertArgv(t, argv(), []string{"pane", "layout", "--pane", "wJH:p4"})
 }
 
-func TestPaneSizeOfAPaneMissingFromTheLayoutIsAnError(t *testing.T) {
+func TestPaneInfoOfAPaneMissingFromTheLayoutIsAnError(t *testing.T) {
 	c, _ := fake(t, layoutJSON)
 
-	if _, _, err := c.PaneSize("wJH:p9"); err == nil || !strings.Contains(err.Error(), "wJH:p9") {
+	if _, err := c.PaneInfo("wJH:p9"); err == nil || !strings.Contains(err.Error(), "wJH:p9") {
 		t.Fatalf("got %v", err)
 	}
 }

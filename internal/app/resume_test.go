@@ -149,7 +149,9 @@ func (h *simHost) Split(pane, direction, cwd string, ratio float64, env map[stri
 func (h *simHost) StateSeq(agent string) (core.AgentState, int64, error) {
 	return core.AgentWorking, 0, nil
 }
-func (h *simHost) PaneSize(pane string) (int, int, error) { return 200, 60, nil }
+func (h *simHost) PaneInfo(pane string) (core.PaneInfo, error) {
+	return core.PaneInfo{Workspace: "ws", Cols: 200, Rows: 60}, nil
+}
 func (h *simHost) OpenTab(workspace string, spec core.OpenSpec) (string, error) {
 	return "", nil
 }

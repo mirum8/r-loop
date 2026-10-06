@@ -64,6 +64,10 @@ type fakeSessionHost struct {
 	Seqs    map[string]int64
 	Sizes   map[string][2]int
 	Tabs    []OpenSpec
+	Ratios  []float64
+	PaneWS  map[string]string
+	InfoErr error
+	TabErr  error
 	Panes   map[string]string
 	Screens map[string]string
 	Err     error
@@ -166,20 +170,32 @@ func (f *fakeSessionHost) ClosePane(pane string) error {
 func (f *fakeSessionHost) Split(pane, direction, cwd string, ratio float64, env map[string]string) (string, error) {
 	f.record("SessionHost.Split %s %s %s", pane, direction, cwd)
 	f.Splits = append(f.Splits, env)
+	f.Ratios = append(f.Ratios, ratio)
 	f.next++
 	return fmt.Sprintf("pane-%d", f.next), f.Err
 }
 
-func (f *fakeSessionHost) PaneSize(pane string) (int, int, error) {
-	f.record("SessionHost.PaneSize %s", pane)
-	if size, ok := f.Sizes[pane]; ok {
-		return size[0], size[1], f.Err
+func (f *fakeSessionHost) PaneInfo(pane string) (PaneInfo, error) {
+	f.record("SessionHost.PaneInfo %s", pane)
+	err := f.Err
+	if f.InfoErr != nil {
+		err = f.InfoErr
 	}
-	return 200, 60, f.Err
+	ws := f.PaneWS[pane]
+	if ws == "" {
+		ws = "ws-of-" + pane
+	}
+	if size, ok := f.Sizes[pane]; ok {
+		return PaneInfo{Workspace: ws, Cols: size[0], Rows: size[1]}, err
+	}
+	return PaneInfo{Workspace: ws, Cols: 200, Rows: 60}, err
 }
 
 func (f *fakeSessionHost) OpenTab(workspace string, spec OpenSpec) (string, error) {
 	f.record("SessionHost.OpenTab %s %s %s %v", workspace, spec.CWD, spec.Label, spec.Env)
+	if f.TabErr != nil {
+		return "", f.TabErr
+	}
 	f.Tabs = append(f.Tabs, spec)
 	f.next++
 	pane := fmt.Sprintf("pane-%d", f.next)

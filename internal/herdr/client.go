@@ -174,11 +174,12 @@ func (c Client) Split(pane, direction, cwd string, ratio float64, env map[string
 	return out.Result.Pane.ID, nil
 }
 
-func (c Client) PaneSize(pane string) (int, int, error) {
+func (c Client) PaneInfo(pane string) (core.PaneInfo, error) {
 	var out struct {
 		Result struct {
 			Layout struct {
-				Panes []struct {
+				Workspace string `json:"workspace_id"`
+				Panes     []struct {
 					ID   string `json:"pane_id"`
 					Rect struct {
 						Width  int `json:"width"`
@@ -189,14 +190,14 @@ func (c Client) PaneSize(pane string) (int, int, error) {
 		} `json:"result"`
 	}
 	if err := c.call(&out, "pane", "layout", "--pane", pane); err != nil {
-		return 0, 0, err
+		return core.PaneInfo{}, err
 	}
 	for _, p := range out.Result.Layout.Panes {
 		if p.ID == pane {
-			return p.Rect.Width, p.Rect.Height, nil
+			return core.PaneInfo{Workspace: out.Result.Layout.Workspace, Cols: p.Rect.Width, Rows: p.Rect.Height}, nil
 		}
 	}
-	return 0, 0, fmt.Errorf("herdr: pane %s is not in its own layout", pane)
+	return core.PaneInfo{}, fmt.Errorf("herdr: pane %s is not in its own layout", pane)
 }
 
 func (c Client) OpenTab(workspace string, spec core.OpenSpec) (string, error) {

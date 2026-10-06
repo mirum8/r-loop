@@ -385,7 +385,9 @@ func (h *dogHost) StateSeq(agent string) (core.AgentState, int64, error) {
 	st, err := h.State(agent)
 	return st, 0, err
 }
-func (h *dogHost) PaneSize(pane string) (int, int, error) { return 200, 60, nil }
+func (h *dogHost) PaneInfo(pane string) (core.PaneInfo, error) {
+	return core.PaneInfo{Workspace: "ws", Cols: 200, Rows: 60}, nil
+}
 func (h *dogHost) OpenTab(workspace string, spec core.OpenSpec) (string, error) {
 	h.record("OpenTab %s %s %s", workspace, spec.CWD, spec.Label)
 	return "wd-tab-pane", nil
@@ -924,6 +926,11 @@ func (h *dialogSim) State(agent string) (core.AgentState, error) {
 		return core.AgentBlocked, nil
 	}
 	return core.AgentWorking, nil
+}
+
+func (h *dialogSim) StateSeq(agent string) (core.AgentState, int64, error) {
+	st, err := h.State(agent)
+	return st, 0, err
 }
 
 func (h *dialogSim) Screen(agent string) (string, error) {

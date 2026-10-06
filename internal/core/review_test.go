@@ -1689,3 +1689,188 @@ func TestAFixRoundSentinelCommitDecidesTheSubjectFinishCommitsUnder(t *testing.T
 		})
 	}
 }
+
+func reviewerEnv(id string) map[string]string {
+	return map[string]string{"R_LOOP_RUN": "run-1", "R_LOOP_PHASE": "3", "R_LOOP_STEP": "implement", "R_LOOP_REVIEWER": id}
+}
+
+func TestOneReviewerSplitsRightOfTheStepPane(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.host.Sizes = map[string][2]int{"pane-1": {156, 52}}
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	if out := r.run(); out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+
+	want := []string{"SessionHost.Split pane-1 right /repo/.r-loop/wt/phase-3"}
+	if got := r.callsFrom("SessionHost.Split", "SessionHost.OpenTab"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("placements =\n%s", strings.Join(got, "\n"))
+	}
+	if want := []float64{0}; !reflect.DeepEqual(r.host.Ratios, want) {
+		t.Fatalf("ratios = %v, want %v", r.host.Ratios, want)
+	}
+}
+
+func TestThreeReviewersDivideTheRightColumnEvenly(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"}, Reviewer{Provider: "claude", Name: "third"})
+	r.host.Sizes = map[string][2]int{"pane-1": {156, 52}}
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	if out := r.run(); out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+
+	wt := "/repo/.r-loop/wt/phase-3"
+	want := []string{"SessionHost.Split pane-1 right " + wt, "SessionHost.Split pane-2 down " + wt, "SessionHost.Split pane-3 down " + wt}
+	if got := r.callsFrom("SessionHost.Split", "SessionHost.OpenTab"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("placements =\n%s", strings.Join(got, "\n"))
+	}
+	if want := []float64{0, 1.0 / 3, 1.0 / 2}; !reflect.DeepEqual(r.host.Ratios, want) {
+		t.Fatalf("ratios = %v, want %v", r.host.Ratios, want)
+	}
+}
+
+func TestReviewersBeyondTheColumnsRoomOpenInTabsOfTheStepsWorkspace(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"}, Reviewer{Provider: "claude", Name: "c3"}, Reviewer{Provider: "codex", Name: "c4"})
+	r.host.Sizes = map[string][2]int{"pane-1": {156, 52}}
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	if out := r.run(); out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+
+	wt := "/repo/.r-loop/wt/phase-3"
+	want := []string{
+		"SessionHost.Split pane-1 right " + wt,
+		"SessionHost.Split pane-2 down " + wt,
+		"SessionHost.Split pane-3 down " + wt,
+		fmt.Sprintf("SessionHost.OpenTab %s %s ◆ p3 implement-rv-c4 %v", r.worker.Workspace, wt, reviewerEnv("c4")),
+	}
+	if got := r.callsFrom("SessionHost.Split", "SessionHost.OpenTab"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("placements =\n%s", strings.Join(got, "\n"))
+	}
+	if want := []float64{0, 1.0 / 3, 1.0 / 2}; !reflect.DeepEqual(r.host.Ratios, want) {
+		t.Fatalf("ratios = %v, want %v", r.host.Ratios, want)
+	}
+	if n := len(r.callsFrom("SessionHost.Start pane-5 ")); n != 1 {
+		t.Fatalf("tab reviewers not started: %q", r.shared.Calls())
+	}
+}
+
+func TestReviewersBesideATooSmallStepPaneAllOpenInTabs(t *testing.T) {
+	for name, size := range map[string][2]int{"narrow": {119, 52}, "short": {156, 14}} {
+		t.Run(name, func(t *testing.T) {
+			r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"}, Reviewer{Provider: "claude", Name: "third"})
+			r.host.Sizes = map[string][2]int{"pane-1": size}
+			r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+			if out := r.run(); out.State != StepOK {
+				t.Fatalf("outcome = %+v", out)
+			}
+
+			if len(r.host.Ratios) != 0 || len(r.host.Tabs) != 3 {
+				t.Fatalf("calls = %q", r.shared.Calls())
+			}
+			for i, id := range []string{"claude", "codex", "third"} {
+				if !reflect.DeepEqual(r.host.Tabs[i].Env, reviewerEnv(id)) {
+					t.Fatalf("tab %d env = %v", i, r.host.Tabs[i].Env)
+				}
+			}
+		})
+	}
+}
+
+func TestReviewersOfAStepPaneThatCannotBeMeasuredOpenInTabs(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
+	r.host.InfoErr = errors.New("herdr: pane_not_found")
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	if out := r.run(); out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+
+	if len(r.host.Ratios) != 0 || len(r.host.Tabs) != 2 {
+		t.Fatalf("calls = %q", r.shared.Calls())
+	}
+}
+
+func TestRound2ClosesTabReviewersAndPlacesTheColumnAgain(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
+	r.host.Sizes = map[string][2]int{"pane-1": {200, 29}}
+	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
+		findings := 0
+		if vars["Round"] == 1 {
+			findings = 1
+		}
+		writeReview(t, vars, "ok", findings)
+	}
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("claude-r1-1", "real", "P1", true, ""), entry("codex-r1-1", "real", "P2", true, ""))
+	}
+
+	if out := r.run(); out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+
+	wt := "/repo/.r-loop/wt/phase-3"
+	tab := fmt.Sprintf("SessionHost.OpenTab %s %s ◆ p3 implement-rv-codex %v", r.worker.Workspace, wt, reviewerEnv("codex"))
+	want := []string{
+		"SessionHost.Split pane-1 right " + wt,
+		tab,
+		"SessionHost.ClosePane pane-2",
+		"SessionHost.ClosePane pane-3",
+		"SessionHost.Split pane-1 right " + wt,
+		tab,
+	}
+	if got := r.callsFrom("SessionHost.Split", "SessionHost.OpenTab", "SessionHost.ClosePane"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("placements =\n%s", strings.Join(got, "\n"))
+	}
+}
+
+func TestRetrySplitsTheTallestColumnReviewerInHalf(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
+	r.host.Sizes = map[string][2]int{"pane-1": {200, 60}, "pane-2": {100, 60}}
+	failCodexOnce(t, r)
+
+	out, _ := r.runRaising(then(Resolution{Action: "retry", By: "watchdog"}))
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	wt := "/repo/.r-loop/wt/phase-3"
+	want := []string{
+		"SessionHost.Split pane-1 right " + wt,
+		"SessionHost.Split pane-2 down " + wt,
+		"SessionHost.ClosePane pane-3",
+		"SessionHost.Split pane-2 down " + wt,
+	}
+	if got := r.callsFrom("SessionHost.Split", "SessionHost.OpenTab", "SessionHost.ClosePane"); !reflect.DeepEqual(got[:len(want)], want) {
+		t.Fatalf("placements =\n%s", strings.Join(got, "\n"))
+	}
+	if want := []float64{0, 1.0 / 2, 1.0 / 2}; !reflect.DeepEqual(r.host.Ratios, want) {
+		t.Fatalf("ratios = %v, want %v", r.host.Ratios, want)
+	}
+}
+
+func TestRetryOfATabReviewerOpensANewTab(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.host.Sizes = map[string][2]int{"pane-1": {119, 60}}
+	failCodexOnce(t, r)
+
+	out, _ := r.runRaising(then(Resolution{Action: "retry", By: "watchdog"}))
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	tab := fmt.Sprintf("SessionHost.OpenTab %s %s ◆ p3 implement-rv-codex %v", r.worker.Workspace, "/repo/.r-loop/wt/phase-3", reviewerEnv("codex"))
+	want := []string{tab, "SessionHost.ClosePane pane-2", tab}
+	if got := r.callsFrom("SessionHost.Split", "SessionHost.OpenTab", "SessionHost.ClosePane"); !reflect.DeepEqual(got[:len(want)], want) {
+		t.Fatalf("placements =\n%s", strings.Join(got, "\n"))
+	}
+	if starts := r.callsFrom("SessionHost.Start pane-3 rloop-2kuxv-p3-implemen-8lgad-r1"); len(starts) != 1 {
+		t.Fatalf("reopened reviewer never started: %q", r.shared.Calls())
+	}
+}

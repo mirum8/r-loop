@@ -106,23 +106,21 @@ func (d *Watchdog) Start(ctx context.Context) error {
 }
 
 func (d *Watchdog) open() (string, string, error) {
-	if d.Pane != "" {
-		pane, err := d.Host.Split(d.Pane, "right", d.Root, 0, nil)
-		if err != nil {
-			return "", "", fmt.Errorf("split: %w", err)
-		}
-		return pane, "", nil
-	}
-	ws, err := d.Host.Open(OpenSpec{CWD: d.Root, Label: "◆ " + labelPrefix(d.Label) + "watchdog"})
+	pane, ws, placed, err := openBeside(d.Host, d.Pane, OpenSpec{CWD: d.Root, Label: "◆ " + labelPrefix(d.Label) + "watchdog"})
 	if err != nil {
-		return "", "", fmt.Errorf("open workspace: %w", err)
+		return "", "", err
 	}
-	if err := d.Host.Tag(ws.ID, map[string]string{"rloop": "◆ run " + d.RunID}); err != nil {
-		if err := d.record("warning", map[string]string{"reason": "tag watchdog workspace: " + err.Error()}); err != nil {
-			return "", "", err
+	if ws != "" {
+		if err := d.Host.Tag(ws, map[string]string{"rloop": "◆ run " + d.RunID}); err != nil {
+			if err := d.record("warning", map[string]string{"reason": "tag watchdog workspace: " + err.Error()}); err != nil {
+				return "", "", err
+			}
 		}
 	}
-	return ws.RootPane, ws.ID, nil
+	if err := d.record("watchdog-placed", map[string]string{"placed": placed, "pane": pane}); err != nil {
+		return "", "", err
+	}
+	return pane, ws, nil
 }
 
 func (d *Watchdog) record(kind string, fields map[string]string) error {

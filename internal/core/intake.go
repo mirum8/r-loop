@@ -43,18 +43,8 @@ func (in *Intake) Run(ctx context.Context, accepted <-chan []string) ([]string, 
 }
 
 func (in *Intake) open() (string, string, error) {
-	if in.Pane != "" {
-		pane, err := in.Host.Split(in.Pane, "right", in.Root, 0, nil)
-		if err != nil {
-			return "", "", fmt.Errorf("split: %w", err)
-		}
-		return pane, "", nil
-	}
-	ws, err := in.Host.Open(OpenSpec{CWD: in.Root, Label: "◆ " + labelPrefix(in.Label) + "intake"})
-	if err != nil {
-		return "", "", fmt.Errorf("open workspace: %w", err)
-	}
-	return ws.RootPane, ws.ID, nil
+	pane, ws, _, err := openBeside(in.Host, in.Pane, OpenSpec{CWD: in.Root, Label: "◆ " + labelPrefix(in.Label) + "intake"})
+	return pane, ws, err
 }
 
 func (in *Intake) converse(ctx context.Context, pane string, accepted <-chan []string) ([]string, error) {

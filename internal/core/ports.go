@@ -22,6 +22,11 @@ type Workspace struct {
 	ID, RootPane string
 }
 
+type PaneInfo struct {
+	Workspace  string
+	Cols, Rows int
+}
+
 type Agent struct {
 	Name, Pane string
 }
@@ -53,7 +58,7 @@ type SessionHost interface {
 	Close(workspaceID string) error
 	Tag(workspaceID string, tokens map[string]string) error
 	Split(pane, direction, cwd string, ratio float64, env map[string]string) (string, error)
-	PaneSize(pane string) (cols, rows int, err error)
+	PaneInfo(pane string) (PaneInfo, error)
 	OpenTab(workspace string, spec OpenSpec) (string, error)
 	ClosePane(pane string) error
 }
