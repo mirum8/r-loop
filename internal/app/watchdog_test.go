@@ -925,7 +925,7 @@ func (h *dialogSim) State(agent string) (core.AgentState, error) {
 	if h.asking(agent) {
 		return core.AgentBlocked, nil
 	}
-	return core.AgentWorking, nil
+	return h.simHost.State(agent)
 }
 
 func (h *dialogSim) StateSeq(agent string) (core.AgentState, int64, error) {

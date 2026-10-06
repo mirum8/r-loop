@@ -76,7 +76,7 @@ func newBaselineRig(t *testing.T) *baselineRig {
 
 func (b *baselineRig) manager() *SessionManager {
 	return &SessionManager{
-		Host:    &scriptedHost{},
+		Host:    &scriptedHost{script: func(int) AgentState { return AgentIdle }},
 		Repo:    b.repo,
 		Prompts: &fakePrompts{Texts: map[string]string{"plan": "plan it", "implement": "build it"}},
 		Store:   b.store,

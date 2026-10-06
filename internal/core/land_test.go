@@ -1327,7 +1327,7 @@ func (h *reportHost) Prompt(agent, text string, wait bool, timeout time.Duration
 	return os.WriteFile(sentinel, data, 0o644)
 }
 
-func (h *reportHost) State(agent string) (core.AgentState, error)  { return core.AgentWorking, nil }
+func (h *reportHost) State(agent string) (core.AgentState, error)  { return core.AgentIdle, nil }
 func (h *reportHost) AgentPane(agent string) (string, error)       { return "", nil }
 func (h *reportHost) Read(agent string, lines int) (string, error) { return "", nil }
 func (h *reportHost) Screen(agent string) (string, error)          { return "", nil }

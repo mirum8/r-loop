@@ -304,6 +304,7 @@ type watch struct {
 	elapsed, quiet time.Duration
 	stalled        bool
 	malformedAt    time.Time
+	okAt           time.Time
 }
 
 func (m *SessionManager) Wait(ctx context.Context, s *Session, obs Observer) Outcome {
@@ -378,7 +379,10 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 	}
 	sentinel, err := ReadSentinel(s.Sentinel)
 	if err == nil {
-		return m.judge(s, sentinel, nil), true
+		if sentinel.Outcome != "ok" {
+			return m.judge(s, sentinel, nil), true
+		}
+		return m.settle(w, sentinel, now, grace)
 	}
 	if errors.Is(err, ErrSentinelMalformed) {
 		if w.malformedAt.IsZero() {
@@ -459,6 +463,29 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 		n.Nudged(s)
 	}
 	return Outcome{}, false
+}
+
+func (m *SessionManager) settle(w *watch, sentinel Sentinel, now time.Time, grace time.Duration) (Outcome, bool) {
+	s := w.s
+	if w.okAt.IsZero() {
+		w.okAt = now
+	}
+	state, err := m.Host.State(s.Agent)
+	switch {
+	case err != nil, state == AgentIdle, state == AgentDone, state == AgentGone:
+	case now.Sub(w.okAt) >= grace:
+		if err := m.event(now, s, Event{Kind: "turn-overran-sentinel", Fields: map[string]string{"state": string(state), "after": grace.String()}}); err != nil {
+			return m.fail(s, "record: "+err.Error()), true
+		}
+	default:
+		if m.Dialogs != nil && state == AgentBlocked {
+			m.Dialogs.Blocked(s)
+		} else if m.Dialogs != nil && state == AgentWorking {
+			m.Dialogs.Unblocked(s)
+		}
+		return Outcome{}, false
+	}
+	return m.judge(s, sentinel, nil), true
 }
 
 func (m *SessionManager) askArgs(key StepKey, provider, model, effort, mcpPath, dir string) (ProviderArgs, string, error) {

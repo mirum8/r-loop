@@ -1334,6 +1334,9 @@ func TestAnAdmittedDialogSuspendsTheStallClockAndTheBackstop(t *testing.T) {
 		if n == 30 {
 			r.writeSentinel(t, s, "ok", "done")
 		}
+		if n > 30 {
+			return AgentIdle
+		}
 		return AgentBlocked
 	}
 	obs := &recObserver{}
@@ -1381,9 +1384,11 @@ func TestAnAgentThatLeavesBlockedTellsTheDialogs(t *testing.T) {
 			return AgentDone
 		case 5:
 			return AgentUnknown
+		case 6:
+			r.writeSentinel(t, s, "ok", "done")
+			return AgentWorking
 		}
-		r.writeSentinel(t, s, "ok", "done")
-		return AgentWorking
+		return AgentIdle
 	}
 
 	out := r.sm.Wait(context.Background(), s, &recObserver{})

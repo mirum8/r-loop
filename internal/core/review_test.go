@@ -84,7 +84,7 @@ func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
 	r.worker = s
 	r.resolved = nil
 	r.dirs = nil
-	r.host.script = func(int) AgentState { return AgentWorking }
+	r.host.script = func(int) AgentState { return AgentIdle }
 	return r
 }
 
@@ -688,6 +688,9 @@ func TestStepAgentClocksFrozenWhileReviewersWork(t *testing.T) {
 		if polls.Load() == 3 {
 			writeReview(t, r.reviews[0], "ok", 0)
 		}
+		if polls.Load() > 3 {
+			return AgentIdle
+		}
 		return AgentWorking
 	}
 
@@ -696,7 +699,7 @@ func TestStepAgentClocksFrozenWhileReviewersWork(t *testing.T) {
 	if out.State != StepOK {
 		t.Fatalf("outcome = %+v", out)
 	}
-	if polls.Load() != 3 || frozen.Load() != 3 {
+	if polls.Load() != 4 || frozen.Load() != 4 {
 		t.Fatalf("polls = %d, frozen = %d", polls.Load(), frozen.Load())
 	}
 	if r.worker.Reviewing.Load() {
@@ -780,6 +783,7 @@ func (h *stateHost) State(agent string) (AgentState, error) {
 func TestReviewerBackstopIsTheReviewTimeout(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "codex"})
 	r.worker.Ref.Kind.Row.ReviewTimeout = 5 * time.Minute
+	r.host.script = func(int) AgentState { return AgentWorking }
 
 	out := r.run()
 

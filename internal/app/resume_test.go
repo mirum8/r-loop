@@ -133,7 +133,14 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 	return nil
 }
 
-func (h *simHost) State(agent string) (core.AgentState, error)            { return core.AgentWorking, nil }
+func (h *simHost) State(agent string) (core.AgentState, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.hang[agentRole(agent)] {
+		return core.AgentWorking, nil
+	}
+	return core.AgentIdle, nil
+}
 func (h *simHost) AgentPane(agent string) (string, error)                 { return "", nil }
 func (h *simHost) Read(agent string, lines int) (string, error)           { return "", nil }
 func (h *simHost) Screen(agent string) (string, error)                    { return "", nil }
