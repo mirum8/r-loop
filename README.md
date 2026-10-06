@@ -158,7 +158,7 @@ With `--unattended`, the intake session starts the command without asking you. C
 |---|---|
 | `0` | All phases landed, or nothing was left to run. |
 | `1` | A step failed, or the run was aborted (also at the triage question). |
-| `2` | Bad usage, bad config or plan, or a git state problem. |
+| `2` | Bad usage, bad config or plan, a git state problem, or a detected language's toolchain missing for static analysis. |
 | `3` | A step stalled (no activity) and then failed. |
 | `4` | Preflight refused to start: dirty tree, herdr not reachable, watchdog did not start, and similar. Also: the triage did not finish within `watchdog.triageTimeout`, or was interrupted. `--cleanup` also exits 4 while a run is live. |
 | `5` | The watchdog halted the run, or is gone (also during the triage). |
@@ -249,6 +249,15 @@ The `ui` reviewer runs the project's `/test-app` skill. It needs
 | `gateTimeout` | `30m` | Time limit for the check command. |
 | `gateIdle` | `10m` | Kill the check command when it prints nothing this long, after a thread dump of any JVM under it; `0` turns it off. Its output streams to `.r-loop/runs/<id>/phase-<N>/gate.log`. |
 | `fix` | implement row | Optional block with `provider`, `model`, `effort` for the fix agent. A key it leaves out comes from the implement row; naming another provider requires `model` and `effort` too. |
+
+### `analyze`
+
+The `static` reviewer runs the project's own analyzers in every review round of `implement` and `gatefix`. The analyzers need no install: the project's toolchain fetches golangci-lint, govulncheck, PMD, SpotBugs and find-sec-bugs at versions pinned in r-loop and caches them. Semgrep runs too when it is on `PATH`. Preflight prints `static: <languages>` and exits 2 when a detected language's toolchain is missing: `go`, or the Maven or Gradle runner and `java`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | `false` turns the `static` reviewer off. |
+| `timeout` | `15m` | Time limit for one round's analysis, all languages and a Java compile included. |
 
 ### `watchdog`
 

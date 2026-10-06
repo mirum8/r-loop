@@ -972,3 +972,91 @@ func TestTriageTimeoutFromTheProjectFileWithProvenance(t *testing.T) {
 		t.Errorf("provenance = %q", got)
 	}
 }
+
+func TestAnalyzeIsOnWithAFifteenMinuteTimeoutByDefault(t *testing.T) {
+	// given
+	d := newDirs(t)
+
+	// when
+	actual := d.load(t)
+
+	// then
+	expected := Analyze{Enabled: true, Timeout: 15 * time.Minute}
+	if actual.Analyze != expected || actual.Provenance["analyze.enabled"] != "default" || actual.Provenance["analyze.timeout"] != "default" {
+		t.Fatalf("actual %+v, provenance %q %q", actual.Analyze, actual.Provenance["analyze.enabled"], actual.Provenance["analyze.timeout"])
+	}
+}
+
+func TestAnalyzeKeysFromTheProjectFileCarryTheirProvenance(t *testing.T) {
+	// given
+	d := newDirs(t)
+	d.writeProject(t, "analyze:\n  enabled: false\n  timeout: 5m\n")
+
+	// when
+	actual := d.load(t)
+
+	// then
+	expected := Analyze{Enabled: false, Timeout: 5 * time.Minute}
+	if actual.Analyze != expected ||
+		actual.Provenance["analyze.enabled"] != ".r-loop/config.yaml:analyze.enabled" ||
+		actual.Provenance["analyze.timeout"] != ".r-loop/config.yaml:analyze.timeout" {
+		t.Fatalf("actual %+v, provenance %q %q", actual.Analyze, actual.Provenance["analyze.enabled"], actual.Provenance["analyze.timeout"])
+	}
+}
+
+func TestNullAnalyzeEnabledFallsThroughToTheMachineFile(t *testing.T) {
+	// given
+	d := newDirs(t)
+	d.writeHome(t, "analyze:\n  enabled: false\n")
+	d.writeProject(t, "analyze:\n  enabled:\n")
+
+	// when
+	actual := d.load(t)
+
+	// then
+	if actual.Analyze.Enabled || actual.Provenance["analyze.enabled"] != "~/.config/r-loop/config.yaml:analyze.enabled" {
+		t.Fatalf("actual %+v, provenance %q", actual.Analyze, actual.Provenance["analyze.enabled"])
+	}
+}
+
+func TestUnknownAnalyzeKeyRejected(t *testing.T) {
+	// given
+	d := newDirs(t)
+	d.writeProject(t, "analyze:\n  languages: go\n")
+
+	// when
+	_, err := Load(d.project, d.home, nil)
+
+	// then
+	if err == nil || !strings.Contains(err.Error(), `.r-loop/config.yaml:2: unknown key "analyze.languages"`) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestAnalyzeEnabledThatIsNotABooleanIsRejected(t *testing.T) {
+	// given
+	d := newDirs(t)
+	d.writeProject(t, "analyze:\n  enabled: yes\n")
+
+	// when
+	_, err := Load(d.project, d.home, nil)
+
+	// then
+	if err == nil || !strings.Contains(err.Error(), `.r-loop/config.yaml:2: analyze.enabled: "yes" is not true or false`) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestAnalyzeTimeoutThatIsNotPositiveIsRejected(t *testing.T) {
+	// given
+	d := newDirs(t)
+	d.writeProject(t, "analyze:\n  timeout: 0s\n")
+
+	// when
+	_, err := Load(d.project, d.home, nil)
+
+	// then
+	if err == nil || !strings.Contains(err.Error(), `.r-loop/config.yaml:2: analyze.timeout: "0s" is not a positive duration`) {
+		t.Fatalf("err %v", err)
+	}
+}

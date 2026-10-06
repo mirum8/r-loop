@@ -74,6 +74,11 @@ type Land struct {
 	Fix         GateFix
 }
 
+type Analyze struct {
+	Enabled bool
+	Timeout time.Duration
+}
+
 type Unattended struct {
 	Allow []string
 }
@@ -90,6 +95,7 @@ type LoopConfig struct {
 	Watchdog   Watchdog
 	Intake     Intake
 	Land       Land
+	Analyze    Analyze
 	Unattended Unattended
 	Notify     Notify
 	Provenance map[string]string
@@ -129,6 +135,7 @@ var topSchema = schema{
 	"providers":  schema{"*": nil},
 	"intake":     roleSchema,
 	"land":       schema{"fixRounds": nil, "gateTimeout": nil, "gateIdle": nil, "fix": roleSchema},
+	"analyze":    schema{"enabled": nil, "timeout": nil},
 	"unattended": schema{"allow": nil},
 	"notify":     schema{"onHalt": nil, "onWarn": nil, "onDone": nil},
 	"watchdog": schema{
@@ -308,6 +315,20 @@ func (r *resolver) aliased(path, old string) (time.Duration, error) {
 		break
 	}
 	return r.duration(path)
+}
+
+func (r *resolver) boolean(path string) (bool, error) {
+	v, n, l, err := r.numeric(path)
+	if err != nil || n == nil {
+		return false, err
+	}
+	switch v {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	}
+	return false, errAt(l.file, n, "%s: %q is not true or false", path, v)
 }
 
 func (r *resolver) count(path string) (int, error) {
@@ -650,6 +671,12 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 		}
 	}
 	if cfg.Land.GateIdle, err = r.durationOrOff("land.gateIdle"); err != nil {
+		return err
+	}
+	if cfg.Analyze.Enabled, err = r.boolean("analyze.enabled"); err != nil {
+		return err
+	}
+	if cfg.Analyze.Timeout, err = r.duration("analyze.timeout"); err != nil {
 		return err
 	}
 	if w.BlockerTimeout, err = r.aliased("watchdog.blockerTimeout", "watchdog.remedyWindow"); err != nil {

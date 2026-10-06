@@ -988,3 +988,124 @@ func TestMigrateConfigWithNoFiles(t *testing.T) {
 		t.Fatalf("code=%d stdout=%q", code, f.out.String())
 	}
 }
+
+func toolchainPath(t *testing.T, tools ...string) {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	scripts := map[string]string{"git": "#!/bin/sh\nexec " + realGit + " \"$@\"\n"}
+	for _, tool := range tools {
+		scripts[tool] = "#!/bin/sh\nexit 0\n"
+	}
+	for name, script := range scripts {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	providers := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+providers)
+}
+
+func (f *fixture) markers(rels ...string) {
+	f.t.Helper()
+	for _, rel := range rels {
+		f.write(rel, "")
+	}
+	f.commit()
+}
+
+func TestPreflightPrintsTheStaticLine(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		markers  []string
+		tools    []string
+		expected string
+	}{
+		{"go with semgrep", []string{"go.mod"}, []string{"go", "semgrep"}, "static: go, semgrep\n"},
+		{"go without semgrep", []string{"go.mod"}, []string{"go"}, "static: go (semgrep not installed)\n"},
+		{"every language", []string{"go.mod", "svc/pom.xml", "app/build.gradle"}, []string{"go", "mvn", "gradle", "java"}, "static: go, maven, gradle (semgrep not installed)\n"},
+		{"no language with semgrep", nil, []string{"semgrep"}, "static: semgrep\n"},
+		{"nothing", nil, nil, "static: none (semgrep not installed)\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// given
+			f := newFixture(t)
+			f.markers(tc.markers...)
+			toolchainPath(t, tc.tools...)
+
+			// when
+			_, err := f.preflight(f.todo, "--plain")
+
+			// then
+			if err != nil || !strings.Contains(f.out.String(), tc.expected) {
+				t.Fatalf("err %v, out %q, expected %q", err, f.out, tc.expected)
+			}
+		})
+	}
+}
+
+func TestPreflightExitsTwoNamingAMissingToolchain(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		markers  []string
+		tools    []string
+		expected string
+	}{
+		{"go", []string{"go.mod"}, nil, "analyze: go module . needs go, not found on PATH"},
+		{"mvn", []string{"svc/pom.xml"}, []string{"java"}, "analyze: maven module svc needs mvn, not found on PATH"},
+		{"maven java", []string{"svc/pom.xml"}, []string{"mvn"}, "analyze: maven module svc needs java, not found on PATH"},
+		{"gradle", []string{"build.gradle"}, []string{"java"}, "analyze: gradle module . needs gradle, not found on PATH"},
+		{"gradle java", []string{"build.gradle"}, []string{"gradle"}, "analyze: gradle module . needs java, not found on PATH"},
+		{"gradlew", []string{"build.gradle", "settings.gradle", "gradlew"}, []string{"java"}, "analyze: gradle module . needs gradlew, which is not executable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// given
+			f := newFixture(t)
+			f.markers(tc.markers...)
+			toolchainPath(t, tc.tools...)
+
+			// when
+			_, err := f.preflight(f.todo, "--plain")
+
+			// then
+			if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), tc.expected) || f.herdrCalled() {
+				t.Fatalf("code=%d err=%v herdr called=%v, expected %q", code, err, f.herdrCalled(), tc.expected)
+			}
+		})
+	}
+}
+
+func TestPreflightChecksNoToolchainWhenAnalyzeIsOff(t *testing.T) {
+	// given
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "analyze:\n  enabled: false\n")
+	f.markers("go.mod")
+	toolchainPath(t)
+
+	// when
+	_, err := f.preflight(f.todo, "--plain")
+
+	// then
+	if err != nil || strings.Contains(f.out.String(), "static:") {
+		t.Fatalf("err %v, out %q", err, f.out)
+	}
+}
+
+func TestAMissingToolchainIsNotCheckedInDryRun(t *testing.T) {
+	// given
+	f := newFixture(t)
+	f.markers("go.mod")
+	toolchainPath(t)
+	f.fakeHerdr(1)
+
+	// when
+	code := f.main(f.todo, "--dry-run", "--plain")
+
+	// then
+	if code != 0 || !strings.Contains(f.out.String(), "static: go (semgrep not installed)\n") {
+		t.Fatalf("code=%d out=%q stderr=%q", code, f.out, f.err)
+	}
+}
