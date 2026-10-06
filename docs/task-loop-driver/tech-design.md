@@ -258,7 +258,7 @@ so.
   dir)` passes the phase run folder `<root>/.r-loop/runs/<runID>/phase-<N>/` for every session in a
   phase worktree — plan, implement, gatefix and their reviewers — and `""` for the primary-tree
   sessions: gate, milestone, watchdog, intake.
-  Shipped: `claude` (`--model {model}`, `--effort {effort}`, `--mcp-config {mcpConfig}`, `dirFlag: --add-dir {dir}`, `review: /code-review`) and
+  Shipped: `claude` (`--model {model}`, `--effort {effort}`, `--mcp-config {mcpConfig}`, `dirFlag: --add-dir {dir}`, `review: /code-review the uncommitted changes: …` — `git diff HEAD` plus untracked files, since a bare `/code-review` diffs only `main...HEAD`) and
   `codex` (`flags: -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true`, `models: debug models`, `-c model={model}`, `-c model_reasoning_effort={effort}`, `-c
   mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.default_tools_approval_mode=approve`, `dirFlag: -c sandbox_workspace_write.writable_roots=["{dir}"]`, `review: /review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.`, `reviewStart: >> Code review started`, `reviewDone: << Code review finished` — ADR-81, replacing `codex exec review --uncommitted {args} -o {output}`).
   `{mcpConfig}` is a per-agent file

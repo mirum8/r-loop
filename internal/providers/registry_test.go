@@ -69,7 +69,7 @@ func TestShippedClaudeBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Provider{Name: "claude", Kind: "claude", ModelFlag: "--model {model}", EffortFlag: "--effort {effort}",
-		AskFlag: "--mcp-config {mcpConfig}", DirFlag: "--add-dir {dir}", SettingsFlag: "--settings {settings}", DoneSignal: "sentinel", Ask: "mcp", Review: "/code-review", Source: "shipped"}
+		AskFlag: "--mcp-config {mcpConfig}", DirFlag: "--add-dir {dir}", SettingsFlag: "--settings {settings}", DoneSignal: "sentinel", Ask: "mcp", Review: "/code-review the uncommitted changes: `git diff HEAD` plus every untracked file from `git ls-files --others --exclude-standard`", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
 	}
@@ -346,7 +346,7 @@ func TestToCore(t *testing.T) {
 	got := ToCore(claude, "opus", "", "http://x", "/run/mcp.json", "")
 	plain := ToCore(pdev, "m", "e", "http://x", "/run/mcp.json", "")
 
-	want := core.ProviderArgs{Kind: "claude", Args: []string{"--model", "opus", "--mcp-config", "/run/mcp.json"}, Ask: true, Review: "/code-review"}
+	want := core.ProviderArgs{Kind: "claude", Args: []string{"--model", "opus", "--mcp-config", "/run/mcp.json"}, Ask: true, Review: "/code-review the uncommitted changes: `git diff HEAD` plus every untracked file from `git ls-files --others --exclude-standard`"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v\nwant %+v", got, want)
 	}
@@ -378,7 +378,7 @@ func TestToCoreFillsTheReviewArgsWithFlagsModelAndEffort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ToCore(claude, "", "", "http://x", "", "").Review; got != "/code-review" {
+	if got := ToCore(claude, "", "", "http://x", "", "").Review; got != "/code-review the uncommitted changes: `git diff HEAD` plus every untracked file from `git ls-files --others --exclude-standard`" {
 		t.Fatalf("claude review = %q", got)
 	}
 }
