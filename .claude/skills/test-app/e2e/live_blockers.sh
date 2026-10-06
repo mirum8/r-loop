@@ -86,7 +86,7 @@ EOF
   while read -r pane agent st; do
     echo "$(date +%T) $n $pane $agent $st" >> "$OUT/agents/timeline.txt"
     f="$OUT/agents/$(echo "$pane" | tr ':' '_')-$n.txt"
-    herdr agent read "$pane" --source visible > "$f" 2>/dev/null
+    herdr agent read "$pane" --source recent-unwrapped --lines 200 > "$f" 2>/dev/null
     hit=""
     grep -q -e '/review' -e 'Code review' -e 'review-plan' -e 'codex exec review' "$f" && hit=1
     if [ -n "$hit" ]; then
@@ -169,8 +169,9 @@ case "$MODE" in
     [ -n "$NR" ] && [ -s "$NR" ] && ok "native-review.txt: $NR ($(wc -c < "$NR") bytes)" && cp "$NR" "$OUT/native-review.txt" || fail "no non-empty implement native-review.txt under $RUN/phase-1"
     ev review-find | grep '"Step":"implement"' | grep -q '"state":"ok"' && ok "implement review-find ok: $(ev review-find | grep '"Step":"implement"' | head -1 | grep -o '"Fields":{[^}]*}')" || fail "implement review-find not ok"
     [ "$blocked" = 0 ] && ok "zero blocked-on events" || fail "$blocked blocked-on events: $(ev blocked-on | head -2)"
-    git log --oneline > "$OUT/gitlog.txt"
-    grep -q 'phase 1' "$OUT/gitlog.txt" && ok "phase commit landed: $(grep 'phase 1' "$OUT/gitlog.txt" | head -1)" || fail "no phase commit"
+    git log --format='%H %P | %s' > "$OUT/gitlog.txt"
+    LM=$(ev landed | grep -o '"merge":"[0-9a-f]*"' | head -1 | cut -d'"' -f4)
+    [ -n "$LM" ] && grep -Eq "^$LM [0-9a-f]+ [0-9a-f]+ \| " "$OUT/gitlog.txt" && ok "phase merge commit landed: $(git log -1 --format='%h %s' "$LM")" || fail "no landed --no-ff merge commit (landed merge '$LM')"
     grep -q '^- \[x\] `Subtract' docs/plan/todo-tiny.md && ok "todo-tiny.md box ticked" || fail "todo-tiny.md not ticked"
     ;;
   B|C)

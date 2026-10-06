@@ -19,7 +19,7 @@ TUI="${TUI:-/Users/mirum8/.claude/skills/r/skills/test-app-create/scripts/tui-se
 LIMIT="${LIVE_LIMIT:-2700}"
 OUT="${OUT:-$(mktemp -d)}"
 mkdir -p "$OUT/frames"
-export TUI_SESSION_SUFFIX="ctl$MODE"
+export TUI_SESSION_SUFFIX="${TUI_SESSION_SUFFIX:-ctl$MODE}"
 fails=0 passes=0
 ok()   { echo "OK   $1"; passes=$((passes + 1)); }
 fail() { echo "FAIL $1"; fails=$((fails + 1)); }
