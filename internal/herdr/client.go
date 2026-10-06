@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"r-loop/internal/core"
 )
@@ -190,18 +191,20 @@ func (c Client) Start(pane, name, kind string, args []string) (core.Agent, error
 			time.Sleep(paneBusyBackoff)
 			continue
 		}
+		if errors.As(err, &herr) && herr.Code == "agent_not_ready" && kind == "codex" {
+			out.Result.Agent.Name, out.Result.Agent.Pane = name, pane
+			break
+		}
 		if errors.As(err, &herr) && herr.Code == "agent_not_ready" && kind == "claude" {
-			accepted, terr := c.acceptTrust(name, claudeTrustAnswer, "down", "enter")
+			screen, serr := c.Screen(name)
+			if serr != nil {
+				return core.Agent{}, serr
+			}
+			accepted, terr := c.trustClaude(name, screen)
 			if terr != nil {
 				return core.Agent{}, terr
 			}
 			if !accepted {
-				return core.Agent{}, err
-			}
-			if err := c.awaitClaudeBanner(name); err != nil {
-				return core.Agent{}, err
-			}
-			if err := c.awaitUnblocked(name); err != nil {
 				return core.Agent{}, err
 			}
 			return core.Agent{Name: name, Pane: pane}, nil
@@ -218,10 +221,30 @@ func (c Client) Start(pane, name, kind string, args []string) (core.Agent, error
 		if err := c.awaitSettled(name); err != nil {
 			return core.Agent{}, err
 		}
-	} else if _, err := c.acceptTrust(name, codexTrustQuestion, "enter"); err != nil {
-		return core.Agent{}, err
+	} else {
+		screen, err := c.Screen(name)
+		if err != nil {
+			return core.Agent{}, err
+		}
+		if _, err := c.trustClaude(name, screen); err != nil {
+			return core.Agent{}, err
+		}
+		if _, err := c.acceptTrust(name, screen, codexTrustQuestion, "enter"); err != nil {
+			return core.Agent{}, err
+		}
 	}
 	return core.Agent{Name: out.Result.Agent.Name, Pane: out.Result.Agent.Pane}, nil
+}
+
+func (c Client) trustClaude(agent, screen string) (bool, error) {
+	accepted, err := c.acceptTrust(agent, screen, claudeTrustAnswer, "down", "enter")
+	if err != nil || !accepted {
+		return accepted, err
+	}
+	if err := c.awaitClaudeBanner(agent); err != nil {
+		return true, err
+	}
+	return true, c.awaitUnblocked(agent)
 }
 
 const (
@@ -240,7 +263,7 @@ func (c Client) awaitCodexPrompt(agent string) error {
 		if err != nil {
 			return err
 		}
-		asks := strings.Contains(screen, codexTrustQuestion) || strings.Contains(screen, codexTrustFolder)
+		asks := contains(screen, codexTrustQuestion) || contains(screen, codexTrustFolder)
 		switch {
 		case asks && !trusted:
 			if err := c.SendKeys(agent, "enter"); err != nil {
@@ -279,21 +302,20 @@ func (c Client) awaitSettled(agent string) error {
 	}
 }
 
-func (c Client) acceptTrust(agent, marker string, keys ...string) (bool, error) {
+func (c Client) acceptTrust(agent, screen, marker string, keys ...string) (bool, error) {
 	asks := func() (bool, error) {
 		screen, err := c.Screen(agent)
-		return strings.Contains(screen, marker), err
+		return contains(screen, marker), err
 	}
-	ask, err := asks()
-	if err != nil || !ask {
-		return false, err
+	if !contains(screen, marker) {
+		return false, nil
 	}
 	if err := c.SendKeys(agent, keys...); err != nil {
 		return true, err
 	}
 	deadline := time.Now().Add(paneBusyBudget)
 	for {
-		if ask, err = asks(); err != nil || !ask {
+		if ask, err := asks(); err != nil || !ask {
 			return true, err
 		}
 		if time.Now().After(deadline) {
@@ -322,11 +344,24 @@ func (c Client) awaitClaudeBanner(agent string) error {
 }
 
 func (c Client) shows(agent, screen, marker string) (bool, error) {
-	if strings.Contains(screen, marker) {
+	if contains(screen, marker) {
 		return true, nil
 	}
 	history, err := c.Read(agent, 200)
-	return strings.Contains(history, marker), err
+	return contains(history, marker), err
+}
+
+func contains(text, marker string) bool {
+	return strings.Contains(squash(text), squash(marker))
+}
+
+func squash(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func (c Client) awaitUnblocked(agent string) error {

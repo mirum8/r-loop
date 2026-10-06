@@ -130,16 +130,18 @@ func TestStartRunsAgentStartWithArgsAfterDashes(t *testing.T) {
 	})
 }
 
-func TestStartReturnsAgentNotReadyWithoutRetry(t *testing.T) {
-	c, argv := fakeExit(t, "", `{"error":{"code":"agent_not_ready","message":"agent x is blocked during startup"},"id":"cli:agent:start"}`, 1)
+func TestStartDoesNotRetryAgentStartWhenCodexNeverGetsReady(t *testing.T) {
+	shrinkPaneBusyWait(t, 50*time.Millisecond)
+	c, calls := notReadyThenTrusted(t, "", "")
 
 	_, err := c.Start("w3A:p2", "x", "codex", nil)
 
-	var herr Error
-	if !errors.As(err, &herr) || herr.Code != "agent_not_ready" {
-		t.Fatalf("got %#v", err)
+	if err == nil || !strings.Contains(err.Error(), "never showed codex's prompt") {
+		t.Fatalf("got %v", err)
 	}
-	assertArgv(t, argv(), []string{"agent", "start", "x", "--kind", "codex", "--pane", "w3A:p2", "--"})
+	if n := countCalls(calls(), "start", "x", "--kind", "codex", "--pane", "w3A:p2", "--"); n != 1 {
+		t.Fatalf("agent start called %d times, calls %q", n, calls())
+	}
 }
 
 func TestPromptWithoutWait(t *testing.T) {
@@ -1076,5 +1078,77 @@ func TestStartFindsClaudesBannerInAShortPaneWhoseBannerScrolledOff(t *testing.T)
 
 	if err != nil {
 		t.Fatalf("Start: %v", err)
+	}
+}
+
+func wrapAt(screen string, width int) string {
+	var out []string
+	for _, line := range strings.Split(screen, "\n") {
+		r := []rune(line)
+		for len(r) > width {
+			out = append(out, string(r[:width]))
+			r = r[width:]
+		}
+		out = append(out, string(r))
+	}
+	return strings.Join(out, "\n")
+}
+
+func TestStartAnswersCodexsTrustDialogThatHerdrReportsNotReady(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := notReadyThenTrusted(t, newTrustScreen, chatScreen)
+
+	agent, err := c.Start("w4M:p2", "rv", "codex", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if agent != (core.Agent{Name: "rv", Pane: "w4M:p2"}) {
+		t.Fatalf("agent %+v", agent)
+	}
+	if n := countCalls(calls(), "send-keys", "rv", "enter"); n != 1 {
+		t.Fatalf("enter pressed %d times, calls %q", n, calls())
+	}
+}
+
+func TestStartAnswersCodexsTrustDialogWrappedInANarrowPane(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := codexBoot(t, []string{wrapAt(newTrustScreen, 16)}, []string{wrapAt(chatScreen, 16)}, []string{"idle"})
+
+	_, err := c.Start("w4M:p2", "rv", "codex", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if n := countCalls(calls(), "send-keys", "rv", "enter"); n != 1 {
+		t.Fatalf("enter pressed %d times, calls %q", n, calls())
+	}
+}
+
+func TestStartAnswersClaudesTrustDialogWrappedInANarrowPaneThatHerdrReportsReady(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := scripted(t, wrapAt(claudeTrustScreen, 16), wrapAt(claudeReadyScreen, 16))
+
+	_, err := c.Start("w8P:p1", "rloop-wd-run-1", "claude", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if countCalls(calls(), "send-keys", "rloop-wd-run-1", "down") != 1 || countCalls(calls(), "send-keys", "rloop-wd-run-1", "enter") != 1 {
+		t.Fatalf("trust dialog not answered, calls %q", calls())
+	}
+}
+
+func TestStartAnswersClaudesTrustDialogWrappedInANarrowPaneThatHerdrReportsNotReady(t *testing.T) {
+	shrinkPaneBusyWait(t, 5*time.Second)
+	c, calls := notReadyThenTrusted(t, wrapAt(claudeTrustScreen, 16), wrapAt(claudeReadyScreen, 16))
+
+	_, err := c.Start("w8P:p1", "rloop-wd-run-1", "claude", nil)
+
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if countCalls(calls(), "send-keys", "rloop-wd-run-1", "down") != 1 || countCalls(calls(), "send-keys", "rloop-wd-run-1", "enter") != 1 {
+		t.Fatalf("trust dialog not answered, calls %q", calls())
 	}
 }
