@@ -18,6 +18,17 @@ type screenHost struct {
 	entered map[string]time.Time
 	enters  map[string]int
 	screen  func(h *screenHost, agent string, n int) string
+	history func(h *screenHost, agent string, n int) string
+}
+
+func (h *screenHost) Read(agent string, lines int) (string, error) {
+	if h.history == nil {
+		return h.scriptedHost.Read(agent, lines)
+	}
+	h.record("SessionHost.Read %s %d", agent, lines)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.history(h, agent, h.screens[agent]), nil
 }
 
 func (h *screenHost) Screen(agent string) (string, error) {
@@ -379,5 +390,46 @@ func TestAPaneReviewBlockerKeepsItsReasonToOneLineAndTheScreenInTheExcerpt(t *te
 	text := blockerText("b1", b)
 	if first, rest, _ := strings.Cut(text, "\n"); strings.Contains(first, "shortcuts") || !strings.Contains(rest, "› "+paneReviewText+"\n\n  ? for shortcuts") {
 		t.Fatalf("routed text = %q", text)
+	}
+}
+
+const shortPaneScreen = "  Worked for 1m 12s\n\n› Ask Codex to do anything\n\n  ? for shortcuts                 100% context left\n"
+
+func TestAPaneReviewWhoseMarkersScrolledOffAShortPaneStillFinishes(t *testing.T) {
+	fastPaneReview(t)
+	r, host := paneReviewRig(t, scripted("› "+paneReviewText, shortPaneScreen), Reviewer{Provider: "codex"})
+	r.worker.Ref.Kind.Row.ReviewTimeout = time.Second
+	host.history = func(h *screenHost, agent string, n int) string {
+		if n < 2 {
+			return "› " + paneReviewText
+		}
+		return ">> Code review started: Review the current code changes <<\n• Working\n\n<< Code review finished >>\n\nThe changes look correct.\n" + shortPaneScreen
+	}
+
+	out := r.run()
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if len(r.reviews) != 1 || r.reviews[0]["ReviewRan"] != true {
+		t.Fatalf("reviews = %+v", r.reviews)
+	}
+}
+
+func TestAPaneReviewIgnoresAFinishInHistoryFromBeforeItsStart(t *testing.T) {
+	fastPaneReview(t)
+	r, host := paneReviewRig(t, scripted("› "+paneReviewText, shortPaneScreen), Reviewer{Provider: "codex"})
+	r.worker.Ref.Kind.Row.ReviewTimeout = 50 * time.Millisecond
+	host.history = func(h *screenHost, agent string, n int) string {
+		if n < 2 {
+			return "› " + paneReviewText
+		}
+		return "<< Code review finished >>\n\n>> Code review started: Review the current code changes <<\n• Working\n" + shortPaneScreen
+	}
+
+	out := r.run()
+
+	if out.State != StepFailed || out.Reason != "reviewer codex: review did not finish within 50ms" {
+		t.Fatalf("outcome = %+v", out)
 	}
 }

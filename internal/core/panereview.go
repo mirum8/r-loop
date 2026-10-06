@@ -20,6 +20,8 @@ const paneScreenPoll = 250 * time.Millisecond
 
 const paneReviewPresses = 5
 
+const paneReviewHistory = 200
+
 var paneReviewFailures = []string{"Review was interrupted", "Reviewer failed to output a response"}
 
 func (h ReviewHalf) paneReviews(ctx context.Context, worker *Session, runs []*reviewerRun, failed func(*reviewerRun, *reviewerFail) Outcome) Outcome {
@@ -119,16 +121,31 @@ func (h ReviewHalf) submit(ctx context.Context, agent string, a ProviderArgs) (i
 }
 
 func (h ReviewHalf) awaitPane(ctx context.Context, s *Session, a ProviderArgs) error {
-	if err := h.awaitScreen(ctx, s.Agent, a.ReviewStart, paneReviewStartWait, "start"); err != nil {
+	if err := h.awaitScreen(ctx, s.Agent, a.ReviewStart, "", paneReviewStartWait, "start"); err != nil {
 		return err
 	}
-	return h.awaitScreen(ctx, s.Agent, a.ReviewDone, s.Ref.Kind.Row.Timeout, "finish")
+	return h.awaitScreen(ctx, s.Agent, a.ReviewDone, a.ReviewStart, s.Ref.Kind.Row.Timeout, "finish")
 }
 
-func (h ReviewHalf) awaitScreen(ctx context.Context, agent, marker string, limit time.Duration, what string) error {
-	_, seen, err := h.pollScreen(ctx, agent, limit, func(screen string) bool { return strings.Contains(screen, marker) })
+func (h ReviewHalf) awaitScreen(ctx context.Context, agent, marker, after string, limit time.Duration, what string) error {
+	var gone error
+	_, seen, err := h.pollScreen(ctx, agent, limit, func(screen string) bool {
+		if strings.Contains(screen, marker) {
+			return true
+		}
+		recent, err := h.Sessions.Host.Read(agent, paneReviewHistory)
+		if err != nil {
+			gone = fmt.Errorf("review: agent gone: %w", err)
+			return true
+		}
+		i := strings.LastIndex(recent, marker)
+		return i >= 0 && (after == "" || i > strings.LastIndex(recent, after))
+	})
 	if err != nil {
 		return err
+	}
+	if gone != nil {
+		return gone
 	}
 	if !seen {
 		return &paneStuck{fmt.Sprintf("review did not %s within %s", what, limit)}
