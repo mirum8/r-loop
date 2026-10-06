@@ -68,6 +68,10 @@ land:
   gateTimeout: 30m
   gateIdle: 10m
 
+analyze:
+  enabled: true
+  timeout: 15m
+
 watchdog:
   provider: claude
   model: opus

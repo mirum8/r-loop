@@ -128,3 +128,12 @@ type Face interface {
 type Notifier interface {
 	Fire(hook string, env map[string]string)
 }
+
+type Analysis struct {
+	Findings []Finding
+	Command  string
+}
+
+type Analyzer interface {
+	Analyze(ctx context.Context, dir string) (Analysis, error)
+}

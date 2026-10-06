@@ -15,6 +15,7 @@ import (
 	"github.com/muesli/termenv"
 	"gopkg.in/yaml.v3"
 
+	"r-loop/internal/analyze"
 	"r-loop/internal/config"
 	"r-loop/internal/core"
 	"r-loop/internal/face/tui"
@@ -177,7 +178,70 @@ func (w *Wiring) checks() ([]core.Phase, []string, error) {
 	if err != nil {
 		return nil, nil, exit(2, "%v", err)
 	}
+	if w.Config.Analyze.Enabled {
+		line, err := w.static()
+		if err != nil {
+			return nil, nil, err
+		}
+		prompts = append(prompts, line)
+	}
 	return list, prompts, nil
+}
+
+func (w *Wiring) static() (string, error) {
+	root := w.Repo.Root()
+	mods, err := analyze.Detect(root)
+	if err != nil {
+		return "", exit(2, "analyze: %v", err)
+	}
+	var kinds []string
+	for _, kind := range []string{analyze.Go, analyze.Maven, analyze.Gradle} {
+		if slices.ContainsFunc(mods, func(m analyze.Module) bool { return m.Kind == kind }) {
+			kinds = append(kinds, kind)
+		}
+	}
+	if !w.Opts.DryRun {
+		for _, m := range mods {
+			if err := toolchain(root, m); err != nil {
+				return "", err
+			}
+		}
+	}
+	_, missing := exec.LookPath("semgrep")
+	langs := strings.Join(kinds, ", ")
+	switch {
+	case missing == nil && langs != "":
+		return "static: " + langs + ", semgrep", nil
+	case missing == nil:
+		return "static: semgrep", nil
+	case langs != "":
+		return "static: " + langs + " (semgrep not installed)", nil
+	}
+	return "static: none (semgrep not installed)", nil
+}
+
+func toolchain(root string, m analyze.Module) error {
+	rel := slashRel(root, m.Dir)
+	if _, err := exec.LookPath(m.Runner); err != nil {
+		if !strings.ContainsRune(m.Runner, filepath.Separator) {
+			return exit(2, "analyze: %s module %s needs %s, not found on PATH; install it or set analyze.enabled: false", m.Kind, rel, m.Runner)
+		}
+		return exit(2, "analyze: %s module %s needs %s, which is not executable; chmod +x it or set analyze.enabled: false", m.Kind, rel, slashRel(root, m.Runner))
+	}
+	if m.Kind == analyze.Maven || m.Kind == analyze.Gradle {
+		if _, err := exec.LookPath("java"); err != nil {
+			return exit(2, "analyze: %s module %s needs java, not found on PATH; install it or set analyze.enabled: false", m.Kind, rel)
+		}
+	}
+	return nil
+}
+
+func slashRel(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return path
+	}
+	return filepath.ToSlash(rel)
 }
 
 func (w *Wiring) clean() error {

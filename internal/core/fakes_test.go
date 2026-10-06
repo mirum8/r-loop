@@ -536,6 +536,31 @@ func (f *fakeNotifier) Fire(hook string, env map[string]string) {
 	f.Fired = append(f.Fired, env)
 }
 
+type fakeAnalyzer struct {
+	callLog
+	mu      sync.Mutex
+	Results []Analysis
+	Errs    []error
+	n       int
+}
+
+func (f *fakeAnalyzer) Analyze(ctx context.Context, dir string) (Analysis, error) {
+	f.record("Analyzer.Analyze %s", dir)
+	f.mu.Lock()
+	i := f.n
+	f.n++
+	f.mu.Unlock()
+	var a Analysis
+	if len(f.Results) > 0 {
+		a = f.Results[min(i, len(f.Results)-1)]
+	}
+	var err error
+	if len(f.Errs) > 0 {
+		err = f.Errs[min(i, len(f.Errs)-1)]
+	}
+	return a, err
+}
+
 var (
 	_ PlanSource  = (*fakePlanSource)(nil)
 	_ SessionHost = (*fakeSessionHost)(nil)
@@ -545,4 +570,5 @@ var (
 	_ AskChannel  = (*fakeAskChannel)(nil)
 	_ Face        = (*fakeFace)(nil)
 	_ Notifier    = (*fakeNotifier)(nil)
+	_ Analyzer    = (*fakeAnalyzer)(nil)
 )
