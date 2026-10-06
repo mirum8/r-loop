@@ -128,7 +128,7 @@ func (l *RunLoop) hold(ctx context.Context, b Blocker, main *blockerHold) Resolu
 		key.Kind = b.Step
 	}
 	q := Question{ID: id, Kind: QuestionBlocker, Step: key, Text: blockerText(id, b), Options: b.Actions, AskedAt: time.Now()}
-	open := openAsk{q: q, s: s, agent: agent, b: b, done: make(chan Resolution, 1)}
+	open := openAsk{q: q, s: s, agent: agent, seq: l.paneSeq(agent, b), b: b, done: make(chan Resolution, 1)}
 	admitted := s != nil && s.live(func() {
 		l.recordQuestion(q)
 		l.trackOpen(open)
@@ -357,15 +357,26 @@ func (l *RunLoop) SettleBlocker(res Resolution) error {
 	return err
 }
 
+func (l *RunLoop) paneSeq(agent string, b Blocker) int64 {
+	if agent == "" || b.Excerpt == "" {
+		return 0
+	}
+	_, seq, err := l.Sessions.Host.StateSeq(agent)
+	if err != nil {
+		return -1
+	}
+	return seq
+}
+
 func (l *RunLoop) paneMoved(open openAsk) string {
 	if open.b.Excerpt == "" {
 		return ""
 	}
-	raw, err := l.Sessions.Host.Screen(open.agent)
+	_, seq, err := l.Sessions.Host.StateSeq(open.agent)
 	if err != nil {
-		return fmt.Sprintf("blocker %s: screen: %s", open.q.ID, err)
+		return fmt.Sprintf("blocker %s: state: %s", open.q.ID, err)
 	}
-	if normaliseScreen(raw) != normaliseScreen(open.b.Excerpt) {
+	if seq != open.seq {
 		return fmt.Sprintf("the pane of blocker %s changed since it was raised; read it again", open.q.ID)
 	}
 	return ""

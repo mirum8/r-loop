@@ -1657,7 +1657,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Eighty-seven decisions, each with the alternative that was live at the time; eleven are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and forty-four carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, and ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it.</p>
+<p class="lede">Eighty-seven decisions, each with the alternative that was live at the time; eleven are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and forty-four carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, and ADR-90 keeps an agent's pane size from ever failing a run.</p>
 
 <div id="adr-index">
 
@@ -2690,7 +2690,7 @@ inside a session.</p>
 
 <div class="adr">
 <h3 id="adr-56">ADR-56 — Review is a half of every step: reviewer panes beside the step's session, which verifies and applies</h3>
-<p><span class="f">Status</span> accepted · supersedes <a href="#adr-24">ADR-24</a> and <a href="#adr-25">ADR-25</a> · amends <a href="#adr-2">ADR-2</a>, <a href="#adr-23">ADR-23</a>, <a href="#adr-45">ADR-45</a> and <a href="#adr-54">ADR-54</a> · amended by <a href="#adr-82">ADR-82</a> — a reviewer that fails no longer fails the step it reviews: it raises a blocker, which the watchdog clears by running that reviewer again, pressing keys under a rule or switching to the row's fallback, or, with the maintainer's quoted reply, by skipping it</p>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-24">ADR-24</a> and <a href="#adr-25">ADR-25</a> · amends <a href="#adr-2">ADR-2</a>, <a href="#adr-23">ADR-23</a>, <a href="#adr-45">ADR-45</a> and <a href="#adr-54">ADR-54</a> · amended by <a href="#adr-82">ADR-82</a> — a reviewer that fails no longer fails the step it reviews: it raises a blocker, which the watchdog clears by running that reviewer again, pressing keys under a rule or switching to the row's fallback, or, with the maintainer's quoted reply, by skipping it · amended by <a href="#adr-90">ADR-90</a> — reviewers divide the right-hand column evenly, and one whose pane would be under 60×15 opens in a new tab of the step's workspace</p>
 <p><span class="f">Context</span> <a href="#adr-54">ADR-54</a> made review a step of its own: one
 workspace per reviewer, then a fresh fix session on the implement row. It could not review a plan,
 and the fixer had to rebuild the intent behind a diff it did not write. In round 20 the maintainer
@@ -3934,6 +3934,42 @@ newly causes elsewhere, are not reported.</p>
 <p><span class="f">Revisit when</span> the step sessions routinely dismiss most <code>static</code>
 findings, a project needs analysis to block landing, or a SonarQube server with branch analysis is
 in use.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-90">ADR-90 — An agent's pane size never fails a run</h3>
+<p><span class="f">Status</span> accepted 2026-10-06 · amends <a href="#adr-56">ADR-56</a></p>
+<p><span class="f">Context</span> Runs failed on how big a herdr pane happened to be. The driver
+split every pane in half — the watchdog off the maintainer's pane, each reviewer off the one before
+it — so a third reviewer got 11 rows and a fourth would get 6, and a maintainer's narrow pane left
+the watchdog 9 columns. It also decided readiness from screen text: a banner that scrolled off a
+short pane or that a narrow claude never draws, a trust dialog whose text wrapped, a review marker
+pushed off screen. Each was patched where it broke; the cause was the same every time.</p>
+<p><span class="f">Decision</span> An agent is ready when herdr reports it <code>idle</code> or
+<code>done</code>; no banner is read. Screen text is read only where herdr has no state for it —
+a first-run trust dialog, which the driver answers with the dialog's own keys and never with a key
+on a screen it does not recognise, and a pane review's start, finish and failure markers — and it
+is matched ignoring whitespace, on the visible screen and then the agent's recent history, so a
+wrapped or scrolled-off line still counts; a finish or failure in history counts only after the
+review's last start. Whether a dialog is still the one the maintainer was shown is decided by
+herdr's <code>state_change_seq</code>, not by an identical screen, so a re-wrapped pane is the same
+dialog. Every pane the driver opens is at least 60 columns by 15 rows: before a split it reads the
+parent's size, and a split that would be smaller is not made. The watchdog and the intake session
+then open in a new tab of the maintainer's own workspace, or in a workspace of their own when that
+fails; a reviewer opens in a new tab of its step's workspace. Reviewers beside a step divide the
+right-hand column evenly instead of halving the last one.</p>
+<p><span class="f">Alternatives</span> Keep patching each check as it breaks — rejected: the
+failures share one cause, and a fifth would follow. A configurable minimum size — rejected: no one
+needs to tune it. Pre-trusting every directory so no dialog appears — not taken: claude has no flag
+for it and the driver would have to write the user's own settings file; codex's per-launch trust
+override is untested on paths with a dot in them.</p>
+<p><span class="f">Consequences</span> <code>SessionHost</code> gains <code>PaneInfo</code>,
+<code>OpenTab</code>, <code>StateSeq</code> and a split ratio. A watchdog or reviewer may open out
+of the maintainer's sight, in another tab; the watchdog's place is recorded as
+<code>watchdog-placed</code>. A size or layout read that
+fails falls back to a tab or workspace; it never fails the run.</p>
+<p><span class="f">Revisit when</span> herdr reports readiness for trust dialogs itself, or the
+agents gain a flag that skips them.</p>
 </div>
 
 

@@ -100,29 +100,30 @@ so.
   - `SessionHost`: `Reachable() error` · `Open(OpenSpec{CWD, Label string; Env
     map[string]string}) (Workspace{ID, RootPane string}, error)` · `Start(pane, name, kind
     string, args []string) (Agent{Name, Pane string}, error)` (the herdr adapter retries
-    `agent_pane_busy` every 250 ms within a 20 s budget and accepts codex's "Do you trust the
-    contents of this directory?" dialog with `enter`, and — when a claude start fails
-    `agent_not_ready` on a screen showing "Yes, I trust this folder" — claude's trust dialog
-    with `down` then `enter`, then reads the visible screen every 250 ms within the 20 s budget
-    until it shows claude's banner `Claude Code v` (failing `herdr: agent <name> never showed
-    claude's prompt after the trust dialog` — herdr reports claude `idle` while it re-initialises
-    and a prompt typed then is lost), then polls `State` the same way until herdr
-    no longer reports the agent `blocked` (failing `herdr: agent <name> stays blocked after the
-    trust dialog`), returning `Agent{name, pane}` from its own arguments; either fails
-    when the dialog has not cleared in 20 s, and any other not-ready screen returns the
-    `agent_not_ready` error with no key pressed — the driver arranging trust for the sessions it
+    `agent_pane_busy` every 250 ms within a 20 s budget and takes `agent_not_ready` as started;
+    it then polls within the budget: a known first-run trust dialog — claude's "Yes, I trust this
+    folder" (`down`, `enter`), codex's "Trust this folder?" or "Do you trust the contents of this
+    directory?" (`enter`) — found on the visible screen or in the last 200 lines of history,
+    matched ignoring whitespace, gets its keys once; the agent is ready when no dialog is visible
+    and herdr reports it `idle` or `done`. No banner is read, and no key is pressed on a blocked
+    screen it does not recognise: that fails `herdr: agent <name> never became ready (state S)`
+    when the budget runs out (spec ADR-90; the driver arranging trust for the sessions it
     opens, spec ADR-1) · `Prompt(agent, text string, wait
     bool, timeout time.Duration) error` · `State(agent) (AgentState, error)` with `AgentState ∈
     {idle, working, blocked, done, unknown, gone}` · `Read(agent string, lines int) (string,
     error)` · `Interrupt(agent) error` · `Close(workspaceID) error` · `Split(pane, direction,
-    cwd string, env map[string]string) (pane string, error)` (an empty `pane` splits the pane herdr calls current; `env` becomes `--env K=V` on the split pane's shell, `nil` for none) ·
+    cwd string, ratio float64, env map[string]string) (pane string, error)` (an empty `pane` splits the pane herdr calls current; `ratio` is the share the split pane keeps, `--ratio`, 0 for herdr's half; `env` becomes `--env K=V` on the split pane's shell, `nil` for none) ·
     `Screen(agent) (string, error)` (herdr `agent read --source visible`, unnormalised) ·
     `SendKeys(agent string, keys ...string) error` (one `agent send-keys` per key, in order,
     stopping at the first error) · `SendText(agent, text string) error` (herdr `pane send-text` on
     the agent's `AgentPane`, no `enter`; Milestone 17) ·
     `AgentPane(agent) (string, error)` (the pane the named agent runs in, `""` when herdr knows no
-    such agent) · `ClosePane(pane) error` (closes one pane; used only for the watchdog's own — a
-    stale one of the same run at its start, and its own at the run's end) · `Tag(workspaceID,
+    such agent) · `ClosePane(pane) error` (closes one pane — a tab's last pane closes the tab; used for the
+    watchdog's own, a stale one of the same run at its start and its own at the run's end, and for
+    reviewer panes between rounds) · `PaneInfo(pane) (PaneInfo{Workspace string; Cols, Rows int}, error)` (from
+    herdr `pane layout`) · `OpenTab(workspaceID, OpenSpec) (pane string, error)` (herdr `tab create
+    --no-focus`, its root pane) · `StateSeq(agent) (AgentState, int64, error)` (`State` plus herdr's
+    `state_change_seq`) · `Tag(workspaceID,
     tokens map[string]string) error` (display-only sidebar tokens via herdr `workspace
     report-metadata --source r-loop`; an empty value clears one: `rloop` carries the step's live
     state, `rloop_wait` is set only while the step waits for input; a failure is a warning, never
@@ -513,7 +514,10 @@ so.
 
 - **Shape** — a review half runs after a step's author half ends `ok` and before the step's
   commit, inside the step's own workspace: the author stays in the root pane, and each reviewer
-  gets a pane split to its right (`Split(rootPane, "right", worktree, reviewerEnv)`, stacked when there are several).
+  gets a pane split to its right (`Split(rootPane, "right", worktree, 0, reviewerEnv)`); further reviewers stack in that
+  right-hand column, each split down from the one above with a ratio that divides the column evenly. No pane is
+  made under 60 columns by 15 rows (`PaneInfo` first): a reviewer that would get less opens in a new tab of the
+  step's workspace (`OpenTab`), and a failed size read takes the tab too (spec ADR-90).
   Each reviewer pane is split with `R_LOOP_RUN`, `R_LOOP_PHASE`, `R_LOOP_STEP` (the reviewed step's) and `R_LOOP_REVIEWER`.
   **Each round starts a fresh reviewer agent** in a fresh pane: from round 2 on, the previous
   round's reviewer panes are closed (`ClosePane`) and split again in the same places, since an
@@ -635,8 +639,10 @@ so.
   asks `AgentPane` for that name; a stale watchdog of the same run (left by a killed driver) is
   recorded as `Event{Kind: "watchdog-stale-closed", Fields{pane}}` and closed with `ClosePane`.
   It then records `Event{Kind: "watchdog-start"}` and splits a pane to the right of the driver's
-  own pane — `HERDR_PANE_ID`, passed in as `Env.Pane` and `Watchdog.Pane`; with no driver pane it
-  opens its own workspace labelled with the watchdog name. `Stop` closes that workspace, or else
+  own pane — `HERDR_PANE_ID`, passed in as `Env.Pane` and `Watchdog.Pane` — when the new pane
+  would be at least 60×15; otherwise it opens a new tab in the driver pane's workspace, and with
+  no driver pane, or when the tab cannot be opened, its own workspace labelled with the watchdog
+  name. The intake session is placed the same way (spec ADR-90). `Stop` closes that workspace, or else
   the pane. If `Start` fails on its row, the run is blocked with exit 4 (`watchdog did not start:
   <reason>`); there is no fallback provider for the watchdog.
 - **Delivery** — step notices go through `Watchdog.Post`, an ordered outbox one goroutine drains

@@ -127,6 +127,7 @@ type openAsk struct {
 	q        Question
 	s        *Session
 	agent    string
+	seq      int64
 	answered bool
 	b        Blocker
 	done     chan Resolution

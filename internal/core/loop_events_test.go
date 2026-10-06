@@ -1724,6 +1724,11 @@ func (h *dialogAgentHost) State(agent string) (AgentState, error) {
 	return AgentWorking, nil
 }
 
+func (h *dialogAgentHost) StateSeq(agent string) (AgentState, int64, error) {
+	st, err := h.State(agent)
+	return st, 0, err
+}
+
 func (h *dialogAgentHost) Screen(agent string) (string, error) {
 	h.record("SessionHost.Screen %s", agent)
 	return dialogScreen + "\n\n", nil

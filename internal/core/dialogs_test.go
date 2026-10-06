@@ -21,7 +21,15 @@ type dialogHost struct {
 	mu      sync.Mutex
 	states  map[string]AgentState
 	screens map[string]string
+	seqs    map[string]int64
 	script  []AgentState
+}
+
+func (h *dialogHost) StateSeq(agent string) (AgentState, int64, error) {
+	st, err := h.State(agent)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return st, h.seqs[agent], err
 }
 
 func (h *dialogHost) State(agent string) (AgentState, error) {
@@ -48,7 +56,25 @@ func (h *dialogHost) Screen(agent string) (string, error) {
 func (h *dialogHost) set(agent string, state AgentState, screen string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.seqs == nil {
+		h.seqs = map[string]int64{}
+	}
+	if h.states[agent] != state || h.screens[agent] != screen {
+		h.seqs[agent]++
+	}
 	h.states[agent], h.screens[agent] = state, screen
+}
+
+func (h *dialogHost) rewrap(agent, screen string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.screens[agent] = screen
+}
+
+func (h *dialogHost) bump(agent string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.seqs[agent]++
 }
 
 type dialogRig struct {
@@ -239,6 +265,19 @@ func TestAnEmptyScreenRaisesNoDialog(t *testing.T) {
 		t.Fatal("an empty screen raised a dialog")
 	}
 	if len(r.questions()) != 0 {
+		t.Errorf("questions %+v", r.questions())
+	}
+}
+
+func TestNoDialogForAnAgentThatLeftBlockedBeforeItsSeqWasRead(t *testing.T) {
+	r := newDialogRig(t)
+	r.serve(t)
+	r.dhost.set(dialogAgent, AgentWorking, dialogScreen)
+
+	if r.loop.Blocked(r.s) {
+		t.Fatal("an agent that is not blocked raised a dialog")
+	}
+	if len(r.questions()) != 0 || r.s.OpenQuestion.Load() {
 		t.Errorf("questions %+v", r.questions())
 	}
 }
@@ -514,7 +553,7 @@ func TestNoKeysAreSentWhenThePaneMovedOn(t *testing.T) {
 		screen string
 		reason string
 	}{
-		{"screen changed", AgentBlocked, "Allow network access?\n1. Yes", "the screen changed"},
+		{"dialog changed", AgentBlocked, "Allow network access?\n1. Yes", "the dialog changed"},
 		{"left blocked", AgentWorking, dialogScreen, "not blocked"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -655,5 +694,39 @@ func TestDialogIDsContinueAfterAResume(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ids, []string{"d1", "q1", "d2", "d3"}) {
 		t.Errorf("ids %v", ids)
+	}
+}
+
+func TestARewrappedDialogIsStillAnswered(t *testing.T) {
+	r := newDialogRig(t)
+	r.serve(t)
+	r.raise(t, r.s)
+	r.waitDog(t, 1)
+	r.dhost.rewrap(dialogAgent, "Allow write to\n.r-loop/runs/run-1?\n1. Yes\n2. No")
+
+	d, reason := r.router.AnswerDialog("d1", []string{"enter"}, dialogRule, "")
+
+	if d != decisionAuthorised {
+		t.Fatalf("answer %s %q", d, reason)
+	}
+	if got := r.sent(); !reflect.DeepEqual(got, []string{dialogAgent + " enter"}) {
+		t.Errorf("keys %q", got)
+	}
+}
+
+func TestADialogWhoseStateMovedOnIsNotAnswered(t *testing.T) {
+	r := newDialogRig(t)
+	r.serve(t)
+	r.raise(t, r.s)
+	r.waitDog(t, 1)
+	r.dhost.bump(dialogAgent)
+
+	d, reason := r.router.AnswerDialog("d1", []string{"enter"}, dialogRule, "")
+
+	if d != decisionRefused || !strings.Contains(reason, "the dialog changed") {
+		t.Fatalf("answer %s %q", d, reason)
+	}
+	if len(r.sent()) != 0 {
+		t.Errorf("keys %q", r.sent())
 	}
 }

@@ -44,6 +44,10 @@ func (l *RunLoop) Blocked(s *Session) bool {
 	if screen == "" || screen == last {
 		return false
 	}
+	state, seq, err := l.Sessions.Host.StateSeq(s.Agent)
+	if err != nil || state != AgentBlocked {
+		return false
+	}
 	var q Question
 	raised := false
 	admitted := owner.live(func() {
@@ -61,7 +65,7 @@ func (l *RunLoop) Blocked(s *Session) bool {
 		raised = true
 		q = Question{ID: id, Kind: QuestionDialog, Step: key, Text: screen, AskedAt: time.Now()}
 		l.recordQuestion(q)
-		l.track(q, owner, s.Agent)
+		l.trackOpen(openAsk{q: q, s: owner, agent: s.Agent, seq: seq})
 		l.emit(Event{Kind: "dialog", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"id": q.ID, "agent": s.Agent, "text": screen}})
 		if l.openQuestion(owner, 1) == 1 {
 			l.stepState(owner, StepWaitingInput)
@@ -162,19 +166,15 @@ func (l *RunLoop) pressKeys(id, agent string, keys []string) error {
 }
 
 func (l *RunLoop) moved(open openAsk) string {
-	state, err := l.Sessions.Host.State(open.agent)
+	state, seq, err := l.Sessions.Host.StateSeq(open.agent)
 	if err != nil {
 		return "state: " + err.Error()
 	}
 	if state != AgentBlocked {
 		return fmt.Sprintf("the agent is %s, not blocked", state)
 	}
-	raw, err := l.Sessions.Host.Screen(open.agent)
-	if err != nil {
-		return "screen: " + err.Error()
-	}
-	if normaliseScreen(raw) != open.q.Text {
-		return "the screen changed"
+	if seq != open.seq {
+		return "the dialog changed"
 	}
 	return ""
 }

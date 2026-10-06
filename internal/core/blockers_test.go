@@ -1193,3 +1193,33 @@ func TestAReviewerBlockerResolvedStopHaltsWithoutAStepBlocker(t *testing.T) {
 		t.Errorf("blocked-on %+v", evs)
 	}
 }
+
+func TestKeysArePressedInARewrappedBlockerPane(t *testing.T) {
+	r := newBlockerRig(t)
+	ch := r.open(t, reviewerBlocker())
+	r.dhost.rewrap(reviewerAgent, "Review was\ninterrupted")
+
+	if d, reason := r.resolve("b1", "keys", keysUnder(dialogRule, "enter")); d != decisionAuthorised {
+		t.Fatalf("keys %s %q", d, reason)
+	}
+	if res := resolved(t, ch); res.Action != "keys" {
+		t.Errorf("resolution %+v", res)
+	}
+	if got := r.sent(); !reflect.DeepEqual(got, []string{reviewerAgent + " enter"}) {
+		t.Errorf("keys %q", got)
+	}
+}
+
+func TestKeysAreRefusedWhenTheBlockerPaneChangedStateWithTheSameText(t *testing.T) {
+	r := newBlockerRig(t)
+	ch := r.open(t, reviewerBlocker())
+	r.dhost.bump(reviewerAgent)
+
+	if d, reason := r.resolve("b1", "keys", keysUnder(dialogRule, "enter")); d != decisionRefused || reason != "the pane of blocker b1 changed since it was raised; read it again" {
+		t.Fatalf("keys %s %q", d, reason)
+	}
+	if len(r.sent()) != 0 {
+		t.Errorf("keys pressed %q", r.sent())
+	}
+	stillHeld(t, ch)
+}

@@ -127,25 +127,35 @@ func (h ReviewHalf) awaitPane(ctx context.Context, s *Session, a ProviderArgs) e
 }
 
 func (h ReviewHalf) awaitScreen(ctx context.Context, agent, marker, after string, limit time.Duration, what string) error {
-	var gone error
+	var stop error
 	_, seen, err := h.pollScreen(ctx, agent, limit, func(screen string) bool {
 		if shows(screen, marker) {
 			return true
 		}
 		recent, err := h.Sessions.Host.Read(agent, paneReviewHistory)
 		if err != nil {
-			gone = fmt.Errorf("review: agent gone: %w", err)
+			stop = fmt.Errorf("review: agent gone: %w", err)
 			return true
 		}
 		recent = squash(recent)
+		start := -1
+		if after != "" {
+			start = strings.LastIndex(recent, squash(after))
+			for _, f := range paneReviewFailures {
+				if strings.LastIndex(recent, squash(f)) > start {
+					stop = &paneStuck{"review failed: " + f}
+					return true
+				}
+			}
+		}
 		i := strings.LastIndex(recent, squash(marker))
-		return i >= 0 && (after == "" || i > strings.LastIndex(recent, squash(after)))
+		return i >= 0 && (after == "" || i > start)
 	})
 	if err != nil {
 		return err
 	}
-	if gone != nil {
-		return gone
+	if stop != nil {
+		return stop
 	}
 	if !seen {
 		return &paneStuck{fmt.Sprintf("review did not %s within %s", what, limit)}

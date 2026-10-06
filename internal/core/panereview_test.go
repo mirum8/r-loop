@@ -462,3 +462,43 @@ func TestAWrappedReviewFailureInANarrowPaneStillFails(t *testing.T) {
 		t.Fatalf("outcome = %+v", out)
 	}
 }
+
+func TestAPaneReviewFailureThatScrolledOffAShortPaneFailsPromptly(t *testing.T) {
+	fastPaneReview(t)
+	r, host := paneReviewRig(t, scripted("› "+paneReviewText, shortPaneScreen), Reviewer{Provider: "codex"})
+	r.worker.Ref.Kind.Row.ReviewTimeout = 5 * time.Second
+	host.history = func(h *screenHost, agent string, n int) string {
+		if n < 2 {
+			return "› " + paneReviewText
+		}
+		return ">> Code review started: Review the current code changes <<\n• Working\n\n■ Review was\ninterrupted. Please re-run /review.\n" + shortPaneScreen
+	}
+
+	start := time.Now()
+	out := r.run()
+
+	if out.State != StepFailed || out.Reason != "reviewer codex: review failed: Review was interrupted" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("failed after %s", took)
+	}
+}
+
+func TestAPaneReviewIgnoresAFailureInHistoryFromBeforeItsStart(t *testing.T) {
+	fastPaneReview(t)
+	r, host := paneReviewRig(t, scripted("› "+paneReviewText, shortPaneScreen), Reviewer{Provider: "codex"})
+	r.worker.Ref.Kind.Row.ReviewTimeout = 50 * time.Millisecond
+	host.history = func(h *screenHost, agent string, n int) string {
+		if n < 2 {
+			return "› " + paneReviewText
+		}
+		return "■ Review was interrupted. Please re-run /review.\n\n>> Code review started: Review the current code changes <<\n• Working\n" + shortPaneScreen
+	}
+
+	out := r.run()
+
+	if out.State != StepFailed || out.Reason != "reviewer codex: review did not finish within 50ms" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
