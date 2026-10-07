@@ -1,0 +1,44 @@
+initscript {
+    repositories {
+        gradlePluginPortal()
+    }
+    dependencies {
+        classpath 'com.github.spotbugs.snom:spotbugs-gradle-plugin:{{spotbugsGradlePlugin}}'
+    }
+}
+
+def settingsDeclareRepositories = false
+settingsEvaluated { settings ->
+    settingsDeclareRepositories = !settings.dependencyResolutionManagement.repositories.isEmpty()
+}
+
+allprojects {
+    afterEvaluate {
+        if (!plugins.hasPlugin('java')) {
+            return
+        }
+        if (!settingsDeclareRepositories && repositories.isEmpty()) {
+            repositories {
+                mavenCentral()
+            }
+        }
+        apply plugin: 'pmd'
+        if (!pluginManager.hasPlugin('com.github.spotbugs')) {
+            apply plugin: com.github.spotbugs.snom.SpotBugsPlugin
+        }
+        pmd {
+            ignoreFailures = true
+        }
+        spotbugs {
+            ignoreFailures = true
+        }
+        dependencies {
+            spotbugsPlugins 'com.h3xstream.findsecbugs:findsecbugs-plugin:{{findSecBugs}}'
+        }
+        tasks.matching { it.name == 'spotbugsMain' }.configureEach {
+            reports {
+                maybeCreate('sarif').required = true
+            }
+        }
+    }
+}
