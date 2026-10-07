@@ -1060,3 +1060,35 @@ func TestAnalyzeTimeoutThatIsNotPositiveIsRejected(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+func TestAReviewerNamedStaticIsRejected(t *testing.T) {
+	// given
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  implement:\n    reviewers:\n      - name: static\n        provider: claude\n        model: opus\n        effort: high\n")
+
+	// then
+	d.loadErr(t, `config.yaml:4: steps.implement.reviewers: the name "static" is reserved for the analyzers, give the reviewer another name`)
+}
+
+func TestADiffRowWithRoundsAndNoReviewersWithoutReviewTimeoutRejected(t *testing.T) {
+	// given
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  docs:\n    prompt: docs\n    check: diff\n    provider: claude\n    model: opus\n    effort: medium\n    timeout: 30m\n    rounds: 1\n")
+
+	// then
+	d.loadErr(t, ".r-loop/config.yaml:3: steps.docs.reviewTimeout: not set, want a positive duration for the review half")
+}
+
+func TestADiffRowWithRoundsAndNoReviewersNeedsNoReviewTimeoutWhenAnalysisIsOff(t *testing.T) {
+	// given
+	d := newDirs(t)
+	d.writeProject(t, "analyze:\n  enabled: false\nsteps:\n  docs:\n    prompt: docs\n    check: diff\n    provider: claude\n    model: opus\n    effort: medium\n    timeout: 30m\n    rounds: 1\n")
+
+	// when
+	actual := d.load(t).Steps["docs"].ReviewTimeout
+
+	// then
+	if actual != 0 {
+		t.Fatalf("docs reviewTimeout = %v", actual)
+	}
+}

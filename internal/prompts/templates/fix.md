@@ -4,6 +4,10 @@ Reviewers reported findings on your work in `{{.Worktree}}`. The findings files,
 {{range .FindingsFiles}}
 - {{.Reviewer}}: `{{.Path}}`
 {{- end}}
+{{- range .FindingsFiles}}{{if eq .Reviewer "static"}}
+
+`static`'s findings come from static analyzers the driver ran on the change, not from a model reading it. A rule hit is not a defect by itself: judge each one against the code like any other finding. A false positive is `not-real`, with the `path:line` that shows it as its evidence.
+{{- end}}{{end}}
 
 Check every finding against the code and give it:
 

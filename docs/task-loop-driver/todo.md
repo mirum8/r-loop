@@ -802,13 +802,13 @@ Contracts: `tech-design.md#milestone-18-static-analysis`
 **Depends on:** Phase 48
 **Files:** `internal/core/review.go` (modify) · `internal/core/session.go` (modify) · `internal/core/review_test.go` (modify) · `internal/core/blockers_test.go` (modify) · `internal/prompts/templates/fix.md` (modify) · `internal/prompts/render_test.go` (modify) · `internal/app/wire.go` (modify) · `internal/app/app_test.go` (modify)
 **Risk:** concurrency
-- [ ] `ReviewHalf` takes an `Analyzer` (nil = no `static` reviewer); for a step whose check is `diff`, each round runs `Analyze(ctx, worker.Dir)` in its own goroutine beside the reviewer panes, and the round joins on it with them
-- [ ] its findings go to `<kind>-findings-static-r<N>.json` in the step's run folder, `reviewer: static`, in the findings format, and a `review-find{round, reviewer: static, state, findings, command: analyze <Command>}` event is recorded; a step with no other reviewers still runs the round
-- [ ] the fix half's `FindingsFiles` include `static`'s file, the verdict must answer its ids like any reviewer's, the next round's prior findings include it, and a resume into round N rebuilds the earlier rounds' paths with `static` among the reviewer ids
-- [ ] an `Analyze` error raises a `reviewer` blocker on `phase-<N>/<kind>-rv-static` with actions retry (analyze again for this round), skip (`reviewer-skipped{step, reviewer: static, reason}`), block and stop; with no raiser it fails the step as a reviewer failure does
-- [ ] `fix.md` says that `static`'s findings come from analyzers, that a rule hit is not a defect by itself, and that a false positive is `not-real` with the `path:line` that shows it
-- [ ] `app` wires `analyze.New(cfg)` into `ReviewHalf` when `analyze.enabled`, and nil otherwise
-- [ ] `review_test.go` proves, with the fake analyzer: findings reach the fix half and the verdict check, zero findings leave a clean round clean, the analysis runs beside the panes, plan steps never run it, a resumed round includes `static`'s earlier files; `blockers_test.go` proves retry and skip; `render_test.go` proves the `fix.md` wording; `app_test.go` proves the wiring for both settings
+- [x] `ReviewHalf` takes an `Analyzer` (nil = no `static` reviewer); for a step whose check is `diff`, each round runs `Analyze(ctx, worker.Dir)` in its own goroutine beside the reviewer panes, and the round joins on it with them
+- [x] its findings go to `<kind>-findings-static-r<N>.json` in the step's run folder, `reviewer: static`, in the findings format, and a `review-find{round, reviewer: static, state, findings, command: analyze <Command>}` event is recorded; a step with no other reviewers still runs the round
+- [x] the fix half's `FindingsFiles` include `static`'s file, the verdict must answer its ids like any reviewer's, the next round's prior findings include it, and a resume into round N rebuilds the earlier rounds' paths with `static` among the reviewer ids
+- [x] an `Analyze` error raises a `reviewer` blocker on `phase-<N>/<kind>-rv-static` with actions retry (analyze again for this round), skip (`reviewer-skipped{step, reviewer: static, reason}`), block and stop; with no raiser it fails the step as a reviewer failure does
+- [x] `fix.md` says that `static`'s findings come from analyzers, that a rule hit is not a defect by itself, and that a false positive is `not-real` with the `path:line` that shows it
+- [x] `app` wires `analyze.New(cfg)` into `ReviewHalf` when `analyze.enabled`, and nil otherwise
+- [x] `review_test.go` proves, with the fake analyzer: findings reach the fix half and the verdict check, zero findings leave a clean round clean, the analysis runs beside the panes, plan steps never run it, a resumed round includes `static`'s earlier files; `blockers_test.go` proves retry and skip; `render_test.go` proves the `fix.md` wording; `app_test.go` proves the wiring for both settings
 **Done when:** `go test -race ./...` is green.
 
 ## Open questions

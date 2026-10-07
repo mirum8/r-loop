@@ -1616,7 +1616,7 @@ func TestLoopFallsBackToTheSingleRunner(t *testing.T) {
 	}
 }
 
-func TestReviewHookRunsOnlyForAnOkStepWithReviewersAndRounds(t *testing.T) {
+func TestReviewHookRunsOnlyForAnOkStepWithRounds(t *testing.T) {
 	cases := []struct {
 		name      string
 		reviewers []Reviewer
@@ -1625,7 +1625,7 @@ func TestReviewHookRunsOnlyForAnOkStepWithReviewersAndRounds(t *testing.T) {
 		want      int
 	}{
 		{"reviewers and rounds", []Reviewer{{Provider: "claude"}}, 2, "", 1},
-		{"no reviewers", nil, 2, "", 0},
+		{"no reviewers", nil, 2, "", 1},
 		{"no rounds", []Reviewer{{Provider: "claude"}}, 0, "", 0},
 		{"failed step", []Reviewer{{Provider: "claude"}}, 2, "fail", 0},
 	}

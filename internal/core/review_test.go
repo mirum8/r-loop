@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1899,5 +1900,525 @@ func TestRetryOfATabReviewerOpensANewTab(t *testing.T) {
 	}
 	if starts := r.callsFrom("SessionHost.Start pane-3 rloop-2kuxv-p3-implemen-8lgad-r1"); len(starts) != 1 {
 		t.Fatalf("reopened reviewer never started: %q", r.shared.Calls())
+	}
+}
+
+func (r *reviewRig) runAnalyzed(a Analyzer) Outcome {
+	return ReviewHalf{Sessions: r.sm, Store: r.store, Analyzer: a}.Run(context.Background(), r.worker.Ref, r.worker, &recObserver{})
+}
+
+func (r *reviewRig) runAnalyzedRaising(a Analyzer, resolve func(n int, b Blocker) Resolution) (Outcome, *raisingObserver) {
+	obs := &raisingObserver{resolve: resolve}
+	return ReviewHalf{Sessions: r.sm, Store: r.store, Analyzer: a}.Run(context.Background(), r.worker.Ref, r.worker, obs), obs
+}
+
+func (r *reviewRig) analyzer(results ...Analysis) *fakeAnalyzer {
+	return &fakeAnalyzer{callLog: callLog{Shared: r.shared}, Results: results}
+}
+
+func (r *reviewRig) failingAnalyzer(errs ...error) *fakeAnalyzer {
+	return &fakeAnalyzer{callLog: callLog{Shared: r.shared}, Errs: errs}
+}
+
+func (r *reviewRig) findsBy(reviewer string) []map[string]string {
+	var out []map[string]string
+	for _, ev := range r.events("review-find") {
+		if ev.Fields["reviewer"] == reviewer {
+			out = append(out, ev.Fields)
+		}
+	}
+	return out
+}
+
+func (r *reviewRig) phaseFile(name string) string {
+	return filepath.Join(r.runDir, "phase-3", name)
+}
+
+func uncheckedError() Analysis {
+	return Analysis{Command: "golangci-lint", Findings: []Finding{{ID: "s1", Title: "golangci-lint/errcheck: unchecked error", Detail: "error\nunchecked error\na.go:3", Files: []string{"a.go"}}}}
+}
+
+func errAnalyze() error { return errors.New("golangci-lint: exit status 3") }
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestTheAnalysisIsWrittenAsStaticsFindingsFileWithRoundPrefixedIDs(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.worker.Ref.Kind.Row.Rounds = 1
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+	r.onFix = func(vars map[string]any) {
+		writeVerdict(t, vars, entry("static-r1-s1", "out-of-scope", "P3", false, ""))
+	}
+
+	// when
+	r.runAnalyzed(r.analyzer(uncheckedError()))
+
+	// then
+	actual := readFile(t, r.phaseFile("implement-findings-static-r1.json"))
+	expected := `{"reviewer":"static","findings":[{"id":"static-r1-s1","title":"golangci-lint/errcheck: unchecked error","detail":"error\nunchecked error\na.go:3","files":["a.go"]}]}`
+	if actual != expected {
+		t.Fatalf("static findings = %s", actual)
+	}
+}
+
+func TestTheAnalysisIsRecordedAsAStaticReviewFind(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	r.runAnalyzed(r.analyzer(Analysis{Command: "golangci-lint, semgrep"}))
+
+	// then
+	actual := r.events("review-find")
+	expected := map[string]string{"step": "implement", "round": "1", "reviewer": "static", "state": "ok", "findings": "0", "command": "analyze golangci-lint, semgrep"}
+	if len(actual) != 2 || !reflect.DeepEqual(actual[1].Fields, expected) {
+		t.Fatalf("review-find = %+v", actual)
+	}
+}
+
+func fixStaticFindingInRound1(t *testing.T, r *reviewRig) {
+	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
+		writeReview(t, vars, "ok", 0)
+	}
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("static-r1-s1", "real", "P1", true, ""))
+	}
+}
+
+func TestEachRoundAnalyzesTheStepsWorktree(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	fixStaticFindingInRound1(t, r)
+
+	// when
+	out := r.runAnalyzed(r.analyzer(uncheckedError(), Analysis{}))
+
+	// then
+	expectedCalls := []string{"Analyzer.Analyze /repo/.r-loop/wt/phase-3", "Analyzer.Analyze /repo/.r-loop/wt/phase-3"}
+	if actual := r.callsFrom("Analyzer.Analyze"); !reflect.DeepEqual(actual, expectedCalls) {
+		t.Fatalf("calls = %q", actual)
+	}
+	finds := r.findsBy("static")
+	if len(finds) != 2 || finds[1]["round"] != "2" || finds[1]["state"] != "ok" {
+		t.Fatalf("static finds = %+v", finds)
+	}
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestStaticsFindingsFileJoinsTheFixHalf(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.worker.Ref.Kind.Row.Rounds = 1
+	r.repo.TreeChanges = nil
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("static-r1-s1", "out-of-scope", "P3", false, ""))
+	}
+
+	// when
+	out := r.runAnalyzed(r.analyzer(uncheckedError()))
+
+	// then
+	expected := []FindingsFile{
+		{Reviewer: "claude", Path: r.phaseFile("implement-findings-claude-r1.json")},
+		{Reviewer: "static", Path: r.phaseFile("implement-findings-static-r1.json")},
+	}
+	if len(r.fixes) != 1 || !reflect.DeepEqual(r.fixes[0]["FindingsFiles"], expected) {
+		t.Fatalf("fixes = %+v", r.fixes)
+	}
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestAVerdictThatLeavesAStaticFindingUnansweredFailsTheFix(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.worker.Ref.Kind.Row.Rounds = 1
+	r.repo.TreeChanges = nil
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars)
+	}
+
+	// when
+	out := r.runAnalyzed(r.analyzer(uncheckedError()))
+
+	// then
+	if out.State != StepFailed || out.Reason != "evidence missing: no verdict for finding static-r1-s1" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestZeroStaticFindingsLeaveACleanRoundClean(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	r.runAnalyzed(r.analyzer(Analysis{}))
+
+	// then
+	if len(r.events("review-clean")) != 1 || len(r.fixes) != 0 {
+		t.Fatalf("clean = %d, fixes = %d", len(r.events("review-clean")), len(r.fixes))
+	}
+	if actual := readFile(t, r.phaseFile("implement-findings-static-r1.json")); actual != `{"reviewer":"static","findings":[]}` {
+		t.Fatalf("static findings = %s", actual)
+	}
+}
+
+type analyzerFunc func(ctx context.Context, dir string) (Analysis, error)
+
+func (f analyzerFunc) Analyze(ctx context.Context, dir string) (Analysis, error) { return f(ctx, dir) }
+
+type gatedAnalyzer struct {
+	started, prompted chan struct{}
+}
+
+func (a *gatedAnalyzer) Analyze(ctx context.Context, dir string) (Analysis, error) {
+	close(a.started)
+	select {
+	case <-a.prompted:
+		return Analysis{}, nil
+	case <-time.After(10 * time.Second):
+		return Analysis{}, errors.New("the reviewer was never prompted")
+	}
+}
+
+func TestTheAnalysisRunsWhileTheReviewerPanesWork(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	a := &gatedAnalyzer{started: make(chan struct{}), prompted: make(chan struct{})}
+	r.behave = func(vars map[string]any) {
+		select {
+		case <-a.started:
+		case <-time.After(10 * time.Second):
+			t.Error("the analysis had not started when the reviewer was prompted")
+		}
+		close(a.prompted)
+		writeReview(t, vars, "ok", 0)
+	}
+
+	// when
+	out := r.runAnalyzed(a)
+
+	// then
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if finds := r.findsBy("static"); len(finds) != 1 || finds[0]["state"] != "ok" {
+		t.Fatalf("static finds = %+v", finds)
+	}
+}
+
+type blockingAnalyzer struct {
+	errs chan error
+}
+
+func (a *blockingAnalyzer) Analyze(ctx context.Context, dir string) (Analysis, error) {
+	<-ctx.Done()
+	a.errs <- ctx.Err()
+	return Analysis{}, ctx.Err()
+}
+
+func receivedNow(ch chan error) error {
+	select {
+	case err := <-ch:
+		return err
+	default:
+		return errors.New("nothing received")
+	}
+}
+
+func TestAFailedPaneOpenCancelsTheAnalysisBeforeTheStepFails(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.sm.Host = &splitFailHost{scriptedHost: r.host, failOn: 1}
+	a := &blockingAnalyzer{errs: make(chan error, 1)}
+
+	// when
+	out := r.runAnalyzed(a)
+
+	// then
+	if actual := receivedNow(a.errs); !errors.Is(actual, context.Canceled) {
+		t.Fatalf("analysis ended with %v", actual)
+	}
+	if out.State != StepFailed || out.Reason != "reviewer claude: pane_not_found" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestAPlanStepNeverRunsTheAnalysis(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.worker.Ref.Kind.Check = "plan-file"
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	r.runAnalyzed(r.analyzer(Analysis{}))
+
+	// then
+	if calls := r.callsFrom("Analyzer.Analyze"); len(calls) != 0 {
+		t.Fatalf("calls = %q", calls)
+	}
+	if finds := r.findsBy("static"); len(finds) != 0 {
+		t.Fatalf("static finds = %+v", finds)
+	}
+	if _, err := os.Stat(r.phaseFile("implement-findings-static-r1.json")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("static file stat = %v", err)
+	}
+}
+
+func TestANilAnalyzerAddsNoStaticReviewer(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	r.runAnalyzed(nil)
+
+	// then
+	if finds := r.events("review-find"); len(finds) != 1 || finds[0].Fields["reviewer"] != "claude" {
+		t.Fatalf("review-find = %+v", finds)
+	}
+	if _, err := os.Stat(r.phaseFile("implement-findings-static-r1.json")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("static file stat = %v", err)
+	}
+}
+
+func TestAStepWithNoOtherReviewersStillRunsTheStaticRound(t *testing.T) {
+	// given
+	r := newReviewRig(t)
+
+	// when
+	r.runAnalyzed(r.analyzer(Analysis{}))
+
+	// then
+	if len(r.events("review-round")) != 1 || len(r.findsBy("static")) != 1 || len(r.events("review-clean")) != 1 {
+		t.Fatalf("events = %+v", r.store.Records["run-1"])
+	}
+	if n := r.count("SessionHost.Split"); n != 0 {
+		t.Fatalf("splits = %d", n)
+	}
+}
+
+func TestDefaultRunnersRunTheStaticRoundForARowWithoutReviewers(t *testing.T) {
+	// given
+	r := newReviewRig(t)
+	a := r.analyzer(Analysis{})
+	r.sm.Analyzer = analyzerFunc(func(ctx context.Context, dir string) (Analysis, error) {
+		r.repo.TreeChanges = nil
+		return a.Analyze(ctx, dir)
+	})
+	ref := r.worker.Ref
+	ref.Key.Attempt = 2
+	r.repo.TreeChanges = []string{"a.go"}
+	r.host.script = func(int) AgentState {
+		os.WriteFile(r.phaseFile("implement-a2.sentinel"), []byte(`{"outcome":"ok","reason":"","commit":"feat(core): add the widget store"}`), 0o644)
+		return AgentWorking
+	}
+	runner := DefaultRunners(r.sm, []StepKind{ref.Kind})["diff"]
+
+	// when
+	out := runner.Run(context.Background(), ref, &recObserver{})
+
+	// then
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if finds := r.findsBy("static"); len(finds) != 1 {
+		t.Fatalf("static finds = %+v", finds)
+	}
+}
+
+func TestTheNextRoundsPriorFindingsIncludeStaticsFile(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	fixStaticFindingInRound1(t, r)
+
+	// when
+	r.runAnalyzed(r.analyzer(uncheckedError(), Analysis{}))
+
+	// then
+	expected := "- " + r.phaseFile("implement-findings-claude-r1.json") + "\n- " + r.phaseFile("implement-findings-static-r1.json")
+	if len(r.reviews) != 2 || r.reviews[1]["PriorFindings"] != expected {
+		t.Fatalf("reviews = %+v", r.reviews)
+	}
+}
+
+func TestAResumedRoundListsStaticsEarlierFilesAmongThePriorFindings(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	writeRoundFindings(t, r, "claude", 1)
+	writeRoundFindings(t, r, "static", 1)
+	r.worker.Ref.ReviewFrom = 2
+	r.worker.Ref.PrevRoundTree = "tree-r1"
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	r.runAnalyzed(r.analyzer(Analysis{}))
+
+	// then
+	expected := "- " + r.phaseFile("implement-findings-claude-r1.json") + "\n- " + r.phaseFile("implement-findings-static-r1.json")
+	if len(r.reviews) != 1 || r.reviews[0]["PriorFindings"] != expected {
+		t.Fatalf("reviews = %+v", r.reviews)
+	}
+}
+
+func TestAnAnalyzeErrorRaisesAStaticReviewerBlocker(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	_, obs := r.runAnalyzedRaising(r.failingAnalyzer(errAnalyze(), nil), then(Resolution{Action: "skip"}))
+
+	// then
+	expected := []Blocker{{Source: "reviewer", Phase: "3", Step: "implement-rv-static", Reason: "reviewer static: golangci-lint: exit status 3", Actions: []string{"retry", "skip", "block", "stop"}}}
+	if !reflect.DeepEqual(obs.blockers, expected) {
+		t.Fatalf("blockers = %+v", obs.blockers)
+	}
+}
+
+func TestAnAnalyzeErrorWithoutARaiserFailsTheStep(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	out := r.runAnalyzed(r.failingAnalyzer(errAnalyze()))
+
+	// then
+	if out.State != StepFailed || out.Reason != "reviewer static: golangci-lint: exit status 3" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	expected := []map[string]string{{"step": "implement", "round": "1", "reviewer": "static", "state": "failed", "findings": "0", "command": "analyze"}}
+	if actual := r.findsBy("static"); !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("static finds = %+v", actual)
+	}
+}
+
+func TestBlockOnAStaticBlockerFailsTheStepWithItsReason(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	out, _ := r.runAnalyzedRaising(r.failingAnalyzer(errAnalyze()), then(Resolution{Action: "block"}))
+
+	// then
+	if out.State != StepFailed || out.Reason != "reviewer static: golangci-lint: exit status 3" || !out.blocked {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestStopOnAStaticBlockerHaltsTheStep(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	out, _ := r.runAnalyzedRaising(r.failingAnalyzer(errAnalyze()), then(Resolution{Action: "stop"}))
+
+	// then
+	if !out.Halted || out.Reason != "stopped by the watchdog at b1: reviewer static: golangci-lint: exit status 3" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+type panickingAnalyzer struct{}
+
+func (panickingAnalyzer) Analyze(ctx context.Context, dir string) (Analysis, error) {
+	panic("boom")
+}
+
+func TestAPanickingAnalyzerFailsTheStepAsAnAnalyzeError(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	out := r.runAnalyzed(panickingAnalyzer{})
+
+	// then
+	if out.State != StepFailed || out.Reason != "reviewer static: panic in analyze: boom" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestAStaticFindingsFileThatCannotBeWrittenFailsTheStep(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+	path := r.phaseFile("implement-findings-static-r1.json")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// when
+	out := r.runAnalyzed(r.analyzer(Analysis{}))
+
+	// then
+	if out.State != StepFailed || out.Reason != "reviewer static: open "+path+": is a directory" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func writeRoundFindings(t *testing.T, r *reviewRig, reviewer string, round int) {
+	t.Helper()
+	body := fmt.Sprintf(`{"reviewer":%q,"findings":[]}`, reviewer)
+	if err := os.WriteFile(r.phaseFile(fmt.Sprintf("implement-findings-%s-r%d.json", reviewer, round)), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAResumedRoundLeavesAStaticFileThatWasNeverWrittenOutOfThePriorFindings(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	writeRoundFindings(t, r, "claude", 1)
+	r.worker.Ref.ReviewFrom = 2
+	r.worker.Ref.PrevRoundTree = "tree-r1"
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	r.runAnalyzed(r.analyzer(Analysis{}))
+
+	// then
+	expected := "- " + r.phaseFile("implement-findings-claude-r1.json")
+	if len(r.reviews) != 1 || r.reviews[0]["PriorFindings"] != expected {
+		t.Fatalf("reviews = %+v", r.reviews)
+	}
+}
+
+func TestSkippingAStaticBlockerRemovesAnEarlierAttemptsStaticFile(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	writeRoundFindings(t, r, "static", 1)
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	out, _ := r.runAnalyzedRaising(r.failingAnalyzer(errAnalyze()), then(Resolution{Action: "skip"}))
+
+	// then
+	if _, err := os.Stat(r.phaseFile("implement-findings-static-r1.json")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("static file stat = %v", err)
+	}
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
 	}
 }

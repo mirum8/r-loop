@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -95,7 +96,13 @@ func fakeProviders(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	tools := t.TempDir()
+	semgrep := "#!/bin/sh\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --output ]; then printf '{\"runs\":[]}' > \"$2\"; fi\n  shift\ndone\n"
+	if err := os.WriteFile(filepath.Join(tools, "semgrep"), []byte(semgrep), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sep := string(os.PathListSeparator)
+	t.Setenv("PATH", bin+sep+tools+sep+os.Getenv("PATH"))
 }
 
 func TestAMissingProviderBinaryExits127NamingTheProviderBinaryAndField(t *testing.T) {
@@ -1107,5 +1114,52 @@ func TestAMissingToolchainIsNotCheckedInDryRun(t *testing.T) {
 	// then
 	if code != 0 || !strings.Contains(f.out.String(), "static: go (semgrep not installed)\n") {
 		t.Fatalf("code=%d out=%q stderr=%q", code, f.out, f.err)
+	}
+}
+
+func reviewFinds(st core.RunState, reviewer string) []map[string]string {
+	var out []map[string]string
+	for _, e := range stepEvents(st, "review-find") {
+		if e.Fields["reviewer"] == reviewer {
+			out = append(out, e.Fields)
+		}
+	}
+	return out
+}
+
+func TestAWiredRunReviewsWithTheAnalyzerWhenAnalyzeIsEnabled(t *testing.T) {
+	// given
+	f := newResumeFixture(t, reviewConfig)
+
+	// when
+	id, code := f.firstRun(newSim(), "--phases", "1")
+
+	// then
+	expected := []map[string]string{{"step": "implement", "round": "1", "reviewer": "static", "state": "ok", "findings": "0", "command": "analyze semgrep"}}
+	if actual := reviewFinds(f.load(id), "static"); !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("static finds = %+v\n%s", actual, f.out)
+	}
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, f.out)
+	}
+}
+
+func TestAWiredRunReviewsWithoutTheAnalyzerWhenAnalyzeIsOff(t *testing.T) {
+	// given
+	f := newResumeFixture(t, reviewConfig+"analyze:\n  enabled: false\n")
+
+	// when
+	id, code := f.firstRun(newSim(), "--phases", "1")
+
+	// then
+	st := f.load(id)
+	if actual := reviewFinds(st, "static"); len(actual) != 0 {
+		t.Fatalf("static finds = %+v", actual)
+	}
+	if actual := reviewFinds(st, "claude"); len(actual) != 1 || actual[0]["state"] != "ok" {
+		t.Fatalf("claude finds = %+v\n%s", actual, f.out)
+	}
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, f.out)
 	}
 }
