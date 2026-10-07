@@ -213,7 +213,7 @@ func waitForFile(t *testing.T, path string) {
 	t.Errorf("no %s within 10s", path)
 }
 
-const golangciArgs = "run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run --issues-exit-code=0 --path-mode=abs --output.sarif.path="
+const golangciArgs = "run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run --issues-exit-code=0 --path-mode=abs --max-same-issues=0 --max-issues-per-linter=0 --output.sarif.path="
 
 const fetchLine = "mvn|<root>|-q -B org.apache.maven.plugins:maven-dependency-plugin:3.11.0:copy -Dartifact=com.h3xstream.findsecbugs:findsecbugs-plugin:1.14.0 -DoutputDirectory=<fetch>"
 
@@ -285,6 +285,52 @@ func TestAnalyzeRunsGolangciLintWithGosecInEachTouchedGoModule(t *testing.T) {
 	}
 }
 
+func TestAnalyzeLiftsGolangciLintsIssueCaps(t *testing.T) {
+	// given
+	bin := stubPath(t)
+	goStub(t, bin, `{"runs":[]}`, `{"runs":[]}`)
+	dir := goRepo(t)
+
+	// when
+	analyzed(t, New(time.Minute), dir)
+
+	// then
+	actual := stubLog(t)
+	expected := []string{"go|<root>|run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@" + golangciLintVersion + " run --issues-exit-code=0 --path-mode=abs --max-same-issues=0 --max-issues-per-linter=0 --output.sarif.path=<out>/golangci-1.sarif --enable=gosec"}
+	if !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("actual %q, expected %q", actual, expected)
+	}
+}
+
+func TestAnalyzeGivesGolangciLintACachePerModuleDirectory(t *testing.T) {
+	// given
+	bin := stubPath(t)
+	goStub(t, bin, `{"runs":[]}`, `{"runs":[]}`)
+	stub(t, bin, "go", `printf '%s|%s\n' "$GOLANGCI_LINT_CACHE" "$GOCACHE" >> "$STUB_LOG.cache"
+`+goStubBody)
+	t.Setenv("GOCACHE", "/shared/gocache")
+	first, second := goRepo(t), goRepo(t)
+
+	// when
+	analyzed(t, New(time.Minute), first)
+	analyzed(t, New(time.Minute), second)
+	analyzed(t, New(time.Minute), first)
+
+	// then
+	data, err := os.ReadFile(os.Getenv("STUB_LOG") + ".cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual := strings.Split(strings.TrimSpace(string(data)), "\n")
+	prefix := filepath.Join(os.Getenv("STUB_CACHE"), "r-loop", "golangci") + "/"
+	if len(actual) != 3 || !strings.HasPrefix(actual[0], prefix) || !strings.HasPrefix(actual[1], prefix) || !strings.HasSuffix(actual[0], "|/shared/gocache") {
+		t.Fatalf("actual %q, expected three caches under %s with GOCACHE kept", actual, prefix)
+	}
+	if actual[0] == actual[1] || actual[0] != actual[2] {
+		t.Fatalf("actual %q, expected one cache per module directory", actual)
+	}
+}
+
 func TestAnalyzeLeavesGosecToTheRepositorysGolangciConfig(t *testing.T) {
 	for _, config := range []string{"tools/.golangci.yml", "tools/.golangci.yaml", "tools/.golangci.toml", "tools/.golangci.json", ".golangci.yml"} {
 		t.Run(config, func(t *testing.T) {
@@ -323,7 +369,7 @@ func TestAnalyzeRunsGovulncheckWhenGoModOrGoSumChanges(t *testing.T) {
 			actual := stubLog(t)
 			expected := []string{
 				"go|<root>|" + golangciArgs + "<out>/golangci-1.sarif --enable=gosec",
-				"go|<root>|run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format sarif ./...",
+				"go|<root>|run golang.org/x/vuln/cmd/govulncheck@v1.7.0 -format sarif ./...",
 			}
 			if !reflect.DeepEqual(actual, expected) {
 				t.Fatalf("actual %q, expected %q", actual, expected)
@@ -429,7 +475,7 @@ func TestAnalyzeFetchesTheFindSecBugsJarOnceIntoTheUserCache(t *testing.T) {
 func TestAnalyzeReadsPmdAndSpotbugsReportsFromEachTouchedMavenModule(t *testing.T) {
 	// given
 	bin := stubPath(t)
-	mvnStub(t, bin, "api core", pmdReport(pmdViolation("src/main/java/X.java", 1, 3, "UnusedLocalVariable")), sarifHit("SQL_INJECTION", "src/main/java/X.java", 1))
+	mvnStub(t, bin, "api core", pmdReport(pmdViolation("src/main/java/X.java", 1, 3, "UnusedLocalVariable")), sarifHit("SQL_INJECTION", "X.java", 1))
 	dir := stubbedRepo(t, map[string]string{".gitignore": javaIgnore, "pom.xml": "", "api/pom.xml": "", "core/pom.xml": ""})
 	writeText(t, dir, "api/src/main/java/X.java", "class X {}\n")
 	writeText(t, dir, "core/src/main/java/X.java", "class X {}\n")
@@ -449,6 +495,24 @@ func TestAnalyzeReadsPmdAndSpotbugsReportsFromEachTouchedMavenModule(t *testing.
 	}
 }
 
+func TestAnalyzeResolvesMavenSpotbugsPathsAgainstTheMainSourceRoot(t *testing.T) {
+	// given
+	bin := stubPath(t)
+	sarif := `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"SpotBugs","rules":[{"id":"PREDICTABLE_RANDOM"}]}},"results":[{"ruleId":"PREDICTABLE_RANDOM","ruleIndex":0,"level":"warning","message":{"text":"This random generator (java.util.Random) is predictable"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"demo/App.java"},"region":{"startLine":14}}}]}]}]}`
+	mvnStub(t, bin, ".", pmdReport(""), sarif)
+	dir := stubbedRepo(t, map[string]string{".gitignore": javaIgnore, "pom.xml": ""})
+	writeText(t, dir, "src/main/java/demo/App.java", "package demo;\n")
+
+	// when
+	actual := analyzed(t, New(time.Minute), dir)
+
+	// then
+	expected := []string{"spotbugs/PREDICTABLE_RANDOM: This random generator (java.util.Random) is predictable src/main/java/demo/App.java"}
+	if actualSummaries := summaries(actual.Findings); !reflect.DeepEqual(actualSummaries, expected) {
+		t.Fatalf("actual %q, expected %q", actualSummaries, expected)
+	}
+}
+
 func TestAnalyzeRunsGradleOnceAtTheBuildRootWithTheInitScript(t *testing.T) {
 	// given
 	bin := stubPath(t)
@@ -462,7 +526,7 @@ func TestAnalyzeRunsGradleOnceAtTheBuildRootWithTheInitScript(t *testing.T) {
 
 	// then
 	actual := stubLog(t)
-	expected := []string{"gradle|<root>|-q --init-script <out>/init.gradle :app:pmdMain :app:spotbugsMain :libs:core:pmdMain :libs:core:spotbugsMain"}
+	expected := []string{"gradle|<root>|--no-daemon -q --init-script <out>/init.gradle :app:pmdMain :app:spotbugsMain :libs:core:pmdMain :libs:core:spotbugsMain"}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("actual %q, expected %q", actual, expected)
 	}
@@ -486,7 +550,7 @@ func TestAnalyzeNamesTheRootGradleProjectsTasksWithoutAPrefix(t *testing.T) {
 
 	// then
 	actual := stubLog(t)
-	expected := []string{"gradle|<root>|-q --init-script <out>/init.gradle :pmdMain :spotbugsMain"}
+	expected := []string{"gradle|<root>|--no-daemon -q --init-script <out>/init.gradle :pmdMain :spotbugsMain"}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("actual %q, expected %q", actual, expected)
 	}
@@ -668,6 +732,110 @@ func TestAnalyzeWritesNoFileIntoTheTreeButBuildOutput(t *testing.T) {
 				t.Fatalf("actual %q, expected %q", actual, c.expected)
 			}
 		})
+	}
+}
+
+func TestAnalyzeLeavesTheUntrackedFilesOfARepoWithoutIgnoresAsItFoundThem(t *testing.T) {
+	gradleOutput := gradleBuild + "\nmkdir -p .gradle/8.14 && : > .gradle/8.14/fileHashes.lock"
+	cases := []struct {
+		name      string
+		committed map[string]string
+		module    string
+		stubName  string
+		body      string
+		timeout   time.Duration
+		failed    bool
+		gone      string
+	}{
+		{"maven", map[string]string{"pom.xml": "", "core/pom.xml": ""}, "core", "mvn", mavenBody(fetchJar, mavenBuild), time.Minute, false, "core/target/classes"},
+		{"gradle", map[string]string{"settings.gradle": "", "core/build.gradle": ""}, "core", "gradle", gradleOutput, time.Minute, false, ".gradle"},
+		{"maven failure", map[string]string{"pom.xml": "", "core/pom.xml": ""}, "core", "mvn", mavenBody(fetchJar, mavenBuild+"\nexit 1"), time.Minute, true, "core/target/classes"},
+		{"gradle timeout", map[string]string{"settings.gradle": "", "core/build.gradle": ""}, "core", "gradle", gradleOutput + "\nsleep 30", 500 * time.Millisecond, true, ".gradle"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// given
+			bin := stubPath(t)
+			javaEnv(t, c.module, pmdReport(""), `{"runs":[]}`)
+			stub(t, bin, c.stubName, c.body)
+			dir := stubbedRepo(t, c.committed)
+			writeText(t, dir, "core/src/main/java/A.java", "class A {}\n")
+			writeText(t, dir, "notes.txt", "mine\n")
+			writeText(t, dir, "core/target/notes.txt", "mine\n")
+			writeText(t, dir, "core/build/notes.txt", "mine\n")
+			expected := gitStatus(t, dir)
+
+			// when
+			_, err := New(c.timeout).Analyze(context.Background(), dir)
+
+			// then
+			if (err != nil) != c.failed {
+				t.Fatalf("Analyze: %v, expected failure %v", err, c.failed)
+			}
+			if actual := gitStatus(t, dir); actual != expected {
+				t.Fatalf("actual %q, expected %q", actual, expected)
+			}
+			if _, err := os.Lstat(filepath.Join(dir, c.gone)); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("%s: %v, expected it removed", c.gone, err)
+			}
+		})
+	}
+}
+
+func TestAnalyzeKeepsAnUntrackedSourceFileWrittenDuringTheAnalysis(t *testing.T) {
+	// given
+	bin := stubPath(t)
+	javaEnv(t, "core", pmdReport(""), `{"runs":[]}`)
+	stub(t, bin, "mvn", mavenBody(fetchJar, mavenBuild+"\nprintf 'class B {}' > core/src/main/java/B.java"))
+	dir := stubbedRepo(t, map[string]string{"pom.xml": "", "core/pom.xml": ""})
+	writeText(t, dir, "core/src/main/java/A.java", "class A {}\n")
+
+	// when
+	analyzed(t, New(time.Minute), dir)
+
+	// then
+	if actual, expected := gitStatus(t, dir), "?? core/src/main/java/A.java\n?? core/src/main/java/B.java"; actual != expected {
+		t.Fatalf("actual %q, expected %q", actual, expected)
+	}
+}
+
+func TestAnalyzeRunsGradleWithoutADaemon(t *testing.T) {
+	// given
+	bin := stubPath(t)
+	gradleStub(t, bin, ".", pmdReport(""), `{"runs":[]}`)
+	dir := loneGradleRepo(t)
+
+	// when
+	analyzed(t, New(time.Minute), dir)
+
+	// then
+	actual := stubLog(t)
+	expected := []string{"gradle|<root>|--no-daemon -q --init-script <out>/init.gradle :pmdMain :spotbugsMain"}
+	if !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("actual %q, expected %q", actual, expected)
+	}
+}
+
+func TestAnalyzeStopsADetachedGradleDaemonBeforeItWritesAfterTheTimeout(t *testing.T) {
+	// given
+	bin := stubPath(t)
+	javaEnv(t, ".", pmdReport(""), `{"runs":[]}`)
+	stub(t, bin, "gradle", `perl -e 'setpgrp(0, 0); exec @ARGV' sh -c 'while :; do mkdir -p .gradle/9.8.0 build/reports && : > .gradle/9.8.0/gc.properties && : > build/reports/late.html; sleep 0.05; done' < /dev/null > /dev/null 2>&1 &
+sleep 30`)
+	dir := stubbedRepo(t, map[string]string{"build.gradle": ""})
+	writeText(t, dir, "src/main/java/A.java", "class A {}\n")
+	expected := gitStatus(t, dir)
+
+	// when
+	_, err := New(500*time.Millisecond).Analyze(context.Background(), dir)
+	time.Sleep(time.Second)
+
+	// then
+	if err == nil {
+		t.Fatal("Analyze: expected a timeout")
+	}
+	if actual := gitStatus(t, dir); actual != expected {
+		t.Fatalf("actual %q, expected %q", actual, expected)
 	}
 }
 

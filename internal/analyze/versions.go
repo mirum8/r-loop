@@ -1,8 +1,8 @@
 package analyze
 
 const (
-	golangciLintVersion          = "v2.14.0"
-	govulncheckVersion           = "v1.8.0"
+	golangciLintVersion          = "v2.12.2"
+	govulncheckVersion           = "v1.7.0"
 	mavenPMDPluginVersion        = "3.28.0"
 	spotbugsMavenPluginVersion   = "4.10.4.1"
 	spotbugsGradlePluginVersion  = "6.5.12"

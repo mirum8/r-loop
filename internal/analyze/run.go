@@ -3,7 +3,9 @@ package analyze
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -50,7 +52,14 @@ func (a *Analyzer) Analyze(parent context.Context, dir string) (core.Analysis, e
 	if err != nil {
 		return core.Analysis{}, fmt.Errorf("analyze: %w", err)
 	}
-	touches := Touched(mods, dir, files)
+	analysis, err := a.run(ctx, parent, dir, ch, Touched(mods, dir, files), files)
+	if tidyErr := tidy(context.WithoutCancel(parent), dir, ch.Untracked); err == nil && tidyErr != nil {
+		return core.Analysis{}, tidyErr
+	}
+	return analysis, err
+}
+
+func (a *Analyzer) run(ctx, parent context.Context, dir string, ch Changes, touches []Touch, files []string) (core.Analysis, error) {
 	out, err := os.MkdirTemp("", "r-loop-analyze-")
 	if err != nil {
 		return core.Analysis{}, fmt.Errorf("analyze: %w", err)
@@ -65,6 +74,35 @@ func (a *Analyzer) Analyze(parent context.Context, dir string) (core.Analysis, e
 		return core.Analysis{}, failure("analyze", nil, p.cause(ctx.Err()))
 	}
 	return analysis, nil
+}
+
+var buildDirs = map[string]bool{"target": true, "build": true, ".gradle": true, ".kotlin": true}
+
+func tidy(ctx context.Context, dir string, before map[string]bool) error {
+	others, err := gitOutput(ctx, dir, "ls-files", "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return err
+	}
+	for _, f := range strings.Split(string(others), "\x00") {
+		if f == "" || before[f] || !buildOutput(f) {
+			continue
+		}
+		path := filepath.Join(dir, filepath.FromSlash(f))
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("analyze: %w", err)
+		}
+		for d := filepath.Dir(path); d != dir; d = filepath.Dir(d) {
+			if os.Remove(d) != nil {
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func buildOutput(rel string) bool {
+	parts := strings.Split(rel, "/")
+	return slices.ContainsFunc(parts[:len(parts)-1], func(p string) bool { return buildDirs[p] })
 }
 
 type pass struct {
@@ -115,11 +153,22 @@ func (p *pass) ran(names ...string) {
 	}
 }
 
-func (p *pass) command(tool, cwd string, stdout io.Writer, name string, args ...string) ([]byte, error) {
+func (p *pass) command(tool, cwd string, env []string, stdout io.Writer, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(p.ctx, name, args...)
 	cmd.Dir = cwd
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	var detached []int
+	cmd.Cancel = func() error {
+		detached = descendants(cmd.Process.Pid)
+		for _, pid := range detached {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	cmd.WaitDelay = time.Second
 	var out, errOut bytes.Buffer
 	if stdout == nil {
@@ -128,6 +177,7 @@ func (p *pass) command(tool, cwd string, stdout io.Writer, name string, args ...
 		cmd.Stdout, cmd.Stderr = io.MultiWriter(stdout, &out), &errOut
 	}
 	err := cmd.Run()
+	awaitGone(detached)
 	output := append(out.Bytes(), errOut.Bytes()...)
 	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
 		err = nil
@@ -136,6 +186,39 @@ func (p *pass) command(tool, cwd string, stdout io.Writer, name string, args ...
 		return output, failure(tool, output, p.cause(err))
 	}
 	return output, nil
+}
+
+func descendants(root int) []int {
+	out, err := exec.Command("ps", "-A", "-o", "pid=", "-o", "ppid=").Output()
+	if err != nil {
+		return nil
+	}
+	children := map[int][]int{}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		pid, err1 := strconv.Atoi(fields[0])
+		ppid, err2 := strconv.Atoi(fields[1])
+		if err1 == nil && err2 == nil {
+			children[ppid] = append(children[ppid], pid)
+		}
+	}
+	found := slices.Clone(children[root])
+	for i := 0; i < len(found); i++ {
+		found = append(found, children[found[i]]...)
+	}
+	return found
+}
+
+func awaitGone(pids []int) {
+	deadline := time.Now().Add(5 * time.Second)
+	for _, pid := range pids {
+		for syscall.Kill(pid, 0) == nil && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 }
 
 func (p *pass) cause(err error) error {
@@ -246,11 +329,15 @@ func (p *pass) golang(n int, t Touch) error {
 	m := t.Module
 	report := filepath.Join(p.out, "golangci-"+strconv.Itoa(n)+".sarif")
 	args := []string{"run", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@" + golangciLintVersion, "run",
-		"--issues-exit-code=0", "--path-mode=abs", "--output.sarif.path=" + report}
+		"--issues-exit-code=0", "--path-mode=abs", "--max-same-issues=0", "--max-issues-per-linter=0", "--output.sarif.path=" + report}
 	if !golangciConfigured(p.dir, m.Dir) {
 		args = append(args, "--enable=gosec")
 	}
-	output, err := p.command("golangci-lint", m.Dir, nil, m.Runner, args...)
+	cache, err := golangciCache(m.Dir)
+	if err != nil {
+		return failure("golangci-lint", nil, err)
+	}
+	output, err := p.command("golangci-lint", m.Dir, []string{"GOLANGCI_LINT_CACHE=" + cache}, nil, m.Runner, args...)
 	if err != nil {
 		return err
 	}
@@ -266,7 +353,7 @@ func (p *pass) golang(n int, t Touch) error {
 	if err != nil {
 		return failure("govulncheck", nil, err)
 	}
-	output, err = p.command("govulncheck", m.Dir, f, m.Runner, "run", "golang.org/x/vuln/cmd/govulncheck@"+govulncheckVersion, "-format", "sarif", "./...")
+	output, err = p.command("govulncheck", m.Dir, nil, f, m.Runner, "run", "golang.org/x/vuln/cmd/govulncheck@"+govulncheckVersion, "-format", "sarif", "./...")
 	if closeErr := f.Close(); err == nil && closeErr != nil {
 		err = failure("govulncheck", output, closeErr)
 	}
@@ -275,6 +362,15 @@ func (p *pass) golang(n int, t Touch) error {
 	}
 	p.ran("govulncheck")
 	return p.read("govulncheck", m.Dir, vulnReport, output)
+}
+
+func golangciCache(modDir string) (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(modDir))
+	return filepath.Join(cache, "r-loop", "golangci", hex.EncodeToString(sum[:8])), nil
 }
 
 func golangciConfigured(root, modDir string) bool {
@@ -314,7 +410,7 @@ func (p *pass) maven(group []Touch) error {
 			return failure("maven", nil, err)
 		}
 	}
-	output, err := p.command("maven", root, nil, runner, "-q", "-B", "-DskipTests", "-pl", strings.Join(modules, ","), "-am", "compile",
+	output, err := p.command("maven", root, nil, nil, runner, "-q", "-B", "-DskipTests", "-pl", strings.Join(modules, ","), "-am", "compile",
 		"org.apache.maven.plugins:maven-pmd-plugin:"+mavenPMDPluginVersion+":pmd",
 		"com.github.spotbugs:spotbugs-maven-plugin:"+spotbugsMavenPluginVersion+":spotbugs",
 		"-Dspotbugs.sarifOutput=true", "-Dspotbugs.pluginList="+jar)
@@ -324,14 +420,14 @@ func (p *pass) maven(group []Touch) error {
 	p.ran("pmd", "spotbugs")
 	for _, t := range group {
 		target := filepath.Join(t.Module.Dir, "target")
-		if err := p.reports("maven", t.Module.Dir, filepath.Join(target, "classes"), filepath.Join(target, "pmd.xml"), filepath.Join(target, "spotbugsSarif.json"), output); err != nil {
+		if err := p.reports("maven", t.Module.Dir, filepath.Join(t.Module.Dir, "src", "main", "java"), filepath.Join(target, "classes"), filepath.Join(target, "pmd.xml"), filepath.Join(target, "spotbugsSarif.json"), output); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (p *pass) reports(tool, dir, classes, pmd, sarif string, output []byte) error {
+func (p *pass) reports(tool, dir, sources, classes, pmd, sarif string, output []byte) error {
 	ok, err := hasClasses(classes)
 	if err != nil {
 		return failure(tool, output, err)
@@ -342,7 +438,7 @@ func (p *pass) reports(tool, dir, classes, pmd, sarif string, output []byte) err
 	if err := p.read("pmd", dir, pmd, output); err != nil {
 		return err
 	}
-	return p.read("spotbugs", dir, sarif, output)
+	return p.read("spotbugs", sources, sarif, output)
 }
 
 func (p *pass) findSecBugs(root, runner string) (string, error) {
@@ -364,7 +460,7 @@ func (p *pass) findSecBugs(root, runner string) (string, error) {
 		return "", failure("find-sec-bugs", nil, err)
 	}
 	defer os.RemoveAll(stage)
-	output, err := p.command("find-sec-bugs", root, nil, runner, "-q", "-B",
+	output, err := p.command("find-sec-bugs", root, nil, nil, runner, "-q", "-B",
 		"org.apache.maven.plugins:maven-dependency-plugin:"+mavenDependencyPluginVersion+":copy",
 		"-Dartifact=com.h3xstream.findsecbugs:findsecbugs-plugin:"+findSecBugsVersion,
 		"-DoutputDirectory="+stage)
@@ -387,7 +483,7 @@ func (p *pass) gradle(group []Touch) error {
 	if err := os.WriteFile(script, []byte(content), 0o644); err != nil {
 		return failure("gradle", nil, err)
 	}
-	args := []string{"-q", "--init-script", script}
+	args := []string{"--no-daemon", "-q", "--init-script", script}
 	for _, t := range group {
 		prefix := ":"
 		if rel := slashRel(root, t.Module.Dir); rel != "." {
@@ -399,7 +495,7 @@ func (p *pass) gradle(group []Touch) error {
 			return failure("gradle", nil, err)
 		}
 	}
-	output, err := p.command("gradle", root, nil, runner, args...)
+	output, err := p.command("gradle", root, nil, nil, runner, args...)
 	if err != nil {
 		return err
 	}
@@ -407,7 +503,7 @@ func (p *pass) gradle(group []Touch) error {
 	for _, t := range group {
 		build := filepath.Join(t.Module.Dir, "build")
 		reports := filepath.Join(build, "reports")
-		if err := p.reports("gradle", t.Module.Dir, filepath.Join(build, "classes", "java", "main"), filepath.Join(reports, "pmd", "main.xml"), filepath.Join(reports, "spotbugs", "main.sarif"), output); err != nil {
+		if err := p.reports("gradle", t.Module.Dir, t.Module.Dir, filepath.Join(build, "classes", "java", "main"), filepath.Join(reports, "pmd", "main.xml"), filepath.Join(reports, "spotbugs", "main.sarif"), output); err != nil {
 			return err
 		}
 	}
@@ -423,7 +519,7 @@ func (p *pass) semgrep(files []string) error {
 		config = filepath.Join(p.dir, ".semgrep")
 	}
 	args := append([]string{"scan", "--metrics=off", "--sarif", "--output", report, "--config", config, "--"}, files...)
-	output, err := p.command("semgrep", p.dir, nil, "semgrep", args...)
+	output, err := p.command("semgrep", p.dir, nil, nil, "semgrep", args...)
 	if err != nil {
 		return err
 	}
