@@ -29,20 +29,21 @@ func timedOut(err error) bool {
 var errStepEnded = errors.New("step already ended")
 
 type SessionManager struct {
-	Host       SessionHost
-	Repo       Repo
-	Prompts    Prompts
-	Store      Store
-	Ask        AskChannel
-	Resolve    func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error)
-	Now        func() time.Time
-	Poll       time.Duration
-	StallGrace time.Duration
-	ItemGates  bool
-	Label      string
-	Dialogs    Dialogs
-	Analyzer   Analyzer
-	mu         sync.Mutex
+	Host         SessionHost
+	Repo         Repo
+	Prompts      Prompts
+	Store        Store
+	Ask          AskChannel
+	Resolve      func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error)
+	Now          func() time.Time
+	Poll         time.Duration
+	StallGrace   time.Duration
+	ItemGates    bool
+	Label        string
+	Dialogs      Dialogs
+	Analyzer     Analyzer
+	ReviewRunner ReviewRunner
+	mu           sync.Mutex
 }
 
 type Dialogs interface {

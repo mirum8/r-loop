@@ -127,11 +127,6 @@ func (f *fakeSessionHost) AgentPane(agent string) (string, error) {
 	return f.Panes[agent], f.Err
 }
 
-func (f *fakeSessionHost) Read(agent string, lines int) (string, error) {
-	f.record("SessionHost.Read %s %d", agent, lines)
-	return f.Screens[agent], f.Err
-}
-
 func (f *fakeSessionHost) Screen(agent string) (string, error) {
 	f.record("SessionHost.Screen %s", agent)
 	return f.Screens[agent], f.Err
@@ -139,11 +134,6 @@ func (f *fakeSessionHost) Screen(agent string) (string, error) {
 
 func (f *fakeSessionHost) SendKeys(agent string, keys ...string) error {
 	f.record("SessionHost.SendKeys %s %s", agent, strings.Join(keys, " "))
-	return f.Err
-}
-
-func (f *fakeSessionHost) SendText(agent, text string) error {
-	f.record("SessionHost.SendText %s %s", agent, text)
 	return f.Err
 }
 
@@ -561,14 +551,40 @@ func (f *fakeAnalyzer) Analyze(ctx context.Context, dir string) (Analysis, error
 	return a, err
 }
 
+type fakeReviewRunner struct {
+	callLog
+	mu      sync.Mutex
+	Outputs []string
+	Errs    []error
+	n       int
+}
+
+func (f *fakeReviewRunner) RunReview(ctx context.Context, dir, command string, timeout time.Duration) (string, error) {
+	f.record("ReviewRunner.RunReview %s %s %s", dir, command, timeout)
+	f.mu.Lock()
+	i := f.n
+	f.n++
+	f.mu.Unlock()
+	var out string
+	if len(f.Outputs) > 0 {
+		out = f.Outputs[min(i, len(f.Outputs)-1)]
+	}
+	var err error
+	if len(f.Errs) > 0 {
+		err = f.Errs[min(i, len(f.Errs)-1)]
+	}
+	return out, err
+}
+
 var (
-	_ PlanSource  = (*fakePlanSource)(nil)
-	_ SessionHost = (*fakeSessionHost)(nil)
-	_ Repo        = (*fakeRepo)(nil)
-	_ Store       = (*fakeStore)(nil)
-	_ Prompts     = (*fakePrompts)(nil)
-	_ AskChannel  = (*fakeAskChannel)(nil)
-	_ Face        = (*fakeFace)(nil)
-	_ Notifier    = (*fakeNotifier)(nil)
-	_ Analyzer    = (*fakeAnalyzer)(nil)
+	_ PlanSource   = (*fakePlanSource)(nil)
+	_ SessionHost  = (*fakeSessionHost)(nil)
+	_ Repo         = (*fakeRepo)(nil)
+	_ Store        = (*fakeStore)(nil)
+	_ Prompts      = (*fakePrompts)(nil)
+	_ AskChannel   = (*fakeAskChannel)(nil)
+	_ Face         = (*fakeFace)(nil)
+	_ Notifier     = (*fakeNotifier)(nil)
+	_ Analyzer     = (*fakeAnalyzer)(nil)
+	_ ReviewRunner = (*fakeReviewRunner)(nil)
 )

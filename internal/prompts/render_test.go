@@ -109,19 +109,21 @@ func TestReviewRunsTheNativeCommandFirstAndKeepsItsOutput(t *testing.T) {
 	}
 }
 
-func TestReviewThatAlreadyRanAsksToSaveItsOutput(t *testing.T) {
+func TestReviewThatAlreadyRanReadsTheDriversFile(t *testing.T) {
 	vars := fullVars()
-	vars["ReviewCommand"] = "/review Review the current code changes"
+	vars["ReviewCommand"] = "codex review --uncommitted"
 	vars["ReviewRan"] = true
 
 	got := render(t, New(t.TempDir()), "review", vars)
 
-	want := "The native review `/review Review the current code changes` already ran in this session; its results are the review output above in your conversation. Save that output verbatim to `/runs/r1/phase-7/implement-rv-ui-r1/native-review.txt`, then base your findings on it."
+	want := "The driver already ran the native review `codex review --uncommitted`. Its output is in `/runs/r1/phase-7/implement-rv-ui-r1/native-review.txt`: read it and base your findings on it, and do not change that file."
 	if !strings.Contains(got, want) {
 		t.Errorf("prompt lacks %q:\n%s", want, got)
 	}
-	if strings.Contains(got, "Your first action is to run this command") {
-		t.Errorf("prompt asks to run the review again:\n%s", got)
+	for _, unwanted := range []string{"Your first action is to run this command", "Save that output verbatim", "above in your conversation"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("prompt has %q:\n%s", unwanted, got)
+		}
 	}
 }
 

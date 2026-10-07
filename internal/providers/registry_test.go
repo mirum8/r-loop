@@ -85,8 +85,7 @@ func TestShippedCodexBlock(t *testing.T) {
 	}
 	want := Provider{Name: "codex", Kind: "codex", Flags: "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
 		AskFlag: "-c mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.default_tools_approval_mode=approve", DirFlag: `-c sandbox_workspace_write.writable_roots=["{dir}"]`, DoneSignal: "sentinel", Ask: "mcp", Models: "debug models",
-		Review:      "/review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.",
-		ReviewStart: ">> Code review started", ReviewDone: "<< Code review finished", Source: "shipped"}
+		ReviewExec: "codex review --uncommitted {args}", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
 	}
@@ -361,7 +360,7 @@ func TestToCoreFillsTheReviewArgsWithFlagsModelAndEffort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	codex.Review, codex.ReviewStart, codex.ReviewDone = "codex exec review --uncommitted {args} -o {output}", "", ""
+	codex.Review, codex.ReviewExec = "codex exec review --uncommitted {args} -o {output}", ""
 	for _, tc := range []struct{ model, effort, want string }{
 		{"gpt-x", "high", "codex exec review --uncommitted -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -c model=gpt-x -c model_reasoning_effort=high -o {output}"},
 		{"", "", "codex exec review --uncommitted -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -o {output}"},
@@ -540,7 +539,7 @@ func TestToCoreReviewArgsCarryNoDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	codex.Review, codex.ReviewStart, codex.ReviewDone = "codex exec review --uncommitted {args} -o {output}", "", ""
+	codex.Review, codex.ReviewExec = "codex exec review --uncommitted {args} -o {output}", ""
 
 	got := ToCore(codex, "", "", "http://x", "", "/run/r1/phase-3")
 
@@ -552,22 +551,32 @@ func TestToCoreReviewArgsCarryNoDir(t *testing.T) {
 	}
 }
 
-func TestShippedCodexRunsReviewInItsPane(t *testing.T) {
+func TestShippedCodexRunsReviewAsADriverCommand(t *testing.T) {
 	codex, err := NewRegistry(nil, nil, t.TempDir()).Resolve("codex")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got := ToCore(codex, "gpt-x", "high", "http://x", "", "")
+	got := ToCore(codex, "gpt-x", "high", "http://x", "", "/run/r1/phase-3")
 
-	if got.Review != "/review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings." ||
-		got.ReviewStart != ">> Code review started" || got.ReviewDone != "<< Code review finished" {
-		t.Errorf("got review %q, start %q, done %q", got.Review, got.ReviewStart, got.ReviewDone)
+	want := "codex review --uncommitted -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -c model=gpt-x -c model_reasoning_effort=high"
+	if got.ReviewExec != want || got.Review != "" {
+		t.Errorf("got review %q, reviewExec %q\nwant reviewExec %q", got.Review, got.ReviewExec, want)
 	}
 }
 
-func TestReviewMarkersDecodeFromAProjectBlock(t *testing.T) {
-	blocks := projectBlocks(t, "pdev:\n  kind: pdev\n  doneSignal: sentinel\n  review: /review all\n  reviewStart: \">> go\"\n  reviewDone: \"<< done\"\n")
+func TestToCoreFillsReviewExecArgs(t *testing.T) {
+	p := Provider{Kind: "x", Flags: `-c sandbox_permissions=["disk-full-read-access"]`, ModelFlag: "--model {model}", AskFlag: "--ask {url}", ReviewExec: "x review {args}"}
+
+	got := ToCore(p, "m1", "", "http://x", "", "")
+
+	if want := `x review -c 'sandbox_permissions=["disk-full-read-access"]' --model m1`; got.ReviewExec != want {
+		t.Errorf("reviewExec = %q, want %q", got.ReviewExec, want)
+	}
+}
+
+func TestReviewExecDecodesFromAProjectBlock(t *testing.T) {
+	blocks := projectBlocks(t, "pdev:\n  kind: pdev\n  doneSignal: sentinel\n  reviewExec: pdev review --all\n")
 	r := NewRegistry(blocks, nil, t.TempDir())
 
 	p, err := r.Resolve("pdev")
@@ -575,22 +584,20 @@ func TestReviewMarkersDecodeFromAProjectBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.ReviewStart != ">> go" || p.ReviewDone != "<< done" {
-		t.Errorf("got %+v", p)
-	}
-	if got := ToCore(p, "", "", "", "", ""); got.Review != "/review all" || got.ReviewStart != ">> go" || got.ReviewDone != "<< done" {
+	if got := ToCore(p, "", "", "", "", ""); got.ReviewExec != "pdev review --all" || got.Review != "" {
 		t.Errorf("core args %+v", got)
 	}
 }
 
-func TestReviewMarkersComeInPairsAfterASlashReview(t *testing.T) {
+func TestABadReviewExecIsRefused(t *testing.T) {
 	cases := []struct {
 		name, block, field string
 	}{
-		{"start without done", "kind: x\ndoneSignal: sentinel\nreview: /review\nreviewStart: go\n", "reviewDone"},
-		{"done without start", "kind: x\ndoneSignal: sentinel\nreview: /review\nreviewDone: done\n", "reviewStart"},
-		{"shell review", "kind: x\ndoneSignal: sentinel\nreview: x review\nreviewStart: go\nreviewDone: done\n", "reviewStart"},
-		{"no review", "kind: x\ndoneSignal: sentinel\nreviewStart: go\nreviewDone: done\n", "reviewStart"},
+		{"with review", "kind: x\ndoneSignal: sentinel\nreview: /review\nreviewExec: x review\n", "reviewExec"},
+		{"slash command", "kind: x\ndoneSignal: sentinel\nreviewExec: /review\n", "reviewExec"},
+		{"output placeholder", "kind: x\ndoneSignal: sentinel\nreviewExec: x review -o {output}\n", "reviewExec"},
+		{"retired reviewStart", "kind: x\ndoneSignal: sentinel\nreview: /review\nreviewStart: go\n", "reviewStart"},
+		{"retired reviewDone", "kind: x\ndoneSignal: sentinel\nreview: /review\nreviewDone: done\n", "reviewDone"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

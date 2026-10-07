@@ -1152,7 +1152,7 @@ func failReviewerInLoop(r *eventsRig) {
 	r.loop.Kinds[1] = kind
 	r.loop.Runners = map[string]StepRunner{kind.Check: singleRunner{sm: r.loop.Sessions, review: func(ctx context.Context, ref StepRef, s *Session, obs Observer) Outcome {
 		h := ReviewHalf{Sessions: r.loop.Sessions, Store: r.loop.Sessions.Store, obs: obs}
-		run := &reviewerRun{rv: Reviewer{Provider: "codex"}, s: &Session{Reviewer: "codex"}, fail: &reviewerFail{reason: "reviewer codex: review did not start within 2m0s", pane: true}}
+		run := &reviewerRun{rv: Reviewer{Provider: "codex"}, s: &Session{Reviewer: "codex"}, fail: &reviewerFail{reason: "reviewer codex: review did not start within 2m0s"}}
 		return h.recover(ctx, s, []*reviewerRun{run}, 0, reviewRound{n: 1})
 	}}}
 }

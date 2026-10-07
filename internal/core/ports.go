@@ -50,10 +50,8 @@ type SessionHost interface {
 	State(agent string) (AgentState, error)
 	StateSeq(agent string) (AgentState, int64, error)
 	AgentPane(agent string) (string, error)
-	Read(agent string, lines int) (string, error)
 	Screen(agent string) (string, error)
 	SendKeys(agent string, keys ...string) error
-	SendText(agent, text string) error
 	Interrupt(agent string) error
 	Close(workspaceID string) error
 	Tag(workspaceID string, tokens map[string]string) error
@@ -136,4 +134,8 @@ type Analysis struct {
 
 type Analyzer interface {
 	Analyze(ctx context.Context, dir string) (Analysis, error)
+}
+
+type ReviewRunner interface {
+	RunReview(ctx context.Context, dir, command string, timeout time.Duration) (string, error)
 }

@@ -1011,46 +1011,6 @@ func TestStartFailsWhenClaudeNeverBecomesReadyAfterItsTrustDialog(t *testing.T) 
 	}
 }
 
-func TestSendTextTypesIntoTheAgentsPane(t *testing.T) {
-	bin, err := filepath.Abs("testdata/herdr")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	log := filepath.Join(dir, "calls")
-	wrapper := filepath.Join(dir, "herdr")
-	script := "#!/bin/sh\n\"" + bin + "\" \"$@\" || exit $?\ncat \"$HERDR_ARGV\" >> \"" + log + "\"\nprintf '\\n' >> \"" + log + "\"\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	fake(t, `{"id":"cli:agent:get","result":{"agent":{"agent":"codex","agent_status":"done","name":"a1","pane_id":"w2X:p3"},"type":"agent_info"}}`)
-	c := Client{Bin: wrapper}
-
-	if err := c.SendText("a1", "/review all of it"); err != nil {
-		t.Fatalf("SendText: %v", err)
-	}
-
-	data, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "agent\x00get\x00a1\x00\n" + "pane\x00send-text\x00w2X:p3\x00/review all of it\x00\n"
-	if string(data) != want {
-		t.Fatalf("calls\n got %q\nwant %q", data, want)
-	}
-}
-
-func TestSendTextToAnAgentWithoutAPaneFails(t *testing.T) {
-	c, argv := fakeExit(t, "", `{"error":{"code":"agent_not_found","message":"agent target a1 not found"},"id":"cli:agent:get"}`, 1)
-
-	err := c.SendText("a1", "/review")
-
-	if err == nil || !strings.Contains(err.Error(), "a1") {
-		t.Fatalf("got %v", err)
-	}
-	assertArgv(t, argv(), []string{"agent", "get", "a1"})
-}
-
 func withHistory(t *testing.T, c Client, history string) Client {
 	t.Helper()
 	dir := t.TempDir()

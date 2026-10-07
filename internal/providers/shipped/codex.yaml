@@ -7,6 +7,4 @@ askFlag: "-c mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.default_tools_ap
 dirFlag: '-c sandbox_workspace_write.writable_roots=["{dir}"]'
 doneSignal: sentinel
 ask: mcp
-review: "/review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings."
-reviewStart: ">> Code review started"
-reviewDone: "<< Code review finished"
+reviewExec: "codex review --uncommitted {args}"

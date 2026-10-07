@@ -14,7 +14,7 @@ The block's items state outcomes; a means they prescribe is a proposal. A change
 
 ## Native review
 {{if .ReviewRan}}
-The native review `{{.ReviewCommand}}` already ran in this session; its results are the review output above in your conversation. Save that output verbatim to `{{.ArtifactsDir}}/native-review.txt`, then base your findings on it. That file goes inside the folder `{{.ArtifactsDir}}/`, not beside the `.sentinel` file of nearly the same name.
+The driver already ran the native review `{{.ReviewCommand}}`. Its output is in `{{.ArtifactsDir}}/native-review.txt`: read it and base your findings on it, and do not change that file.
 {{- else}}
 Your first action is to run this command, exactly as written:
 

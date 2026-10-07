@@ -366,10 +366,8 @@ func (h *dogHost) State(agent string) (core.AgentState, error) {
 	return core.AgentWorking, nil
 }
 func (h *dogHost) AgentPane(agent string) (string, error)                 { return h.stale[agent], nil }
-func (h *dogHost) Read(agent string, lines int) (string, error)           { return "", nil }
 func (h *dogHost) Screen(agent string) (string, error)                    { return "", nil }
 func (h *dogHost) SendKeys(agent string, keys ...string) error            { return nil }
-func (h *dogHost) SendText(agent, text string) error                      { return nil }
 func (h *dogHost) Interrupt(agent string) error                           { return nil }
 func (h *dogHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
 func (h *dogHost) Close(workspaceID string) error                         { return nil }

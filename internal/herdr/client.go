@@ -455,18 +455,6 @@ func (c Client) SendKeys(agent string, keys ...string) error {
 	return nil
 }
 
-func (c Client) SendText(agent, text string) error {
-	pane, err := c.AgentPane(agent)
-	if err != nil {
-		return err
-	}
-	if pane == "" {
-		return fmt.Errorf("agent %s has no pane", agent)
-	}
-	_, err = c.exec("pane", "send-text", pane, text)
-	return err
-}
-
 func (c Client) Interrupt(agent string) error {
 	var out struct{}
 	if err := c.call(&out, "agent", "send-keys", agent, "esc"); err != nil {

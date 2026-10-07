@@ -99,10 +99,8 @@ func (h *intakeHost) Prompt(agent, text string, wait bool, timeout time.Duration
 }
 func (h *intakeHost) State(agent string) (core.AgentState, error)            { return core.AgentWorking, nil }
 func (h *intakeHost) AgentPane(agent string) (string, error)                 { return "", nil }
-func (h *intakeHost) Read(agent string, lines int) (string, error)           { return "", nil }
 func (h *intakeHost) Screen(agent string) (string, error)                    { return "", nil }
 func (h *intakeHost) SendKeys(agent string, keys ...string) error            { return nil }
-func (h *intakeHost) SendText(agent, text string) error                      { return nil }
 func (h *intakeHost) Interrupt(agent string) error                           { return nil }
 func (h *intakeHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
 func (h *intakeHost) Split(pane, direction, cwd string, ratio float64, env map[string]string) (string, error) {

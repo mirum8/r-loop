@@ -21,8 +21,8 @@ var shipped embed.FS
 const shippedSource = "shipped"
 
 type Provider struct {
-	Name, Kind, Flags, ModelFlag, EffortFlag, AskFlag, DirFlag, SettingsFlag, DoneSignal, Ask, Review, ReviewStart, ReviewDone, Models, Source string
-	Settings                                                                                                                                   string
+	Name, Kind, Flags, ModelFlag, EffortFlag, AskFlag, DirFlag, SettingsFlag, DoneSignal, Ask, Review, ReviewExec, Models, Source string
+	Settings                                                                                                                      string
 }
 
 type Registry struct {
@@ -78,7 +78,7 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 	p := Provider{Name: name, Source: source}
 	fields := map[string]*string{
 		"kind": &p.Kind, "flags": &p.Flags, "modelFlag": &p.ModelFlag, "effortFlag": &p.EffortFlag, "askFlag": &p.AskFlag,
-		"dirFlag": &p.DirFlag, "settingsFlag": &p.SettingsFlag, "doneSignal": &p.DoneSignal, "ask": &p.Ask, "review": &p.Review, "reviewStart": &p.ReviewStart, "reviewDone": &p.ReviewDone, "models": &p.Models,
+		"dirFlag": &p.DirFlag, "settingsFlag": &p.SettingsFlag, "doneSignal": &p.DoneSignal, "ask": &p.Ask, "review": &p.Review, "reviewExec": &p.ReviewExec, "models": &p.Models,
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, val := n.Content[i].Value, n.Content[i+1]
@@ -110,12 +110,12 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 		return fail("doneSignal", "must be sentinel, got %q", p.DoneSignal)
 	case p.Ask != "" && p.Ask != "mcp" && p.Ask != "none":
 		return fail("ask", "must be mcp or none, got %q", p.Ask)
-	case p.ReviewStart != "" && p.ReviewDone == "":
-		return fail("reviewDone", "is required with reviewStart")
-	case p.ReviewDone != "" && p.ReviewStart == "":
-		return fail("reviewStart", "is required with reviewDone")
-	case p.ReviewStart != "" && !strings.HasPrefix(p.Review, "/"):
-		return fail("reviewStart", "and reviewDone need a review that starts with /, got %q", p.Review)
+	case p.Review != "" && p.ReviewExec != "":
+		return fail("reviewExec", "and review are exclusive")
+	case strings.HasPrefix(p.ReviewExec, "/"):
+		return fail("reviewExec", "is a command the driver runs, not a slash command, got %q", p.ReviewExec)
+	case strings.Contains(p.ReviewExec, "{output}"):
+		return fail("reviewExec", "must not contain {output}: the driver saves its stdout")
 	}
 	if p.Ask == "" {
 		p.Ask = "none"
@@ -200,8 +200,9 @@ func ToCore(p Provider, model, effort, askURL, mcpConfigPath, dir string) core.P
 	for i, arg := range reviewArgs {
 		reviewArgs[i] = shellWord(arg)
 	}
-	return core.ProviderArgs{Kind: p.Kind, Args: Args(p, model, effort, askURL, mcpConfigPath, dir), Ask: p.Ask == "mcp", Review: strings.ReplaceAll(p.Review, "{args}", strings.Join(reviewArgs, " ")),
-		ReviewStart: p.ReviewStart, ReviewDone: p.ReviewDone}
+	joined := strings.Join(reviewArgs, " ")
+	return core.ProviderArgs{Kind: p.Kind, Args: Args(p, model, effort, askURL, mcpConfigPath, dir), Ask: p.Ask == "mcp",
+		Review: strings.ReplaceAll(p.Review, "{args}", joined), ReviewExec: strings.ReplaceAll(p.ReviewExec, "{args}", joined)}
 }
 
 func shellWord(arg string) string {

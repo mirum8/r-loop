@@ -342,7 +342,6 @@ type slot struct {
 type reviewerFail struct {
 	reason  string
 	stalled bool
-	pane    bool
 }
 
 type blockerRaiser interface {
@@ -376,7 +375,7 @@ func (h ReviewHalf) args(worker *Session, rv Reviewer) (ProviderArgs, string, er
 	if err != nil {
 		return a, url, fmt.Errorf("reviewer %s: %w", rv.ID(), err)
 	}
-	if rv.TemplateFor(worker.Ref.Key.Kind) == "review" && a.Review == "" {
+	if rv.TemplateFor(worker.Ref.Key.Kind) == "review" && a.Review == "" && a.ReviewExec == "" {
 		return a, url, fmt.Errorf("reviewer %s declares no native reviewer", rv.ID())
 	}
 	return a, url, nil
@@ -437,9 +436,9 @@ func (h ReviewHalf) open(ctx context.Context, worker *Session, rows []Reviewer, 
 			}
 		}
 	}
-	promptAll := func(pane bool) Outcome {
+	promptAll := func(native bool) Outcome {
 		for _, r := range runs {
-			if r.fail != nil || paneReview(r) != pane {
+			if r.fail != nil || execReview(r) != native {
 				continue
 			}
 			if f := h.prompt(r); f != nil {
@@ -453,7 +452,7 @@ func (h ReviewHalf) open(ctx context.Context, worker *Session, rows []Reviewer, 
 	if out := promptAll(false); out.State == StepFailed {
 		return nil, out
 	}
-	if out := h.paneReviews(ctx, worker, runs, failed); out.State == StepFailed {
+	if out := h.nativeReviews(ctx, worker, runs, failed); out.State == StepFailed {
 		return nil, out
 	}
 	if out := promptAll(true); out.State == StepFailed {
@@ -622,7 +621,7 @@ func (h ReviewHalf) recover(ctx context.Context, worker *Session, runs []*review
 	for r.fail != nil {
 		f := *r.fail
 		actions := reviewerActions
-		if !f.pane && !f.stalled {
+		if !f.stalled {
 			actions = slices.DeleteFunc(slices.Clone(actions), func(a string) bool { return a == actionKeys })
 		}
 		b := Blocker{Source: sourceReviewer, Phase: worker.Ref.Key.Phase, Step: reviewerKey(worker.Ref.Key, r.rv.ID()).Kind, Reason: f.reason, Excerpt: h.screen(r.s), Actions: actions}
@@ -643,7 +642,7 @@ func (h ReviewHalf) recover(ctx context.Context, worker *Session, runs []*review
 		case actionRetry, actionSwitch:
 			out = h.reopen(ctx, worker, runs, i, rd, res)
 		case actionKeys:
-			out = h.resume(ctx, worker, r, rd, f)
+			out = h.await(ctx, worker, r, rd)
 		case actionStop:
 			return Outcome{State: StepFailed, Reason: stoppedAt(res.ID, f.reason), Session: worker, Halted: true}
 		default:
@@ -714,7 +713,7 @@ func (h ReviewHalf) reopen(ctx context.Context, worker *Session, runs []*reviewe
 		return out
 	}
 	if f == nil {
-		out = h.paneReviews(ctx, worker, []*reviewerRun{r}, func(_ *reviewerRun, pf *reviewerFail) Outcome {
+		out = h.nativeReviews(ctx, worker, []*reviewerRun{r}, func(_ *reviewerRun, pf *reviewerFail) Outcome {
 			f = pf
 			return Outcome{}
 		})
@@ -727,24 +726,6 @@ func (h ReviewHalf) reopen(ctx context.Context, worker *Session, runs []*reviewe
 	}
 	if f != nil {
 		return fail(f.reason)
-	}
-	return h.await(ctx, worker, r, rd)
-}
-
-func (h ReviewHalf) resume(ctx context.Context, worker *Session, r *reviewerRun, rd reviewRound, f reviewerFail) Outcome {
-	if f.pane {
-		if err := h.awaitPane(ctx, r.s, r.args); err != nil {
-			r.fail = paneFail(r.s, err)
-			return Outcome{}
-		}
-		if err := h.event(worker, "review-ran", map[string]string{"reviewer": r.s.Reviewer}); err != nil {
-			return h.Sessions.fail(worker, "record: "+err.Error())
-		}
-		r.s.Ref.Vars["ReviewRan"] = true
-		if pf := h.prompt(r); pf != nil {
-			r.fail = pf
-			return Outcome{}
-		}
 	}
 	return h.await(ctx, worker, r, rd)
 }
@@ -831,6 +812,9 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 	vars["Rounds"] = rd.rounds
 	vars["ReviewRan"] = false
 	vars["ReviewCommand"] = strings.ReplaceAll(args.Review, "{output}", shellQuote(filepath.Join(artifacts, "native-review.txt")))
+	if args.ReviewExec != "" {
+		vars["ReviewCommand"] = args.ReviewExec
+	}
 	vars["FindingsPath"] = reviewFindingsPath(worker, id, rd.n)
 	vars["ArtifactsDir"] = artifacts
 	vars["RequiredPath"] = required

@@ -33,6 +33,7 @@ import (
 	"r-loop/internal/prompts"
 	"r-loop/internal/providers"
 	"r-loop/internal/quota"
+	"r-loop/internal/reviewexec"
 	"r-loop/internal/store"
 )
 
@@ -521,17 +522,18 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		analyzer = analyze.New(cfg.Analyze.Timeout)
 	}
 	sm := &core.SessionManager{
-		Host:       w.Host,
-		Repo:       repo,
-		Prompts:    w.Prompts,
-		Store:      w.records,
-		Ask:        w.Ask,
-		Resolve:    w.resolve,
-		Now:        time.Now,
-		StallGrace: cfg.Watchdog.StallGrace,
-		ItemGates:  pl.Backlog,
-		Label:      cfg.Label,
-		Analyzer:   analyzer,
+		Host:         w.Host,
+		Repo:         repo,
+		Prompts:      w.Prompts,
+		Store:        w.records,
+		Ask:          w.Ask,
+		Resolve:      w.resolve,
+		Now:          time.Now,
+		StallGrace:   cfg.Watchdog.StallGrace,
+		ItemGates:    pl.Backlog,
+		Label:        cfg.Label,
+		Analyzer:     analyzer,
+		ReviewRunner: reviewexec.New(),
 	}
 	runners := core.DefaultRunners(sm, kinds)
 	impl := rows["implement"]

@@ -379,7 +379,7 @@ func checkRole(reg *providers.Registry, r role) (providers.Provider, error) {
 	if err != nil {
 		return providers.Provider{}, exit(2, "%s: %v", r.field, err)
 	}
-	if r.review && p.Review == "" {
+	if r.review && p.Review == "" && p.ReviewExec == "" {
 		return providers.Provider{}, exit(2, "%s: provider %s has no review command", r.field, r.provider)
 	}
 	if p.Ask != "mcp" {

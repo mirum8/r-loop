@@ -364,6 +364,22 @@ func TestImplementReviewerWithoutReviewCommandIsRefusedWithExit2(t *testing.T) {
 	}
 }
 
+func TestPreflightPassesAReviewerWhoseProviderHasOnlyAReviewExec(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "providers:\n  bare:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n    models: debug models\n    reviewExec: codex review --uncommitted\nsteps:\n  implement:\n    reviewers:\n      - provider: bare\n        model: gpt-6-sol\n        effort: e\n")
+	f.commit()
+	bin := t.TempDir()
+	script := "#!/bin/sh\nif [ \"$1 $2\" = \"debug models\" ]; then\n  echo '{\"models\":[{\"slug\":\"gpt-6-sol\",\"visibility\":\"list\"}]}'\nfi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if _, err := f.preflight(f.todo, "--plain"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPreflightPassesASecurityReviewerOnAnyProviderAndInstallsNothing(t *testing.T) {
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  bare:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n    models: debug models\nsteps:\n  implement:\n    reviewers:\n      - name: security\n        provider: bare\n        model: gpt-6-sol\n        effort: e\n        prompt: review-security\n")
