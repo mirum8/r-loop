@@ -137,7 +137,39 @@ git checkout -q .r-loop/config.yaml
 
 printf 'providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n    review: "/review x"\n    reviewStart: ">> s"\n' >> .r-loop/config.yaml
 run docs/plan/todo-tiny.md --dry-run --plain
-[ "$rc" = 2 ] && grep -q 'reviewDone is required with reviewStart' "$T/err" && ok "reviewStart without reviewDone exits 2" || fail "reviewStart alone rc=$rc: $(head -2 "$T/err")"
+[ "$rc" = 2 ] && grep -q 'reviewStart is not a provider key' "$T/err" && ok "the retired reviewStart key exits 2" || fail "reviewStart rc=$rc: $(head -2 "$T/err")"
+git checkout -q .r-loop/config.yaml
+
+printf 'providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n    reviewExec: "/review x"\n' >> .r-loop/config.yaml
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 2 ] && grep -q 'reviewExec is a command the driver runs' "$T/err" && ok "a slash reviewExec exits 2" || fail "slash reviewExec rc=$rc: $(head -2 "$T/err")"
+git checkout -q .r-loop/config.yaml
+
+printf 'providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n    reviewDone: "x"\n' >> .r-loop/config.yaml
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 2 ] && grep -q 'reviewDone is not a provider key' "$T/err" && ok "the retired reviewDone key exits 2" || fail "reviewDone rc=$rc: $(head -2 "$T/err")"
+git checkout -q .r-loop/config.yaml
+
+printf 'providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n    reviewExec: "codex review -o {output}"\n' >> .r-loop/config.yaml
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 2 ] && grep -q 'reviewExec must not contain {output}' "$T/err" && ok "a reviewExec with {output} exits 2" || fail "reviewExec {output} rc=$rc: $(head -2 "$T/err")"
+git checkout -q .r-loop/config.yaml
+
+printf 'providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n    review: "/review"\n    reviewExec: "codex review --uncommitted"\n' >> .r-loop/config.yaml
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 2 ] && grep -q 'reviewExec and review are exclusive' "$T/err" && ok "review with reviewExec exits 2" || fail "review+reviewExec rc=$rc: $(head -2 "$T/err")"
+git checkout -q .r-loop/config.yaml
+
+sed -i.bak 's/      - provider: codex/      - provider: bare/' .r-loop/config.yaml && rm -f .r-loop/config.yaml.bak
+printf 'providers:\n  bare:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n' >> .r-loop/config.yaml
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 2 ] && grep -q 'provider bare has no review command' "$T/err" && ok "a reviewer with no review command exits 2" || fail "no review command rc=$rc: $(head -2 "$T/err")"
+git checkout -q .r-loop/config.yaml
+
+sed -i.bak 's/      - provider: codex/      - provider: execonly/' .r-loop/config.yaml && rm -f .r-loop/config.yaml.bak
+printf 'providers:\n  execonly:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n    reviewExec: "codex review --uncommitted {args}"\n' >> .r-loop/config.yaml
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 0 ] && grep -q 'reviewer execonly' "$T/out" && ok "a reviewer with only reviewExec passes preflight" || fail "reviewExec-only reviewer rc=$rc: $(head -2 "$T/err")"
 git checkout -q .r-loop/config.yaml
 
 echo "// dirty" >> calc.go

@@ -89,32 +89,19 @@ find "$(dirname "$EV")" -name '*-findings-codex-*' > "$OUT/findings.txt"
 case "$final" in *finished*) ok "run finished: $final" ;; *) fail "run did not finish: $final" ;; esac
 
 SC="$OUT/screens"
-composer=$(grep -l '^ *› */review Review the current code changes' "$SC"/*visible.txt 2>/dev/null | head -1)
-presses=$(grep '"Kind":"review-ran".*"reviewer":"codex"' "$EV" | grep -o '"presses":"[0-9]*"' | head -1 | grep -o '[0-9][0-9]*')
-if [ -n "$composer" ]; then
-  ok "composer showed /review before submit: $composer"
-elif [ "${presses:-0}" -ge 1 ]; then
-  echo "NOTE composer not sampled (the driver presses enter within 250ms of seeing it); review-ran presses=$presses proves the driver saw /review typed"
-else
-  fail "/review text never seen in a composer and review-ran has no presses"
-fi
-banner=$(grep -h '>> Code review started' "$SC"/*.txt 2>/dev/null | sort -u | head -2)
-[ -n "$banner" ] && ok "start banner: $banner" || fail "no '>> Code review started' banner"
-done_=$(grep -h '<< Code review finished' "$SC"/*.txt 2>/dev/null | sort -u | head -2)
-[ -n "$done_" ] && ok "finished marker: $done_" || fail "no '<< Code review finished' marker"
-echoed=$(grep -l '>> Code review started' "$SC"/*recent-unwrapped.txt 2>/dev/null | xargs grep -h '^ *› */review' 2>/dev/null | head -1)
-[ -z "$echoed" ] && ok "no '› /review' line in the feed after submit (expected)" || echo "NOTE '› /review' seen next to the banner: $echoed"
-grep -q "$S/.r-loop/wt/" <(grep -h -e 'Code review started' -e 'Ran ' -e '/.r-loop/wt/' "$SC"/*.txt) && ok "review ran inside a .r-loop/wt worktree" || fail "no worktree path in codex screens"
-
+typed=$(grep -l '/review Review the current code changes' "$SC"/*.txt 2>/dev/null | head -1)
+[ -z "$typed" ] && ok "nothing typed /review into a codex pane" || fail "/review typed into a codex pane: $typed"
+ran=$(grep '"Kind":"review-ran".*"reviewer":"codex"' "$EV" | head -1)
+[ -n "$ran" ] && ! echo "$ran" | grep -q '"presses"' && ok "review-ran recorded without presses" || fail "review-ran: ${ran:-missing}"
 pf=$(grep '"Kind":"review-find"' "$EV" | grep '"Step":"plan"' | grep codex | head -1)
 echo "$pf" | grep -q '"command":"prompt review-plan"' && ok "plan reviewer used the review-plan prompt (no native /review on plan, by design)" || fail "plan review-find: $pf"
 imf=$(grep '"Kind":"review-find"' "$EV" | grep '"Step":"implement"' | grep codex | head -1)
-echo "$imf" | grep -q '"command":"/review Review the current code changes' && echo "$imf" | grep -q '"state":"ok"' && ok "implement review-find ran /review, state ok" || fail "implement review-find: $imf"
-grep -q '"Kind":"review-ran".*"reviewer":"codex"' "$EV" && ok "review-ran recorded: $(grep -o '"presses":"[0-9]*"' "$EV" | head -1)" || fail "no review-ran event"
+echo "$imf" | grep -q '"command":"codex review --uncommitted' && echo "$imf" | grep -q '"state":"ok"' && ok "implement review-find ran codex review --uncommitted, state ok" || fail "implement review-find: $imf"
 for k in plan implement; do
   grep -q "/$k-findings-codex-" "$OUT/findings.txt" && ok "$k findings file" || fail "no $k findings file"
 done
-ls "$(dirname "$EV")"/phase-1/implement-rv-codex-*/native-review.txt > /dev/null 2>&1 && ok "native-review.txt saved" || fail "no native-review.txt"
+NR=$(ls "$(dirname "$EV")"/phase-1/implement-rv-codex-*/native-review.txt 2>/dev/null | head -1)
+[ -n "$NR" ] && [ -s "$NR" ] && ok "native-review.txt written by the driver ($(wc -c < "$NR") bytes)" && cp "$NR" "$OUT/native-review.txt" || fail "no non-empty native-review.txt"
 
 "$TUI" send "$H" q > /dev/null
 sleep 2

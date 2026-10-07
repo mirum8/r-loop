@@ -1,7 +1,7 @@
 #!/bin/sh
 # usage: live_blockers.sh A|B|C
-#   A  ADR-81 happy path: codex plan reviewer runs review-plan as a prompt, codex implement reviewer runs /review in its pane
-#   B  ADR-82 reviewer blocker: codex reviewStart never appears; the unattended watchdog resolves the blocker, the phase blocks (exit 1)
+#   A  ADR-81 happy path: codex plan reviewer runs review-plan as a prompt; the driver runs codex review --uncommitted for the implement reviewer
+#   B  ADR-82 reviewer blocker: codex's reviewExec exits non-zero; the unattended watchdog resolves the blocker, the phase blocks (exit 1)
 #   C  ADR-82 land blocker: the Done-when gate is red and land.fixRounds is 0; the watchdog resolves it (block/stop)
 set -u
 MODE="${1:-A}"
@@ -43,8 +43,8 @@ s = s.replace("  unblockTimeout: 15m\n", "  unblockTimeout: 15m\n" + w)
 if mode == "B":
     block = "providers:\n  codex:\n"
     for line in open(shipped):
-        if line.startswith("reviewStart:"):
-            line = 'reviewStart: ">> Never started"\n'
+        if line.startswith("reviewExec:"):
+            line = 'reviewExec: "echo review refused >&2; exit 7"\n'
         block += "    " + line
     s += block
 open(p, "w").write(s)
@@ -176,8 +176,7 @@ case "$MODE" in
     grep -q 'codex exec review' "$OUT/review-hits.txt" 2>/dev/null && fail "'codex exec review' seen in a pane" || ok "no 'codex exec review' in any pane"
     ev review-running | grep -q '"Step":"implement"' && ok "review-running on implement: $(ev review-running | grep -o '"Fields":{[^}]*}' | head -1)" || fail "no review-running on implement"
     ev review-ran | grep -q '"Step":"implement"' && ok "review-ran on implement" || fail "no review-ran on implement"
-    grep -q '>> Code review started' "$OUT/review-hits.txt" 2>/dev/null && ok "a pane showed '>> Code review started'" || fail "no pane showed '>> Code review started' (polling may have missed it)"
-    grep -q '<< Code review finished' "$OUT/review-hits.txt" 2>/dev/null && ok "a pane showed '<< Code review finished'" || fail "no pane showed '<< Code review finished' (polling may have missed it)"
+    grep -q '/review Review the current' "$OUT/review-hits.txt" 2>/dev/null && fail "'/review' typed into a pane" || ok "no '/review' typed into any pane"
     NR=$(ls "$RUN"/phase-1/implement-rv-*/native-review.txt 2>/dev/null | head -1)
     [ -n "$NR" ] && [ -s "$NR" ] && ok "native-review.txt: $NR ($(wc -c < "$NR") bytes)" && cp "$NR" "$OUT/native-review.txt" || fail "no non-empty implement native-review.txt under $RUN/phase-1"
     ev review-find | grep '"Step":"implement"' | grep -q '"state":"ok"' && ok "implement review-find ok: $(ev review-find | grep '"Step":"implement"' | head -1 | grep -o '"Fields":{[^}]*}')" || fail "implement review-find not ok"
@@ -193,7 +192,7 @@ case "$MODE" in
     [ "$blocked" -ge 1 ] && ok "$blocked blocked-on event(s): $(ev blocked-on | head -1 | grep -o '"Fields":{[^}]*}')" || fail "no blocked-on event"
     if [ "$MODE" = B ]; then
       ev blocked-on | grep '"source":"reviewer"' | grep -q '"step":"implement-rv-codex' && ok "blocked-on source reviewer, step implement-rv-codex" || fail "no blocked-on with source reviewer on implement-rv-codex"
-      ev blocked-on | grep -q 'review never started\|did not start' && ok "reason names the start wait: $(ev blocked-on | head -1 | grep -o '"reason":"[^"]\{0,120\}')" || fail "blocked-on reason does not name the start wait"
+      ev blocked-on | grep -q 'native review .*exit status 7: review refused' && ok "reason names the command's failure: $(ev blocked-on | head -1 | grep -o '"reason":"[^"]\{0,160\}')" || fail "blocked-on reason does not name the native review's exit and stderr"
     else
       ev blocked-on | grep -q -e '"source":"land"' -e '"source":"gatefix"' -e '"source":"gate-probe"' && ok "blocked-on from land/gatefix/gate-probe: $(ev blocked-on | grep -o '"source":"[^"]*"' | sort -u | tr '\n' ' ')" || fail "no land-side blocked-on: $(ev blocked-on | grep -o '"source":"[^"]*"' | tr '\n' ' ')"
     fi
@@ -219,8 +218,9 @@ case "$MODE" in
 esac
 
 grep -q 'alt=0' "$OUT/tui-status.txt" && ok "q quits, alt screen off ($(cat "$OUT/tui-status.txt"))" || fail "after q: $(cat "$OUT/tui-status.txt")"
-"$TUI" stop "$H" --expect-exited > /dev/null 2>&1; src=$?
-[ "$MODE" = A ] && { [ "$src" = 0 ] && ok "stop --expect-exited 0" || fail "stop --expect-exited rc=$src"; }
+if [ "$MODE" = A ]; then want_status=0; else want_status="$code"; fi
+"$TUI" stop "$H" --expect-exited --status "$want_status" > /dev/null 2>&1; src=$?
+[ "$src" = 0 ] && ok "stop --expect-exited --status $want_status" || fail "stop --expect-exited --status $want_status rc=$src"
 trap - EXIT
 
 echo "failures: $fails"
