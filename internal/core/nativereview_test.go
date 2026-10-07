@@ -109,6 +109,20 @@ func TestAFailedExecReviewRaisesARetryableBlockerNamingTheCommandAndError(t *tes
 	}
 }
 
+func TestAFailedExecReviewsBlockerExplainsThePaneWasNeverPromptedInsteadOfShowingIt(t *testing.T) {
+	runner := &fakeReviewRunner{Errs: []error{errors.New("exit 7: review refused")}}
+	r := execReviewRig(t, runner, Reviewer{Provider: "codex"})
+
+	_, obs := r.runRaising(then(Resolution{Action: "block", By: "watchdog"}))
+
+	if len(obs.blockers) != 1 {
+		t.Fatalf("blockers = %+v", obs.blockers)
+	}
+	if expected := "The driver ran `" + execReviewCommand + "` itself and it failed before the reviewer pane was prompted: the pane has done nothing, and an addendum never reaches it. Retry runs the same command again."; obs.blockers[0].Excerpt != expected {
+		t.Fatalf("excerpt = %q, expected %q", obs.blockers[0].Excerpt, expected)
+	}
+}
+
 func TestAFailedExecReviewWithoutARaiserFailsTheStep(t *testing.T) {
 	runner := &fakeReviewRunner{Errs: []error{errors.New("timed out after 1h0m0s")}}
 	r := execReviewRig(t, runner, Reviewer{Provider: "codex"})

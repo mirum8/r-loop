@@ -342,6 +342,7 @@ type slot struct {
 type reviewerFail struct {
 	reason  string
 	stalled bool
+	excerpt string
 }
 
 type blockerRaiser interface {
@@ -624,7 +625,10 @@ func (h ReviewHalf) recover(ctx context.Context, worker *Session, runs []*review
 		if !f.stalled {
 			actions = slices.DeleteFunc(slices.Clone(actions), func(a string) bool { return a == actionKeys })
 		}
-		b := Blocker{Source: sourceReviewer, Phase: worker.Ref.Key.Phase, Step: reviewerKey(worker.Ref.Key, r.rv.ID()).Kind, Reason: f.reason, Excerpt: h.screen(r.s), Actions: actions}
+		b := Blocker{Source: sourceReviewer, Phase: worker.Ref.Key.Phase, Step: reviewerKey(worker.Ref.Key, r.rv.ID()).Kind, Reason: f.reason, Excerpt: f.excerpt, Actions: actions}
+		if b.Excerpt == "" {
+			b.Excerpt = h.screen(r.s)
+		}
 		res := raiser.raise(ctx, b)
 		var out Outcome
 		switch res.Action {

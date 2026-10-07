@@ -42,7 +42,7 @@ func (h ReviewHalf) nativeReviews(ctx context.Context, worker *Session, runs []*
 	for _, i := range native {
 		r := runs[i]
 		if errs[i] != nil {
-			if out := failed(r, &reviewerFail{reason: "reviewer " + r.s.Reviewer + ": " + errs[i].Error()}); out.State == StepFailed {
+			if out := failed(r, &reviewerFail{reason: "reviewer " + r.s.Reviewer + ": " + errs[i].Error(), excerpt: execFailedExcerpt(r.s)}); out.State == StepFailed {
 				return out
 			}
 			continue
@@ -77,4 +77,8 @@ func (h ReviewHalf) runNativeReview(ctx context.Context, worker *Session, s *Ses
 		return errors.New(prefix + ": " + err.Error())
 	}
 	return nil
+}
+
+func execFailedExcerpt(s *Session) string {
+	return "The driver ran `" + s.Ref.Vars["ReviewCommand"].(string) + "` itself and it failed before the reviewer pane was prompted: the pane has done nothing, and an addendum never reaches it. Retry runs the same command again."
 }
