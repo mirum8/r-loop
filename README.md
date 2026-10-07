@@ -321,8 +321,7 @@ new one, put a block under `providers:` in the project config, or a file at
 | `doneSignal` | How the agent reports that it is done. Only `sentinel`. |
 | `ask` | `mcp` (the agent can ask the watchdog) or `none`. Step agents need `mcp`. |
 | `review` | The agent's own review command, for example `/code-review`. Plan reviewers never run it: they review the plan by prompt alone. |
-| `reviewStart` | Screen text a review begins with, for a `review` that starts with `/`. r-loop then types `review` into the reviewer's pane itself and waits for this text, then for `reviewDone`, before it sends the prompt. Built in: `>> Code review started` (codex). Set both or neither. |
-| `reviewDone` | Screen text a review ends with. Built in: `<< Code review finished` (codex). Set both or neither. |
+| `reviewExec` | A shell command r-loop runs itself in the step worktree instead of `review`. Its stdout becomes the reviewer's `native-review.txt`, and the reviewer is then prompted to turn it into findings. A non-zero exit, a timeout or empty output fails the reviewer. `{args}` expands to the provider's flags, model and effort. Built in: `codex review --uncommitted {args}` (codex). Not with `review`. |
 
 ### Example
 

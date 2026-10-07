@@ -1011,8 +1011,8 @@ regardless. It cannot halt on this, and it cannot rewrite the fields
 The driver snapshots the worktree and splits one pane per configured reviewer to the right of the
 step's session, in the same workspace — <code>codex</code> reads claude's plan against the phase
 and the code with the plan-review prompt alone, <code>claude</code> runs <code>/code-review</code>
-on codex's code, and a <code>codex</code> reviewer of code gets <code>/review</code> typed into its
-pane by the driver before its prompt (<a href="#adr-81">ADR-81</a>) — each report-only, each
+on codex's code, and for a <code>codex</code> reviewer of code the driver runs <code>codex review
+--uncommitted</code> before its prompt and saves the output for it (<a href="#adr-81">ADR-81</a>) — each report-only, each
 writing the findings file the driver named. While they work, the step's session waits and its
 clocks stand still. The driver then checks that no reviewer changed the tree and prompts the step's
 own session, which still holds everything it did: check each finding against the code, give it a
@@ -3561,7 +3561,7 @@ maintainer would have refused, or herdr reports a dialog as a dialog rather than
 
 <div class="adr">
 <h3 id="adr-81">ADR-81 — Plan reviews are prompt-only; codex reviews code with <code>/review</code> in its own pane</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-23">ADR-23</a> and <a href="#adr-74">ADR-74</a> · supersedes the 2026-09-23 amendment of <a href="#adr-55">ADR-55</a>, returning to the <code>/review</code> of <a href="#adr-54">ADR-54</a></p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-23">ADR-23</a> and <a href="#adr-74">ADR-74</a> · supersedes the 2026-09-23 amendment of <a href="#adr-55">ADR-55</a>, returning to the <code>/review</code> of <a href="#adr-54">ADR-54</a> · amended 2026-10-07 — codex no longer reviews code in its pane: the driver runs <code>codex review --uncommitted</code> itself, a subprocess in the step worktree outside any agent's sandbox, and writes its stdout to <code>native-review.txt</code>; the reviewer's session is then prompted to read that file and write the findings. On 2026-10-07 a clean <code>/review</code> was lost because herdr refused the history read while it still showed codex working, and its retries failed on the pane; process exit replaces the typed text, the enter presses and the screen markers. The nested-sandbox objection below does not apply to a process the driver starts. A provider block names such a command in <code>reviewExec</code> (exclusive with <code>review</code>, no <code>/</code>, no <code>{output}</code>; <code>{args}</code> as in <code>review</code>); <code>reviewStart</code> and <code>reviewDone</code> are gone, and a block that still sets them is refused. A non-zero exit, a timeout at the row's <code>reviewTimeout</code> or empty stdout fails the reviewer, a blocker under <a href="#adr-82">ADR-82</a></p>
 <p><span class="f">Context</span> Two reviewers did not do the work they were started for. A
 reviewer on the plan step ran its provider's native code reviewer over a markdown plan, and the
 plan often sits gitignored under <code>.task-plans/</code>, so the native pass reviewed nothing;
@@ -4011,15 +4011,14 @@ agents gain a flag that skips them.</p>
       <td>One provider — herdr kind <code>claude</code></td>
       <td>the pack's existing agent, and the reference implementation of the adapter</td></tr>
   <tr><td>Codex CLI</td><td>0.156.1</td>
-      <td>One provider — herdr kind <code>codex</code>; its <code>/review &lt;text&gt;</code>, typed
-          into the reviewer's pane by the driver and followed by its start and end markers, is the
-          native reviewer (<a href="#adr-81">ADR-81</a>)</td>
+      <td>One provider — herdr kind <code>codex</code>; its <code>codex review --uncommitted</code>,
+          run by the driver in the step worktree, is the native reviewer (<a href="#adr-81">ADR-81</a>)</td>
       <td>a second vendor is what proves <a href="#adr-6">ADR-6</a> rather than asserting it</td></tr>
 </table>
 
-<p>Both native reviewers run inside a session (<a href="#adr-55">ADR-55</a>), and only on code: a
+<p>Claude Code's native reviewer runs inside a session (<a href="#adr-55">ADR-55</a>), codex's as a subprocess the driver starts (<a href="#adr-81">ADR-81</a>), and both only on code: a
 plan is reviewed by the <code>review-plan</code> prompt alone (<a href="#adr-81">ADR-81</a>). Codex's
-<code>/review</code> is typed into its pane by the driver, which waits for its end marker before the
+<code>codex review --uncommitted</code> is run by the driver, which saves its stdout before the
 prompt; Claude Code's <code>/code-review</code> is named in the prompt. Both report only here —
 <code>/code-review</code>'s <code>--fix</code> is deliberately not used: the reviewed step's own
 session applies what survives its verdict (<a href="#adr-56">ADR-56</a>). Their native outputs
@@ -4131,9 +4130,7 @@ providers:                    # claude and codex ship built in; a block here add
     dirFlag: '-c sandbox_workspace_write.writable_roots=["{dir}"]'   # the phase's run folder, for a session in a phase worktree (ADR-79)
     doneSignal: sentinel
     ask: mcp                  # mcp | none
-    review: "/review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings."   # typed into the reviewer's pane by the driver (ADR-81)
-    reviewStart: ">> Code review started"   # the screen text a review begins with; both or neither, only with a / review
-    reviewDone: "<< Code review finished"   # the screen text it ends with; the prompt follows it
+    reviewExec: "codex review --uncommitted {args}"   # run by the driver in the step worktree; its stdout is native-review.txt (ADR-81)
 
 land:
   fixRounds: 1                # a red Done when: gets this many gate-fix steps (ADR-64)

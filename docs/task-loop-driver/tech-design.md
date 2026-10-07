@@ -117,8 +117,7 @@ so.
     cwd string, ratio float64, env map[string]string) (pane string, error)` (an empty `pane` splits the pane herdr calls current; `ratio` is the share the split pane keeps, `--ratio`, 0 for herdr's half; `env` becomes `--env K=V` on the split pane's shell, `nil` for none) ·
     `Screen(agent) (string, error)` (herdr `agent read --source visible`, unnormalised) ·
     `SendKeys(agent string, keys ...string) error` (one `agent send-keys` per key, in order,
-    stopping at the first error) · `SendText(agent, text string) error` (herdr `pane send-text` on
-    the agent's `AgentPane`, no `enter`; Milestone 17) ·
+    stopping at the first error) ·
     `AgentPane(agent) (string, error)` (the pane the named agent runs in, `""` when herdr knows no
     such agent) · `ClosePane(pane) error` (closes one pane — a tab's last pane closes the tab; used for the
     watchdog's own, a stale one of the same run at its start and its own at the run's end, and for
@@ -246,7 +245,7 @@ so.
 - **Provider block** — `providers.<name>`: `kind` (required), `flags` (fixed, no
   placeholder, passed first on every start), `modelFlag` (`{model}`),
   `effortFlag` (`{effort}`, may be empty → banner `effort n/a`), `models` (a `kind` subcommand printing the model catalog JSON; a bare lowercase model (`^[a-z]+$`) is an alias resolved to the newest `visibility: list` slug `gpt-<version>-<alias>`, once per process (memoised in the wiring, checked in preflight, applied on every `Resolve`; a resume resolves again and may pick up a newer release); no match or a failing catalog exits 2), `askFlag` (`{url}` or
-  `{mcpConfig}`), `dirFlag` (`{dir}` or empty, ADR-79), `doneSignal ∈ {sentinel}`, `ask ∈ {mcp, none}`, `review` (may be empty; `{args}` is replaced with `Args(p, model, effort, "", "", "")`, and `{output}` with the shell-quoted `<ArtifactsDir>/native-review.txt`), `reviewStart` and `reviewDone` (the screen texts a pane review begins and ends with; both or neither, and only with a `review` that starts with `/`, else refused on `Resolve` naming the key and the source; Milestone 17).
+  `{mcpConfig}`), `dirFlag` (`{dir}` or empty, ADR-79), `doneSignal ∈ {sentinel}`, `ask ∈ {mcp, none}`, `review` (may be empty; `{args}` is replaced with `Args(p, model, effort, "", "", "")`, and `{output}` with the shell-quoted `<ArtifactsDir>/native-review.txt`), `reviewExec` (a shell command the driver runs in the step worktree, its stdout the native report; exclusive with `review`, never starting with `/`, never carrying `{output}`, else refused on `Resolve` naming the key and the source; `{args}` as in `review`; ADR-81 as amended 2026-10-07).
   `flags` may carry none of `{model}`, `{effort}`, `{url}`, `{mcpConfig}`, `{dir}`.
   **Precedence is whole-block**: the project config's block, else
   `~/.config/r-loop/providers/<name>.yaml`, else the shipped block. `Args(p, model, effort, askURL,
@@ -260,12 +259,11 @@ so.
   sessions: gate, milestone, watchdog, intake.
   Shipped: `claude` (`--model {model}`, `--effort {effort}`, `--mcp-config {mcpConfig}`, `dirFlag: --add-dir {dir}`, `review: /code-review the uncommitted changes: …` — `git diff HEAD` plus untracked files, since a bare `/code-review` diffs only `main...HEAD`) and
   `codex` (`flags: -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true`, `models: debug models`, `-c model={model}`, `-c model_reasoning_effort={effort}`, `-c
-  mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.default_tools_approval_mode=approve`, `dirFlag: -c sandbox_workspace_write.writable_roots=["{dir}"]`, `review: /review Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.`, `reviewStart: >> Code review started`, `reviewDone: << Code review finished` — ADR-81, replacing `codex exec review --uncommitted {args} -o {output}`).
+  mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.default_tools_approval_mode=approve`, `dirFlag: -c sandbox_workspace_write.writable_roots=["{dir}"]`, `reviewExec: codex review --uncommitted {args}` — ADR-81 as amended, replacing the `/review` typed into its pane).
   `{mcpConfig}` is a per-agent file
   `{"mcpServers":{"r-loop":{"type":"http","url":"<url>"}}}`. Neither sets an MCP tool timeout:
   every call returns at once (ADR-76), so the clients' defaults are enough. The core sees a provider only as
-  `ProviderArgs{Kind string; Args []string; Ask bool; Review, ReviewStart, ReviewDone string}`
-  (`ToCore` copies `reviewStart` and `reviewDone`; Milestone 17).
+  `ProviderArgs{Kind string; Args []string; Ask bool; Review, ReviewExec string}`.
 - **Step kind** — `StepKind{Name, Prompt, Check string; Row StepRow}`; `StepRow{Provider, Model, Effort string; Fallback Fallback; Timeout time.Duration; Reviewers []Reviewer; Rounds int; ReviewTimeout time.Duration}`; `Reviewer{Provider, Model, Effort string}`, `Fallback{Provider, Model, Effort string}` and `GateFix{Provider, Model, Effort string}` — one type per role, the same three fields; an empty `Model` or `Effort` is the provider's default. A row's `check ∈ {plan-file,
   diff, report}` or one added with `RegisterCheck`; `findings` and `verdict` are the review
   half's own checks and are never named on a row. Evidence predicates take
@@ -396,7 +394,7 @@ so.
   PlanPath, Branch, Base, Worktree, Sentinel, RunDir, AskURL, PhaseWarnings, ReviewedKind, Round,
   Rounds, ReviewCommand, FindingsPath, FindingsFiles, PriorFindings, PriorVerdicts, RoundTree,
   VerdictPath, ReportPath, MilestoneName, MilestonePhases, Addendum, ReviewRan` (`ReviewRan`: the
-  pane review ran in this session, Milestone 17); override
+  driver already ran the `reviewExec` command and wrote `native-review.txt`); override
   `.r-loop/prompts/<name>.md`, else embedded. Templates: `plan`, `implement`, `review`, `review-plan`, `fix`,
   `milestone`, `watchdog`, `gatefix`; `gatefix` adds `GateCommand` and `GateOutput`; `watchdog`
   receives only `TodoPath`, `SpecDir`, `RunDir`, `Allow` (the allow-listed remedy classes),
@@ -538,12 +536,11 @@ so.
   `ask: none` in any session role (ADR-73), so every reviewer has the channel.
 - **A round** — (1) `RoundTree = Snapshot(worktree)`, appended as `Event{Kind: "review-round",
   Fields{step, round, tree}}` before any reviewer starts; (2) resolve every reviewer (on a row
-  other than `plan`, one whose template is `review` and whose provider has no `review` command
-  fails the step before any pane opens); start every reviewer agent; run the pane review for each
-  reviewer whose provider has `ReviewStart` (Milestone 17), all at once; then prompt each with its
+  other than `plan`, one whose template is `review` and whose provider has neither `review` nor `reviewExec`
+  fails the step before any pane opens); start every reviewer agent; prompt every reviewer without
+  `ReviewExec`; run each `ReviewExec` command, all at once, then prompt its reviewer with its
   template — `TemplateFor(reviewed kind)`: `plan` reviewers get `review-plan`, which runs no native
-  command; (3) join on every reviewer sentinel; a `failed` or `stalled` reviewer, a failed pane
-  review, or a reviewer whose evidence below is missing raises a reviewer blocker naming it
+  command; (3) join on every reviewer sentinel; a `failed` or `stalled` reviewer, a failed `ReviewExec` command, or a reviewer whose evidence below is missing raises a reviewer blocker naming it
   (Milestone 17; before it, the step failed); every findings file must pass the `findings` check; a native reviewer's `<ArtifactsDir>/native-review.txt` must exist, else ``evidence missing: native review `<cmd>` left no output at <kind>-rv-<name>-r<n>-a<k>/native-review.txt`` (plus ``, found one at native-review.txt in the phase folder instead`` when one sits there; it is never accepted), and be non-empty, else ``evidence missing: native review `<cmd>` produced no output``; then
   `TreeDiff(RoundTree, Snapshot(worktree))` must be empty, else `failed(reviewer modified the
   tree: <paths>)`; (4) no findings in any file → the review half ends clean; (5) prompt the author
@@ -1092,37 +1089,23 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
   `SessionManager` and in preflight's `native`/`checkRole` — so a plan row's reviewer on a provider
   with no `review` command passes, and the same reviewer on implement still exits 2. The
   `review-find` event's `command` field is `prompt <template>` for a reviewer that runs none.
-- **Provider keys (ADR-81)** — `reviewStart` and `reviewDone` in a provider block: both or neither,
-  and only when `review` starts with `/`; otherwise `Resolve` refuses the block naming the key and
-  its source (`reviewStart and reviewDone come together, with a /review command`). `ToCore` copies
-  them into `ProviderArgs{…; ReviewStart, ReviewDone string}`. Shipped codex: `review: "/review
-  Review the current code changes (staged, unstaged, and untracked files) and provide prioritized
-  findings."`, `reviewStart: ">> Code review started"`, `reviewDone: "<< Code review finished"`.
-  claude's block is unchanged.
-- **`SessionHost.SendText(agent, text string) error`** — herdr `pane send-text` into the pane
-  `AgentPane(agent)` names, no `enter`; an agent herdr does not know is an error naming it. Every
-  `SessionHost` fake implements it; the core fake records the calls in order with `SendKeys`.
-- **The pane review** — `ReviewHalf.open`, for a reviewer whose provider has `ReviewStart`, after
-  `Start` and before the prompt, one goroutine per reviewer, all reviewers of the round at once. The
-  round's other reviewers are prompted before the pane reviews start, so they work beside them:
-  1. `SendText(agent, Review)`; read `Screen(agent)` until the composer shows the text (whitespace
-     ignored, within 5s), then `SendKeys(agent, "enter")`. codex swallows an Enter that lands right
-     after fast typed input, so while the text is still in the composer and `ReviewStart` is not on
-     the screen 3s after a press, press `enter` again — at most 5 presses in all; `review-ran` records them as `presses`.
-  2. Read `Screen(agent)` every 250 ms (or at the session poll, if shorter) until it shows `ReviewStart`, within
-     2 minutes (codex starts its MCP servers first). herdr reports codex's menus and dialogs as
-     `idle` or `done`, never `blocked`, so the screen's text is the only detector; the agent state
-     is read only for `gone`.
-  3. Read it the same way until it shows `ReviewDone`, within the row's `ReviewTimeout`.
-  4. Render the reviewer's template with `ReviewRan: true`: the review ran in this session; save its
-     output verbatim to `<ArtifactsDir>/native-review.txt`, then write the findings.
-  Failures, each a reviewer failure named `review in pane: <reason>`: no `ReviewStart` within
-  2 minutes (`review never started`); `Review was interrupted` or `Reviewer failed to output a
-  response` on the screen (the text itself); the text not in the composer within 5s (`review text
-  did not reach the composer within <d>`); `ReviewTimeout` before `ReviewDone` (`review did not
-  finish within <d>`); the agent `gone`; a `SendText`, `SendKeys` or `Screen` error. The
-  `native-review.txt` evidence check is unchanged. A reviewer without `ReviewStart` is untouched.
-- **`ReviewRan`** — a bool in `StepVars` and `fullVars`, `false` everywhere but a pane-reviewed
+- **Provider key `reviewExec` (ADR-81 as amended 2026-10-07)** — a shell command; exclusive with
+  `review`, not starting with `/`, no `{output}`; `ToCore` expands `{args}` into
+  `ProviderArgs.ReviewExec`. Shipped codex: `reviewExec: "codex review --uncommitted {args}"`, which
+  prints only the review on stdout and its transcript on stderr. `reviewStart` and `reviewDone`
+  are no longer keys. claude's block is unchanged.
+- **`core.ReviewRunner`** — `RunReview(ctx, dir, command string, timeout time.Duration) (stdout
+  string, error)`, on `SessionManager.ReviewRunner`; the adapter `internal/reviewexec` runs
+  `sh -c command` in `dir` in its own process group, killed on timeout or cancel. Errors:
+  `timed out after <d>`, `interrupted: …`, or the exit status, each followed by stderr's last line.
+- **The native exec review** — `ReviewHalf.open`, for a reviewer whose template is `review` and
+  whose provider has `ReviewExec`, after `Start` and after the round's other reviewers are prompted,
+  one goroutine per reviewer, all at once: `review-running`; `RunReview(ctx, worker.Dir,
+  ReviewCommand, ReviewTimeout)`; stdout to `<ArtifactsDir>/native-review.txt`; `review-ran`; then
+  the prompt with `ReviewRan: true`. Failures, each a reviewer failure ``reviewer <id>: native review
+  `<cmd>`: <err>``, or ``… produced no output`` for blank stdout; the reviewer is not prompted. A
+  retry reruns the command. The `native-review.txt` evidence check is unchanged.
+- **`ReviewRan`** — a bool in `StepVars` and `fullVars`, `false` everywhere but an exec-reviewed
   reviewer's prompt; `review.md` words its native section by it.
 - **A blocker (ADR-82)** — `Question{Kind: "blocker"}`, id `b<n>` numbered on from the stored
   records, `Text` the routed text, `Answer` the action, `Citation` what authorised it
@@ -1147,7 +1130,7 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
   | source | raised when | `retry` means | actions |
   |---|---|---|---|
   | `step` | a pipeline step ends `failed` or `stalled` (`loop.go` `ended`/`awaitRestart`) | a new attempt: the restart path, with the addendum and provider | retry, switch, block, stop |
-  | `reviewer` | a reviewer fails: a pane review failure, a `failed` sentinel, evidence missing, stalled, gone | that reviewer reopened for this round | retry, keys, switch, skip, block, stop |
+  | `reviewer` | a reviewer fails: a failed `ReviewExec` command, a `failed` sentinel, evidence missing, stalled, gone | that reviewer reopened for this round | retry, keys, switch, skip, block, stop |
   | `land` | a merge conflict, an unfinished merge, a wrong branch, a dirty or changed tree, a red gate with no fix round left, an item gate green at base or with no test file, a tick or commit failure | `Land` again, after a remedy or the maintainer's own fix | retry, block, stop |
   | `gatefix` | a gatefix step that does not end `ok` | another gatefix round | retry, switch, block, stop |
   | `gate-probe` | an error of `GateProbe` itself, not of its step | the probe again | retry, block, stop |
