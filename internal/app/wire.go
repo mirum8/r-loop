@@ -20,6 +20,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 
+	"r-loop/internal/analyze"
 	"r-loop/internal/askmcp"
 	"r-loop/internal/config"
 	"r-loop/internal/core"
@@ -515,6 +516,10 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	if err != nil {
 		return nil, exit(2, "%v", err)
 	}
+	var analyzer core.Analyzer
+	if cfg.Analyze.Enabled {
+		analyzer = analyze.New(cfg.Analyze.Timeout)
+	}
 	sm := &core.SessionManager{
 		Host:       w.Host,
 		Repo:       repo,
@@ -526,6 +531,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		StallGrace: cfg.Watchdog.StallGrace,
 		ItemGates:  pl.Backlog,
 		Label:      cfg.Label,
+		Analyzer:   analyzer,
 	}
 	runners := core.DefaultRunners(sm, kinds)
 	impl := rows["implement"]

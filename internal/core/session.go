@@ -41,6 +41,7 @@ type SessionManager struct {
 	ItemGates  bool
 	Label      string
 	Dialogs    Dialogs
+	Analyzer   Analyzer
 	mu         sync.Mutex
 }
 

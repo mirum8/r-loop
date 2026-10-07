@@ -4,7 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -103,13 +103,9 @@ func TestGateCommandFromTheRealTodoLinesPassesOnACorrectTree(t *testing.T) {
 	for i, key := range keys {
 		env = append(env, key+"="+values[i])
 	}
-	for _, n := range []int{535, 549, 565, 578, 607} {
-		t.Run(strconv.Itoa(n), func(t *testing.T) {
-			line := lines[n-1]
-			if !strings.HasPrefix(line, "**Done when:** ") {
-				t.Fatalf("line %d is not a Done when line: %q", n, line)
-			}
-			command := gateCommand(strings.TrimPrefix(line, "**Done when:** "))
+	for _, phase := range []string{"32", "33", "34", "35", "37"} {
+		t.Run("phase-"+phase, func(t *testing.T) {
+			command := gateCommand(strings.TrimPrefix(doneWhenOf(t, lines, phase), "**Done when:** "))
 			cmd := exec.Command("sh", "-c", command)
 			cmd.Dir = "../.."
 			cmd.Env = env
@@ -119,4 +115,18 @@ func TestGateCommandFromTheRealTodoLinesPassesOnACorrectTree(t *testing.T) {
 			}
 		})
 	}
+}
+
+func doneWhenOf(t *testing.T, lines []string, phase string) string {
+	t.Helper()
+	heading := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(l, "### Phase "+phase+" ") })
+	if heading >= 0 {
+		for _, l := range lines[heading+1:] {
+			if strings.HasPrefix(l, "**Done when:** ") {
+				return l
+			}
+		}
+	}
+	t.Fatalf("no Done when line under phase %s", phase)
+	return ""
 }

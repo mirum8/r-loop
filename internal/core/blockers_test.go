@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -1222,4 +1225,79 @@ func TestKeysAreRefusedWhenTheBlockerPaneChangedStateWithTheSameText(t *testing.
 		t.Errorf("keys pressed %q", r.sent())
 	}
 	stillHeld(t, ch)
+}
+
+func analyzeInLoop(r *eventsRig, errs ...error) *fakeAnalyzer {
+	r.loop.Kinds[1].Row.Rounds = 1
+	a := &fakeAnalyzer{callLog: callLog{Shared: r.shared}, Errs: errs}
+	r.loop.Sessions.Analyzer = analyzerFunc(func(ctx context.Context, dir string) (Analysis, error) {
+		r.repo.mu.Lock()
+		r.repo.changes = nil
+		r.repo.mu.Unlock()
+		return a.Analyze(ctx, dir)
+	})
+	r.loop.Runners = DefaultRunners(r.loop.Sessions, r.loop.Kinds)
+	return a
+}
+
+func (r *eventsRig) staticFindStates() []string {
+	var out []string
+	for _, ev := range r.events("review-find") {
+		if ev.Fields["reviewer"] == "static" {
+			out = append(out, ev.Fields["state"])
+		}
+	}
+	return out
+}
+
+func TestAStaticBlockerResolvedRetryAnalyzesTheRoundAgain(t *testing.T) {
+	// given
+	r, seen := newSourceRig(t, resolveAs("retry"))
+	analyzeInLoop(r, errors.New("golangci-lint: exit status 3"), nil)
+
+	// when
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if len(*seen) != 1 || (*seen)[0].b.Source != "reviewer" || (*seen)[0].b.Step != "implement-rv-static" {
+		t.Fatalf("blockers %+v", *seen)
+	}
+	wt := filepath.Join(r.repo.RootDir, ".r-loop", "wt", "phase-2")
+	if actual := r.calls("Analyzer.Analyze "); !reflect.DeepEqual(actual, []string{wt, wt}) {
+		t.Fatalf("analyze calls %q", actual)
+	}
+	if actual := r.staticFindStates(); !reflect.DeepEqual(actual, []string{"failed", "ok"}) {
+		t.Fatalf("static states %q", actual)
+	}
+}
+
+func TestAStaticBlockerResolvedSkipFinishesTheRoundWithoutStatic(t *testing.T) {
+	// given
+	r, _ := newSourceRig(t, resolveAs("skip"))
+	analyzeInLoop(r, errors.New("golangci-lint: exit status 3"))
+
+	// when
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	expected := map[string]string{"step": "implement", "reviewer": "static", "reason": "reviewer static: golangci-lint: exit status 3"}
+	if skipped := r.events("reviewer-skipped"); len(skipped) != 1 || !reflect.DeepEqual(skipped[0].Fields, expected) {
+		t.Fatalf("reviewer-skipped %+v", skipped)
+	}
+	wt := filepath.Join(r.repo.RootDir, ".r-loop", "wt", "phase-2")
+	if actual := r.calls("Analyzer.Analyze "); !reflect.DeepEqual(actual, []string{wt}) {
+		t.Fatalf("analyze calls %q", actual)
+	}
+	if clean := r.events("review-clean"); len(clean) != 1 {
+		t.Fatalf("review-clean %+v", clean)
+	}
+	if _, err := os.Stat(filepath.Join(r.store.dir, "phase-2", "implement-findings-static-r1.json")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("static file stat = %v", err)
+	}
 }

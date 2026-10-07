@@ -615,6 +615,9 @@ func (r *resolver) row(name string) (StepRow, error) {
 		if ids[id] {
 			return row, errAt(l.file, it, "%sreviewers: two reviewers named %q, give one a name", p, id)
 		}
+		if id == "static" {
+			return row, errAt(l.file, it, "%sreviewers: the name %q is reserved for the analyzers, give the reviewer another name", p, id)
+		}
 		ids[id] = true
 		row.Reviewers = append(row.Reviewers, rv)
 	}
@@ -622,7 +625,13 @@ func (r *resolver) row(name string) (StepRow, error) {
 		n, l := r.lookup("steps." + name)
 		return row, errAt(l.file, n, "%stimeout: not set, want a positive duration", p)
 	}
-	if row.ReviewTimeout == 0 && row.Rounds > 0 && len(row.Reviewers) > 0 {
+	static := false
+	if row.Check == "diff" {
+		if static, err = r.boolean("analyze.enabled"); err != nil {
+			return row, err
+		}
+	}
+	if row.ReviewTimeout == 0 && row.Rounds > 0 && (len(row.Reviewers) > 0 || static) {
 		n, l := r.lookup("steps." + name)
 		return row, errAt(l.file, n, "%sreviewTimeout: not set, want a positive duration for the review half", p)
 	}

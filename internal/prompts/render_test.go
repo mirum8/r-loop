@@ -1095,3 +1095,32 @@ func TestSecurityReviewReadsTheUntrackedFilesAndNeedsAnAttackPath(t *testing.T) 
 		}
 	}
 }
+
+func TestFixExplainsThatStaticFindingsComeFromAnalyzers(t *testing.T) {
+	// given
+	vars := with("FindingsFiles", []core.FindingsFile{{Reviewer: "static", Path: "/runs/r1/phase-7/implement-findings-static-r1.json"}})
+
+	// when
+	actual := render(t, New(t.TempDir()), "fix", vars)
+
+	// then
+	if !strings.Contains(actual, "`static`'s findings come from static analyzers the driver ran on the change") {
+		t.Errorf("fix prompt does not name the analyzers:\n%s", actual)
+	}
+	if !strings.Contains(actual, "A rule hit is not a defect by itself") {
+		t.Errorf("fix prompt does not discount a rule hit:\n%s", actual)
+	}
+	if !strings.Contains(actual, "A false positive is `not-real`, with the `path:line` that shows it as its evidence") {
+		t.Errorf("fix prompt does not ask for evidence on a false positive:\n%s", actual)
+	}
+}
+
+func TestFixWithoutAStaticFileLeavesTheAnalyzerNoteOut(t *testing.T) {
+	// when
+	actual := render(t, New(t.TempDir()), "fix", fullVars())
+
+	// then
+	if strings.Contains(actual, "A rule hit is not a defect by itself") {
+		t.Errorf("fix prompt names the analyzers:\n%s", actual)
+	}
+}

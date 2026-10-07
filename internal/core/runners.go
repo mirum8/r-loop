@@ -20,7 +20,7 @@ func (r singleRunner) Run(ctx context.Context, ref StepRef, obs Observer) Outcom
 	} else {
 		out = r.sm.Wait(ctx, s, obs)
 	}
-	if out.State == StepOK && len(row.Reviewers) > 0 && row.Rounds > 0 && r.review != nil {
+	if out.State == StepOK && row.Rounds > 0 && r.review != nil {
 		out = r.review(ctx, ref, s, obs)
 	}
 	return r.sm.Finish(s, out)
@@ -29,7 +29,7 @@ func (r singleRunner) Run(ctx context.Context, ref StepRef, obs Observer) Outcom
 func DefaultRunners(sm *SessionManager, kinds []StepKind) map[string]StepRunner {
 	runners := make(map[string]StepRunner, len(kinds))
 	for _, k := range kinds {
-		runners[k.Check] = singleRunner{sm: sm, review: ReviewHalf{Sessions: sm, Store: sm.Store}.Run}
+		runners[k.Check] = singleRunner{sm: sm, review: ReviewHalf{Sessions: sm, Store: sm.Store, Analyzer: sm.Analyzer}.Run}
 	}
 	return runners
 }

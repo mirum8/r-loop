@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -13,11 +14,17 @@ import (
 	"time"
 )
 
-const maxAgentName = 32
+const (
+	maxAgentName   = 32
+	staticReviewer = "static"
+)
+
+var staticActions = []string{actionRetry, actionSkip, actionBlock, actionStop}
 
 type ReviewHalf struct {
 	Sessions *SessionManager
 	Store    Store
+	Analyzer Analyzer
 	obs      Observer
 }
 
@@ -35,7 +42,7 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 	if out.State == StepFailed {
 		return out
 	}
-	if len(rows) == 0 {
+	if len(rows) == 0 && !h.static(worker) {
 		return Outcome{State: StepOK, Session: worker}
 	}
 	args := make([]ProviderArgs, len(rows))
@@ -54,7 +61,16 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 		rd.prevTree = ref.PrevRoundTree
 		for n := 1; n < start; n++ {
 			for _, rv := range rows {
-				rd.prior = append(rd.prior, filepath.Join(stepDir(worker), fmt.Sprintf("%s-findings-%s-r%d.json", ref.Key.Kind, rv.ID(), n)))
+				rd.prior = append(rd.prior, reviewFindingsPath(worker, rv.ID(), n))
+			}
+			if h.static(worker) {
+				path := reviewFindingsPath(worker, staticReviewer, n)
+				_, err := os.Stat(path)
+				if err == nil {
+					rd.prior = append(rd.prior, path)
+				} else if !errors.Is(err, fs.ErrNotExist) {
+					return sm.fail(worker, "reviewer static: "+err.Error())
+				}
 			}
 			rd.verdicts = append(rd.verdicts, filepath.Join(stepDir(worker), fmt.Sprintf("%s-verdict-r%d.json", ref.Key.Kind, n)))
 		}
@@ -69,8 +85,15 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 			return sm.fail(worker, "record: "+err.Error())
 		}
 		obs.Reviewing(worker, rd.n)
+		var static *staticRun
+		if h.static(worker) {
+			static = h.analyze(ctx, worker)
+		}
 		runs, out := h.open(ctx, worker, rows, required, args, urls, reviewers, rd)
 		if out.State == StepFailed {
+			if static != nil {
+				static.stop()
+			}
 			return out
 		}
 		var waiting []*reviewerRun
@@ -86,17 +109,30 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 		for i, r := range waiting {
 			r.out = outs[i]
 		}
+		if static != nil {
+			static.wait()
+		}
 		findings, out := h.join(ctx, worker, runs, rd)
 		if out.State == StepFailed {
 			return out
 		}
+		staticFile, staticN, out := h.settleStatic(ctx, worker, static, rd)
+		if out.State == StepFailed {
+			return out
+		}
+		findings += staticN
 		var spent time.Duration
+		var files []FindingsFile
 		reviewers = nil
 		for _, r := range runs {
 			spent = max(spent, r.out.active)
 			if !r.skipped {
 				reviewers = append(reviewers, r.s)
+				files = append(files, FindingsFile{Reviewer: r.s.Reviewer, Path: r.s.Ref.Vars["FindingsPath"].(string)})
 			}
+		}
+		if staticFile != nil {
+			files = append(files, *staticFile)
 		}
 		if out := h.checkTree(worker, tree); out.State == StepFailed {
 			return out
@@ -104,7 +140,7 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 		fixed := false
 		verdictPath := filepath.Join(stepDir(worker), fmt.Sprintf("%s-verdict-r%d.json", worker.Ref.Key.Kind, rd.n))
 		if findings > 0 {
-			if fixed, out = h.fix(ctx, worker, reviewers, rd, verdictPath, spent, obs); out.State == StepFailed {
+			if fixed, out = h.fix(ctx, worker, files, rd, verdictPath, spent, obs); out.State == StepFailed {
 				return out
 			}
 		}
@@ -114,8 +150,8 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 			}
 			return Outcome{State: StepOK, Session: worker}
 		}
-		for _, r := range reviewers {
-			rd.prior = append(rd.prior, r.Ref.Vars["FindingsPath"].(string))
+		for _, f := range files {
+			rd.prior = append(rd.prior, f.Path)
 		}
 		rd.verdicts = append(rd.verdicts, verdictPath)
 		rd.prevTree = tree
@@ -123,14 +159,12 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 	return Outcome{State: StepOK, Session: worker, Warning: fmt.Sprintf("review round limit reached; round %d fixes unreviewed", row.Rounds)}
 }
 
-func (h ReviewHalf) fix(ctx context.Context, worker *Session, reviewers []*Session, rd reviewRound, verdictPath string, spent time.Duration, obs Observer) (bool, Outcome) {
+func (h ReviewHalf) fix(ctx context.Context, worker *Session, files []FindingsFile, rd reviewRound, verdictPath string, spent time.Duration, obs Observer) (bool, Outcome) {
 	sm := h.Sessions
 	key := worker.Ref.Key
-	files := make([]FindingsFile, len(reviewers))
-	paths := make([]string, len(reviewers))
-	for i, r := range reviewers {
-		paths[i] = r.Ref.Vars["FindingsPath"].(string)
-		files[i] = FindingsFile{Reviewer: r.Reviewer, Path: paths[i]}
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.Path
 	}
 	vars := make(map[string]any, len(worker.Ref.Vars)+8)
 	for k, v := range worker.Ref.Vars {
@@ -182,6 +216,109 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, reviewers []*Sessi
 		}
 	}
 	return fixed, Outcome{}
+}
+
+func reviewFindingsPath(worker *Session, id string, round int) string {
+	return filepath.Join(stepDir(worker), fmt.Sprintf("%s-findings-%s-r%d.json", worker.Ref.Key.Kind, id, round))
+}
+
+func (h ReviewHalf) static(worker *Session) bool {
+	return h.Analyzer != nil && worker.Ref.Kind.Check == "diff"
+}
+
+type staticRun struct {
+	done     chan struct{}
+	cancel   context.CancelFunc
+	analysis Analysis
+	err      error
+}
+
+func (h ReviewHalf) analyze(ctx context.Context, worker *Session) *staticRun {
+	ctx, cancel := context.WithCancel(ctx)
+	run := &staticRun{done: make(chan struct{}), cancel: cancel}
+	go func() {
+		defer close(run.done)
+		defer func() {
+			if v := recover(); v != nil {
+				run.err = fmt.Errorf("%w in analyze: %v", errPanic, v)
+			}
+		}()
+		run.analysis, run.err = h.Analyzer.Analyze(ctx, worker.Dir)
+	}()
+	return run
+}
+
+func (r *staticRun) wait() *staticRun {
+	<-r.done
+	r.cancel()
+	return r
+}
+
+func (r *staticRun) stop() {
+	r.cancel()
+	<-r.done
+}
+
+func (h ReviewHalf) settleStatic(ctx context.Context, worker *Session, run *staticRun, rd reviewRound) (*FindingsFile, int, Outcome) {
+	if run == nil {
+		return nil, 0, Outcome{}
+	}
+	sm := h.Sessions
+	for {
+		if run.err == nil {
+			path := reviewFindingsPath(worker, staticReviewer, rd.n)
+			n := len(run.analysis.Findings)
+			if err := writeStaticFindings(path, rd.n, run.analysis.Findings); err != nil {
+				return nil, 0, sm.fail(worker, "reviewer static: "+err.Error())
+			}
+			if err := h.foundStatic(worker, rd.n, StepOK, n, run.analysis.Command); err != nil {
+				return nil, 0, sm.fail(worker, "record: "+err.Error())
+			}
+			return &FindingsFile{Reviewer: staticReviewer, Path: path}, n, Outcome{}
+		}
+		reason := "reviewer static: " + run.err.Error()
+		if err := h.foundStatic(worker, rd.n, StepFailed, 0, ""); err != nil {
+			return nil, 0, sm.fail(worker, "record: "+err.Error())
+		}
+		raiser := h.raiser()
+		if raiser == nil {
+			return nil, 0, Outcome{State: StepFailed, Reason: reason, Session: worker}
+		}
+		res := raiser.raise(ctx, Blocker{Source: sourceReviewer, Phase: worker.Ref.Key.Phase, Step: reviewerKey(worker.Ref.Key, staticReviewer).Kind, Reason: reason, Actions: staticActions})
+		switch res.Action {
+		case actionSkip:
+			if err := h.event(worker, "reviewer-skipped", map[string]string{"reviewer": staticReviewer, "reason": reason}); err != nil {
+				return nil, 0, sm.fail(worker, "record: "+err.Error())
+			}
+			if err := os.Remove(reviewFindingsPath(worker, staticReviewer, rd.n)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return nil, 0, sm.fail(worker, "reviewer static: "+err.Error())
+			}
+			return nil, 0, Outcome{}
+		case actionRetry:
+			run = h.analyze(ctx, worker).wait()
+		case actionStop:
+			return nil, 0, Outcome{State: StepFailed, Reason: stoppedAt(res.ID, reason), Session: worker, Halted: true}
+		default:
+			return nil, 0, Outcome{State: StepFailed, Reason: reason, Session: worker, blocked: true}
+		}
+	}
+}
+
+func (h ReviewHalf) foundStatic(worker *Session, round int, state StepState, n int, command string) error {
+	return h.event(worker, "review-find", map[string]string{"round": strconv.Itoa(round), "reviewer": staticReviewer, "state": string(state), "findings": strconv.Itoa(n), "command": strings.TrimSpace("analyze " + command)})
+}
+
+func writeStaticFindings(path string, round int, fs []Finding) error {
+	out := make([]Finding, 0, len(fs))
+	for _, f := range fs {
+		f.ID = fmt.Sprintf("%s-r%d-%s", staticReviewer, round, f.ID)
+		out = append(out, f)
+	}
+	data, err := json.Marshal(Findings{Reviewer: staticReviewer, Findings: out})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 type reviewerRun struct {
@@ -694,7 +831,7 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 	vars["Rounds"] = rd.rounds
 	vars["ReviewRan"] = false
 	vars["ReviewCommand"] = strings.ReplaceAll(args.Review, "{output}", shellQuote(filepath.Join(artifacts, "native-review.txt")))
-	vars["FindingsPath"] = filepath.Join(dir, fmt.Sprintf("%s-findings-%s-r%d.json", key.Kind, id, rd.n))
+	vars["FindingsPath"] = reviewFindingsPath(worker, id, rd.n)
 	vars["ArtifactsDir"] = artifacts
 	vars["RequiredPath"] = required
 	vars["RoundTree"] = rd.prevTree
