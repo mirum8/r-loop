@@ -325,7 +325,7 @@ func (w *Wiring) leftovers(list []core.Phase) error {
 
 type role struct {
 	field, provider, model string
-	review                 bool
+	review, noAsk          bool
 }
 
 func (w *Wiring) validateProviders() error {
@@ -350,9 +350,10 @@ func (w *Wiring) validateProviders() error {
 	}
 	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider, model: cfg.Watchdog.Model})
 	roles = append(roles, role{field: "intake.provider", provider: cfg.Intake.Provider, model: cfg.Intake.Model})
+	roles = append(roles, role{field: "watchdog.fixer.provider", provider: cfg.Watchdog.Fixer.Provider, model: cfg.Watchdog.Fixer.Model, noAsk: true})
 	resolved := make([]providers.Provider, len(roles))
 	for i, r := range roles {
-		p, err := checkRole(w.Registry, r)
+		p, err := checkRole(w.registry(), r)
 		if err != nil {
 			return err
 		}
@@ -382,7 +383,7 @@ func checkRole(reg *providers.Registry, r role) (providers.Provider, error) {
 	if r.review && p.Review == "" && p.ReviewExec == "" {
 		return providers.Provider{}, exit(2, "%s: provider %s has no review command", r.field, r.provider)
 	}
-	if p.Ask != "mcp" {
+	if !r.noAsk && p.Ask != "mcp" {
 		return providers.Provider{}, exit(2, "%s: provider %s has no MCP ask channel", r.field, r.provider)
 	}
 	return p, nil
@@ -402,6 +403,7 @@ func reviewTemplate(reviewed string, rv config.Reviewer) string {
 func (w *Wiring) promptSources() ([]string, error) {
 	vars := core.StepVars(core.StepRef{}, w.Plan, w.Todo, "")
 	vars["GateCommand"], vars["GateOutput"] = "", ""
+	vars["IncidentPath"], vars["ProposalPath"], vars["Root"] = "", "", ""
 	var lines []string
 	for _, name := range w.sessionSteps() {
 		_, source, err := w.Prompts.Render(w.Config.Steps[name].Prompt, vars)
@@ -410,7 +412,7 @@ func (w *Wiring) promptSources() ([]string, error) {
 		}
 		lines = append(lines, fmt.Sprintf("prompt %s: %s", name, source))
 	}
-	for _, name := range []string{"review", "fix", "gatefix"} {
+	for _, name := range []string{"review", "fix", "gatefix", "fixer"} {
 		_, source, err := w.Prompts.Render(name, vars)
 		if err != nil {
 			return nil, err

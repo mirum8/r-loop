@@ -1419,7 +1419,7 @@ func TestAFailedReviewerRaisesAReviewerBlockerAndSkipLetsTheRoundGoOn(t *testing
 	if out.State != StepOK {
 		t.Fatalf("outcome = %+v", out)
 	}
-	want := Blocker{Source: "reviewer", Phase: "3", Step: "implement-rv-codex", Reason: "reviewer codex: /review is not available in this session", Actions: []string{"retry", "switch", "skip", "block", "stop"}}
+	want := Blocker{Source: "reviewer", Phase: "3", Step: "implement-rv-codex", Reason: "reviewer codex: /review is not available in this session", Actions: []string{"retry", "switch", "skip", "fix", "block", "stop"}}
 	if len(obs.blockers) != 1 || !reflect.DeepEqual(obs.blockers[0], want) {
 		t.Fatalf("blockers = %+v", obs.blockers)
 	}
@@ -1503,6 +1503,20 @@ func TestSwitchReopensTheReviewerOnTheGivenProvider(t *testing.T) {
 	}
 	if starts := r.callsFrom("SessionHost.Start pane-3 "); len(starts) != 1 || !strings.Contains(starts[0], "gemini [--model pro --effort high]") {
 		t.Fatalf("starts = %q", starts)
+	}
+}
+
+func TestAFixRetryReopensTheReviewerWithItsArgumentsResolvedAgain(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	failCodexOnce(t, r)
+
+	out, _ := r.runRaising(then(Resolution{Action: "retry", By: "maintainer", Citation: "fix-b1"}))
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if want := [][]string{{"codex", "", ""}, {"codex", "", ""}}; !reflect.DeepEqual(r.resolved, want) {
+		t.Fatalf("resolved = %v", r.resolved)
 	}
 }
 
@@ -2289,7 +2303,7 @@ func TestAnAnalyzeErrorRaisesAStaticReviewerBlocker(t *testing.T) {
 	_, obs := r.runAnalyzedRaising(r.failingAnalyzer(errAnalyze(), nil), then(Resolution{Action: "skip"}))
 
 	// then
-	expected := []Blocker{{Source: "reviewer", Phase: "3", Step: "implement-rv-static", Reason: "reviewer static: golangci-lint: exit status 3", Actions: []string{"retry", "skip", "block", "stop"}}}
+	expected := []Blocker{{Source: "reviewer", Phase: "3", Step: "implement-rv-static", Reason: "reviewer static: golangci-lint: exit status 3", Actions: []string{"retry", "skip", "fix", "block", "stop"}}}
 	if !reflect.DeepEqual(obs.blockers, expected) {
 		t.Fatalf("blockers = %+v", obs.blockers)
 	}

@@ -202,6 +202,7 @@ type fakeRepo struct {
 	Branch      string
 	SHA         string
 	DirtyFiles  []string
+	CommitPaths [][]string
 	Changed     []string
 	Added       int
 	Deleted     int
@@ -314,6 +315,9 @@ func (f *fakeRepo) AbortMerge() error {
 
 func (f *fakeRepo) Commit(ctx context.Context, message string, paths ...string) (string, error) {
 	f.record("Repo.Commit %q", message)
+	f.mu.Lock()
+	f.CommitPaths = append(f.CommitPaths, paths)
+	f.mu.Unlock()
 	return f.SHA, f.Err
 }
 

@@ -98,7 +98,7 @@ func TestAFailedExecReviewRaisesARetryableBlockerNamingTheCommandAndError(t *tes
 	if out.State != StepFailed || out.Reason != reason {
 		t.Fatalf("outcome = %+v", out)
 	}
-	if len(obs.blockers) != 1 || obs.blockers[0].Reason != reason || !reflect.DeepEqual(obs.blockers[0].Actions, []string{"retry", "switch", "skip", "block", "stop"}) {
+	if len(obs.blockers) != 1 || obs.blockers[0].Reason != reason || !reflect.DeepEqual(obs.blockers[0].Actions, []string{"retry", "switch", "skip", "fix", "block", "stop"}) {
 		t.Fatalf("blockers = %+v", obs.blockers)
 	}
 	if len(r.reviews) != 0 {

@@ -15,7 +15,7 @@ var embedded embed.FS
 
 var names = map[string]bool{
 	"plan": true, "implement": true, "review": true, "review-plan": true, "review-ui": true, "review-security": true, "fix": true,
-	"milestone": true, "watchdog": true, "gatefix": true, "gate": true, "intake": true,
+	"milestone": true, "watchdog": true, "gatefix": true, "gate": true, "intake": true, "fixer": true,
 }
 
 const sentinel = `{{define "outcome"}}

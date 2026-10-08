@@ -61,6 +61,12 @@ type Watchdog struct {
 	UnblockTimeout, TriageTimeout            time.Duration
 	OvertimeFactor, DiffFactor               float64
 	MaxRestarts                              int
+	Fixer                                    Fixer
+}
+
+type Fixer struct {
+	Provider, Model, Effort string
+	Timeout                 time.Duration
 }
 
 type Intake struct {
@@ -142,6 +148,7 @@ var topSchema = schema{
 		"provider": nil, "model": nil, "effort": nil, "allow": nil, "dialogs": nil, "maxRestarts": nil,
 		"blockerTimeout": nil, "remedyWindow": nil, "checkTimeout": nil, "stallGrace": nil, "unblockTimeout": nil, "triageTimeout": nil,
 		"overtimeFactor": nil, "diffFactor": nil,
+		"fixer": schema{"provider": nil, "model": nil, "effort": nil, "timeout": nil},
 	},
 }
 
@@ -500,9 +507,10 @@ func Load(projectDir, homeDir string, overrides []Override) (LoopConfig, error) 
 
 func (cfg *LoopConfig) requireRoles() error {
 	roles := map[string][3]string{
-		"watchdog": {cfg.Watchdog.Provider, cfg.Watchdog.Model, cfg.Watchdog.Effort},
-		IntakeRow:  {cfg.Intake.Provider, cfg.Intake.Model, cfg.Intake.Effort},
-		"land.fix": {cfg.Land.Fix.Provider, cfg.Land.Fix.Model, cfg.Land.Fix.Effort},
+		"watchdog":       {cfg.Watchdog.Provider, cfg.Watchdog.Model, cfg.Watchdog.Effort},
+		IntakeRow:        {cfg.Intake.Provider, cfg.Intake.Model, cfg.Intake.Effort},
+		"watchdog.fixer": {cfg.Watchdog.Fixer.Provider, cfg.Watchdog.Fixer.Model, cfg.Watchdog.Fixer.Effort},
+		"land.fix":       {cfg.Land.Fix.Provider, cfg.Land.Fix.Model, cfg.Land.Fix.Effort},
 	}
 	for name, row := range cfg.Steps {
 		roles["steps."+name] = [3]string{row.Provider, row.Model, row.Effort}
@@ -660,6 +668,7 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 		dst  *string
 	}{
 		{"watchdog.provider", &w.Provider}, {"watchdog.model", &w.Model}, {"watchdog.effort", &w.Effort},
+		{"watchdog.fixer.provider", &w.Fixer.Provider}, {"watchdog.fixer.model", &w.Fixer.Model}, {"watchdog.fixer.effort", &w.Fixer.Effort},
 		{"intake.provider", &cfg.Intake.Provider}, {"intake.model", &cfg.Intake.Model}, {"intake.effort", &cfg.Intake.Effort},
 		{"notify.onHalt", &cfg.Notify.OnHalt}, {"notify.onWarn", &cfg.Notify.OnWarn}, {"notify.onDone", &cfg.Notify.OnDone},
 	} {
@@ -673,6 +682,7 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 	}{
 		{"watchdog.checkTimeout", &w.CheckTimeout}, {"watchdog.stallGrace", &w.StallGrace},
 		{"watchdog.unblockTimeout", &w.UnblockTimeout}, {"watchdog.triageTimeout", &w.TriageTimeout},
+		{"watchdog.fixer.timeout", &w.Fixer.Timeout},
 		{"land.gateTimeout", &cfg.Land.GateTimeout},
 	} {
 		if *f.dst, err = r.duration(f.path); err != nil {

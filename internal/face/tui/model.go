@@ -126,6 +126,7 @@ type Model struct {
 	landLog    string
 	landFrom   time.Time
 	Questions  []Question
+	fixing     map[string]string
 	DogGone    bool
 	DogWaiting bool
 	dogSince   time.Time
@@ -251,6 +252,23 @@ func (m Model) Apply(ev core.Event) Model {
 	case "blocker-resolved":
 		m.settle(ev.Fields["id"])
 		m.log(ev, toneDim, fmt.Sprintf("%s → %s (%s)", ev.Fields["id"], ev.Fields["action"], ev.Fields["by"]))
+	case core.EventFixStarted:
+		m.fixing = maps.Clone(m.fixing)
+		if m.fixing == nil {
+			m.fixing = map[string]string{}
+		}
+		m.fixing[ev.Phase] = ev.Fields["id"]
+		m.log(ev, toneDim, fmt.Sprintf("fixer · %s started (%s %s)", ev.Fields["id"], ev.Fields["provider"], ev.Fields["model"]))
+	case core.EventFixProposed:
+		m.unfix(ev)
+		m.log(ev, toneDim, fmt.Sprintf("fix %s proposed (%s): %s", ev.Fields["id"], ev.Fields["kind"], ev.Fields["cause"]))
+	case core.EventFixFailed:
+		m.unfix(ev)
+		m.log(ev, toneError, fmt.Sprintf("fix %s failed: %s", ev.Fields["id"], ev.Fields["reason"]))
+	case core.EventFixApplied:
+		m.log(ev, toneDim, fmt.Sprintf("fix %s applied", ev.Fields["id"]))
+	case core.EventFixRejected:
+		m.log(ev, toneDim, fmt.Sprintf("fix %s rejected", ev.Fields["id"]))
 	case "human":
 		if ev.Fields["what"] == "resume" {
 			m.log(ev, toneDim, "resumed")
@@ -303,7 +321,16 @@ func replay(m Model, history []core.Event) Model {
 	m.ended = time.Time{}
 	m.checking, m.landing = "", ""
 	m.Questions, m.DogGone, m.DogWaiting, m.Paused = nil, false, false, ""
+	m.fixing = nil
 	return m
+}
+
+func (m *Model) unfix(ev core.Event) {
+	if m.fixing[ev.Phase] != ev.Fields["id"] {
+		return
+	}
+	m.fixing = maps.Clone(m.fixing)
+	delete(m.fixing, ev.Phase)
 }
 
 func (m *Model) setPhase(n string, state core.PhaseState) {

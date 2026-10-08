@@ -249,7 +249,7 @@ func questionLines(st RunState) []string {
 		}
 		out = append(out, line)
 	}
-	return out
+	return append(out, FixLines(st.Events)...)
 }
 
 func signalLines(st RunState) []string {

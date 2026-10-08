@@ -21,6 +21,16 @@ One more agent, the **watchdog**, runs for the whole run. Before the first phase
 work against the code and shows you a table of what will run. Then it watches the steps, answers
 the agents' questions, and asks you when it cannot answer. It is the only agent that talks to you.
 
+When something fails and a retry will not clear it — the same failure again, a provider that
+updated itself mid-run, a flag or a screen the provider no longer knows — the watchdog can hand
+the blocker to the **fixer**. The fixer opens beside the driver, reads the incident, investigates
+without changing anything, and proposes a fix: commands to run, a new config file, steps for you
+to do by hand, or a bug report against r-loop or the project. The watchdog shows you the proposal
+and asks: apply or reject. On apply, r-loop runs the commands, writes the config (keeping the old
+file as `config.bak`), reloads the config and retries the blocked step in the same run. That retry
+does not count against the step's retries. On reject or a failed apply the blocker stays open for
+the watchdog's other actions. `--unattended` runs never use the fixer.
+
 ## Requirements
 
 - Go 1.25 or newer (only to build)
@@ -274,6 +284,7 @@ The `static` reviewer runs the project's own analyzers in every review round of 
 | `overtimeFactor` | `2` | Warn when a step runs longer than this many times the longest landed step of the same kind. |
 | `diffFactor` | `3` | Warn when a diff is bigger than this many times the largest landed phase. |
 | `dialogs` | `[]` | Rules for answering a step's in-pane dialog (an approval or a choice menu), one sentence each. The watchdog answers a dialog a rule covers, citing the rule. Any other dialog it declines or asks you about; with `--unattended` it declines. |
+| `fixer` | claude, opus, high, `20m` | Block with `provider`, `model`, `effort` and `timeout` for the fixer: the session that diagnoses a blocker a retry will not clear and proposes a fix. It has no ask channel, so its provider needs no `ask: mcp`. `timeout` bounds one fix. The banner prints `fixer: <provider> <model> <effort>`. |
 
 Remedy classes: `deps`, `ports`, `containers`, `locks`, `restart`, `retry`, `provider`.
 
@@ -316,6 +327,7 @@ new one, put a block under `providers:` in the project config, or a file at
 | `modelFlag` | Flag template with `{model}`, for example `--model {model}`. |
 | `effortFlag` | Flag template with `{effort}`. May be empty. |
 | `models` | Subcommand of `kind` that prints the model catalog as JSON, used to resolve a model alias. Built in: `debug models` (codex). Empty: models pass through unchanged. |
+| `version` | Subcommand of `kind` that prints its version. At run start r-loop runs it once for every provider the config names (10 s each) and records the first line it prints as `provider-versions` in the run; a failure records `?`, a block without `version` records `-`, and neither fails the run. Each blocker's text ends with `versions: <name> <start> → <now>, …`, the arrow only where a version moved since the run started. Built in: `--version` (claude, codex). |
 | `askFlag` | Flag that connects the agent to r-loop's MCP server. Uses `{url}` or `{mcpConfig}`. |
 | `dirFlag` | Flag that lets the agent write its phase's run folder, `.r-loop/runs/<run>/phase-<N>/`, where it writes its sentinel. Uses `{dir}`. Given only to sessions working in a phase worktree. Built in: `--add-dir {dir}` (claude), `-c sandbox_workspace_write.writable_roots=["{dir}"]` (codex). May be empty. |
 | `doneSignal` | How the agent reports that it is done. Only `sentinel`. |
@@ -364,6 +376,7 @@ Each run lives in `.r-loop/runs/<runID>/`:
 - `report.md` — what happened, updated after every change
 - `triage.json`, `triage.md`, `gate.json` — the watchdog's verdicts, the table you saw, and the decision
 - `phase-<N>/` — step logs, sentinels, review findings and verdicts
+- `fix-b<n>/` — a fix: `incident.md`, the fixer's `proposal.json`, `config.bak` and each command's `command-<i>.log`
 
 Phase plans are written to `.task-plans/phase-<N>-<title>.md` and committed with the phase.
 

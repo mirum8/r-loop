@@ -87,6 +87,9 @@ func fullVars() map[string]any {
 		"Addendum":        "",
 		"GroupItems":      "",
 		"TriageNotes":     "",
+		"IncidentPath":    "/runs/r1/fix-b3/incident.md",
+		"ProposalPath":    "/runs/r1/fix-b3/proposal.json",
+		"Root":            "/repo",
 	}
 }
 
@@ -281,7 +284,7 @@ func TestGatefixReviewAndFixPromptsDoNotOfferAskWatchdog(t *testing.T) {
 
 func TestAllTemplatesRenderWithFullVariableSet(t *testing.T) {
 	r := New(t.TempDir())
-	for _, name := range append(stepTemplates, "watchdog") {
+	for _, name := range append(stepTemplates, "watchdog", "fixer") {
 		text, source, err := r.Render(name, fullVars())
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
@@ -420,7 +423,7 @@ func TestWatchdogClearsBlockers(t *testing.T) {
 		"`propose_remedy`, then `retry`",
 		"`keys` with `rule`",
 		"`switch` to the row's fallback",
-		"`ask_maintainer` with the options: retry, skip, switch provider, block this phase, stop the run",
+		"`ask_maintainer` with the options: retry, skip, switch provider, hand to the fixer, block this phase, stop the run",
 		"Then call `resolve_blocker` again with their reply, quoted, as `maintainer_said`",
 	} {
 		if !strings.Contains(text, want) {
@@ -429,6 +432,36 @@ func TestWatchdogClearsBlockers(t *testing.T) {
 	}
 	if strings.Contains(text, "nothing authorised fixes it, call `resolve_blocker` with `block` or `stop`") {
 		t.Errorf("attended watchdog told to block without asking:\n%s", text)
+	}
+}
+
+func TestWatchdogHandsABlockerToTheFixer(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"- `apply_fix(id, decision, maintainer_said?)` — decide a fix the fixer proposed for blocker `id`: `apply` or `reject`.",
+		"  - `fix` hands the blocker to the fixer, with your diagnosis as `addendum`",
+		"## Handing a blocker to the fixer\n\n- Take `fix` when a retry will not clear the blocker: the same failure repeats, a provider's version moved since the run started",
+		"or a provider does not know a flag or shows a screen the driver does not expect.",
+		"On `fix b<n> proposed` for an `env` or `config` fix, show the proposal to the maintainer",
+		"call `ask_maintainer` with the options apply and reject",
+		"Then call `apply_fix(id, decision)` with their decision and their reply, quoted, as `maintainer_said`; `apply` needs it.",
+		"An `r-loop` or `project` fix is never applied",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestAnUnattendedWatchdogIsToldTheFixerIsRefused(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", with("Unattended", true))
+
+	if !strings.Contains(text, "## Handing a blocker to the fixer\n\n- This run is unattended: `fix` is refused.") {
+		t.Errorf("unattended watchdog not told fix is refused:\n%s", text)
+	}
+	if strings.Contains(text, "Then call `apply_fix(id, decision)`") {
+		t.Errorf("unattended watchdog told to apply fixes:\n%s", text)
 	}
 }
 
@@ -1124,5 +1157,49 @@ func TestFixWithoutAStaticFileLeavesTheAnalyzerNoteOut(t *testing.T) {
 	// then
 	if strings.Contains(actual, "A rule hit is not a defect by itself") {
 		t.Errorf("fix prompt names the analyzers:\n%s", actual)
+	}
+}
+
+func TestFixerProposesAndChangesNothing(t *testing.T) {
+	text := render(t, New(t.TempDir()), "fixer", fullVars())
+
+	for _, want := range []string{
+		"Read `/runs/r1/fix-b3/incident.md` first.",
+		"Use read-only commands only: provider versions, `--help` output, release notes",
+		"Change no file, in the repository, its worktrees or anywhere else on the machine, and install, upgrade, downgrade or log in to nothing.",
+		"Write `/runs/r1/fix-b3/proposal.json` as one JSON object",
+		"Put the exact shell commands in `commands`",
+		"`content` is that file's complete new text",
+		"`.r-loop/config.yaml` or `~/.config/r-loop/config.yaml`",
+		"`manual` lists what the maintainer must do by hand, such as a login or anything else interactive.",
+		"`r-loop` — a bug in r-loop itself. Name the file and the line",
+		"`project` — a fault in the project being built",
+		"An r-loop run in `/repo` is held by a blocker",
+		`{"outcome":"ok","reason":""}`,
+		"/runs/r1/phase-7/plan-a1.sentinel",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("fixer prompt missing %q", want)
+		}
+	}
+	if strings.Contains(text, "ask_watchdog") {
+		t.Error("the fixer prompt offers ask_watchdog")
+	}
+}
+
+func TestFixerPromptIsOverridable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".r-loop", "prompts", "fixer.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("read {{.IncidentPath}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	text, source, err := New(dir).Render("fixer", fullVars())
+
+	if err != nil || text != "read /runs/r1/fix-b3/incident.md" || source != path {
+		t.Errorf("text %q source %q err %v", text, source, err)
 	}
 }

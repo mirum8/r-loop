@@ -177,6 +177,7 @@ func StatusLines(run core.RunState, pl core.Plan, now time.Time, deadPID int) []
 			lines = append(lines, fmt.Sprintf("question %s %s", q.ID, q.Text))
 		}
 	}
+	lines = append(lines, core.FixLines(run.Events)...)
 	for _, w := range run.Warnings {
 		lines = append(lines, "warning "+w)
 	}

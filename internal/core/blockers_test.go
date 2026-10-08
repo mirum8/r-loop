@@ -678,7 +678,7 @@ func TestAFailedStepRaisesAStepBlockerAndRetryRerunsItWithTheAddendum(t *testing
 	if code != 0 {
 		t.Fatalf("exit %d, want 0", code)
 	}
-	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b, Blocker{Source: "step", Phase: "2", Step: "implement", Reason: "tests red", Actions: []string{"retry", "switch", "block", "stop"}}) {
+	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b, Blocker{Source: "step", Phase: "2", Step: "implement", Reason: "tests red", Actions: []string{"retry", "switch", "fix", "block", "stop"}}) {
 		t.Fatalf("blockers %+v", *seen)
 	}
 	if got := r.agents(); !reflect.DeepEqual(got, []string{"rloop-p2-plan", "rloop-p2-implement", "rloop-p2-implement-a2"}) {
@@ -812,7 +812,7 @@ func TestAMergeConflictRaisesALandBlockerAndRetryLandsAfterTheFix(t *testing.T) 
 	if *calls != 2 {
 		t.Errorf("Land called %d times", *calls)
 	}
-	want := Blocker{Source: "land", Phase: "2", Step: "land", Reason: ErrMergeConflict.Error() + ": a.go", Actions: []string{"retry", "block", "stop"}}
+	want := Blocker{Source: "land", Phase: "2", Step: "land", Reason: ErrMergeConflict.Error() + ": a.go", Actions: []string{"retry", "fix", "block", "stop"}}
 	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b, want) {
 		t.Fatalf("blockers %+v", *seen)
 	}
@@ -871,7 +871,7 @@ func TestAGateProbeErrorRaisesAGateProbeBlockerAndRetryProbesAgain(t *testing.T)
 	if code != 0 || *calls != 2 {
 		t.Fatalf("exit %d, Land calls %d", code, *calls)
 	}
-	if len(*seen) != 1 || (*seen)[0].b.Source != "gate-probe" || (*seen)[0].b.Step != "gate" || !reflect.DeepEqual((*seen)[0].b.Actions, []string{"retry", "block", "stop"}) {
+	if len(*seen) != 1 || (*seen)[0].b.Source != "gate-probe" || (*seen)[0].b.Step != "gate" || !reflect.DeepEqual((*seen)[0].b.Actions, []string{"retry", "fix", "block", "stop"}) {
 		t.Fatalf("blockers %+v", *seen)
 	}
 }
@@ -1299,5 +1299,248 @@ func TestAStaticBlockerResolvedSkipFinishesTheRoundWithoutStatic(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(r.store.dir, "phase-2", "implement-findings-static-r1.json")); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("static file stat = %v", err)
+	}
+}
+
+func TestABlockersTextEndsWithTheVersionsAndAnArrowOnlyWhereOneMoved(t *testing.T) {
+	r := newBlockerRig(t)
+	start := Event{Kind: "provider-versions", Fields: map[string]string{"claude": "2.1.220", "codex": "0.47.0"}}
+	if err := r.store.Append("run-1", Record{Kind: RecordEvent, Event: &start}); err != nil {
+		t.Fatal(err)
+	}
+	r.loop.Versions = func() map[string]string { return map[string]string{"claude": "2.1.220", "codex": "0.48.1"} }
+
+	r.open(t, landBlocker())
+
+	want := "blocker b1 from phase-2/land (land): merge conflict in a.go\nactions: retry, block, stop; resolve it with resolve_blocker\n\nCONFLICT (content): a.go\n\nversions: claude 2.1.220, codex 0.47.0 → 0.48.1"
+	if got := r.questions()[0].Text; got != want {
+		t.Errorf("text %q\nwant %q", got, want)
+	}
+}
+
+func TestABlockersVersionsHaveNoArrowWhenNothingMoved(t *testing.T) {
+	r := newBlockerRig(t)
+	start := Event{Kind: "provider-versions", Fields: map[string]string{"claude": "2.1.220", "codex": "?"}}
+	if err := r.store.Append("run-1", Record{Kind: RecordEvent, Event: &start}); err != nil {
+		t.Fatal(err)
+	}
+	r.loop.Versions = func() map[string]string { return map[string]string{"claude": "2.1.220", "codex": "?"} }
+
+	r.open(t, landBlocker())
+
+	if got := r.questions()[0].Text; !strings.HasSuffix(got, "\n\nCONFLICT (content): a.go\n\nversions: claude 2.1.220, codex ?") {
+		t.Errorf("text %q", got)
+	}
+}
+
+func TestABlockerHasNoVersionsLineWithoutVersions(t *testing.T) {
+	r := newBlockerRig(t)
+
+	r.open(t, landBlocker())
+
+	if got := r.questions()[0].Text; strings.Contains(got, "versions:") {
+		t.Errorf("text %q", got)
+	}
+}
+
+func TestAFixIsAuthorisedOnTheWatchdogsWordAndLeavesTheBlockerOpen(t *testing.T) {
+	r := newFixerRig(t)
+	r.rem.Allow = nil
+	ch := r.open(t, fixableBlocker())
+
+	d, reason := r.resolve("b1", "fix")
+
+	if d != decisionAuthorised || reason != "" {
+		t.Fatalf("fix %s %q", d, reason)
+	}
+	stillHeld(t, ch)
+	if q := r.questions()[0]; q.AnsweredBy != "" {
+		t.Errorf("the blocker was settled: %+v", q)
+	}
+	if got := r.events("blocker-resolved"); len(got) != 0 {
+		t.Errorf("blocker-resolved %+v", got)
+	}
+	if got := r.events("fix-started"); len(got) != 1 {
+		t.Errorf("fix-started %+v", got)
+	}
+}
+
+func TestAnUnattendedRunRefusesAFix(t *testing.T) {
+	r := newFixerRig(t)
+	r.router.Dog.Unattended = true
+	ch := r.open(t, fixableBlocker())
+
+	d, reason := r.resolve("b1", "fix")
+
+	if d != decisionRefused || reason != "unattended: block or stop" {
+		t.Errorf("fix %s %q", d, reason)
+	}
+	if got := r.events("fix-started"); len(got) != 0 {
+		t.Errorf("fix-started %+v", got)
+	}
+	stillHeld(t, ch)
+}
+
+func TestASecondFixOfTheSameBlockerIsRefusedNamingTheFirst(t *testing.T) {
+	for name, tc := range map[string]struct {
+		end    func(t *testing.T, r *fixerRig)
+		reason string
+	}{
+		"failed": {func(t *testing.T, r *fixerRig) {
+			r.write(t, "fixer.sentinel", `{"outcome":"failed","reason":"no network"}`)
+			r.failedWith(t)
+		}, "already fixed: fix-b1 failed"},
+		"proposed": {func(t *testing.T, r *fixerRig) {
+			r.propose(t, configProposal)
+			waitFor(t, func() bool { return len(r.events("fix-proposed")) == 1 })
+		}, "already fixed: fix-b1 proposed"},
+		"open": {func(t *testing.T, r *fixerRig) {}, "already fixed: fix-b1 open"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newFixerRig(t)
+			ch := r.started(t)
+			tc.end(t, r)
+
+			d, reason := r.resolve("b1", "fix")
+
+			if d != decisionRefused || reason != tc.reason {
+				t.Errorf("second fix %s %q, want %q", d, reason, tc.reason)
+			}
+			if got := r.events("fix-started"); len(got) != 1 {
+				t.Errorf("fix-started %+v", got)
+			}
+			stillHeld(t, ch)
+		})
+	}
+}
+
+func TestAFixWhileAnotherIsOpenIsRefusedAsBusy(t *testing.T) {
+	r := newFixerRig(t)
+	r.started(t)
+	ch := r.open(t, Blocker{Source: "milestone", Phase: "2", Step: "milestone", Reason: "report failed", Actions: []string{"retry", "skip", "fix", "stop"}})
+
+	d, reason := r.resolve("b2", "fix")
+
+	if d != decisionRefused || reason != "fixer busy on b1" {
+		t.Errorf("fix %s %q", d, reason)
+	}
+	if got := r.events("fix-started"); len(got) != 1 {
+		t.Errorf("fix-started %+v", got)
+	}
+	stillHeld(t, ch)
+}
+
+func TestTheHoldsClockStandsStillWhileItsFixIsOpen(t *testing.T) {
+	r := newFixerRig(t)
+	r.loop.BlockerTimeout = 250 * time.Millisecond
+	ch := r.started(t)
+
+	time.Sleep(500 * time.Millisecond)
+	stillHeld(t, ch)
+	r.write(t, "fixer.sentinel", `{"outcome":"failed","reason":"no network"}`)
+
+	if res := resolved(t, ch); res.Action != "block" || res.By != "timeout" {
+		t.Errorf("resolution %+v", res)
+	}
+	if got := r.failedWith(t); got != "the fixer failed: no network" {
+		t.Errorf("reason %q", got)
+	}
+}
+
+func TestWhileItsFixIsOpenABlockerRefusesEveryActionButBlockAndStop(t *testing.T) {
+	r := newFixerRig(t)
+	ch := r.started(t)
+
+	d, reason := r.resolve("b1", "retry", said("retry (Recommended)"))
+
+	if d != decisionRefused || reason != "fix b1 is open: wait for the fixer's proposal, or block or stop" {
+		t.Fatalf("retry %s %q", d, reason)
+	}
+	stillHeld(t, ch)
+	if len(r.events("fix-failed")) != 0 {
+		t.Errorf("fix-failed %+v", r.events("fix-failed"))
+	}
+	if d, reason := r.resolve("b1", "block"); d != decisionAuthorised {
+		t.Fatalf("block %s %q", d, reason)
+	}
+	if res := resolved(t, ch); res.Action != "block" {
+		t.Errorf("resolution %+v", res)
+	}
+}
+
+func TestARetrySettledByAFixDoesNotCountTowardsTheRetryBudget(t *testing.T) {
+	r := newBlockerRig(t)
+	r.rem.MaxRestarts = 1
+	for _, ev := range []Event{
+		{Kind: "blocker-resolved", Fields: map[string]string{"id": "b0", "action": "retry", "by": "maintainer", "source": "land", "step": "phase-2/land", "fix": "fix-b0"}},
+		{Kind: "restart", Fields: map[string]string{"step": "phase-2/land", "remedy": "b0", "citation": "fix-b0"}},
+	} {
+		r.store.Append("run-1", Record{Kind: RecordEvent, Event: &ev})
+	}
+	ch := r.open(t, landBlocker())
+
+	if d, reason := r.resolve("b1", "retry"); d != decisionAuthorised {
+		t.Fatalf("retry %s %q", d, reason)
+	}
+	if res := resolved(t, ch); res.Action != "retry" {
+		t.Errorf("resolution %+v", res)
+	}
+}
+
+func TestAStepRetriedByAFixRerunsOnTheReloadedKindWithoutSpendingARestart(t *testing.T) {
+	var r *eventsRig
+	r, _ = newSourceRig(t, func(Blocker) Resolution {
+		row := StepRow{Provider: "claude", Model: "opus", Effort: "high", Timeout: 1000 * time.Hour}
+		r.loop.SetKinds([]StepKind{
+			{Name: "plan", Prompt: "plan", Check: "plan-file", Row: row},
+			{Name: "implement", Prompt: "implement", Check: "diff", Row: row},
+		})
+		return Resolution{Action: "retry", By: "maintainer", Citation: "fix-b1"}
+	})
+	r.loop.MaxRestarts = 0
+	r.host.behaviour["rloop-p2-implement"] = "fail"
+
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	if code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	if want := []string{"codex//", "codex//", "claude/opus/high"}; !reflect.DeepEqual(r.resolved, want) {
+		t.Errorf("resolved %v, want %v", r.resolved, want)
+	}
+	restarts := r.events("restart")
+	if len(restarts) != 1 || restarts[0].Fields["citation"] != "fix-b1" || restarts[0].Fields["attempt"] != "2" {
+		t.Errorf("restarts %+v", restarts)
+	}
+	if len(r.events("restart-refused")) != 0 {
+		t.Errorf("restart-refused %+v", r.events("restart-refused"))
+	}
+	if n := r.loop.restarts["phase-2/implement"]; n != 0 {
+		t.Errorf("restarts spent %d", n)
+	}
+	if evs := r.events("blocker-resolved"); len(evs) != 1 || evs[0].Fields["fix"] != "fix-b1" {
+		t.Errorf("blocker-resolved %+v", evs)
+	}
+}
+
+func TestAStepAfterAFixInTheSamePhaseStartsOnTheReloadedKind(t *testing.T) {
+	var r *eventsRig
+	r, _ = newSourceRig(t, func(Blocker) Resolution {
+		row := StepRow{Provider: "claude", Model: "opus", Effort: "high", Timeout: 1000 * time.Hour}
+		r.loop.SetKinds([]StepKind{
+			{Name: "plan", Prompt: "plan", Check: "plan-file", Row: row},
+			{Name: "implement", Prompt: "implement", Check: "diff", Row: row},
+		})
+		return Resolution{Action: "retry", By: "maintainer", Citation: "fix-b1"}
+	})
+	r.host.behaviour["rloop-p2-plan"] = "fail"
+
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	if code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	if want := []string{"codex//", "claude/opus/high", "claude/opus/high"}; !reflect.DeepEqual(r.resolved, want) {
+		t.Errorf("resolved %v, want %v", r.resolved, want)
 	}
 }

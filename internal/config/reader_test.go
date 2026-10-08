@@ -93,7 +93,8 @@ func TestDefaults(t *testing.T) {
 	}
 	wantWatchdog := Watchdog{Provider: "claude", Model: "opus", Effort: "medium", Allow: []string{}, BlockerTimeout: 10 * time.Minute,
 		CheckTimeout: 10 * time.Minute, StallGrace: 2 * time.Minute, UnblockTimeout: 2 * time.Hour, TriageTimeout: 2 * time.Hour,
-		OvertimeFactor: 2, DiffFactor: 3, MaxRestarts: 2, Dialogs: []string{}}
+		OvertimeFactor: 2, DiffFactor: 3, MaxRestarts: 2, Dialogs: []string{},
+		Fixer: Fixer{Provider: "claude", Model: "opus", Effort: "high", Timeout: 20 * time.Minute}}
 	if !reflect.DeepEqual(cfg.Watchdog, wantWatchdog) {
 		t.Errorf("Watchdog = %+v", cfg.Watchdog)
 	}
@@ -652,6 +653,7 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 		"override: implement provider claude (flag) replaces codex (.r-loop/config.yaml)",
 		"override: plan model sonnet (flag) replaces opus (default)",
 		"watchdog: claude opus low allow [deps]  ← provider default model default effort .r-loop/config.yaml:watchdog.effort",
+		"fixer: claude opus high  ← default",
 		"intake: claude sonnet medium  ← default",
 	}, "\n") + "\n"
 	if got := Banner(cfg); got != want {
@@ -804,6 +806,44 @@ func TestUnknownIntakeKeyRejected(t *testing.T) {
 	d.writeProject(t, "intake:\n  timeout: 5m\n")
 
 	d.loadErr(t, `unknown key "intake.timeout"`)
+}
+
+func TestWatchdogFixerFromTheProjectFileKeepsItsProvenance(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "watchdog:\n  fixer:\n    provider: codex\n    model: gpt-5.6\n    timeout: 5m\n")
+
+	cfg := d.load(t)
+
+	if cfg.Watchdog.Fixer != (Fixer{Provider: "codex", Model: "gpt-5.6", Effort: "high", Timeout: 5 * time.Minute}) {
+		t.Fatalf("fixer = %+v", cfg.Watchdog.Fixer)
+	}
+	if got := cfg.Provenance["watchdog.fixer.provider"]; got != ".r-loop/config.yaml:watchdog.fixer.provider" {
+		t.Errorf("provider provenance = %q", got)
+	}
+	if !strings.Contains(Banner(cfg), "fixer: codex gpt-5.6 high  ← provider .r-loop/config.yaml:watchdog.fixer.provider model .r-loop/config.yaml:watchdog.fixer.model effort default\n") {
+		t.Errorf("banner:\n%s", Banner(cfg))
+	}
+}
+
+func TestWatchdogFixerWithoutAModelRejected(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "watchdog:\n  fixer:\n    model: \"\"\n")
+
+	d.loadErr(t, "watchdog.fixer.model: not set, every session names its provider, model and effort")
+}
+
+func TestUnknownWatchdogFixerKeyRejected(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "watchdog:\n  fixer:\n    ask: mcp\n")
+
+	d.loadErr(t, `unknown key "watchdog.fixer.ask"`)
+}
+
+func TestWatchdogFixerTimeoutMustBeADuration(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "watchdog:\n  fixer:\n    timeout: soon\n")
+
+	d.loadErr(t, `watchdog.fixer.timeout: "soon" is not a duration`)
 }
 
 func TestCreateWritesTheDefaultsAsTheMachineFile(t *testing.T) {

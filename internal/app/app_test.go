@@ -15,6 +15,7 @@ import (
 
 	"r-loop/internal/core"
 	"r-loop/internal/face/tui"
+	"r-loop/internal/providers"
 	"r-loop/internal/store"
 )
 
@@ -108,12 +109,13 @@ func fakeProviders(t *testing.T) {
 func TestAMissingProviderBinaryExits127NamingTheProviderBinaryAndField(t *testing.T) {
 	provider := "providers:\n  ghost:\n    kind: rloop-no-such-binary\n    doneSignal: sentinel\n    ask: mcp\n    review: ghost review\n"
 	for field, cfg := range map[string]string{
-		"watchdog.provider":    "watchdog:\n  provider: ghost\n",
-		"intake.provider":      "intake:\n  provider: ghost\n",
-		"steps.plan.provider":  "steps:\n  plan:\n    provider: ghost\n",
-		"steps.plan.fallback":  "steps:\n  plan:\n    fallback:\n      provider: ghost\n      model: m\n      effort: e\n",
-		"steps.plan.reviewers": "steps:\n  plan:\n    reviewers:\n      - provider: ghost\n        model: m\n        effort: e\n",
-		"land.fix.provider":    "land:\n  fix:\n    provider: ghost\n    model: m\n    effort: e\n",
+		"watchdog.provider":       "watchdog:\n  provider: ghost\n",
+		"intake.provider":         "intake:\n  provider: ghost\n",
+		"steps.plan.provider":     "steps:\n  plan:\n    provider: ghost\n",
+		"steps.plan.fallback":     "steps:\n  plan:\n    fallback:\n      provider: ghost\n      model: m\n      effort: e\n",
+		"steps.plan.reviewers":    "steps:\n  plan:\n    reviewers:\n      - provider: ghost\n        model: m\n        effort: e\n",
+		"land.fix.provider":       "land:\n  fix:\n    provider: ghost\n    model: m\n    effort: e\n",
+		"watchdog.fixer.provider": "watchdog:\n  fixer:\n    provider: ghost\n",
 	} {
 		t.Run(field, func(t *testing.T) {
 			f := newFixture(t)
@@ -714,7 +716,7 @@ func TestBannerNamesTheReviewAndFixPromptSources(t *testing.T) {
 
 	code := f.main(f.todo, "--dry-run", "--plain")
 
-	for _, want := range []string{"prompt review: " + filepath.Join(f.root, ".r-loop", "prompts", "review.md") + "\n", "prompt fix: embedded\n"} {
+	for _, want := range []string{"prompt review: " + filepath.Join(f.root, ".r-loop", "prompts", "review.md") + "\n", "prompt fix: embedded\n", "prompt fixer: embedded\n"} {
 		if code != 0 || !strings.Contains(f.out.String(), want) {
 			t.Fatalf("code=%d %q missing from:\n%s%s", code, want, f.out.String(), f.err.String())
 		}
@@ -1177,5 +1179,113 @@ func TestAWiredRunReviewsWithoutTheAnalyzerWhenAnalyzeIsOff(t *testing.T) {
 	}
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, f.out)
+	}
+}
+
+func TestRunStartRecordsEveryNamedProvidersVersion(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "providers:\n  bare:\n    kind: claude\n    doneSignal: sentinel\n    ask: mcp\nintake:\n  provider: bare\n")
+	f.commit()
+	bin := t.TempDir()
+	scripts := map[string]string{
+		"claude": "#!/bin/sh\nif [ \"$1\" = --version ]; then\n  printf '\\n  2.1.220 (Claude Code)\\nbuild 7\\n'\nfi\nexit 0\n",
+		"codex": "#!/bin/sh\nif [ \"$1 $2\" = \"debug models\" ]; then\n  echo '{\"models\":[{\"slug\":\"gpt-6-sol\",\"visibility\":\"list\"}]}'\n  exit 0\nfi\n" +
+			"if [ \"$1\" = --version ]; then\n  echo 'codex-cli 0.48.1'\n  exit 3\nfi\nexit 0\n",
+	}
+	for name, script := range scripts {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	w, err := f.preflight(f.todo, "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w.recordVersions()
+
+	st, err := w.Store.Load(w.Loop.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []core.Event
+	for _, ev := range st.Events {
+		if ev.Kind == "provider-versions" {
+			got = append(got, ev)
+		}
+	}
+	want := map[string]string{"bare": "-", "claude": "2.1.220 (Claude Code)", "codex": "?"}
+	if len(got) != 1 || !reflect.DeepEqual(got[0].Fields, want) {
+		t.Fatalf("provider-versions %+v, want %v", got, want)
+	}
+	if now := w.Loop.Versions(); !reflect.DeepEqual(now, want) {
+		t.Errorf("versions now %v, want %v", now, want)
+	}
+}
+
+func TestAProviderWhoseVersionCommandIsMissingRecordsAQuestionMark(t *testing.T) {
+	p := providers.Provider{Name: "ghost", Kind: "rloop-no-such-binary", Version: "--version"}
+
+	if got := providerVersion(p); got != "?" {
+		t.Errorf("version %q", got)
+	}
+}
+
+func TestAFixerProviderWithoutMCPPassesPreflight(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "providers:\n  plainbot:\n    kind: claude\n    doneSignal: sentinel\n    ask: none\nwatchdog:\n  fixer:\n    provider: plainbot\n    model: opus\n    effort: high\n")
+	f.commit()
+
+	w, err := f.preflight(f.todo, "--plain")
+
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if w.Fixer.Provider != "plainbot" || w.Fixer.Model != "opus" || w.Fixer.Effort != "high" || w.Fixer.Timeout != 20*time.Minute {
+		t.Errorf("fixer %+v", w.Fixer)
+	}
+	if w.Fixer.RunID != w.Loop.RunID || w.Fixer.RunDir != w.Store.Dir(w.Loop.RunID) || w.Fixer.Root != f.root {
+		t.Errorf("fixer run %q dir %q root %q", w.Fixer.RunID, w.Fixer.RunDir, w.Fixer.Root)
+	}
+	if w.Loop.Fixer != core.BlockerFixer(w.Fixer) || w.Router.Fix == nil {
+		t.Error("the fixer is not wired into the loop and the router")
+	}
+}
+
+func TestCheckConfigLoadsTheCandidateInPlaceOfItsFileAndKeepsTheOther(t *testing.T) {
+	f := newFixture(t)
+	f.commit()
+	w, err := Wire(Options{Todo: f.todo, Plain: true}, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.write(".r-loop/config.yaml", "pipeline: [plan]\n")
+	user := filepath.Join(f.env.Home, ".config", "r-loop", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(user), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(user, []byte("label: home\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, tc := range map[string]struct{ file, content, err string }{
+		"project candidate replaces the broken file": {".r-loop/config.yaml", "watchdog:\n  model: opus\n", ""},
+		"project candidate refused":                  {".r-loop/config.yaml", "watchdog:\n  model: [opus]\n", ".r-loop/config.yaml:2"},
+		"user candidate keeps the project file":      {"~/.config/r-loop/config.yaml", "label: other\n", ".r-loop/config.yaml:1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := w.checkConfig(tc.file, tc.content)
+
+			if tc.err == "" && err != nil || tc.err != "" && (err == nil || !strings.Contains(err.Error(), tc.err)) {
+				t.Errorf("err %v, want %q", err, tc.err)
+			}
+		})
+	}
+	if data, _ := os.ReadFile(filepath.Join(f.root, ".r-loop", "config.yaml")); string(data) != "pipeline: [plan]\n" {
+		t.Errorf("the project config changed: %q", data)
+	}
+	if data, _ := os.ReadFile(user); string(data) != "label: home\n" {
+		t.Errorf("the user config changed: %q", data)
 	}
 }

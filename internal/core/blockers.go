@@ -18,6 +18,7 @@ const (
 	actionSkip   = "skip"
 	actionBlock  = "block"
 	actionStop   = "stop"
+	actionFix    = "fix"
 
 	sourceStep      = "step"
 	sourceReviewer  = "reviewer"
@@ -37,7 +38,7 @@ const (
 )
 
 var blockerOptions = []struct{ action, option string }{
-	{actionRetry, "retry"}, {actionSkip, "skip"}, {actionSwitch, "switch provider"}, {actionBlock, "block this phase"}, {actionStop, "stop the run"},
+	{actionRetry, "retry"}, {actionSkip, "skip"}, {actionSwitch, "switch provider"}, {actionFix, "hand to the fixer"}, {actionBlock, "block this phase"}, {actionStop, "stop the run"},
 }
 
 var blockerID = regexp.MustCompile(`^b\d+$`)
@@ -127,7 +128,7 @@ func (l *RunLoop) hold(ctx context.Context, b Blocker, main *blockerHold) Resolu
 		key = s.Ref.Key
 		key.Kind = b.Step
 	}
-	q := Question{ID: id, Kind: QuestionBlocker, Step: key, Text: blockerText(id, b), Options: b.Actions, AskedAt: time.Now()}
+	q := Question{ID: id, Kind: QuestionBlocker, Step: key, Text: blockerText(id, b, l.versionsLine()), Options: b.Actions, AskedAt: time.Now()}
 	open := openAsk{q: q, s: s, agent: agent, seq: l.paneSeq(agent, b), b: b, done: make(chan Resolution, 1)}
 	admitted := s != nil && s.live(func() {
 		l.recordQuestion(q)
@@ -202,7 +203,7 @@ func (l *RunLoop) wait(ctx context.Context, open openAsk, routed <-chan bool, ma
 				l.withdrawBlocker(id, runStopped)
 				return <-open.done
 			}
-			if !l.dogWaiting() {
+			if !l.dogWaiting() && !l.fixOpen(id) {
 				left -= now.Sub(last)
 			}
 			last = now
@@ -246,6 +247,37 @@ func (l *RunLoop) restartBlocker(open openAsk, main *blockerHold, rs Restart) (R
 	return <-open.done, true
 }
 
+func (l *RunLoop) FixOpen(id string) bool {
+	return l.fixOpen(id)
+}
+
+func (l *RunLoop) fixOpen(id string) bool {
+	return l.Fixer != nil && l.Fixer.Open(id)
+}
+
+func (l *RunLoop) StartFix(id, addendum string) error {
+	open, ok := l.openBlocker(id)
+	if !ok {
+		return fmt.Errorf("blocker %s is not open", id)
+	}
+	if l.Fixer == nil {
+		return errors.New("no fixer is wired")
+	}
+	l.mu.Lock()
+	ctx := l.askCtx
+	l.mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := l.Fixer.Start(ctx, open.b, open.q, addendum); err != nil {
+		return err
+	}
+	if _, ok := l.openBlocker(id); !ok {
+		l.Fixer.Withdraw(id)
+	}
+	return nil
+}
+
 func (l *RunLoop) dogWaiting() bool {
 	w, ok := l.watcher().(interface{ Waiting() bool })
 	return ok && w.Waiting()
@@ -267,7 +299,7 @@ func (l *RunLoop) blockerSession(b Blocker) (*Session, string) {
 	return s, agent
 }
 
-func blockerText(id string, b Blocker) string {
+func blockerText(id string, b Blocker, versions string) string {
 	text := fmt.Sprintf("blocker %s from phase-%s/%s (%s): %s\nactions: %s; resolve it with resolve_blocker", id, b.Phase, b.Step, b.Source, b.Reason, strings.Join(b.Actions, ", "))
 	excerpt := strings.TrimRight(b.Excerpt, " \t\r\n")
 	if len(excerpt) > screenBytes {
@@ -279,7 +311,21 @@ func blockerText(id string, b Blocker) string {
 	if excerpt != "" {
 		text += "\n\n" + excerpt
 	}
+	if versions != "" {
+		text += "\n\n" + versions
+	}
 	return text
+}
+
+func (l *RunLoop) versionsLine() string {
+	if l.Versions == nil {
+		return ""
+	}
+	moves := versionMoves(startVersions(l.Store, l.RunID), l.Versions())
+	if len(moves) == 0 {
+		return ""
+	}
+	return "versions: " + strings.Join(moves, ", ")
 }
 
 func (l *RunLoop) trackOpen(open openAsk) {
@@ -420,8 +466,15 @@ func (l *RunLoop) finish(open openAsk, res Resolution, answer string, release bo
 	if w, ok := l.watcher().(interface{ Withdraw(id string) }); ok {
 		w.Withdraw(q.ID)
 	}
+	if l.Fixer != nil {
+		l.Fixer.Withdraw(q.ID)
+	}
 	b := open.b
-	l.emit(Event{Kind: "blocker-resolved", Phase: b.Phase, Step: b.Step, Fields: map[string]string{"id": q.ID, "action": res.Action, "by": res.By, "source": b.Source, "step": fmt.Sprintf("phase-%s/%s", b.Phase, b.Step)}})
+	fields := map[string]string{"id": q.ID, "action": res.Action, "by": res.By, "source": b.Source, "step": fmt.Sprintf("phase-%s/%s", b.Phase, b.Step)}
+	if fixCitation(res.Citation) {
+		fields["fix"] = res.Citation
+	}
+	l.emit(Event{Kind: "blocker-resolved", Phase: b.Phase, Step: b.Step, Fields: fields})
 	if res.By == maintainerCitation {
 		l.emit(Event{Kind: "human", Phase: b.Phase, Step: b.Step, Fields: map[string]string{"what": "blocker", "id": q.ID}})
 	}
@@ -445,6 +498,12 @@ func (r *QuestionRouter) ResolveBlocker(id, action, rule, addendum string, keys 
 	}
 	if !slices.Contains(b.Actions, action) {
 		return decisionRefused, fmt.Sprintf("%s is not an action for blocker %s (%s): %s", action, id, b.Source, orList(b.Actions))
+	}
+	if action == actionFix {
+		return r.fix(id, addendum)
+	}
+	if action != actionBlock && action != actionStop && r.FixOpen != nil && r.FixOpen(id) {
+		return decisionRefused, fmt.Sprintf("fix %s is open: wait for the fixer's proposal, or block or stop", id)
 	}
 	rem := r.Remedies
 	if rem == nil {
@@ -522,6 +581,19 @@ func (r *QuestionRouter) ResolveBlocker(id, action, rule, addendum string, keys 
 	return decisionAuthorised, ""
 }
 
+func (r *QuestionRouter) fix(id, addendum string) (string, string) {
+	if r.Dog != nil && r.Dog.Unattended {
+		return decisionRefused, unattendedBlockOrStop
+	}
+	if r.Fix == nil {
+		return decisionRefused, "no fixer is wired"
+	}
+	if err := r.Fix(id, addendum); err != nil {
+		return decisionRefused, err.Error()
+	}
+	return decisionAuthorised, ""
+}
+
 func (r *QuestionRouter) retries(target string) (int, error) {
 	if r.Remedies == nil || r.Remedies.Store == nil || r.Dog == nil {
 		return 0, nil
@@ -538,7 +610,7 @@ func retriesUsed(events []Event, target string) int {
 	for _, ev := range events {
 		f := ev.Fields
 		switch {
-		case ev.Kind == "blocker-resolved" && (f["action"] == actionRetry || f["action"] == actionSwitch) && f["step"] == target:
+		case ev.Kind == "blocker-resolved" && (f["action"] == actionRetry || f["action"] == actionSwitch) && f["step"] == target && f["fix"] == "":
 			n++
 		case ev.Kind == "restart" && f["step"] == target && !blockerID.MatchString(f["remedy"]):
 			n++

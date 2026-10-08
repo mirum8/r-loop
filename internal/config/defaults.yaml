@@ -86,6 +86,11 @@ watchdog:
   stallGrace: 2m
   overtimeFactor: 2
   diffFactor: 3
+  fixer:
+    provider: claude
+    model: opus
+    effort: high
+    timeout: 20m
 
 intake:
   provider: claude

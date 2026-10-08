@@ -92,6 +92,7 @@ type Wiring struct {
 	Dog       *core.Watchdog
 	Remedies  *core.Remedies
 	Router    *core.QuestionRouter
+	Fixer     *core.Fixer
 	Triaged   bool
 	LocalTodo bool
 
@@ -102,6 +103,7 @@ type Wiring struct {
 	dogDir   string
 	settings string
 	models   modelCache
+	cfgMu    sync.Mutex
 }
 
 type overrides struct {
@@ -445,6 +447,7 @@ func displayExit(err error) error {
 }
 
 func (w *Wiring) run(ctx context.Context, opts core.RunOptions) int {
+	w.recordVersions()
 	kept, deferrals, finished, err := w.unblock(ctx, opts)
 	if err == nil && !finished {
 		opts, finished, err = w.triage(ctx, opts, kept, deferrals)
@@ -485,7 +488,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Todo:     todo,
 		Plan:     pl,
 		Config:   cfg,
-		Registry: providers.NewRegistry(cfg.Providers, cfg.Provenance, filepath.Join(env.Home, ".config", "r-loop", "providers")),
+		Registry: newRegistry(cfg, env.Home),
 		Store:    store.New(root),
 		Prompts:  prompts.New(root),
 		Host:     herdr.Client{Bin: env.Herdr},
@@ -507,16 +510,11 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	}
 	w.Ask = &askmcp.Server{Store: w.records}
 	w.Notify = &notify.Shell{Emit: w.Face.Emit}
-	rows := map[string]core.StepRow{}
-	promptNames := map[string]string{}
-	checks := map[string]string{}
-	for name, row := range cfg.Steps {
-		rows[name], promptNames[name], checks[name] = coreRow(row), row.Prompt, row.Check
-	}
-	kinds, err := core.Pipeline(cfg.Pipeline, rows, promptNames, checks)
+	k, err := kindsOf(cfg)
 	if err != nil {
 		return nil, exit(2, "%v", err)
 	}
+	kinds := k.pipeline
 	var analyzer core.Analyzer
 	if cfg.Analyze.Enabled {
 		analyzer = analyze.New(cfg.Analyze.Timeout)
@@ -536,18 +534,11 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		ReviewRunner: reviewexec.New(),
 	}
 	runners := core.DefaultRunners(sm, kinds)
-	impl := rows["implement"]
-	fix := cfg.Land.Fix
-	fixKind := core.StepKind{Name: "gatefix", Prompt: "gatefix", Check: "diff", Row: core.StepRow{
-		Provider: fix.Provider, Model: fix.Model, Effort: fix.Effort,
-		Timeout: impl.Timeout, Reviewers: impl.Reviewers, Rounds: 1, ReviewTimeout: impl.ReviewTimeout,
-	}}
-	ms := cfg.Steps["milestone"]
-	gs := cfg.Steps["gate"]
+	fixKind := k.fix
 	w.Probe = &core.GateProbe{
 		Sessions: sm,
 		Repo:     repo,
-		Kind:     core.StepKind{Name: "gate", Prompt: gs.Prompt, Check: gs.Check, Row: rows["gate"]},
+		Kind:     k.gate,
 		Plan:     pl,
 		Face:     w.Face,
 		Timeout:  cfg.Land.GateTimeout,
@@ -564,7 +555,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 			Plan:     pl,
 			Sessions: sm,
 			Repo:     repo,
-			Kind:     core.StepKind{Name: "milestone", Prompt: ms.Prompt, Check: ms.Check, Row: rows["milestone"]},
+			Kind:     k.milestone,
 			Topic:    pl.Topic,
 			Face:     w.Face,
 		},
@@ -610,7 +601,87 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	w.Remedies.Blockers = w.Loop
 	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Keys: w.Loop.DeliverKeys, Rules: cfg.Watchdog.Dialogs, Repo: repo, Remedies: w.Remedies, Blocker: w.Loop.OpenBlocker, Settle: w.Loop.SettleBlocker}
 	w.Loop.BlockerTimeout = cfg.Watchdog.BlockerTimeout
+	w.Loop.Versions = w.versions
+	fc := cfg.Watchdog.Fixer
+	w.Fixer = &core.Fixer{
+		Host: w.Host, Prompts: w.Prompts, Store: w.records, Repo: repo, Resolve: w.resolve, Dialogs: w.Loop, Face: w.Face,
+		Post: w.Watch.Post, CheckConfig: w.checkConfig, Versions: w.versions,
+		Reload: w.reloadConfig, Blocker: w.Loop.OpenBlocker, Settle: w.Loop.SettleBlocker,
+		Provider: fc.Provider, Model: fc.Model, Effort: fc.Effort,
+		Root: root, Home: env.Home, Pane: env.Pane, Label: cfg.Label, Timeout: fc.Timeout,
+	}
+	w.Loop.Fixer = w.Fixer
+	w.Router.Fix = w.Loop.StartFix
+	w.Router.FixOpen = w.Loop.FixOpen
 	return w, nil
+}
+
+type stepKinds struct {
+	pipeline             []core.StepKind
+	rows                 map[string]core.StepRow
+	fix, gate, milestone core.StepKind
+}
+
+func kindsOf(cfg config.LoopConfig) (stepKinds, error) {
+	rows := map[string]core.StepRow{}
+	promptNames := map[string]string{}
+	checks := map[string]string{}
+	for name, row := range cfg.Steps {
+		rows[name], promptNames[name], checks[name] = coreRow(row), row.Prompt, row.Check
+	}
+	pipeline, err := core.Pipeline(cfg.Pipeline, rows, promptNames, checks)
+	if err != nil {
+		return stepKinds{}, err
+	}
+	impl := rows["implement"]
+	fix := cfg.Land.Fix
+	ms := cfg.Steps["milestone"]
+	gs := cfg.Steps["gate"]
+	return stepKinds{
+		pipeline: pipeline,
+		fix: core.StepKind{Name: "gatefix", Prompt: "gatefix", Check: "diff", Row: core.StepRow{
+			Provider: fix.Provider, Model: fix.Model, Effort: fix.Effort,
+			Timeout: impl.Timeout, Reviewers: impl.Reviewers, Rounds: 1, ReviewTimeout: impl.ReviewTimeout,
+		}},
+		gate:      core.StepKind{Name: "gate", Prompt: gs.Prompt, Check: gs.Check, Row: rows["gate"]},
+		milestone: core.StepKind{Name: "milestone", Prompt: ms.Prompt, Check: ms.Check, Row: rows["milestone"]},
+	}, nil
+}
+
+func newRegistry(cfg config.LoopConfig, home string) *providers.Registry {
+	return providers.NewRegistry(cfg.Providers, cfg.Provenance, filepath.Join(home, ".config", "r-loop", "providers"))
+}
+
+func (w *Wiring) reloadConfig() error {
+	cfg, err := config.Load(w.Repo.Root(), w.Env.Home, w.Opts.Overrides)
+	if err != nil {
+		return err
+	}
+	k, err := kindsOf(cfg)
+	if err != nil {
+		return err
+	}
+	reg := newRegistry(cfg, w.Env.Home)
+	for _, name := range providerNamesOf(cfg) {
+		if _, err := reg.Resolve(name); err != nil {
+			return err
+		}
+	}
+	w.cfgMu.Lock()
+	w.Config, w.Registry = cfg, reg
+	w.cfgMu.Unlock()
+	w.models.reset()
+	w.Loop.SetKinds(k.pipeline)
+	w.Gate.FixKind = k.fix
+	w.Probe.Kind = k.gate
+	w.Gate.Boundary.Kind = k.milestone
+	return nil
+}
+
+func (w *Wiring) registry() *providers.Registry {
+	w.cfgMu.Lock()
+	defer w.cfgMu.Unlock()
+	return w.Registry
 }
 
 func addedClasses(cfg config.LoopConfig) []string {
@@ -633,7 +704,7 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	w.Watch.PhaseCheck = &core.PhaseCheck{Dog: w.Dog, Repo: w.Loop.Sessions.Repo, Timeout: wd.CheckTimeout, Backlog: w.Plan.Backlog}
 	w.Router.Dog = w.Dog
 	w.Watch.Router = w.Router
-	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, RunStatus: w.runStatus, StepInfo: w.stepInfo, StopRun: w.Loop.StopRun, PauseRun: w.Loop.PauseRun, ContinueRun: w.Loop.ContinueRun})
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, ApplyFix: w.Fixer.Apply, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, RunStatus: w.runStatus, StepInfo: w.stepInfo, StopRun: w.Loop.StopRun, PauseRun: w.Loop.PauseRun, ContinueRun: w.Loop.ContinueRun})
 	return nil
 }
 
@@ -774,25 +845,94 @@ func (w *Wiring) pollUsage(ctx context.Context) {
 	}
 }
 
-func (w *Wiring) providerKinds() map[string]bool {
+func (w *Wiring) providerNames() []string {
+	w.cfgMu.Lock()
 	cfg := w.Config
-	names := []string{cfg.Watchdog.Provider, cfg.Land.Fix.Provider}
+	w.cfgMu.Unlock()
+	return providerNamesOf(cfg)
+}
+
+func providerNamesOf(cfg config.LoopConfig) []string {
+	names := []string{cfg.Watchdog.Provider, cfg.Watchdog.Fixer.Provider, cfg.Intake.Provider, cfg.Land.Fix.Provider}
 	for _, row := range cfg.Steps {
 		names = append(names, row.Provider, row.Fallback.Provider)
 		for _, rv := range row.Reviewers {
 			names = append(names, rv.Provider)
 		}
 	}
-	kinds := map[string]bool{}
-	for _, name := range names {
-		if name == "" {
-			continue
+	slices.Sort(names)
+	names = slices.Compact(names)
+	if len(names) > 0 && names[0] == "" {
+		names = names[1:]
+	}
+	return names
+}
+
+func (w *Wiring) checkConfig(file, content string) error {
+	tmp, err := os.MkdirTemp("", "r-loop-fix-config-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	project, home := filepath.Join(tmp, "project"), filepath.Join(tmp, "home")
+	layers := []struct{ label, from, to string }{
+		{".r-loop/config.yaml", filepath.Join(w.Repo.Root(), ".r-loop", "config.yaml"), filepath.Join(project, ".r-loop", "config.yaml")},
+		{"~/.config/r-loop/config.yaml", filepath.Join(w.Env.Home, ".config", "r-loop", "config.yaml"), filepath.Join(home, ".config", "r-loop", "config.yaml")},
+	}
+	for _, l := range layers {
+		data := []byte(content)
+		if l.label != file {
+			data, err = os.ReadFile(l.from)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
 		}
-		if p, err := w.Registry.Resolve(name); err == nil {
+		if err := os.MkdirAll(filepath.Dir(l.to), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(l.to, data, 0o644); err != nil {
+			return err
+		}
+	}
+	_, err = config.Load(project, home, w.Opts.Overrides)
+	return err
+}
+
+func (w *Wiring) providerKinds() map[string]bool {
+	kinds := map[string]bool{}
+	for _, name := range w.providerNames() {
+		if p, err := w.registry().Resolve(name); err == nil {
 			kinds[p.Kind] = true
 		}
 	}
 	return kinds
+}
+
+func (w *Wiring) versions() map[string]string {
+	names := w.providerNames()
+	out := make(map[string]string, len(names))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, name := range names {
+		wg.Go(func() {
+			v := "?"
+			if p, err := w.registry().Resolve(name); err == nil {
+				v = providerVersion(p)
+			}
+			mu.Lock()
+			out[name] = v
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	return out
+}
+
+func (w *Wiring) recordVersions() {
+	w.record(core.Event{Kind: core.EventProviderVersions, Fields: w.versions()})
 }
 
 func (w *Wiring) startTUI(ctx context.Context) {
@@ -867,6 +1007,7 @@ func (w *Wiring) bind(runID string) {
 	w.Notify.Log = filepath.Join(dir, "notify.log")
 	w.Ask.RunDir, w.Ask.RunID = dir, runID
 	w.Dog.RunID, w.Dog.RunDir = runID, dir
+	w.Fixer.RunID, w.Fixer.RunDir = runID, dir
 	if run, err := w.Store.Load(runID); err == nil {
 		w.Ask.Seq = len(run.Questions)
 		w.Watch.SeedSignals(run.Signals)
@@ -883,7 +1024,7 @@ func terminal(v any) bool {
 }
 
 func (w *Wiring) resolve(provider, model, effort, askURL, mcpConfigPath, dir string) (core.ProviderArgs, error) {
-	p, err := w.Registry.Resolve(provider)
+	p, err := w.registry().Resolve(provider)
 	if err != nil {
 		return core.ProviderArgs{}, err
 	}
@@ -908,6 +1049,6 @@ func coreRow(r config.StepRow) core.StepRow {
 }
 
 func (w *Wiring) asks(provider string) bool {
-	p, err := w.Registry.Resolve(provider)
+	p, err := w.registry().Resolve(provider)
 	return err == nil && p.Ask == "mcp"
 }

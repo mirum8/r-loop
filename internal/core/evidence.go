@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -553,4 +554,104 @@ func Judge(s Sentinel, sErr error, evidenceOK bool, missing string) (StepState, 
 		return StepFailed, "evidence missing: " + missing
 	}
 	return StepOK, ""
+}
+
+const (
+	FixEnv     = "env"
+	FixConfig  = "config"
+	FixRLoop   = "r-loop"
+	FixProject = "project"
+
+	projectConfigFile = ".r-loop/config.yaml"
+	userConfigFile    = "~/.config/r-loop/config.yaml"
+)
+
+type Proposal struct {
+	Kind     string        `json:"kind"`
+	Cause    string        `json:"cause"`
+	Evidence string        `json:"evidence"`
+	Commands []string      `json:"commands"`
+	Config   *ConfigChange `json:"config"`
+	Manual   []string      `json:"manual"`
+	Risk     string        `json:"risk"`
+}
+
+type ConfigChange struct {
+	File    string `json:"file"`
+	Content string `json:"content"`
+}
+
+func ReadProposal(path string) (Proposal, error) {
+	var p Proposal
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return p, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&p); err != nil {
+		return p, fmt.Errorf("proposal.json: %w", err)
+	}
+	return p, nil
+}
+
+func (p Proposal) Validate(checkConfig func(file, content string) error) error {
+	if !slices.Contains([]string{FixEnv, FixConfig, FixRLoop, FixProject}, p.Kind) {
+		return fmt.Errorf("kind %q is not env, config, r-loop or project", p.Kind)
+	}
+	if strings.TrimSpace(p.Cause) == "" {
+		return errors.New("cause is empty")
+	}
+	changes := p.Kind == FixEnv || p.Kind == FixConfig
+	if !changes && (len(p.Commands) > 0 || p.Config != nil) {
+		return fmt.Errorf("a %s fix carries no commands and no config", p.Kind)
+	}
+	for i, c := range p.Commands {
+		if strings.TrimSpace(c) == "" {
+			return fmt.Errorf("command %d is empty", i+1)
+		}
+	}
+	if p.Config == nil {
+		return nil
+	}
+	if p.Config.File != projectConfigFile && p.Config.File != userConfigFile {
+		return fmt.Errorf("config file %q is not %s or %s", p.Config.File, projectConfigFile, userConfigFile)
+	}
+	if checkConfig != nil {
+		if err := checkConfig(p.Config.File, p.Config.Content); err != nil {
+			return fmt.Errorf("config %s: %w", p.Config.File, err)
+		}
+	}
+	return nil
+}
+
+func (p Proposal) Render() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "cause: %s\nevidence: %s\n", p.Cause, orNone(p.Evidence))
+	list := func(name string, items []string) {
+		if len(items) == 0 {
+			fmt.Fprintf(&b, "%s: none\n", name)
+			return
+		}
+		fmt.Fprintf(&b, "%s:\n", name)
+		for _, it := range items {
+			fmt.Fprintf(&b, "- %s\n", it)
+		}
+	}
+	list("commands", p.Commands)
+	if p.Config == nil {
+		b.WriteString("config: unchanged\n")
+	} else {
+		fmt.Fprintf(&b, "config: %s, new content:\n%s\n", p.Config.File, fenced(p.Config.Content))
+	}
+	list("manual", p.Manual)
+	fmt.Fprintf(&b, "risk: %s", orNone(p.Risk))
+	return b.String()
+}
+
+func (p Proposal) next() string {
+	if p.Kind == FixRLoop || p.Kind == FixProject {
+		return "r-loop does not apply a " + p.Kind + " fix: show it to the maintainer, then resolve the blocker with its other actions"
+	}
+	return "apply it with apply_fix after the maintainer confirms"
 }

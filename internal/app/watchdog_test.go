@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1058,7 +1059,7 @@ func TestAWiredRunSendsALandBlockerToTheWatchdogWhichBlocksThePhase(t *testing.T
 	if code != 1 {
 		t.Fatalf("exit %d, want 1\n%s", code, f.out)
 	}
-	if !dog.prompted("blocker b1 from phase-1/land (land): merge conflict: a.go\nactions: retry, block, stop; resolve it with resolve_blocker") {
+	if !dog.prompted("blocker b1 from phase-1/land (land): merge conflict: a.go\nactions: retry, fix, block, stop; resolve it with resolve_blocker") {
 		t.Fatalf("the watchdog never heard of the blocker: %q", dog.Calls())
 	}
 	if got := <-decided; got != "authorised " {
@@ -1150,5 +1151,131 @@ func TestTheWatchdogReadsTheRunAndTheLiveStepThroughRunStatusAndStepInfo(t *test
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("run never halted")
+	}
+}
+
+type fixSim struct {
+	*simHost
+	mu       sync.Mutex
+	args     map[string][]string
+	proposal string
+}
+
+func (h *fixSim) Start(pane, name, kind string, args []string) (core.Agent, error) {
+	h.mu.Lock()
+	h.args[agentRole(name)] = slices.Clone(args)
+	h.mu.Unlock()
+	return h.simHost.Start(pane, name, kind, args)
+}
+
+func (h *fixSim) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	if !strings.HasPrefix(agent, "rloop-fix-") {
+		return h.simHost.Prompt(agent, text, wait, timeout)
+	}
+	sentinel := sentinelRe.FindString(text)
+	writeTo(filepath.Join(filepath.Dir(sentinel), "proposal.json"), h.proposal)
+	writeTo(sentinel, `{"outcome":"ok","reason":""}`)
+	return nil
+}
+
+func (h *fixSim) started(role string) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.args[role]
+}
+
+const fixedClaude = `providers:
+  claude:
+    kind: claude
+    flags: "--renamed-flag"
+    modelFlag: "--model {model}"
+    effortFlag: "--effort {effort}"
+    askFlag: "--mcp-config {mcpConfig}"
+    dirFlag: "--add-dir {dir}"
+    doneSignal: sentinel
+    ask: mcp
+    settingsFlag: "--settings {settings}"
+`
+
+func TestAWiredRunAppliesAFixersConfigChangeAndRetriesTheStepWithTheNewProviderFlags(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newConfig := noReviewConfig + fixedClaude
+	proposal, err := json.Marshal(map[string]any{"kind": "config", "cause": "claude renamed a flag", "evidence": "claude --help", "config": map[string]string{"file": ".r-loop/config.yaml", "content": newConfig}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sim := &fixSim{simHost: newSim(), args: map[string][]string{}, proposal: string(proposal)}
+	sim.fail["rloop-p1-implement"] = true
+	f.sim(w, sim.simHost)
+	w.Loop.Sessions.Host = sim
+	w.Fixer.Host = sim
+	w.Fixer.Poll = 5 * time.Millisecond
+	w.Loop.BlockerTimeout = time.Minute
+	dog := answeringDog(w, "sqlite", "docs/topic/todo.md:1")
+	decided := make(chan string, 2)
+	dog.onPrompt = func(text string) {
+		switch {
+		case strings.HasPrefix(text, "blocker b1 from phase-1/implement (step): "):
+			go func() {
+				d, reason := w.Router.ResolveBlocker("b1", "fix", "", "claude rejects a flag", nil, "", "", "", "")
+				decided <- "fix " + d + " " + reason
+			}()
+		case strings.HasPrefix(text, "fix b1 proposed (config): claude renamed a flag"):
+			go func() {
+				client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+				cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: w.Ask.WatchdogURL(), MaxRetries: -1}, nil)
+				if err != nil {
+					decided <- err.Error()
+					return
+				}
+				defer cs.Close()
+				res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "apply_fix", Arguments: map[string]any{"id": "b1", "decision": "apply", "maintainer_said": "yes, apply it"}})
+				if err != nil {
+					decided <- err.Error()
+					return
+				}
+				out, _ := res.StructuredContent.(map[string]any)
+				decided <- fmt.Sprintf("apply_fix %v %v", out["decision"], out["reason"])
+			}()
+		}
+	}
+	w.Dog.Host = dog
+
+	code := w.Execute(core.RunOptions{Phases: []string{"1"}})
+
+	if code != 0 {
+		t.Fatalf("exit %d, want 0\n%s", code, f.out)
+	}
+	if got := []string{<-decided, <-decided}; !reflect.DeepEqual(got, []string{"fix authorised ", "apply_fix authorised <nil>"}) {
+		t.Errorf("decisions %q", got)
+	}
+	if first := sim.started("rloop-p1-implement"); slices.Contains(first, "--renamed-flag") {
+		t.Errorf("attempt 1 args %q", first)
+	}
+	if second := sim.started("rloop-p1-implement-a2"); !slices.Contains(second, "--renamed-flag") {
+		t.Errorf("attempt 2 args %q", second)
+	}
+	data, err := os.ReadFile(filepath.Join(f.root, ".r-loop", "config.yaml"))
+	if err != nil || string(data) != newConfig {
+		t.Errorf("config %q %v", data, err)
+	}
+	dir := w.Store.Dir(w.Loop.RunID)
+	if bak, err := os.ReadFile(filepath.Join(dir, "fix-b1", "config.bak")); err != nil || string(bak) != noReviewConfig {
+		t.Errorf("config.bak %q %v", bak, err)
+	}
+	st := f.load(w.Loop.RunID)
+	if got := core.FixLines(st.Events); !reflect.DeepEqual(got, []string{"fix-b1 config: claude renamed a flag → applied"}) {
+		t.Errorf("fix lines %q", got)
+	}
+	if len(st.Questions) != 1 || st.Questions[0].Answer != "retry" || st.Questions[0].AnsweredBy != "maintainer" || st.Questions[0].Citation != "fix-b1" {
+		t.Errorf("questions %+v", st.Questions)
+	}
+	restarts := stepEvents(st, "restart")
+	if len(restarts) != 1 || restarts[0].Fields["citation"] != "fix-b1" {
+		t.Errorf("restarts %+v", restarts)
 	}
 }

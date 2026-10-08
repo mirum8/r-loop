@@ -21,8 +21,8 @@ var shipped embed.FS
 const shippedSource = "shipped"
 
 type Provider struct {
-	Name, Kind, Flags, ModelFlag, EffortFlag, AskFlag, DirFlag, SettingsFlag, DoneSignal, Ask, Review, ReviewExec, Models, Source string
-	Settings                                                                                                                      string
+	Name, Kind, Flags, ModelFlag, EffortFlag, AskFlag, DirFlag, SettingsFlag, DoneSignal, Ask, Review, ReviewExec, Models, Version, Source string
+	Settings                                                                                                                               string
 }
 
 type Registry struct {
@@ -79,6 +79,7 @@ func decode(name string, n *yaml.Node, source string) (Provider, error) {
 	fields := map[string]*string{
 		"kind": &p.Kind, "flags": &p.Flags, "modelFlag": &p.ModelFlag, "effortFlag": &p.EffortFlag, "askFlag": &p.AskFlag,
 		"dirFlag": &p.DirFlag, "settingsFlag": &p.SettingsFlag, "doneSignal": &p.DoneSignal, "ask": &p.Ask, "review": &p.Review, "reviewExec": &p.ReviewExec, "models": &p.Models,
+		"version": &p.Version,
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, val := n.Content[i].Value, n.Content[i+1]

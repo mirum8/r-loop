@@ -7,3 +7,4 @@ doneSignal: sentinel
 ask: mcp
 review: "/code-review the uncommitted changes: `git diff HEAD` plus every untracked file from `git ls-files --others --exclude-standard`"
 settingsFlag: "--settings {settings}"
+version: "--version"

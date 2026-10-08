@@ -166,6 +166,30 @@ func TestStatusPrintsOneLinePerBlocker(t *testing.T) {
 	}
 }
 
+func TestStatusPrintsOneLinePerFix(t *testing.T) {
+	f := newFixture(t)
+	fix := func(kind string, fields map[string]string) core.Record {
+		return core.Record{Kind: core.RecordEvent, Event: &core.Event{Kind: kind, Phase: "4", Step: "implement", Fields: fields}}
+	}
+	f.seedRun(
+		core.Record{Kind: core.RecordRun, Run: core.RunRunning},
+		fix("fix-started", map[string]string{"id": "b1", "provider": "claude", "model": "opus"}),
+		fix("fix-proposed", map[string]string{"id": "b1", "kind": "config", "cause": "codex renamed --foo"}),
+		fix("fix-failed", map[string]string{"id": "b1", "reason": "reload: bad provider; .r-loop/config.yaml restored"}),
+		fix("fix-started", map[string]string{"id": "b2", "provider": "claude", "model": "opus"}),
+		fix("fix-proposed", map[string]string{"id": "b2", "kind": "env", "cause": "codex is logged out"}),
+		fix("fix-started", map[string]string{"id": "b3", "provider": "claude", "model": "opus"}),
+	)
+
+	code := f.main("status", "--plain")
+
+	out := f.out.String()
+	want := "\nfix-b1 config: codex renamed --foo → failed (reload: bad provider; .r-loop/config.yaml restored)\nfix-b2 env: codex is logged out → proposed\nfix-b3 → open\n"
+	if code != 0 || !strings.Contains(out, want) {
+		t.Errorf("code=%d, output lacks %q:\n%s", code, want, out)
+	}
+}
+
 func TestStatusPrintsOneLinePerDialog(t *testing.T) {
 	f := newFixture(t)
 	key := core.StepKey{Phase: "4", Kind: "implement"}

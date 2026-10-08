@@ -69,7 +69,7 @@ func TestShippedClaudeBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Provider{Name: "claude", Kind: "claude", ModelFlag: "--model {model}", EffortFlag: "--effort {effort}",
-		AskFlag: "--mcp-config {mcpConfig}", DirFlag: "--add-dir {dir}", SettingsFlag: "--settings {settings}", DoneSignal: "sentinel", Ask: "mcp", Review: "/code-review the uncommitted changes: `git diff HEAD` plus every untracked file from `git ls-files --others --exclude-standard`", Source: "shipped"}
+		AskFlag: "--mcp-config {mcpConfig}", DirFlag: "--add-dir {dir}", SettingsFlag: "--settings {settings}", DoneSignal: "sentinel", Ask: "mcp", Review: "/code-review the uncommitted changes: `git diff HEAD` plus every untracked file from `git ls-files --others --exclude-standard`", Version: "--version", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
 	}
@@ -84,7 +84,7 @@ func TestShippedCodexBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Provider{Name: "codex", Kind: "codex", Flags: "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
-		AskFlag: "-c mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.default_tools_approval_mode=approve", DirFlag: `-c sandbox_workspace_write.writable_roots=["{dir}"]`, DoneSignal: "sentinel", Ask: "mcp", Models: "debug models",
+		AskFlag: "-c mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.default_tools_approval_mode=approve", DirFlag: `-c sandbox_workspace_write.writable_roots=["{dir}"]`, DoneSignal: "sentinel", Ask: "mcp", Models: "debug models", Version: "--version",
 		ReviewExec: "codex review --uncommitted {args}", Source: "shipped"}
 	if p != want {
 		t.Errorf("got %+v\nwant %+v", p, want)
@@ -586,6 +586,33 @@ func TestReviewExecDecodesFromAProjectBlock(t *testing.T) {
 	}
 	if got := ToCore(p, "", "", "", "", ""); got.ReviewExec != "pdev review --all" || got.Review != "" {
 		t.Errorf("core args %+v", got)
+	}
+}
+
+func TestVersionDecodesFromAProjectBlock(t *testing.T) {
+	blocks := projectBlocks(t, "pdev:\n  kind: pdev\n  doneSignal: sentinel\n  version: version --short\n")
+
+	p, err := NewRegistry(blocks, nil, t.TempDir()).Resolve("pdev")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Version != "version --short" {
+		t.Errorf("version %q", p.Version)
+	}
+}
+
+func TestAVersionThatIsNotAStringIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pdev.yaml")
+	if err := os.WriteFile(path, []byte("kind: x\ndoneSignal: sentinel\nversion:\n  - --version\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := NewRegistry(nil, nil, dir).Resolve("pdev")
+
+	if err == nil || !strings.Contains(err.Error(), "version must be a string") || !strings.Contains(err.Error(), path) {
+		t.Errorf("err = %v", err)
 	}
 }
 

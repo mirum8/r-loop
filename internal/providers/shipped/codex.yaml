@@ -2,6 +2,7 @@ kind: codex
 flags: "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true"
 modelFlag: "-c model={model}"
 models: "debug models"
+version: "--version"
 effortFlag: "-c model_reasoning_effort={effort}"
 askFlag: "-c mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.default_tools_approval_mode=approve"
 dirFlag: '-c sandbox_workspace_write.writable_roots=["{dir}"]'

@@ -25,6 +25,7 @@ type WatchdogHandlers struct {
 
 	AnswerDialog   func(id string, keys []string, rule, maintainerSaid string) (string, string)
 	ResolveBlocker func(id, action, rule, addendum string, keys []string, provider, model, effort, maintainerSaid string) (string, string)
+	ApplyFix       func(id, decision, maintainerSaid string) (string, string)
 
 	AskMaintainer func(question string, options []string, recommended string) error
 	Resume        func() error
@@ -107,6 +108,12 @@ type resolveBlockerInput struct {
 	Model          string   `json:"model,omitempty"`
 	Effort         string   `json:"effort,omitempty"`
 	MaintainerSaid string   `json:"maintainer_said,omitempty"`
+}
+
+type applyFixInput struct {
+	ID             string `json:"id"`
+	Decision       string `json:"decision"`
+	MaintainerSaid string `json:"maintainer_said,omitempty"`
 }
 
 type acceptedOutput struct {
@@ -192,7 +199,7 @@ type decisionOutput struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
-var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true, "stop_run": true, "pause_run": true, "continue_run": true}
+var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "apply_fix": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true, "stop_run": true, "pause_run": true, "continue_run": true}
 
 func (s *Server) Handle(h WatchdogHandlers) {
 	s.mu.Lock()
@@ -353,7 +360,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "resolve_blocker",
-		Description: "Clear an open blocker the driver holds the run on, with one of its actions: retry, keys, switch, skip, block or stop. retry takes an addendum for the next attempt; keys takes the herdr keys to press in its pane and rule: the text of one configured dialog rule, exactly; switch takes provider, and model and effort for a provider that is not the row's fallback. Anything not authorised on its own comes back ask: ask the maintainer in your own session, then call again with maintainer_said: their reply, quoted. block and stop are always authorised.",
+		Description: "Clear an open blocker the driver holds the run on, with one of its actions: retry, keys, switch, fix, skip, block or stop. retry takes an addendum for the next attempt; keys takes the herdr keys to press in its pane and rule: the text of one configured dialog rule, exactly; switch takes provider, and model and effort for a provider that is not the row's fallback; fix hands it to the fixer session with the addendum as your diagnosis, and the blocker stays open until you call apply_fix. Anything not authorised on its own comes back ask: ask the maintainer in your own session, then call again with maintainer_said: their reply, quoted. block and stop are always authorised.",
 	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in resolveBlockerInput) (*mcp.CallToolResult, decisionOutput, error) {
 		if err := s.record("resolve_blocker", "", map[string]string{"id": in.ID, "action": in.Action, "rule": in.Rule, "addendum": in.Addendum, "keys": strings.Join(in.Keys, " "), "provider": in.Provider, "model": in.Model, "effort": in.Effort, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
@@ -366,6 +373,23 @@ func (s *Server) watchdogServer() *mcp.Server {
 			return nil, decisionOutput{Decision: "refused", Reason: notAvailable}, nil
 		}
 		decision, reason := h(in.ID, in.Action, in.Rule, in.Addendum, in.Keys, in.Provider, in.Model, in.Effort, in.MaintainerSaid)
+		return nil, decisionOutput{Decision: decision, Reason: reason}, nil
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "apply_fix",
+		Description: "Decide a fix the fixer proposed for blocker id: apply or reject. apply needs maintainer_said: the maintainer's reply, quoted, after you showed them the proposal in your own session; the driver runs its commands, writes its config, reloads the config and retries the blocker. reject leaves the blocker open.",
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in applyFixInput) (*mcp.CallToolResult, decisionOutput, error) {
+		if err := s.record("apply_fix", "", map[string]string{"id": in.ID, "decision": in.Decision, "maintainer_said": in.MaintainerSaid}); err != nil {
+			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
+		}
+		if err := s.resume(); err != nil {
+			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
+		}
+		h := s.handlersNow().ApplyFix
+		if h == nil {
+			return nil, decisionOutput{Decision: "refused", Reason: notAvailable}, nil
+		}
+		decision, reason := h(in.ID, in.Decision, in.MaintainerSaid)
 		return nil, decisionOutput{Decision: decision, Reason: reason}, nil
 	}))
 	mcp.AddTool(srv, &mcp.Tool{

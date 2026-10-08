@@ -295,6 +295,9 @@ func TestANilHandlerAnswersNotAvailable(t *testing.T) {
 	if out := call(t, cs, "resolve_blocker", map[string]any{"id": "b1", "action": "block"}); out["decision"] != "refused" || out["reason"] != "not available" {
 		t.Fatalf("resolve_blocker = %+v", out)
 	}
+	if out := call(t, cs, "apply_fix", map[string]any{"id": "b1", "decision": "apply", "maintainer_said": "apply it"}); out["decision"] != "refused" || out["reason"] != "not available" {
+		t.Fatalf("apply_fix = %+v", out)
+	}
 	if out := call(t, cs, "run_status", nil); out["reason"] != "not available" {
 		t.Fatalf("run_status = %+v", out)
 	}
@@ -332,6 +335,40 @@ func TestResolveBlockerIsRecordedThenResumesThenReachesItsHandler(t *testing.T) 
 		t.Fatalf("records seen by the handler = %+v", seen)
 	}
 	want := map[string]string{"tool": "resolve_blocker", "id": "b2", "action": "keys", "rule": "allow go test", "addendum": "try again", "keys": "down enter", "provider": "claude", "model": "opus", "effort": "high", "maintainer_said": "yes"}
+	if ev := seen[0].Event; ev == nil || ev.Kind != "watchdog-call" || !reflect.DeepEqual(ev.Fields, want) {
+		t.Fatalf("record = %+v", seen[0])
+	}
+}
+
+func TestApplyFixIsRecordedThenResumesThenReachesItsHandler(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	var calls []string
+	var seen []core.Record
+	s.Handle(WatchdogHandlers{
+		Resume: func() error {
+			calls = append(calls, "resume")
+			return nil
+		},
+		ApplyFix: func(id, decision, maintainerSaid string) (string, string) {
+			seen = st.records()
+			calls = append(calls, "apply "+id+"|"+decision+"|"+maintainerSaid)
+			return "refused", "fix-b3 failed: command 1 exited 2"
+		},
+	})
+
+	out := call(t, connect(t, s.WatchdogURL()), "apply_fix", map[string]any{"id": "b3", "decision": "apply", "maintainer_said": "yes, apply it"})
+
+	if out["decision"] != "refused" || out["reason"] != "fix-b3 failed: command 1 exited 2" {
+		t.Fatalf("out = %+v", out)
+	}
+	if want := "resume,apply b3|apply|yes, apply it"; strings.Join(calls, ",") != want {
+		t.Fatalf("calls = %v", calls)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("records seen by the handler = %+v", seen)
+	}
+	want := map[string]string{"tool": "apply_fix", "id": "b3", "decision": "apply", "maintainer_said": "yes, apply it"}
 	if ev := seen[0].Event; ev == nil || ev.Kind != "watchdog-call" || !reflect.DeepEqual(ev.Fields, want) {
 		t.Fatalf("record = %+v", seen[0])
 	}
@@ -410,7 +447,7 @@ func TestWatchdogPathListsNoAskTool(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	if want := []string{"answer_dialog", "answer_question", "ask_maintainer", "continue_run", "pause_run", "propose_remedy", "resolve_blocker", "restart_step", "run_status", "signal", "step_info", "stop_run", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
+	if want := []string{"answer_dialog", "answer_question", "apply_fix", "ask_maintainer", "continue_run", "pause_run", "propose_remedy", "resolve_blocker", "restart_step", "run_status", "signal", "step_info", "stop_run", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
 		t.Fatalf("watchdog tools = %v, want %v", names, want)
 	}
 }
@@ -460,7 +497,7 @@ func TestWatchdogToolsOnAStepPathAre404(t *testing.T) {
 	if len(tools.Tools) != 1 || tools.Tools[0].Name != "ask_watchdog" {
 		t.Fatalf("step tools = %+v", tools.Tools)
 	}
-	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info", "stop_run", "pause_run", "continue_run"} {
+	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "apply_fix", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info", "stop_run", "pause_run", "continue_run"} {
 		_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{"kind": "halt", "step": "phase-3/implement"}})
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not found") {
 			t.Fatalf("%s on a step path: err = %v", name, err)

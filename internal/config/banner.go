@@ -48,6 +48,9 @@ func Banner(cfg LoopConfig, extra ...string) string {
 	w := cfg.Watchdog
 	fmt.Fprintf(&b, "watchdog: %s %s %s allow [%s]  ← %s\n", w.Provider, w.Model, w.Effort,
 		strings.Join(w.Allow, ", "), sources(p["watchdog.provider"], p["watchdog.model"], p["watchdog.effort"]))
+	fx := w.Fixer
+	fmt.Fprintf(&b, "fixer: %s  ← %s\n", roleLine(fx.Provider, fx.Model, fx.Effort),
+		sources(p["watchdog.fixer.provider"], p["watchdog.fixer.model"], p["watchdog.fixer.effort"]))
 	in := cfg.Intake
 	fmt.Fprintf(&b, "intake: %s  ← %s\n", roleLine(in.Provider, in.Model, in.Effort),
 		sources(p["intake.provider"], p["intake.model"], p["intake.effort"]))

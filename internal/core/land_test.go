@@ -2217,7 +2217,7 @@ func TestAGatefixThatDoesNotEndOKRaisesAGatefixBlockerAndSwitchRunsAnotherRoundO
 	if err != nil {
 		t.Fatalf("Land: %v", err)
 	}
-	want := core.Blocker{Source: "gatefix", Phase: "1", Step: "gatefix", Reason: "gate failed: gate-fix round 1 ended failed: could not fix", Actions: []string{"retry", "switch", "block", "stop"}}
+	want := core.Blocker{Source: "gatefix", Phase: "1", Step: "gatefix", Reason: "gate failed: gate-fix round 1 ended failed: could not fix", Actions: []string{"retry", "switch", "fix", "block", "stop"}}
 	if len(script.blockers) != 1 || !reflect.DeepEqual(script.blockers[0], want) {
 		t.Fatalf("blockers = %+v", script.blockers)
 	}
@@ -2342,7 +2342,7 @@ func TestAFailedMilestoneReportRaisesAMilestoneBlockerAndRetryRunsTheReportAgain
 		t.Fatalf("Land 2: %v", err)
 	}
 
-	want := core.Blocker{Source: "milestone", Phase: "2", Step: "milestone", Reason: "failed: report failed", Actions: []string{"retry", "skip", "stop"}}
+	want := core.Blocker{Source: "milestone", Phase: "2", Step: "milestone", Reason: "failed: report failed", Actions: []string{"retry", "skip", "fix", "stop"}}
 	if len(script.blockers) != 1 || !reflect.DeepEqual(script.blockers[0], want) {
 		t.Fatalf("blockers = %+v", script.blockers)
 	}

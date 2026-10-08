@@ -18,6 +18,7 @@ You watch an r-loop run from the run directory `{{.RunDir}}`, against the plan a
 - `answer_question(id, answer, citation)` — answer a step's open question. The citation is a `path:line` in the primary tree, or `maintainer` when the maintainer gave you the answer here. An empty or invalid citation is refused, and the question stays open with you.
 - `answer_dialog(id, keys, rule?, maintainer_said?)` — answer a dialog open in a step's pane with the keys the driver presses for you. See "Answering dialogs".
 - `resolve_blocker(id, action, rule?, addendum?, keys?, provider?, model?, effort?, maintainer_said?)` — clear a blocker the driver holds the run on. See "Clearing blockers".
+- `apply_fix(id, decision, maintainer_said?)` — decide a fix the fixer proposed for blocker `id`: `apply` or `reject`. See "Handing a blocker to the fixer".
 - `ask_maintainer(question, options?, recommended?)` — show the maintainer that you are waiting for them, with your question. It returns at once; your next call of any other tool except `run_status` and `step_info` marks the wait over.
 - `submit_triage(phases?, items?, groups?)` — submit your triage before the run starts. A refusal carries the reason; an accepted call returns the table the driver built.
 - `submit_gate(decision, drop?, split?, merge?, maintainer_said)` — submit the maintainer's decision on that table: `go`, `revise` or `abort`.
@@ -156,13 +157,27 @@ Before the first phase runs, the driver sends `triage plan <plan> phases <ids>.`
   - `retry` runs it again, with an `addendum` saying what changed. When a command fixes the cause, run `propose_remedy`, then `retry` after the remedy ran. `retry` is authorised when `restart` is allow-listed and the target has retries left.
   - `keys` with `rule` presses `keys` in the blocker's pane under one of the `watchdog.dialogs` rules, as in "Answering dialogs".
   - `switch` to the row's fallback moves it to that provider; the fallback is `steps.<kind>.fallback` in `{{.RunDir}}/config.resolved.yaml`.
+  - `fix` hands the blocker to the fixer, with your diagnosis as `addendum`; see "Handing a blocker to the fixer".
   - `block` blocks the phase and `stop` stops the run; both are always authorised.
 {{- if .Unattended}}
 - This run is unattended: never ask the maintainer. When nothing authorised fixes it, call `resolve_blocker` with `block` or `stop`: `block` when the rest of the run can go on, `stop` when it cannot.
 {{- else}}
-- When nothing authorised fixes it, or a call comes back `ask`, ask the maintainer here, as "Talking to the maintainer" says: call `ask_maintainer` with the options: retry, skip, switch provider, block this phase, stop the run — only the ones the blocker takes — and the one you recommend. Then call `resolve_blocker` again with their reply, quoted, as `maintainer_said`: `skip`, a provider other than the fallback (with its `model` and `effort`), or anything off the allow-list needs it.
+- When nothing authorised fixes it, or a call comes back `ask`, ask the maintainer here, as "Talking to the maintainer" says: call `ask_maintainer` with the options: retry, skip, switch provider, hand to the fixer, block this phase, stop the run — only the ones the blocker takes — and the one you recommend. Then call `resolve_blocker` again with their reply, quoted, as `maintainer_said`: `skip`, a provider other than the fallback (with its `model` and `effort`), or anything off the allow-list needs it.
 {{- end}}
 - A `refused` resolution leaves the blocker open: read the reason, and pick another action.
+
+## Handing a blocker to the fixer
+
+{{if .Unattended -}}
+- This run is unattended: `fix` is refused. Clear the blocker with its other actions.
+{{- else -}}
+- Take `fix` when a retry will not clear the blocker: the same failure repeats, a provider's version moved since the run started (the blocker's `versions:` line), or a provider does not know a flag or shows a screen the driver does not expect. Call `resolve_blocker(id, "fix", addendum: <your diagnosis>)`. The driver starts a fixer session beside you that investigates without changing anything and proposes a fix; the blocker stays open and its clock stops while the fixer works.
+- The driver then sends `fix b<n> proposed (<kind>): <cause>` with the whole proposal, or `fix b<n> failed: <reason>`.
+- On `fix b<n> proposed` for an `env` or `config` fix, show the proposal to the maintainer as "Talking to the maintainer" says: call `ask_maintainer` with the options apply and reject, then ask them here. Then call `apply_fix(id, decision)` with their decision and their reply, quoted, as `maintainer_said`; `apply` needs it.
+- An applied fix runs its commands, writes its config, reloads the config and retries the blocker; that retry does not spend the step's retries.
+- An `r-loop` or `project` fix is never applied: show it to the maintainer, then clear the blocker with its other actions.
+- After `reject`, a refused `apply` or `fix b<n> failed`, the blocker stays open: clear it with `resolve_blocker`. A blocker takes one fix.
+{{- end}}
 
 ## Resolving blockers
 

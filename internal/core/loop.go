@@ -89,6 +89,8 @@ type RunLoop struct {
 	Ask            AskChannel
 	BlockerTimeout time.Duration
 	MaxRestarts    int
+	Versions       func() map[string]string
+	Fixer          BlockerFixer
 
 	mu          sync.Mutex
 	signalsMu   sync.Mutex
@@ -176,7 +178,7 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 	l.pending = map[string]bool{}
 	l.restarts = map[string]int{}
 	for _, ev := range prior.Events {
-		if ev.Kind == "restart" {
+		if ev.Kind == "restart" && !fixCitation(ev.Fields["citation"]) {
 			l.restarts[ev.Fields["step"]]++
 		}
 	}
@@ -355,8 +357,12 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 		return "check", Outcome{State: StepFailed, Reason: "watchdog: " + watchdogGone, Halted: true}, false
 	}
 	stopped := l.stoppedKind(prior, n)
-	replan = replan && stopped != "" && stopped != "plan" && slices.ContainsFunc(l.Kinds, func(k StepKind) bool { return k.Name == "plan" })
-	for _, kind := range l.Kinds {
+	kinds := l.kinds()
+	replan = replan && stopped != "" && stopped != "plan" && slices.ContainsFunc(kinds, func(k StepKind) bool { return k.Name == "plan" })
+	for _, kind := range kinds {
+		if cur, ok := l.kind(kind.Name); ok {
+			kind = cur
+		}
 		attempt, state := latestAttempt(prior, l.RunID, n, kind.Name)
 		rerunPlan := replan && kind.Name == "plan"
 		if state == StepOK && !rerunPlan {
@@ -503,10 +509,10 @@ func (e *probeError) Error() string { return e.err.Error() }
 func (e *probeError) Unwrap() error { return e.err }
 
 var (
-	stepActions      = []string{actionRetry, actionSwitch, actionBlock, actionStop}
-	landActions      = []string{actionRetry, actionBlock, actionStop}
-	reviewerActions  = []string{actionRetry, actionKeys, actionSwitch, actionSkip, actionBlock, actionStop}
-	milestoneActions = []string{actionRetry, actionSkip, actionStop}
+	stepActions      = []string{actionRetry, actionSwitch, actionFix, actionBlock, actionStop}
+	landActions      = []string{actionRetry, actionFix, actionBlock, actionStop}
+	reviewerActions  = []string{actionRetry, actionKeys, actionSwitch, actionSkip, actionFix, actionBlock, actionStop}
+	milestoneActions = []string{actionRetry, actionSkip, actionFix, actionStop}
 )
 
 func (l *RunLoop) landBlocker(ctx context.Context, n string, err error, last *Session) (Outcome, bool, bool) {
@@ -625,7 +631,7 @@ func (l *RunLoop) checkPhase(ctx context.Context, ph Phase, base string) bool {
 }
 
 func (l *RunLoop) stoppedKind(prior RunState, phase string) string {
-	for _, kind := range l.Kinds {
+	for _, kind := range l.kinds() {
 		if attempt, state := latestAttempt(prior, l.RunID, phase, kind.Name); attempt > 0 && state != StepOK {
 			return kind.Name
 		}
@@ -725,13 +731,20 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 		}
 		return StepRef{}, false, false
 	}
-	if l.restarts[step] >= l.MaxRestarts {
+	byFix := fixCitation(res.Citation)
+	if !byFix && l.restarts[step] >= l.MaxRestarts {
 		reason := fmt.Sprintf("restart limit %d reached", l.MaxRestarts)
 		l.emit(Event{Kind: "restart-refused", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "reason": reason}})
 		answer(reason)
 		return StepRef{}, false, false
 	}
-	l.restarts[step]++
+	if byFix {
+		if k, ok := l.kind(kind.Name); ok {
+			kind = k
+		}
+	} else {
+		l.restarts[step]++
+	}
 	if res.Provider != "" {
 		kind.Row.Provider, kind.Row.Model, kind.Row.Effort = res.Provider, res.Model, res.Effort
 		if fb := kind.Row.Fallback; fb.Provider == res.Provider && res.Model == "" {
@@ -750,6 +763,27 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 	l.emit(Event{Kind: "restart", Phase: key.Phase, Step: key.Kind, Fields: f})
 	answer("")
 	return next, true, false
+}
+
+func (l *RunLoop) SetKinds(kinds []StepKind) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.Kinds = kinds
+}
+
+func (l *RunLoop) kinds() []StepKind {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.Kinds
+}
+
+func (l *RunLoop) kind(name string) (StepKind, bool) {
+	for _, k := range l.kinds() {
+		if k.Name == name {
+			return k, true
+		}
+	}
+	return StepKind{}, false
 }
 
 func (l *RunLoop) poll() time.Duration {
@@ -1172,7 +1206,7 @@ func (l *RunLoop) question(ctx context.Context, q Question) {
 		}
 	}()
 	base, _, _ := strings.Cut(q.Step.Kind, "-rv-")
-	if !slices.ContainsFunc(l.Kinds, func(k StepKind) bool { return k.Name == base }) {
+	if _, ok := l.kind(base); !ok {
 		l.recordWithdrawn(q, "land-stage step")
 		l.Ask.Answer(q.ID, fmt.Sprintf("r-loop: phase-%s/%s cannot ask the watchdog; this question is withdrawn.", q.Step.Phase, q.Step.Kind), "withdrawn", "")
 		return
@@ -1483,6 +1517,9 @@ func (l *RunLoop) askingSession(ctx context.Context, key StepKey) *Session {
 
 func (l *RunLoop) stepState(s *Session, state StepState) {
 	key := s.Ref.Key
+	if isFixKind(key.Kind) {
+		return
+	}
 	if err := l.Store.Append(l.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: state}); err != nil {
 		l.emit(Event{Kind: "warning", Fields: map[string]string{"reason": "store: " + err.Error()}})
 	}

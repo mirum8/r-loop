@@ -19,7 +19,7 @@ const (
 	staticReviewer = "static"
 )
 
-var staticActions = []string{actionRetry, actionSkip, actionBlock, actionStop}
+var staticActions = []string{actionRetry, actionSkip, actionFix, actionBlock, actionStop}
 
 type ReviewHalf struct {
 	Sessions *SessionManager
@@ -687,8 +687,10 @@ func (h ReviewHalf) reopen(ctx context.Context, worker *Session, runs []*reviewe
 		r.s.Pane = ""
 	}
 	rv := r.rv
-	if res.Provider != "" {
-		rv.Provider, rv.Model, rv.Effort = res.Provider, res.Model, res.Effort
+	if res.Provider != "" || strings.HasPrefix(res.Citation, fixKindPrefix) {
+		if res.Provider != "" {
+			rv.Provider, rv.Model, rv.Effort = res.Provider, res.Model, res.Effort
+		}
 		a, url, err := h.args(worker, rv)
 		if err != nil {
 			return fail(err.Error())

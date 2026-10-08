@@ -48,3 +48,18 @@ func openBeside(host SessionHost, pane string, spec OpenSpec) (string, string, s
 	}
 	return ws.RootPane, ws.ID, "workspace", nil
 }
+
+func openTab(host SessionHost, pane string, spec OpenSpec) (string, string, error) {
+	if pane != "" {
+		if info, err := host.PaneInfo(pane); err == nil && info.Workspace != "" {
+			if p, err := host.OpenTab(info.Workspace, spec); err == nil {
+				return p, "", nil
+			}
+		}
+	}
+	ws, err := host.Open(spec)
+	if err != nil {
+		return "", "", fmt.Errorf("open workspace: %w", err)
+	}
+	return ws.RootPane, ws.ID, nil
+}
