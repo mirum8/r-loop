@@ -1230,3 +1230,89 @@ nothing installed beyond the project's own toolchain.
 - **Config** — `analyze.enabled` (`true`) and `analyze.timeout` (`15m`), nothing else. Preflight,
   when enabled, exits 2 naming a detected language's missing toolchain (`go`; the runner and
   `java`), and prints `static: <languages>[, semgrep]` or `… (semgrep not installed)`.
+
+## Milestone 19 — The fixer
+
+ADR-91. A blocker a retry will not clear goes to a fixer session that proposes a fix; the driver
+applies it on the maintainer's quoted confirmation and settles the blocker as `retry`, in the same run.
+
+- **Provider key `version` (ADR-6 as amended by ADR-91)** — a kind subcommand, like `models`, run as
+  `<kind> <version>` with a 10 s timeout; the first non-empty line of stdout is the version. Shipped:
+  claude and codex `version: "--version"`. `providers.Provider.Version`; a block without it has no
+  version (`-`). `app` runs every provider the config names once at run start and records
+  `provider-versions{<name>: <version>, …}`; a failure records `<name>: ?` and never fails the run.
+- **Versions on a blocker** — `RunLoop.Versions func() map[string]string` (nil = none); `blockerText`
+  appends a line `versions: codex 0.47.0 → 0.48.1, claude 2.1.220` (`a → b` only where it moved since
+  `provider-versions`).
+- **Config** — `watchdog.fixer` with `provider`, `model`, `effort` (`roleSchema`) and `timeout`
+  (duration); defaults `claude`, `opus`, `high`, `20m`; required by `requireRoles`; banner line
+  `fixer: <provider> <model> <effort>`. Preflight checks its binary and model like any role but does
+  not require `ask: mcp` (the fixer has no ask channel).
+- **Action `fix`** — `actionFix = "fix"`, added to every source's action list (`stepActions`,
+  `landActions`, `reviewerActions`, `staticActions`, `milestoneActions`, gatefix's) and to
+  `blockerOptions` as `hand to the fixer`. `ResolveBlocker` rows:
+
+  | action | authorised when | otherwise |
+  |---|---|---|
+  | `fix` | the blocker has no fix yet, and the run is not `--unattended` | refused: `already fixed: fix-b<n> <state>` or `unattended: block or stop` |
+
+  An authorised `fix` calls `Fixer.Start(ctx, blocker, question, addendum)` and returns
+  `authorised` without settling the blocker. `wait` stops the hold's clock while
+  `Fixer.Open(id)` is true, as it does while the watchdog is waiting.
+- **Paths** — `<runDir>/fix-b<n>/`: `incident.md`, `proposal.json`, `fixer.sentinel`,
+  `config.bak` (the file a config fix replaced), `command-<i>.log` (each command's output).
+- **Incident** — `incident.md` sections: `## Blocker` (`BlockerLine`, the routed text), `## Diagnosis`
+  (the addendum), `## Excerpt`, `## Versions` (run start and now), `## Recent records` (the run's last
+  50 records, one JSON per line), `## Config` (`config.resolved.yaml` with provenance), `## Paths` (the
+  primary root, the step's worktree if any, the run folder).
+- **The fixer session** — `core.Fixer{Host, Prompts, Store, Repo, Resolve, Dialogs, Face, Root, RunDir,
+  Pane, Label, Timeout, Poll}`. One open fix at a time per run; a second `fix` while one is open is
+  refused `fixer busy on b<n>`. Agent name `rloop-fix-b<n>-<runID suffix>`, at most 32 characters;
+  placed with `openBeside` (label `◆ fixer b<n>`), cwd the primary root, args from
+  `Resolve(provider, model, effort, "", "", "")` — no ask URL, no `dirFlag`. Held as a `*Session` with
+  `Key{Run, Phase, Kind: "fix-b<n>", Attempt: 1}` so `Dialogs.Blocked/Unblocked` route a dialog in its
+  pane to the watchdog (ADR-80). Before start: `Repo.Snapshot` of the primary tree and of the step's
+  worktree when the blocker has one. Prompt `fixer` with `IncidentPath`, `ProposalPath`, `Sentinel`,
+  `RunDir`, `Root`. Poll every `Poll`: `ReadSentinel`; `AgentGone` fails; `Timeout` fails. On `ok`:
+  read and validate the proposal, `TreeDiff` both snapshots and compare both r-loop config files with
+  their contents at start (any change fails the fix), close the pane,
+  record `fix-proposed`, and `Watch.Post` `fix b<n> proposed (<kind>): <cause>` with the rendered
+  proposal and `apply it with apply_fix after the maintainer confirms`. On failure: close the pane,
+  record `fix-failed`, post `fix b<n> failed: <reason>`. A blocker withdrawn or settled while its fix is
+  open closes the pane and records `fix-failed{reason: withdrawn}`.
+- **Proposal** — `core.Proposal{Kind, Cause, Evidence string; Commands []string; Config *ConfigChange;
+  Manual []string; Risk string}`, `ConfigChange{File, Content string}`, JSON keys `kind, cause,
+  evidence, commands, config{file, content}, manual, risk`. Valid when: `Kind ∈ {env, config, r-loop,
+  project}`; `Cause` non-empty; `Commands` and `Config` only for `env` or `config`; `Config.File` is
+  `.r-loop/config.yaml` (relative to the root) or `~/.config/r-loop/config.yaml`; `Config.Content`
+  passes `Fixer.CheckConfig(file, content)` — `app` wires it to `config.Load` with the candidate in
+  place of that file. An invalid proposal fails the fix with the reason.
+- **`apply_fix(id, decision: apply|reject, maintainer_said?) → {decision: authorised|refused,
+  reason?}`** — on the watchdog surface only, in `watchdogTools`, recorded as `watchdog-call` before
+  its handler, which first calls `Resume`; nil handler → refused. Refused: an id with no proposed fix,
+  a blocker no longer open, `apply` without `maintainer_said`, `apply` on kind `r-loop` or `project`.
+  `reject` records `fix-rejected{id}`. `apply`: record `fix-applied{id, commands, config}` first; run
+  each command with `Repo.Run(<fix dir>, command, Timeout)`, output to `command-<i>.log`, stopping at the
+  first non-zero exit (`fix-failed{id, reason: command <i> exited <n>}`); `TreeDiff` the snapshots again;
+  copy the current config file to `config.bak` and write the new content; call `Fixer.Reload()`; then
+  `SettleBlocker(Resolution{ID, Action: retry, By: maintainer, Citation: "fix-b<n>"})`. A blocker
+  settled by a fix does not count in `retriesUsed` and the step's `restarts` counter.
+- **Reload** — `app.reloadConfig()`: `config.Load` with the run's overrides, a new `providers.Registry`
+  into `w.Registry`, `w.models` emptied, `RunLoop.SetKinds(core.Pipeline(...))` under `l.mu`, and the
+  `Gate.FixKind`, `Probe.Kind` and `Boundary.Kind` rows refreshed. A failed reload leaves everything as
+  it was and fails the fix.
+- **Events** — `fix-started{id, provider, model}`, `fix-proposed{id, kind, cause}`, `fix-applied{id,
+  commands, config}`, `fix-rejected{id}`, `fix-failed{id, reason}`, each with the blocker's `phase` and
+  `step`.
+- **Prompt** — `fixer.md`: read the incident; investigate with read-only commands (versions, `--help`,
+  release notes, config, logs, the panes' screens named in the incident); change no file and install
+  nothing; write `proposal.json` with the exact commands and the whole new config file, `manual` for
+  anything interactive (a login), `r-loop` with the file and line for a bug in r-loop, `project` for a
+  fault in the project; then the sentinel (`outcome` partial). `watchdog.md` gains "Handing a blocker
+  to the fixer": take `fix` when the same failure repeats, a version moved, or a flag or screen is
+  unknown to the provider; on `fix b<n> proposed`, show the proposal to the maintainer with
+  `ask_maintainer` (options apply, reject) and call `apply_fix` with their reply quoted.
+- **Faces** — TUI `fixer · b<n>` on the phase's row from `fix-started` until `fix-proposed` or
+  `fix-failed`, with a feed line for each fix event; plain prints each as a line. The run report and
+  `r-loop status` list `fix-b<n> <kind>: <cause> → applied|rejected|failed (<reason>)`, `open` while
+  the fixer runs and `proposed` while it waits.

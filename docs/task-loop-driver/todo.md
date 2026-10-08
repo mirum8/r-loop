@@ -40,6 +40,10 @@ ADR-89 added Milestone 18, Phases 47–49: the driver runs local static analyzer
 govulncheck through `go run`, PMD and SpotBugs with find-sec-bugs through Maven or Gradle, Semgrep
 when installed — picked by the languages the change touches, with no configuration, as a `static`
 reviewer in every round of implement and gatefix.
+ADR-91 added Milestone 19, Phases 50–52: a blocker a retry will not clear goes to a fixer session
+that proposes a fix without changing anything; the driver applies it — commands and an r-loop config
+file — on the maintainer's confirmation through the watchdog, reloads the config and retries the step
+in the same run.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -77,6 +81,9 @@ reviewer in every round of implement and gatefix.
 - Wave 31: Phase 47
 - Wave 32: Phase 48
 - Wave 33: Phase 49
+- Wave 34: Phase 50
+- Wave 35: Phase 51
+- Wave 36: Phase 52
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -810,6 +817,52 @@ Contracts: `tech-design.md#milestone-18-static-analysis`
 - [x] `app` wires `analyze.New(cfg)` into `ReviewHalf` when `analyze.enabled`, and nil otherwise
 - [x] `review_test.go` proves, with the fake analyzer: findings reach the fix half and the verdict check, zero findings leave a clean round clean, the analysis runs beside the panes, plan steps never run it, a resumed round includes `static`'s earlier files; `blockers_test.go` proves retry and skip; `render_test.go` proves the `fix.md` wording; `app_test.go` proves the wiring for both settings
 **Done when:** `go test -race ./...` is green.
+
+## Milestone 19 — The fixer
+Contracts: `tech-design.md#milestone-19-the-fixer`
+
+### Phase 50 — Provider versions, the incident and the `watchdog.fixer` config
+**Implements:** Get a stuck step fixed without stopping the run
+**Depends on:** Phase 49
+**Files:** `internal/providers/registry.go` (modify) · `internal/providers/shipped/claude.yaml` (modify) · `internal/providers/shipped/codex.yaml` (modify) · `internal/providers/registry_test.go` (modify) · `internal/app/models.go` (modify) · `internal/app/wire.go` (modify) · `internal/app/app_test.go` (modify) · `internal/config/reader.go` (modify) · `internal/config/defaults.yaml` (modify) · `internal/config/banner.go` (modify) · `internal/config/reader_test.go` (modify) · `internal/core/blockers.go` (modify) · `internal/core/fixer.go` (new) · `internal/core/fixer_test.go` (new) · `internal/core/blockers_test.go` (modify) · `README.md` (modify)
+**Risk:** none
+- [x] a provider block takes `version`, a kind subcommand; `Provider.Version` is decoded and validated like `models`; the shipped claude and codex blocks carry `version: "--version"`
+- [x] `app` runs `<kind> <version>` for every provider the config names once at run start, 10 s each, and records `provider-versions{<name>: <first stdout line>}`; a failure or a block without `version` records `?` or `-` and never fails the run
+- [x] `RunLoop.Versions` (nil = none) gives the versions now; `blockerText` appends `versions: <name> <start> → <now>, …`, the arrow only where it moved
+- [x] `watchdog.fixer` takes `provider`, `model`, `effort` and `timeout`; defaults `claude`, `opus`, `high`, `20m`; required like the other roles; unknown keys rejected (exit 2); the banner prints `fixer: <provider> <model> <effort>`; `README.md` lists the block and `version`
+- [x] `core.writeIncident(dir, in Incident)` writes `fix-b<n>/incident.md` with the sections `Blocker`, `Diagnosis`, `Excerpt`, `Versions`, `Recent records` (the last 50, one JSON each), `Config` and `Paths`
+- [x] tests prove the `version` key and the shipped blocks, the recorded event with a stub binary and with a failing one, the versions line with and without a move, the config defaults, required roles and rejection, and every incident section
+**Done when:** `go test -race ./internal/providers/... ./internal/config/... ./internal/core/... ./internal/app/...` is green and `grep -n "^  fixer:" internal/config/defaults.yaml` prints the line.
+
+### Phase 51 — The `fix` action and the fixer session
+**Implements:** Get a stuck step fixed without stopping the run · Leave a run to finish on its own
+**Depends on:** Phase 50
+**Files:** `internal/core/blockers.go` (modify) · `internal/core/loop.go` (modify) · `internal/core/review.go` (modify) · `internal/core/land.go` (modify) · `internal/core/fixer.go` (modify) · `internal/core/evidence.go` (modify) · `internal/core/fixer_test.go` (modify) · `internal/core/blockers_test.go` (modify) · `internal/prompts/render.go` (modify) · `internal/prompts/templates/fixer.md` (new) · `internal/prompts/render_test.go` (modify) · `internal/app/preflight.go` (modify) · `internal/app/wire.go` (modify) · `internal/app/app_test.go` (modify)
+**Risk:** concurrency
+- [x] `actionFix` is in every source's action list and in `blockerOptions` (`hand to the fixer`); `ResolveBlocker` authorises it on the watchdog's word once per blocker, refuses it unattended, for a blocker that already had a fix and while another fix is open, and on `authorised` calls `Fixer.Start` without settling the blocker
+- [x] `wait` stops the hold's clock while the blocker's fix is open, and starts it again from where it stood when the fix is proposed, rejected or failed
+- [x] `Fixer.Start` snapshots the primary tree and the step's worktree, writes the incident, records `fix-started`, opens the session with `openBeside` (cwd the primary root, no ask URL, no `dirFlag`), holds it as a `*Session` keyed `fix-b<n>` so a dialog in its pane reaches the watchdog through `Dialogs`, and prompts it with the `fixer` template
+- [x] its poll reads `fix-b<n>/fixer.sentinel`; on `ok` it reads `proposal.json`, validates it (kind, cause, commands and config only for `env`/`config`, the config file one of the two r-loop files, `CheckConfig` passing), `TreeDiff`s both snapshots, closes the pane, records `fix-proposed` and posts the proposal to the watchdog; a `failed` sentinel, an invalid proposal, a changed tree, `AgentGone` or `watchdog.fixer.timeout` closes the pane, records `fix-failed` with the reason and posts it
+- [x] a blocker withdrawn or settled while its fix is open closes the fixer's pane and records `fix-failed{reason: withdrawn}`
+- [x] `fixer.md` says: read the incident, investigate with read-only commands, change no file and install nothing, write the proposal with exact commands and the whole new config file, `manual` for anything interactive, `r-loop` with file and line for an r-loop bug, `project` for a project fault, then the sentinel; it is in the renderer's `names` and overridable as `.r-loop/prompts/fixer.md`
+- [x] preflight checks `watchdog.fixer`'s binary and model, does not require `ask: mcp` for it, and prints `prompt fixer: <source>`; `app` wires `Fixer` with `CheckConfig` loading the candidate file through `config.Load`
+- [x] `fixer_test.go` proves, with the fake host and repo: the start sequence and placement, a valid proposal posted, each invalid proposal and each failure with its reason, a changed tree failing the fix, the timeout, a dialog routed through `Dialogs`, and the pane closed on withdrawal; `blockers_test.go` proves the authorisations and refusals and the paused clock; `render_test.go` the template wording
+**Done when:** `go test -race ./...` is green and `grep -n "actionFix" internal/core/blockers.go` prints the constant.
+
+### Phase 52 — `apply_fix`, the config reload and the retry
+**Implements:** Get a stuck step fixed without stopping the run · Be told when a run halts
+**Depends on:** Phase 51
+**Files:** `internal/askmcp/watchdog.go` (modify) · `internal/askmcp/watchdog_test.go` (modify) · `internal/core/fixer.go` (modify) · `internal/core/fixer_test.go` (modify) · `internal/core/blockers.go` (modify) · `internal/core/blockers_test.go` (modify) · `internal/core/loop.go` (modify) · `internal/core/report.go` (modify) · `internal/core/report_test.go` (modify) · `internal/prompts/templates/watchdog.md` (modify) · `internal/prompts/render_test.go` (modify) · `internal/app/wire.go` (modify) · `internal/app/status.go` (modify) · `internal/app/status_test.go` (modify) · `internal/app/watchdog_test.go` (modify) · `internal/face/tui/model.go` (modify) · `internal/face/tui/model_test.go` (modify) · `internal/face/plain/plain.go` (modify) · `internal/face/plain/plain_test.go` (modify) · `README.md` (modify)
+**Risk:** concurrency, security
+- [x] the watchdog surface gains `apply_fix(id, decision, maintainer_said?) → {decision, reason?}`, in `watchdogTools` so a step's URL answers it 404, recorded as `watchdog-call` before its handler, which first calls `resume()`; with no handler it is refused; `app` wires it to `Fixer.Apply`
+- [x] `Fixer.Apply` refuses an id with no proposed fix, a blocker no longer open, `apply` without `maintainer_said` and `apply` on kind `r-loop` or `project`; `reject` records `fix-rejected` and leaves the blocker open
+- [x] `apply` records `fix-applied` first, runs each command with `Repo.Run` in the fix folder with its output in `command-<i>.log`, stops at the first non-zero exit with `fix-failed`, `TreeDiff`s both snapshots again, copies the replaced config file to `config.bak`, writes the new content and calls `Reload`; a failed reload restores the file from `config.bak` and fails the fix
+- [x] `app.reloadConfig` loads the config with the run's overrides, replaces `w.Registry`, empties the models cache, calls `RunLoop.SetKinds` under `l.mu` and refreshes the gatefix, gate-probe and milestone rows; a session already running keeps its arguments
+- [x] after a successful apply the blocker settles as `retry`, `By: maintainer`, `Citation: fix-b<n>`; each source then retries as for any `retry`, and the retry does not count in `retriesUsed` or the step's `restarts`
+- [x] `watchdog.md` gains "Handing a blocker to the fixer" and lists `apply_fix`: when to take `fix`, and on `fix b<n> proposed` ask the maintainer with the options apply and reject, then call `apply_fix` with their reply quoted
+- [x] the TUI shows `fixer · b<n>` on the phase's row from `fix-started` until `fix-proposed` or `fix-failed`, with a feed line for each fix event; the plain face prints each; the run report and `r-loop status` list `fix-b<n> <kind>: <cause> → <state>`; `README.md` describes the flow
+- [x] `fixer_test.go` proves apply with stub commands, the stop at a failing command, a tree changed by a command, the config written with its backup, a failed reload restored, and reject; `blockers_test.go` proves the retry settled by a fix and not counted; `watchdog_test.go` proves the record-then-resume order, the nil-handler refusal and the 404; `app/watchdog_test.go` proves a wired run in which a step fails, the watchdog takes `fix`, a scripted fixer proposes a config change, `apply_fix` applies it and the step's next attempt starts with the new provider flags and the run exits 0; the face, report and status tests prove their lines
+**Done when:** `go test -race ./...` is green and `grep -n "apply_fix" internal/askmcp/watchdog.go internal/prompts/templates/watchdog.md` prints the tool and the prompt section.
 
 ## Open questions
 
