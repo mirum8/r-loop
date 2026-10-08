@@ -119,6 +119,45 @@ watchdog_keys '  blockerTimeout: 0s\n'
 [ "$rc" = 2 ] && ok "blockerTimeout: 0s exits 2: $(head -1 "$T/err")" || fail "blockerTimeout 0s rc=$rc"
 
 run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 0 ] && grep -qx 'fixer: claude opus high  ← default' "$T/out" && grep -qx 'prompt fixer: embedded' "$T/out" \
+  && ok "dry-run banner: default fixer and embedded fixer prompt" || fail "default fixer banner rc=$rc: $(grep -e '^fixer' -e 'prompt fixer' "$T/out")"
+
+perl -0pi -e 's/  unblockTimeout: 15m\n/  unblockTimeout: 15m\n  fixer:\n    provider: claude\n    model: sonnet\n    effort: low\n    timeout: 5m\n/' .r-loop/config.yaml
+git commit -qam fixer
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 0 ] && grep -qx 'fixer: claude sonnet low  ← provider .r-loop/config.yaml:watchdog.fixer.provider model .r-loop/config.yaml:watchdog.fixer.model effort .r-loop/config.yaml:watchdog.fixer.effort' "$T/out" \
+  && ok "watchdog.fixer from the project file shows its provenance" || fail "fixer provenance rc=$rc: $(grep '^fixer' "$T/out") $(head -1 "$T/err")"
+git reset -q --hard HEAD~1
+
+fixer_rejected() {
+  watchdog_keys "$1"
+  if [ "$rc" = 2 ] && grep -q "$2" "$T/err" && [ ! -d .r-loop/runs ]; then ok "$3 exits 2: $(head -1 "$T/err")"
+  else fail "$3 rc=$rc: $(head -1 "$T/err")"; fi
+}
+fixer_rejected '  fixer:\n    bogus: 1\n' 'unknown key "watchdog.fixer.bogus"' "watchdog.fixer.bogus"
+fixer_rejected '  fixer:\n    timeout: soon\n' 'watchdog.fixer.timeout: "soon" is not a duration' "watchdog.fixer.timeout: soon"
+fixer_rejected '  fixer:\n    provider: claude\n    model:\n    effort: low\n' 'watchdog.fixer.model: not set' "an empty watchdog.fixer.model"
+fixer_rejected '  fixer: {provider: claude}\n' 'flow style' "a flow-style watchdog.fixer"
+
+claude2() {
+  perl -0pi -e 's/(  implement:\n    provider: )claude/${1}claude2/' .r-loop/config.yaml
+  printf "providers:\n  claude2:\n    kind: claude\n    doneSignal: sentinel\n    ask: mcp\n$1" >> .r-loop/config.yaml
+  run docs/plan/todo-tiny.md --dry-run --plain
+  git checkout -q .r-loop/config.yaml
+}
+claude2 '    version:\n      - --version\n'
+[ "$rc" = 2 ] && grep -q 'provider claude2: version must be a string' "$T/err" && [ ! -d .r-loop/runs ] \
+  && ok "a provider version that is a list exits 2" || fail "version list rc=$rc: $(head -1 "$T/err")"
+claude2 '    version: "--version"\n'
+[ "$rc" = 0 ] && grep -q '^implement  claude2 ' "$T/out" && ok "a provider version string loads" || fail "version string rc=$rc: $(head -1 "$T/err")"
+
+mkdir -p .r-loop/prompts && printf '# custom fixer\n' > .r-loop/prompts/fixer.md && git add .r-loop/prompts && git commit -qm fixer-prompt
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 0 ] && grep -q '^prompt fixer: .*/\.r-loop/prompts/fixer\.md$' "$T/out" \
+  && ok "an override fixer prompt is reported by path" || fail "fixer prompt override rc=$rc: $(grep 'prompt fixer' "$T/out")"
+git reset -q --hard HEAD~1
+
+run docs/plan/todo-tiny.md --dry-run --plain
 [ "$rc" = 0 ] && grep -q '^  reviewer codex ' "$T/out" && grep -qx 'prompt review-plan: embedded' "$T/out" \
   && ok "dry-run with a codex plan reviewer lists 'prompt review-plan: embedded'" \
   || fail "dry-run banner: no codex plan reviewer or no 'prompt review-plan' line rc=$rc"
