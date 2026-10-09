@@ -323,9 +323,20 @@ func TestPlanTouchedLetsTheDesignStepWriteItsOwnDesign(t *testing.T) {
 	noWarning(t, shipped(t, "plan-touched").Run(ctx))
 }
 
-func TestPlanTouchedFiresOnTheDesignChangedByAnotherStep(t *testing.T) {
-	repo := &fakeRepo{RootDir: "/repo", Changed: []string{".task-plans/phase-3-third-thing.design.md"}}
+func TestPlanTouchedQuietOnTheDesignCommittedBeforeTheStepStarted(t *testing.T) {
+	repo := &fakeRepo{RootDir: "/repo", Changed: []string{".task-plans/phase-3-third-thing.design.md", "internal/core/checks.go"},
+		ChangedSince: map[string][]string{"sha-plan": {"internal/core/checks.go"}}}
 	ctx := checkCtx(&fakeStore{}, repo, "implement", 1, time.Minute)
+	ctx.Session.StartSHA = "sha-plan"
+
+	noWarning(t, shipped(t, "plan-touched").Run(ctx))
+}
+
+func TestPlanTouchedFiresOnTheDesignChangedByAnotherStep(t *testing.T) {
+	repo := &fakeRepo{RootDir: "/repo", Changed: []string{".task-plans/phase-3-third-thing.design.md"},
+		ChangedSince: map[string][]string{"sha-plan": {".task-plans/phase-3-third-thing.design.md"}}}
+	ctx := checkCtx(&fakeStore{}, repo, "implement", 1, time.Minute)
+	ctx.Session.StartSHA = "sha-plan"
 
 	sig := oneWarning(t, shipped(t, "plan-touched").Run(ctx), ctx)
 

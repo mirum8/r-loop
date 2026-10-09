@@ -198,22 +198,23 @@ func (f *fakeSessionHost) OpenTab(workspace string, spec OpenSpec) (string, erro
 
 type fakeRepo struct {
 	callLog
-	RootDir     string
-	Branch      string
-	SHA         string
-	DirtyFiles  []string
-	CommitPaths [][]string
-	Changed     []string
-	Added       int
-	Deleted     int
-	Tree        string
-	Index       string
-	TreeChanges []string
-	Touched     []string
-	MergeErr    error
-	RunExit     int
-	RunOutput   string
-	Err         error
+	RootDir      string
+	Branch       string
+	SHA          string
+	DirtyFiles   []string
+	CommitPaths  [][]string
+	Changed      []string
+	ChangedSince map[string][]string
+	Added        int
+	Deleted      int
+	Tree         string
+	Index        string
+	TreeChanges  []string
+	Touched      []string
+	MergeErr     error
+	RunExit      int
+	RunOutput    string
+	Err          error
 }
 
 func (f *fakeRepo) Root() string {
@@ -272,6 +273,9 @@ func (f *fakeRepo) DiffNonEmpty(dir, ref string) (bool, error) {
 
 func (f *fakeRepo) ChangedFiles(dir, ref string) ([]string, error) {
 	f.record("Repo.ChangedFiles %s %s", dir, ref)
+	if changed, ok := f.ChangedSince[ref]; ok {
+		return changed, f.Err
+	}
 	return f.Changed, f.Err
 }
 
