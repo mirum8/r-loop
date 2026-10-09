@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"strconv"
 
 	"gopkg.in/yaml.v3"
@@ -83,6 +84,7 @@ func Migrate(path string) (Migration, error) {
 		}
 	}
 	forEachRole(doc.Content[0], fill)
+	m.Changes = append(m.Changes, addDesign(doc.Content[0])...)
 	if len(m.Changes) == 0 {
 		return m, nil
 	}
@@ -101,6 +103,20 @@ func Migrate(path string) (Migration, error) {
 		}
 	}
 	return m, os.WriteFile(path, out.Bytes(), 0o644)
+}
+
+func addDesign(root *yaml.Node) []string {
+	pipeline := child(root, "pipeline")
+	if pipeline == nil || pipeline.Kind != yaml.SequenceNode {
+		return nil
+	}
+	plan := slices.IndexFunc(pipeline.Content, func(n *yaml.Node) bool { return n.Value == "plan" })
+	if plan < 0 || slices.ContainsFunc(pipeline.Content, func(n *yaml.Node) bool { return n.Value == "design" }) {
+		return nil
+	}
+	before := roleText(pipeline)
+	pipeline.Content = slices.Insert(pipeline.Content, plan, scalar("design"))
+	return []string{fmt.Sprintf("pipeline: %s → %s", before, roleText(pipeline))}
 }
 
 func scalar(v string) *yaml.Node {

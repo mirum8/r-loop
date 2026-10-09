@@ -78,6 +78,7 @@ func ResetModels(path string) ([]string, error) {
 			changes = append(changes, fmt.Sprintf("land.fix: %s → removed", roleText(fix)))
 		}
 	}
+	changes = append(changes, addDesign(root)...)
 	pruneEmpty(root)
 	if len(changes) == 0 {
 		return nil, nil

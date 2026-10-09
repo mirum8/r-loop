@@ -972,6 +972,24 @@ func TestResetModelsLeavesAFileAtTheDefaultsAlone(t *testing.T) {
 	}
 }
 
+func TestResetModelsAddsTheDesignStepToAPinnedPipeline(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "pipeline:\n  - plan\n  - implement\n")
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	changes, err := ResetModels(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"pipeline: plan, implement → design, plan, implement"}; !reflect.DeepEqual(changes, want) {
+		t.Errorf("changes = %q", changes)
+	}
+	if got := d.load(t).Pipeline; !reflect.DeepEqual(got, []string{"design", "plan", "implement"}) {
+		t.Errorf("pipeline = %q", got)
+	}
+}
+
 func TestLabelLoadsWithItsProvenanceAndShowsInTheBanner(t *testing.T) {
 	d := newDirs(t)
 	d.writeProject(t, "label: test\n")

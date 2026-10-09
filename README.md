@@ -199,7 +199,8 @@ Each key is taken from the first place that has it:
 `r-loop --create-config` writes the built-in defaults to `~/.config/r-loop/config.yaml` as a
 starting point. When that file already exists, it resets the models instead: the provider, model
 and effort of each built-in step row, its `fallback` and `reviewers`, the `watchdog` and `intake`
-go back to the built-in defaults, `land.fix` is removed, and every other key stays. It prints each
+go back to the built-in defaults, `land.fix` is removed, a `pipeline` that has `plan` but no
+`design` gets `design` before `plan`, and every other key stays. It prints each
 change; the original is kept as `config.yaml.bak`.
 
 Every agent session names its provider, model and effort; nothing runs on a provider's own
@@ -208,6 +209,7 @@ defaults. A config that is missing one of the three is an error (exit 2).
 reviewer was only a provider name. It rewrites `~/.config/r-loop/config.yaml` and the
 `.r-loop/config.yaml` in the current directory, turning each bare name into a block and filling a
 block's missing `model` or `effort`. The values come from the built-in defaults for that provider.
+A `pipeline` that has `plan` but no `design` gets `design` before `plan`.
 The original is kept as `config.yaml.bak`; an existing `.bak` is never overwritten. A provider with no built-in default is reported, and you have to set it by
 hand (exit 1). `install.sh` runs it on the machine file.
 

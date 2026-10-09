@@ -120,3 +120,38 @@ func TestMigrateKeepsTheFirstBackup(t *testing.T) {
 		t.Errorf("backup = %q", bak)
 	}
 }
+
+func TestMigrateAddsTheDesignStepBeforePlanToAPinnedPipeline(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "pipeline:\n  - plan # first\n  - implement\n")
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	m, err := Migrate(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"pipeline: plan, implement → design, plan, implement"}; !reflect.DeepEqual(m.Changes, want) {
+		t.Errorf("changes = %q", m.Changes)
+	}
+	if got := d.load(t).Pipeline; !reflect.DeepEqual(got, []string{"design", "plan", "implement"}) {
+		t.Errorf("pipeline = %q", got)
+	}
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "# first") {
+		t.Errorf("comment lost from:\n%s", data)
+	}
+}
+
+func TestMigrateLeavesAPipelineWithDesignOrWithoutPlanAlone(t *testing.T) {
+	for _, pipeline := range []string{"  - design\n  - plan\n", "  - implement\n"} {
+		d := newDirs(t)
+		d.writeHome(t, "pipeline:\n"+pipeline)
+		path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+		m, err := Migrate(path)
+
+		if err != nil || len(m.Changes) != 0 {
+			t.Errorf("%q: migration = %+v, %v", pipeline, m, err)
+		}
+	}
+}
