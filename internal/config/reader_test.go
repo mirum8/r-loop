@@ -529,6 +529,20 @@ func TestPipelineEntryWithoutStepsRowRejected(t *testing.T) {
 	d.loadErr(t, `"docs"`)
 }
 
+func TestPipelineDesignAfterPlanRejectedAtItsLine(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "pipeline:\n  - plan\n  - design\n  - implement\n")
+
+	d.loadErr(t, `config.yaml:3: pipeline entry "design": a design-file step must come before the plan-file step`)
+}
+
+func TestPipelineSecondDesignRejectedAtItsLine(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "pipeline:\n  - design\n  - design\n  - plan\n")
+
+	d.loadErr(t, `config.yaml:3: pipeline entry "design": a second design-file step after "design"`)
+}
+
 func TestAddedStepRow(t *testing.T) {
 	d := newDirs(t)
 	d.writeProject(t, "pipeline:\n  - plan\n  - implement\n  - docs\nsteps:\n  docs:\n    prompt: docs\n    check: diff\n    provider: claude\n    model: sonnet\n    effort: low\n    timeout: 30m\n")

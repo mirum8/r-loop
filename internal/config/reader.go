@@ -546,9 +546,23 @@ func (r *resolver) resolve() (LoopConfig, error) {
 		cfg.Steps[name] = row
 	}
 	pipeline, pl := r.lookup("pipeline")
+	designAt, planned := "", false
 	for i, name := range cfg.Pipeline {
-		if _, ok := cfg.Steps[name]; !ok {
+		row, ok := cfg.Steps[name]
+		if !ok {
 			return cfg, errAt(pl.file, pipeline.Content[i], "pipeline entry %q has no steps row", name)
+		}
+		switch row.Check {
+		case "design-file":
+			if designAt != "" {
+				return cfg, errAt(pl.file, pipeline.Content[i], "pipeline entry %q: a second design-file step after %q", name, designAt)
+			}
+			if planned {
+				return cfg, errAt(pl.file, pipeline.Content[i], "pipeline entry %q: a design-file step must come before the plan-file step", name)
+			}
+			designAt = name
+		case "plan-file":
+			planned = true
 		}
 	}
 	for _, name := range r.children("providers") {
