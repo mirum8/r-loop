@@ -827,6 +827,7 @@ func TestApplyGateRefusesDesign(t *testing.T) {
 		{"no design step", plan, GateDecision{Decision: GateRevise, DesignOn: []string{"2"}, MaintainerSaid: "y"}, false, "design_on and design_off need a design step in the pipeline"},
 		{"unknown phase", plan, GateDecision{Decision: GateRevise, DesignOn: []string{"9"}, MaintainerSaid: "y"}, true, "design: phase 9 is not a phase this run builds"},
 		{"dropped phase", plan, GateDecision{Decision: GateRevise, Drop: []string{"3"}, DesignOn: []string{"3"}, MaintainerSaid: "y"}, true, "design: phase 3 is not a phase this run builds"},
+		{"dependent of a dropped phase", plan, GateDecision{Decision: GateRevise, Drop: []string{"2"}, DesignOn: []string{"3"}, MaintainerSaid: "y"}, true, "design: phase 3 is not a phase this run builds"},
 		{"both lists", plan, GateDecision{Decision: GateRevise, DesignOn: []string{"2"}, DesignOff: []string{"2"}, MaintainerSaid: "y"}, true, "design: 2 is in both design_on and design_off"},
 		{"unknown group", backlog, GateDecision{Decision: GateRevise, DesignOff: []string{"G9"}, MaintainerSaid: "y"}, true, "design: group G9 does not exist"},
 	} {

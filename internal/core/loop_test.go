@@ -1976,6 +1976,31 @@ func TestAResumeReadsAnEarlierDesignFromTheWorktree(t *testing.T) {
 	}
 }
 
+func TestReplanAfterAHaltInDesignRunsAFreshPlan(t *testing.T) {
+	r := newLoopRig(t)
+	prompts := withDesign(r, "2")
+	r.store.Append("run-1", Record{Kind: RecordEvent, Event: &Event{Kind: "step", Phase: "2", Step: "design", Fields: map[string]string{"attempt": "1", "state": string(StepFailed), "reason": "design went wrong"}}})
+	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: "2", Kind: "design", Attempt: 1}, State: StepFailed})
+
+	code := r.run(RunOptions{Phases: []string{"2"}, Resume: true, Replan: true})
+
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if v := prompts.of("2/plan"); v["Addendum"] != "" {
+		t.Errorf("plan got a replan addendum %q", v["Addendum"])
+	}
+	var plans []string
+	for _, c := range r.calls("Repo.CommitAll ") {
+		if strings.Contains(c, "p2 plan") {
+			plans = append(plans, c)
+		}
+	}
+	if len(plans) != 1 {
+		t.Errorf("plan commits %v", r.calls("Repo.CommitAll "))
+	}
+}
+
 func TestPipelineAcceptsADesignStepBeforeThePlanStep(t *testing.T) {
 	kinds, err := Pipeline([]string{"design", "plan"}, map[string]StepRow{"design": {}, "plan": {}},
 		map[string]string{"design": "design", "plan": "plan"}, map[string]string{"design": "design-file", "plan": "plan-file"})

@@ -477,9 +477,10 @@ func ApplyGate(plan Plan, list []Phase, t Triage, g GateDecision, designAsked bo
 				out.Dropped = append(out.Dropped, id)
 			}
 		}
+		kept, _, _ := TriageResult(plan, list, out)
 		if err := gateDesign(g, func(id string, on bool) error {
 			i := slices.IndexFunc(out.Phases, func(v PhaseVerdict) bool { return v.Phase == id })
-			if i < 0 || out.Phases[i].Status != VerdictBuild || slices.Contains(out.Dropped, id) {
+			if i < 0 || out.Phases[i].Status != VerdictBuild || !slices.ContainsFunc(kept, func(ph Phase) bool { return ph.ID == id }) {
 				return fmt.Errorf("design: phase %s is not a phase this run builds", id)
 			}
 			out.Phases[i].Design, out.Phases[i].DesignNote = turned(on, out.Phases[i].Design, out.Phases[i].DesignNote)

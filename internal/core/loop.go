@@ -359,7 +359,8 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 	}
 	stopped := l.stoppedKind(prior, n)
 	kinds := l.kinds()
-	replan = replan && stopped != "" && stopped != "plan" && slices.ContainsFunc(kinds, func(k StepKind) bool { return k.Name == "plan" })
+	_, planState := latestAttempt(prior, l.RunID, n, "plan")
+	replan = replan && stopped != "" && planState == StepOK && slices.ContainsFunc(kinds, func(k StepKind) bool { return k.Name == "plan" })
 	for _, kind := range kinds {
 		if cur, ok := l.kind(kind.Name); ok {
 			kind = cur
