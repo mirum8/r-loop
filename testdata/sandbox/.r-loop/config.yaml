@@ -1,5 +1,13 @@
 label: test
+pipeline:
+  - plan
+  - implement
 steps:
+  design:
+    provider: claude
+    model: sonnet
+    effort: low
+    timeout: 20m
   plan:
     provider: claude
     model: sonnet

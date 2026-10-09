@@ -308,6 +308,35 @@ for arg in '../../etc/passwd.md' "x; touch $T/pwned.md" "\`touch $T/pwned\`.md" 
   else fail "hostile .md path rc=$rc: $arg"; fi
 done
 
+D=$("$ROOT/testdata/sandbox/make-sandbox.sh") && cd "$D"
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 0 ] && grep -q '^phase 1  Subtract  plan (review ×1) → implement' "$T/out" && ! grep -q '^design ' "$T/out" \
+  && ok "the sandbox pins [plan, implement]: no design" || fail "plain sandbox dry-run rc=$rc: $(grep '^phase 1' "$T/out")"
+design_cfg() {
+  awk -v p="$1" '/^pipeline:$/ { print; n = split(p, e, ","); for (i = 1; i <= n; i++) printf "  - %s\n", e[i]; skip = 1; next }
+    skip && /^  - / { next } { skip = 0; print }' "$D/.r-loop/config.yaml.orig" > "$D/.r-loop/config.yaml"
+}
+cp .r-loop/config.yaml .r-loop/config.yaml.orig
+design_cfg design,plan,implement
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 0 ] && grep -q '^phase 1  Subtract  design → plan (review ×1) → implement' "$T/out" \
+  && grep -q '^design  claude  sonnet  low  20m  design-file' "$T/out" && grep -q '^prompt design: embedded' "$T/out" \
+  && grep -q '3 step sessions (design, plan, implement)' "$T/out" \
+  && ok "pipeline [design, plan, implement]: dry-run runs design before plan" || fail "design dry-run rc=$rc: $(head -2 "$T/err") $(grep '^phase 1' "$T/out")"
+design_cfg plan,design,implement
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 2 ] && [ ! -s "$T/out" ] && grep -q 'design-file step must come before the plan-file step' "$T/err" \
+  && ok "design after plan exits 2: $(cat "$T/err")" || fail "design after plan rc=$rc: $(cat "$T/err")"
+design_cfg design,design,plan,implement
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 2 ] && [ ! -s "$T/out" ] && grep -q 'second design-file step' "$T/err" \
+  && ok "design twice exits 2: $(cat "$T/err")" || fail "design twice rc=$rc: $(cat "$T/err")"
+design_cfg design,plan,implement
+run docs/plan/todo-design.md --dry-run --plain
+[ "$rc" = 0 ] && [ "$(grep -c '^phase [0-9].* design → plan' "$T/out")" = 2 ] \
+  && ok "todo-design.md dry-run: 2 phases, design → plan" || fail "todo-design.md dry-run rc=$rc: $(head -2 "$T/err")"
+cd "$ROOT"; rm -rf "$D"
+
 cd "$ROOT"
 go test ./internal/face/... > /dev/null 2>&1 && ok "golden harness go test ./internal/face/..." || fail "go test ./internal/face/..."
 
