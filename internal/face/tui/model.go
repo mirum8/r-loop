@@ -106,6 +106,8 @@ type Question struct {
 	Blocker bool
 }
 
+const stepSkipped = "skipped"
+
 type stepID struct {
 	phase string
 	kind  string
@@ -227,6 +229,16 @@ func (m Model) Apply(ev core.Event) Model {
 		m.log(ev, toneDim, "land gate fix r"+ev.Fields["round"])
 	case "assumption":
 		m.log(ev, toneDim, "assumed: "+ev.Fields["text"])
+	case "step-skipped":
+		m.done = maps.Clone(m.done)
+		if m.done == nil {
+			m.done = map[stepID]string{}
+		}
+		m.done[stepID{ev.Phase, ev.Step}] = stepSkipped
+	case "design":
+		m.log(ev, toneDim, "design: "+ev.Fields["intent"])
+	case "design-skipped":
+		m.log(ev, toneDim, "design skipped: "+ev.Fields["reason"])
 	case "question":
 		m.Questions = append(append([]Question(nil), m.Questions...), Question{ID: ev.Fields["id"], Phase: ev.Phase, Step: ev.Step, At: ev.At})
 		m.log(ev, toneDim, "asked "+ev.Fields["id"])

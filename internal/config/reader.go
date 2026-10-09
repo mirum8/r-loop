@@ -125,7 +125,7 @@ var remedyClasses = []string{"deps", "ports", "containers", "locks", "restart", 
 
 var reviewerName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-var checks = []string{"plan-file", "diff", "report"}
+var checks = []string{"plan-file", "design-file", "diff", "report"}
 
 type schema map[string]schema
 

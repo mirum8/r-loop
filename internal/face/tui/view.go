@@ -387,9 +387,16 @@ func (m Model) pipeline(s *Step, w int) string {
 		kinds = append(slices.Clone(m.Steps), s.Kind)
 	}
 	parts := make([]string, 0, len(kinds))
-	live := slices.Index(kinds, s.Kind)
+	live := 0
 	for _, kind := range kinds {
-		switch state := m.done[stepID{s.Phase, kind}]; {
+		state := m.done[stepID{s.Phase, kind}]
+		if state == stepSkipped {
+			continue
+		}
+		if kind == s.Kind {
+			live = len(parts)
+		}
+		switch {
 		case kind == s.Kind && s.State != string(core.StepOK) && s.State != string(core.StepFailed):
 			parts = append(parts, th.Current.Render(kind))
 		case state == string(core.StepOK):

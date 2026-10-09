@@ -45,6 +45,7 @@ const noReviewConfig = `steps:
 var (
 	sentinelRe = regexp.MustCompile("[^\\s`]+\\.sentinel")
 	planRe     = regexp.MustCompile(`\.task-plans/[a-z0-9-]+\.md`)
+	designRe   = regexp.MustCompile(`\.task-plans/[a-z0-9-]+\.design\.md`)
 	findingsRe = regexp.MustCompile("into `([^`]+-findings-([a-z0-9]+)-r[0-9]+\\.json)`")
 	nativeRe   = regexp.MustCompile("`([^`]+/native-review\\.txt)`")
 	tokenRe    = regexp.MustCompile(`-[0-9a-z]{5}(-p[1-9])`)
@@ -107,7 +108,9 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 	case findingsRe.MatchString(text):
 		m := findingsRe.FindStringSubmatch(text)
 		writeTo(m[1], `{"reviewer":"`+m[2]+`","findings":[]}`)
-		writeTo(nativeRe.FindStringSubmatch(text)[1], "native review output")
+		if native := nativeRe.FindStringSubmatch(text); native != nil {
+			writeTo(native[1], "native review output")
+		}
 	case fail:
 		wip := "wip.txt"
 		if spec.Env["R_LOOP_STEP"] == "plan" {
@@ -118,6 +121,8 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 		return nil
 	case spec.Env["R_LOOP_STEP"] == "plan":
 		writeTo(filepath.Join(spec.CWD, planRe.FindString(text)), "status: planned\n\n## Summary\nx\n## Changes\nx\n## Tests\n- a test by "+agent+"\n## Assumptions\nnone\n")
+	case spec.Env["R_LOOP_STEP"] == "design":
+		writeTo(filepath.Join(spec.CWD, designRe.FindString(text)), "## States\n- empty: a hint\n## Reuse map\n- web/list.html:4\n\nDESIGN-INTENT: the list reads calm and dense.\n")
 	default:
 		name := "code.txt"
 		if edit != "" {
@@ -126,8 +131,11 @@ func (h *simHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 		writeTo(filepath.Join(spec.CWD, name), "written by "+agent)
 	}
 	commit := "feat(core): add the widget store"
-	if spec.Env["R_LOOP_STEP"] == "plan" {
+	switch spec.Env["R_LOOP_STEP"] {
+	case "plan":
 		commit = "docs(plan): plan the widget store"
+	case "design":
+		commit = "docs(design): design the widget list"
 	}
 	writeTo(sentinel, `{"outcome":"ok","reason":"","commit":"`+commit+`"}`)
 	return nil

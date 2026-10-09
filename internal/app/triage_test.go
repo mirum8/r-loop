@@ -65,7 +65,7 @@ func verdicts(statuses map[string]core.PhaseVerdict) core.Triage {
 
 func submit(t *testing.T, w *Wiring, tr core.Triage) string {
 	t.Helper()
-	ok, reason, table := w.submitTriage(tr)
+	ok, reason, table := w.submitTriage(noDesign(w, tr))
 	if !ok {
 		t.Errorf("submit_triage refused: %s", reason)
 	}
@@ -186,7 +186,7 @@ func TestAnAlreadyDonePhaseIsDroppedNotTicked(t *testing.T) {
 func TestAnAlreadyDoneVerdictWithoutAnExistingCitationIsRefused(t *testing.T) {
 	var reason string
 	k := startTriage(t, func(w *Wiring, text string) {
-		_, reason, _ = w.submitTriage(verdicts(map[string]core.PhaseVerdict{"2": {Phase: "2", Status: core.VerdictAlreadyDone, Note: "built at nowhere.go:9"}}))
+		_, reason, _ = w.submitTriage(noDesign(w, verdicts(map[string]core.PhaseVerdict{"2": {Phase: "2", Status: core.VerdictAlreadyDone, Note: "built at nowhere.go:9"}})))
 		submit(t, w, allBuild(text))
 		gate(t, w, core.GateDecision{Decision: core.GateGo, MaintainerSaid: "go"})
 	})
@@ -322,7 +322,7 @@ func TestARefusedTriageCanBeResubmitted(t *testing.T) {
 	var reason string
 	k := startTriage(t, func(w *Wiring, text string) {
 		var ok bool
-		ok, reason, _ = w.submitTriage(core.Triage{Phases: []core.PhaseVerdict{{Phase: "1", Status: core.VerdictBuild}, {Phase: "3", Status: core.VerdictBuild}}})
+		ok, reason, _ = w.submitTriage(noDesign(w, core.Triage{Phases: []core.PhaseVerdict{{Phase: "1", Status: core.VerdictBuild}, {Phase: "3", Status: core.VerdictBuild}}}))
 		if ok {
 			t.Error("an incomplete triage was accepted")
 		}
@@ -402,10 +402,10 @@ func (l *tickingLander) Land(ctx context.Context, ph core.Phase) (core.Landing, 
 }
 
 func groupTwoItems(w *Wiring, text string) {
-	w.submitTriage(core.Triage{
+	w.submitTriage(noDesign(w, core.Triage{
 		Items:  []core.ItemVerdict{fixItem("1"), fixItem("2"), fixItem("3")},
 		Groups: []core.Group{{ID: "g1", Items: []string{"2", "1"}, Subsystem: "parser", Rationale: "same function"}, {ID: "g2", Items: []string{"3"}, Subsystem: "cli"}},
-	})
+	}))
 	if asksTheMaintainer(text) {
 		w.submitGate(core.GateDecision{Decision: core.GateGo, MaintainerSaid: "go"})
 	}
@@ -551,15 +551,11 @@ func TestNoTriageTableIsTypedIntoTheWatchdogPaneWithoutAGate(t *testing.T) {
 	}
 }
 
-func designKind() core.StepKind {
-	return core.StepKind{Name: "design", Prompt: "design", Check: "design-file", Row: core.StepRow{Provider: "claude"}}
-}
-
 func TestATriageWithADesignStepNeedsAFlagPerPhaseAndTheGateCanTurnItOver(t *testing.T) {
 	var text, refused, first, revised string
 	k := startTriage(t, func(w *Wiring, sent string) {
 		text = sent
-		_, refused, _ = w.submitTriage(allBuild(sent))
+		_, refused, _ = w.submitTriage(core.Triage{Phases: []core.PhaseVerdict{{Phase: "1", Status: core.VerdictBuild}, {Phase: "2", Status: core.VerdictBuild}, {Phase: "3", Status: core.VerdictBuild}}})
 		yes, no := true, false
 		first = submit(t, w, core.Triage{Phases: []core.PhaseVerdict{
 			{Phase: "1", Status: core.VerdictBuild, Design: &yes, DesignNote: "the list page gains an empty state"},
@@ -569,7 +565,6 @@ func TestATriageWithADesignStepNeedsAFlagPerPhaseAndTheGateCanTurnItOver(t *test
 		revised = gate(t, w, core.GateDecision{Decision: core.GateRevise, DesignOn: []string{"2"}, DesignOff: []string{"1"}, MaintainerSaid: "design 2, not 1"})
 		gate(t, w, core.GateDecision{Decision: core.GateAbort, MaintainerSaid: "stop"})
 	})
-	k.w.Loop.Kinds = append([]core.StepKind{designKind()}, k.w.Loop.Kinds...)
 
 	if code := k.run(); code != 1 {
 		t.Fatalf("exit %d\n%s", code, k.f.err)
@@ -620,6 +615,72 @@ func TestTheRunListRecordsTheDesignFlagsAndResumeRestoresThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := recordedDesign(k.f.load(k.w.Loop.RunID)); len(got) != 1 || got["2"] != "the list page" {
+		t.Errorf("recorded design %v", got)
+	}
+}
+
+func TestAWiredRunDesignsOnlyTheFlaggedPhaseAndHandsTheDesignToThePlanAndTheUIReviewer(t *testing.T) {
+	f := newResumeFixture(t, reviewConfig)
+	f.write(".claude/skills/test-app/SKILL.md", "# test-app\n")
+	f.commit()
+	w, err := f.preflight(f.todo, "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sim := newSim()
+	land := f.sim(w, sim)
+	w.Dog.Host = &dogHost{triage: func(text string) {
+		tr := allBuild(text)
+		yes := true
+		tr.Phases[0].Design, tr.Phases[0].DesignNote = &yes, "the list page gains an empty state"
+		submit(t, w, tr)
+		gate(t, w, core.GateDecision{Decision: core.GateGo, MaintainerSaid: "go"})
+	}}
+
+	code := w.Execute(core.RunOptions{Phases: []string{"1", "2"}})
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, f.out, f.err)
+	}
+	if !slices.Equal(land.landed, []string{"1", "2"}) {
+		t.Errorf("landed %v", land.landed)
+	}
+	var p1, p2 []string
+	for _, a := range sim.startedAgents() {
+		switch {
+		case strings.HasPrefix(a, "rloop-p1-"):
+			p1 = append(p1, strings.TrimPrefix(a, "rloop-p1-"))
+		case strings.HasPrefix(a, "rloop-p2-"):
+			p2 = append(p2, strings.TrimPrefix(a, "rloop-p2-"))
+		}
+	}
+	if !slices.Equal(p1[:3], []string{"design", "plan", "implement"}) || slices.Contains(p2, "design") {
+		t.Errorf("phase 1 steps %v, phase 2 steps %v", p1, p2)
+	}
+	design := ".task-plans/phase-1-one.design.md"
+	var planText, uiText string
+	for _, a := range sim.promptedAgents() {
+		switch {
+		case strings.HasSuffix(a, "-p1-plan"):
+			planText = sim.text(a)
+		case strings.Contains(a, "-p1-") && strings.HasPrefix(sim.text(a), "# UI review"):
+			uiText = sim.text(a)
+		}
+	}
+	if !strings.Contains(planText, "decided what the user sees in `"+design+"`") {
+		t.Errorf("plan prompt lacks the design:\n%s", planText)
+	}
+	if !strings.Contains(uiText, "set this intent: \"the list reads calm and dense.\"") {
+		t.Errorf("ui reviewer prompt lacks the intent:\n%s", uiText)
+	}
+	run := f.load(w.Loop.RunID)
+	if skips := stepEvents(run, "step-skipped"); len(skips) != 1 || skips[0].Phase != "2" {
+		t.Errorf("step-skipped %+v", skips)
+	}
+	if got := stepEvents(run, "design"); len(got) != 1 || got[0].Phase != "1" {
+		t.Errorf("design events %+v", got)
+	}
+	if got := recordedDesign(run); got["1"] != "the list page gains an empty state" || len(got) != 1 {
 		t.Errorf("recorded design %v", got)
 	}
 }

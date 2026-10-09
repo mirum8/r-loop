@@ -15,6 +15,9 @@ The phase:
 5. Functional check: the changed flows end to end. On the web: responses and status codes, form submits and redirects, the app logs. On a terminal: the key paths, the argv, the exit codes, stdout and stderr.
 6. Visual check, web: pick the two pages this diff changed most, capture each at 1280x800, 768x1024 and the iPhone 14 device, at most 6 screenshots. Then load the `frontend-design` skill and judge the screenshots against it: typography, colour and theme, spacing and layout, broken or overflowing elements. Visual check, terminal UI: capture the changed screen at 160x50, at the app's default size and at 80x24, at most 6 frames, and judge clipping, wrapping, alignment, colour use and legibility. A command-line tool has no visual check.
 7. Save every screenshot and frame under `{{.ArtifactsDir}}` and name its path in the finding's `detail`.
+{{- if .DesignIntent}}
+8. The phase's design (`{{.Design}}`) set this intent: "{{.DesignIntent}}". Judge the visual check against it and against the screens and states the design names, and report where the result departs from them.
+{{- end}}
 
 Report a defect this diff causes or leaves in what it changed; not an old defect elsewhere in the app. In each finding's `files`, name the source files that cause it, so the fix can be checked against them. When `/test-app` could not run — the build, deploy or launch failed — report that as one finding with the error: a check that did not run is never an empty list.
 {{- if .PriorFindings}}

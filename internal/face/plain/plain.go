@@ -81,6 +81,12 @@ func (f *Face) Emit(ev core.Event) {
 		fmt.Fprintf(f.Out, "%s  phase %s  %s  blocker %s → %s (%s)\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["id"], ev.Fields["action"], ev.Fields["by"])
 	case core.EventFixStarted, core.EventFixProposed, core.EventFixApplied, core.EventFixRejected, core.EventFixFailed:
 		fmt.Fprintf(f.Out, "%s  phase %s  %s  %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fixDetail(ev))
+	case "step-skipped":
+		fmt.Fprintf(f.Out, "%s  phase %s  %s  skipped: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["reason"])
+	case "design":
+		fmt.Fprintf(f.Out, "%s  phase %s  design: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["intent"])
+	case "design-skipped":
+		fmt.Fprintf(f.Out, "%s  phase %s  design skipped: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["reason"])
 	case "review-find":
 		fields := ev.Fields
 		fmt.Fprintf(f.Out, "%s  phase %s  %s  reviewer %s r%s  %s  %s findings", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fields["reviewer"], fields["round"], fields["state"], fields["findings"])

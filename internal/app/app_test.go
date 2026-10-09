@@ -344,7 +344,7 @@ func TestProviderBlockMissingKindIsRefusedInPreflight(t *testing.T) {
 	if code := exitCode(t, err); code != 2 {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
-	for _, want := range []string{"steps.plan.provider", "kind is required"} {
+	for _, want := range []string{"steps.design.provider", "kind is required"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("%q missing from %v", want, err)
 		}
@@ -495,7 +495,7 @@ func TestWireBuildsTheGateFixKindAndTheMilestoneBoundary(t *testing.T) {
 	if b := g.Boundary; b == nil || b.Kind.Name != "milestone" || b.Kind.Check != "report" || b.Kind.Row.Provider != "claude" || b.RunID != w.Loop.RunID || b.Topic != "topic" {
 		t.Fatalf("boundary=%+v", g.Boundary)
 	}
-	if len(w.Loop.Kinds) != 2 || w.Loop.Kinds[1].Row.Model != "gpt-x" || w.Loop.Lander != g {
+	if len(w.Loop.Kinds) != 3 || w.Loop.Kinds[0].Check != "design-file" || w.Loop.Kinds[2].Row.Model != "gpt-x" || w.Loop.Lander != g {
 		t.Fatalf("loop kinds=%+v", w.Loop.Kinds)
 	}
 	args, err := w.Loop.Sessions.Resolve("codex", "gpt-x", "high", "", "", "")
@@ -590,8 +590,8 @@ func TestDryRunPrintsBannerWithOverridesAndTheRunList(t *testing.T) {
 		"reviewer ui requires .claude/skills/test-app/SKILL.md: missing, reviewer skipped\n",
 		"watchdog: claude opus medium allow []  ← default\n",
 		"intake: claude sonnet medium  ← default\n",
-		"phase 2  PlanReader: phases and milestones  plan (review ×2) → implement (review ×3) → land\n",
-		"phase 31  Unattended mode  plan (review ×2) → implement (review ×3) → land\n",
+		"phase 2  PlanReader: phases and milestones  design → plan (review ×2) → implement (review ×3) → land\n",
+		"phase 31  Unattended mode  design → plan (review ×2) → implement (review ×3) → land\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("%q missing from:\n%s", want, out)
@@ -1287,5 +1287,17 @@ func TestCheckConfigLoadsTheCandidateInPlaceOfItsFileAndKeepsTheOther(t *testing
 	}
 	if data, _ := os.ReadFile(user); string(data) != "label: home\n" {
 		t.Errorf("the user config changed: %q", data)
+	}
+}
+
+func TestADesignStepAfterThePlanStepIsRefusedWithExit2(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "pipeline:\n  - plan\n  - design\n  - implement\n")
+	f.commit()
+
+	_, err := f.preflight(f.todo, "--plain")
+
+	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), `pipeline entry "design": a design-file step must come before the plan-file step`) {
+		t.Fatalf("code=%d err=%v", code, err)
 	}
 }

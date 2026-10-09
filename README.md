@@ -99,6 +99,16 @@ code at a similar risk, and never puts a cosmetic fix with a deep one. Each grou
 named after its lowest issue number, and lands in one commit that ticks every issue in it. You
 see the groups in a table and can go, drop, split, merge or abort.
 
+**Design** — with a `design` step in the pipeline (the default), the triage also marks each phase
+or group that changes what a user sees: a new or changed screen, view, state, layout or copy, on a
+web page or in a terminal UI. Editing a template that must look the same does not count. The table
+shows a `Design:` line per phase, and you can turn it on or off at the question. A marked phase runs
+`design → plan → implement`: a claude session with the `frontend-design` skill writes
+`.task-plans/phase-<N>-<slug>.design.md` (screens, states, layout, what it reuses, copy, and a
+`DESIGN-INTENT:` line), the plan builds it, and the `ui` reviewer judges the result against that
+intent. The other phases skip the step. A marked phase whose code shows nothing renders differently
+ends the step with `status: no-visual-change`.
+
 An issue has no `Done when:` line, so the plan step must write a test command for it (one for the
 whole group). At land time this test must fail on the old code and pass on the new code, and the
 project's full test suite must also pass.
@@ -133,7 +143,7 @@ r-loop --version
 
 A phase is named by its heading label: `10`, or `10a` for a phase inserted after 10 (`--phases 10a,10b`, `--from 10a`). Order is the order of the headings in the plan.
 
-`<step>` is a row name under `steps:` in the config: `plan`, `implement`, `milestone` or `gate`,
+`<step>` is a row name under `steps:` in the config: `design`, `plan`, `implement`, `milestone` or `gate`,
 or `intake` (see below). The three step flags change only that step, not its reviewers.
 
 ### Free text
@@ -208,17 +218,19 @@ Durations use Go format: `30m`, `1h`, `2h30m`.
 
 ### `pipeline`
 
-The steps run for each phase, in order. Default: `[plan, implement]`.
+The steps run for each phase, in order. Default: `[design, plan, implement]`. A step with check
+`design-file` runs only on the phases the triage marked for design, and must come before the
+`plan-file` step.
 
 ### `steps.<name>`
 
-One row per step kind. Built-in rows: `plan`, `implement`, `milestone` (writes a report when a
+One row per step kind. Built-in rows: `design` (decides the UI of a marked phase), `plan`, `implement`, `milestone` (writes a report when a
 milestone closes) and `gate` (finds the test suite command for an issues file).
 
 | Key | Meaning |
 |---|---|
 | `prompt` | Prompt template name. |
-| `check` | Evidence the step must leave: `plan-file` (a valid plan file, and no other change), `diff` (the worktree changed) or `report` (a non-empty report). |
+| `check` | Evidence the step must leave: `plan-file` (a valid plan file, and no other change), `design-file` (a design with `## States`, `## Reuse map` and a last `DESIGN-INTENT:` line, or `status: no-visual-change` with cited evidence, and no other change), `diff` (the worktree changed) or `report` (a non-empty report). |
 | `provider` | Agent CLI: `claude` or `codex`, or your own provider. |
 | `model` | Model name passed to the provider. A bare lowercase name is an alias for the newest version: claude resolves `opus`/`sonnet` itself; for codex, r-loop resolves `sol`, `luna`, … to the newest listed `gpt-<version>-<alias>` in `codex debug models`, once per start: every session of a run uses the same version, and a `resume` resolves again, picking up a newer release. |
 | `effort` | Reasoning effort passed to the provider. |
@@ -242,12 +254,14 @@ Defaults:
 
 | Step | Provider | Model | Effort | Timeout | Check | Reviewers | Rounds | Review timeout | Fallback |
 |---|---|---|---|---|---|---|---|---|---|
+| `design` | claude | opus | high | 1h | design-file | — | — | — | — |
 | `plan` | claude | opus | high | 1h | plan-file | codex | 2 | 20m | codex |
 | `implement` | claude | opus | medium | 4h | diff | codex, ui | 3 | 45m | codex |
 | `milestone` | claude | opus | medium | 1h | report | — | — | — | — |
 | `gate` | claude | sonnet | medium | 30m | report | — | — | — | — |
 
 Every reviewer runs on codex, sol, high; the fallbacks on codex, sol with the row's effort.
+`design` has no fallback: it needs claude's `frontend-design` skill.
 The `ui` reviewer runs the project's `/test-app` skill. It needs
 `.claude/skills/test-app/SKILL.md`, so it is skipped in projects without that file.
 

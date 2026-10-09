@@ -35,6 +35,12 @@ The phase and its items state the outcome to deliver. Where they prescribe the m
 
 Address each of these warnings in the plan: resolve it, or say under `## Assumptions` why it does not apply.
 {{- end}}
+{{- if .Design}}
+
+## The phase's design
+
+The design step decided what the user sees in `{{.Design}}`. Read it first and plan its implementation: the screens, every state, the layout, the copy and the accessibility it requires are obligations, not proposals. Do not decide them again. Take its reuse map into `## Changes`, and build nothing its "Do not invent" list names.
+{{- end}}
 
 ## 1. Explore
 

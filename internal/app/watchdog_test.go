@@ -838,16 +838,38 @@ func triageIDs(text string) []string {
 }
 
 func allBuild(text string) core.Triage {
+	var design *bool
+	if strings.Contains(text, "The pipeline has a design step") {
+		design = new(bool)
+	}
 	var t core.Triage
 	if !strings.HasPrefix(text, "triage backlog") {
 		for _, id := range triageIDs(text) {
-			t.Phases = append(t.Phases, core.PhaseVerdict{Phase: id, Status: core.VerdictBuild})
+			t.Phases = append(t.Phases, core.PhaseVerdict{Phase: id, Status: core.VerdictBuild, Design: design})
 		}
 		return t
 	}
 	for _, id := range triageIDs(text) {
 		t.Items = append(t.Items, fixItem(id))
-		t.Groups = append(t.Groups, core.Group{ID: "g" + id, Items: []string{id}, Subsystem: "x"})
+		t.Groups = append(t.Groups, core.Group{ID: "g" + id, Items: []string{id}, Subsystem: "x", Design: design})
+	}
+	return t
+}
+
+func noDesign(w *Wiring, t core.Triage) core.Triage {
+	if !core.DesignAsked(w.Loop.Kinds) {
+		return t
+	}
+	t.Phases, t.Groups = slices.Clone(t.Phases), slices.Clone(t.Groups)
+	for i, v := range t.Phases {
+		if v.Design == nil && v.Status == core.VerdictBuild {
+			t.Phases[i].Design = new(bool)
+		}
+	}
+	for i, g := range t.Groups {
+		if g.Design == nil {
+			t.Groups[i].Design = new(bool)
+		}
 	}
 	return t
 }

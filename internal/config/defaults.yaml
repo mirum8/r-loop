@@ -1,8 +1,16 @@
 pipeline:
+  - design
   - plan
   - implement
 
 steps:
+  design:
+    prompt: design
+    check: design-file
+    provider: claude
+    model: opus
+    effort: high
+    timeout: 1h
   plan:
     prompt: plan
     check: plan-file

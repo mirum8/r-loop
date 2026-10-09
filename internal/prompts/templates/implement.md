@@ -9,6 +9,10 @@ A `Resolved first:` list under the phase records decisions the maintainer has al
 
 This phase fixes backlog items {{.GroupItems}} with one change. Every member's outcome is an obligation, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done.
 {{- end}}
+{{- if .Design}}
+
+The design at `{{.Design}}` is the UI spec the plan builds: what each screen shows, in every state, and what it reuses. Build it as written, and never edit it.
+{{- end}}
 
 1. Read the plan at `{{.PlanPath}}` first. It is the contract for this step. Where its `## Why this approach` replaces a means the phase block proposes, follow the plan.
 2. Write the tests from its `## Tests` section before any production code, and see them fail for the right reason. Write them by the rules under `## Writing tests` below.

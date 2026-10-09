@@ -64,8 +64,12 @@ func (d dirs) loadErr(t *testing.T, want string, overrides ...Override) {
 func TestDefaults(t *testing.T) {
 	cfg := newDirs(t).load(t)
 
-	if !reflect.DeepEqual(cfg.Pipeline, []string{"plan", "implement"}) {
+	if !reflect.DeepEqual(cfg.Pipeline, []string{"design", "plan", "implement"}) {
 		t.Errorf("Pipeline = %v", cfg.Pipeline)
+	}
+	wantDesign := StepRow{Prompt: "design", Check: "design-file", Provider: "claude", Model: "opus", Effort: "high", Timeout: time.Hour}
+	if !reflect.DeepEqual(cfg.Steps["design"], wantDesign) {
+		t.Errorf("design = %+v", cfg.Steps["design"])
 	}
 	wantPlan := StepRow{Prompt: "plan", Check: "plan-file", Provider: "claude", Model: "opus", Effort: "high",
 		Fallback: Fallback{Provider: "codex", Model: "sol", Effort: "high"}, Timeout: time.Hour,
@@ -636,6 +640,7 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 	)
 
 	want := strings.Join([]string{
+		"design  claude  opus  high  1h  design-file  ← default",
 		"plan  claude  sonnet  high  1h  plan-file  ← provider default model flag:--model effort default",
 		"  review rounds 2 20m  ← default",
 		"  reviewer codex sol high  ← default",

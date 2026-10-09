@@ -1301,3 +1301,52 @@ func TestAFailedFixerLeavesThePhasesRowAndAResumeForgetsAnOpenOne(t *testing.T) 
 		t.Fatalf("row after a resume %q", row)
 	}
 }
+
+func TestTheStepsLineLeavesOutADesignStepTheTriageSkipped(t *testing.T) {
+	header := Header{RunID: "20260918-140000", Todo: "docs/x/todo.md", Started: t0, Steps: []string{"design", "plan", "implement"}}
+	m := NewModel(header, plan(), NewTheme(lipgloss.NewRenderer(io.Discard), false))
+	for _, ev := range []core.Event{
+		{At: at(0), Kind: "phase-start", Phase: "1", Fields: map[string]string{"phase": "1", "title": "scaffold"}},
+		step(0, 1, "design", "running", "claude", "opus", "high", "ws-1"),
+		step(4, 1, "design", "ok", "claude", "opus", "high", "ws-1"),
+		step(5, 1, "plan", "running", "claude", "opus", "high", "ws-2"),
+	} {
+		m = m.Apply(ev)
+	}
+	if got := ansiStrip(m.pipeline(m.Live, 200)); got != "design ✓ › plan › implement" {
+		t.Fatalf("flagged phase %q", got)
+	}
+
+	for _, ev := range []core.Event{
+		{At: at(22), Kind: "phase-start", Phase: "2", Fields: map[string]string{"phase": "2", "title": "config reader"}},
+		{At: at(22), Kind: "step-skipped", Phase: "2", Step: "design", Fields: map[string]string{"phase": "2", "step": "design", "reason": "not flagged for design at triage"}},
+		step(22, 2, "plan", "running", "claude", "opus", "high", "ws-3"),
+	} {
+		m = m.Apply(ev)
+	}
+
+	if got := ansiStrip(m.pipeline(m.Live, 200)); got != "plan › implement" {
+		t.Fatalf("skipped phase %q", got)
+	}
+	for _, f := range m.Feed {
+		if strings.Contains(f.Text, "not flagged") {
+			t.Errorf("a skipped design step reached the feed: %+v", f)
+		}
+	}
+}
+
+func TestTheFeedNamesTheDesignAndItsSkip(t *testing.T) {
+	for _, c := range []struct {
+		ev   core.Event
+		text string
+	}{
+		{core.Event{Kind: "design", Phase: "1", Fields: map[string]string{"phase": "1", "intent": "the list reads calm and dense."}}, "design: the list reads calm and dense."},
+		{core.Event{Kind: "design-skipped", Phase: "1", Fields: map[string]string{"phase": "1", "reason": "the page renders the same: web/list.html:4"}}, "design skipped: the page renders the same: web/list.html:4"},
+	} {
+		c.ev.At = at(5)
+		m := newModel([]core.Event{c.ev})
+		if len(m.Feed) != 1 || !strings.HasSuffix(m.Feed[0].Text, c.text) || m.Feed[0].Tone != toneDim {
+			t.Errorf("%s: feed %+v, want %q", c.ev.Kind, m.Feed, c.text)
+		}
+	}
+}

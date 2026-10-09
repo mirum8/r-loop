@@ -11,7 +11,7 @@ import (
 
 var _ core.Prompts = (*Renderer)(nil)
 
-var stepTemplates = []string{"plan", "implement", "review", "review-plan", "review-ui", "review-security", "fix", "milestone", "gatefix", "gate"}
+var stepTemplates = []string{"design", "plan", "implement", "review", "review-plan", "review-ui", "review-security", "fix", "milestone", "gatefix", "gate"}
 
 func TestEveryStepPromptTellsTheAgentToWriteTheSentinelAtomically(t *testing.T) {
 	r := New(t.TempDir())
@@ -87,6 +87,10 @@ func fullVars() map[string]any {
 		"Addendum":        "",
 		"GroupItems":      "",
 		"TriageNotes":     "",
+		"DesignPath":      ".task-plans/phase-7.design.md",
+		"DesignNote":      "",
+		"Design":          "",
+		"DesignIntent":    "",
 		"IncidentPath":    "/runs/r1/fix-b3/incident.md",
 		"ProposalPath":    "/runs/r1/fix-b3/proposal.json",
 		"Root":            "/repo",
@@ -1061,7 +1065,7 @@ func TestPromptsThatWriteTestsCarryTheTestRules(t *testing.T) {
 
 func TestPromptsThatWriteNoTestsCarryNoTestRules(t *testing.T) {
 	r := New(t.TempDir())
-	for _, name := range []string{"review-ui", "gate", "gatefix", "milestone", "watchdog", "intake"} {
+	for _, name := range []string{"design", "review-ui", "gate", "gatefix", "milestone", "watchdog", "intake"} {
 		t.Run(name, func(t *testing.T) {
 			vars := fullVars()
 			vars["Text"], vars["Dir"], vars["Root"], vars["Usage"] = "phase 3", "/repo", "/repo", ""
@@ -1219,6 +1223,104 @@ func TestFixerPromptIsOverridable(t *testing.T) {
 	text, source, err := New(dir).Render("fixer", fullVars())
 
 	if err != nil || text != "read /runs/r1/fix-b3/incident.md" || source != path {
+		t.Errorf("text %q source %q err %v", text, source, err)
+	}
+}
+
+func TestDesignPromptLoadsTheRubricAndWritesOnlyTheDesign(t *testing.T) {
+	text := render(t, New(t.TempDir()), "design", with("DesignNote", "the store screen gains an empty state"))
+
+	for _, want := range []string{
+		"# Design phase 7 — PromptRenderer",
+		"Write the design to `.task-plans/phase-7.design.md` and touch no other file",
+		"The watchdog flagged this phase for design: the store screen gains an empty state",
+		"Load the `frontend-design` skill with the Skill tool first",
+		"write a `failed` sentinel whose reason is `frontend-design is not available`",
+		"`DESIGN.md`",
+		"Never start a second visual language",
+		"For a terminal UI",
+		"`## States` and `## Reuse map` are never left out",
+		"`## States` — what each changed screen shows for default, empty, loading, error, success and no permission",
+		"`## Reuse map` — each existing component",
+		"\"Do not invent\" list",
+		"`## Decisions`",
+		"DESIGN-INTENT: <at most two sentences",
+		"status: no-visual-change",
+		"## Evidence",
+		"never how the code is structured",
+		"## Naming the commit",
+		"ask_watchdog",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("design prompt missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "## Writing tests") {
+		t.Errorf("the design prompt carries the test rules")
+	}
+	if strings.Contains(render(t, New(t.TempDir()), "design", fullVars()), "flagged this phase") {
+		t.Errorf("design prompt names a flag without a note")
+	}
+}
+
+func TestPlanAndImplementBuildTheDesignOnlyWhenThereIsOne(t *testing.T) {
+	r := New(t.TempDir())
+	vars := with("Design", ".task-plans/phase-7.design.md")
+
+	plan := render(t, r, "plan", vars)
+	implement := render(t, r, "implement", vars)
+
+	for _, want := range []string{"## The phase's design", "decided what the user sees in `.task-plans/phase-7.design.md`", "Do not decide them again", "Take its reuse map into `## Changes`"} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("plan missing %q", want)
+		}
+	}
+	if !strings.Contains(implement, "The design at `.task-plans/phase-7.design.md` is the UI spec the plan builds") {
+		t.Errorf("implement lacks the design:\n%s", implement)
+	}
+	for _, name := range []string{"plan", "implement"} {
+		if strings.Contains(render(t, r, name, fullVars()), "design at") || strings.Contains(render(t, r, name, fullVars()), "## The phase's design") {
+			t.Errorf("%s names a design without one", name)
+		}
+	}
+}
+
+func TestTheUIReviewJudgesAgainstTheDesignIntentOnlyWhenThereIsOne(t *testing.T) {
+	r := New(t.TempDir())
+	vars := with("DesignIntent", "the list reads calm and dense.")
+	vars["Design"] = ".task-plans/phase-7.design.md"
+
+	text := render(t, r, "review-ui", vars)
+
+	if !strings.Contains(text, "8. The phase's design (`.task-plans/phase-7.design.md`) set this intent: \"the list reads calm and dense.\". Judge the visual check against it") {
+		t.Errorf("review-ui lacks the intent:\n%s", text)
+	}
+	if strings.Contains(render(t, r, "review-ui", fullVars()), "set this intent") {
+		t.Errorf("review-ui names an intent without one")
+	}
+}
+
+func TestIntakeNamesTheDesignStep(t *testing.T) {
+	text := render(t, New(t.TempDir()), "intake", map[string]any{"Dir": "/repo", "Text": "x", "Usage": "u", "Root": "/repo", "Unattended": false})
+
+	if !strings.Contains(text, "pipeline step (`design`, `plan`, `implement`, `milestone`, `gate`)") {
+		t.Errorf("intake:\n%s", text)
+	}
+}
+
+func TestDesignPromptIsOverridable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".r-loop", "prompts", "design.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("design {{.DesignPath}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	text, source, err := New(dir).Render("design", fullVars())
+
+	if err != nil || text != "design .task-plans/phase-7.design.md" || source != path {
 		t.Errorf("text %q source %q err %v", text, source, err)
 	}
 }

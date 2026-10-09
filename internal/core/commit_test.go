@@ -24,6 +24,7 @@ func TestValidSubject(t *testing.T) {
 		{"phase label", "feat(core): phase 3", "describe the change"},
 		{"phase and title", "feat: Phase 3 implement", "describe the change"},
 		{"step label", "chore(r-loop): implement", "describe the change"},
+		{"design step label", "docs(ui): design", "describe the change"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

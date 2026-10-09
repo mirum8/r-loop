@@ -13,7 +13,7 @@ const maxSubject = 100
 
 var (
 	subjectShape = regexp.MustCompile(`^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9][a-z0-9._/-]*\))?!?: (.+)$`)
-	labelOnly    = regexp.MustCompile(`(?i)^(phase\s*\d+\b.*|plan|implement|gatefix|fix|review|wip|changes|update)$`)
+	labelOnly    = regexp.MustCompile(`(?i)^(phase\s*\d+\b.*|design|plan|implement|gatefix|fix|review|wip|changes|update)$`)
 )
 
 func ValidSubject(s string) error {

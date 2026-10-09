@@ -296,3 +296,23 @@ func TestFixLinesNameTheFixAndWhatHappened(t *testing.T) {
 		t.Fatalf("got %q, want %q", out.String(), want)
 	}
 }
+
+func TestDesignLinesNameTheSkipTheIntentAndTheNoVisualChange(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	for _, ev := range []core.Event{
+		{At: at, Kind: "step-skipped", Phase: "2", Step: "design", Fields: map[string]string{"phase": "2", "step": "design", "reason": "not flagged for design at triage"}},
+		{At: at, Kind: "design", Phase: "3", Fields: map[string]string{"phase": "3", "intent": "the list reads calm and dense."}},
+		{At: at, Kind: "design-skipped", Phase: "4", Fields: map[string]string{"phase": "4", "reason": "the page renders the same: web/list.html:4"}},
+	} {
+		f.Emit(ev)
+	}
+
+	want := "14:03:09  phase 2  design  skipped: not flagged for design at triage\n" +
+		"14:03:09  phase 3  design: the list reads calm and dense.\n" +
+		"14:03:09  phase 4  design skipped: the page renders the same: web/list.html:4\n"
+	if out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
