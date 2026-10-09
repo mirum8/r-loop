@@ -1316,3 +1316,82 @@ applies it on the maintainer's quoted confirmation and settles the blocker as `r
   `fix-failed`, with a feed line for each fix event; plain prints each as a line. The run report and
   `r-loop status` list `fix-b<n> <kind>: <cause> → applied|rejected|failed (<reason>)`, `open` while
   the fixer runs and `proposed` while it waits.
+
+## Milestone 20 — The design step
+
+ADR-92. A phase that changes what a user sees gets a `design` step before `plan`: a claude session
+with `frontend-design` writes the phase's UI/UX design, the plan builds it, and the `ui` reviewer
+judges the rendered result against its intent. The watchdog's triage decides which phases those are.
+
+- **Design-aware run** — `core.DesignAsked(kinds []StepKind) bool`: true when an entry's `Check` is
+  `design-file`. `core.Pipeline` refuses a second `design-file` entry and one that is not before the
+  `plan-file` entry: `pipeline entry "<name>": a design-file step must come before the plan-file step`
+  (exit 2 through config).
+- **Triage verdicts** — `PhaseVerdict` and `Group` gain `Design *bool` (`json:"design,omitempty"`) and
+  `DesignNote string` (`json:"design_note,omitempty"`). With `DesignAsked`: every `build` phase and
+  every group carries `design`; `true` needs a non-empty `design_note` with no control character;
+  refusals `phase <id>: design is required — does it change what a user sees?`,
+  `phase <id>: design true needs a design_note naming what changes`, and the same with `group <id>`.
+  A non-`build` phase may omit it. Without `DesignAsked`, any `design` or `design_note` is refused:
+  `the pipeline has no design step: leave design out`.
+  `ValidateTriage(plan, list, t, cite, designAsked bool)` and `TriageText(plan, list, ask, designAsked
+  bool)` take the flag; with it, the text adds one line: `The pipeline has a design step: give every
+  build phase (every group) design true or false, as your prompt's "Design" rule says.`
+- **The gate** — `GateDecision` gains `DesignOn, DesignOff []string` (`json:"design_on,omitempty"`,
+  `json:"design_off,omitempty"`). `ApplyGate` refuses them without `DesignAsked`, an id that is not a
+  kept phase or group, and an id in both lists; `design_on` sets `Design` true with the note
+  `turned on by the maintainer` unless it already had one; `design_off` sets it false and clears the
+  note. `submit_gate`'s input type gains both keys.
+- **On the phase** — `core.Phase` gains `Design bool` and `DesignNote string`. `TriageResult` copies a
+  verdict's flag and note onto the kept phase; `GroupBacklog` copies a group's onto its head phase.
+- **Run list** — `recordRunList` adds `fields["design"]`, a JSON object `{"<phase id>": "<note>"}` of
+  the flagged phases, absent when none is. `core.RunListDesign(fields) map[string]string` reads it;
+  `resume` applies it to the plan's phases after `GroupBacklog`. A run list recorded without the field
+  flags nothing.
+- **Table** — `RenderTriage`, with `DesignAsked`, adds a line to each kept phase's block:
+  `Design: <note>` or `Design: —`; the summary line counts `<n> to design`.
+- **Paths** — `phaseDesignPath(n, title)` is `phasePlanPath(n, title)` with `.md` replaced by
+  `.design.md`. `planTouched` lets the design step change its own design path, and no other step.
+- **Step vars** — `StepVars` adds `DesignPath` (always), `DesignNote` (`ph.DesignNote`), `Design` and
+  `DesignIntent` (both `""`). `RunLoop.ref` sets `Design` to the design path and `DesignIntent` to the
+  intent once the phase's design step is `ok` and its file is not a skip; reviewers inherit both
+  through the worker's vars.
+- **Gating** — in `runPhase`, a kind whose `Check` is `design-file` on a phase with `Design` false is
+  not run: the driver emits `step-skipped{phase, step, reason: "not flagged for design at triage"}`,
+  appends no step record, and goes on to the next kind. A resumed run does the same.
+- **Evidence check `design-file`** — registered beside `plan-file`. Reads `DesignPath` in the worktree.
+  Passes when the file has `status: no-visual-change` in its header and a `## Evidence` with at least
+  one `path:line`, or when it has `## States`, `## Reuse map` and, as its last non-empty line,
+  `DESIGN-INTENT: <text>` with non-empty text. Fails `no design at <path>`, `design: missing <heading>`,
+  `design: no DESIGN-INTENT line`, `design: no-visual-change needs a cited ## Evidence`, and
+  `design step changed <file>` for any changed file other than the design path.
+  `core.DesignOf(path, fsys) (intent, skip string)` reads a passing file: the intent, or the skip
+  evidence.
+- **Events** — `step-skipped{phase, step, reason}`; `design-skipped{phase, reason}` when the design
+  step passed on `no-visual-change`; `design{phase, intent}` when it passed with a design.
+- **Prompts** — `design.md` (new, in the renderer's `names`, overridable as
+  `.r-loop/prompts/design.md`): load `frontend-design` with the Skill tool first, and when it is not
+  listed write a `failed` sentinel `frontend-design is not available`; read the phase block, the
+  `DesignNote`, the design system (`DESIGN.md`, tokens, the CSS custom properties, the neighbouring
+  screens; for a terminal UI the colour tokens, cell layout and the 80-column limit) and build on it,
+  never a second visual language; write `DesignPath` with `## Screens`, `## States` (default, empty,
+  loading, error, success, no permission, each or why not), `## Layout` (a text wireframe per screen),
+  `## Reuse map` (`path:line` for each reused thing, then "Do not invent"), `## Responsive` (web
+  widths, or terminal geometries), `## Accessibility`, `## Copy`, `## Decisions` (each with what it
+  rejected), sized to the change but never without `## States` and `## Reuse map`, ending with
+  `DESIGN-INTENT: <at most two sentences>`; or `status: no-visual-change` with a cited `## Evidence`
+  when the code shows nothing renders differently; change no other file; no class names or code
+  structure. `plan.md` gains `{{if .Design}}`: read `{{.Design}}`, plan its implementation without
+  re-deciding it, take its reuse map into `## Changes`. `implement.md` gains `{{if .Design}}`: the
+  design at `{{.Design}}` is the UI spec. `review-ui.md` gains `{{if .DesignIntent}}`: judge the
+  visual check against the intent, and report where the result departs from it. `watchdog.md`'s
+  "Triage" gains the "Design" rule: the rendered result, not the file kind; a phase meant to look as
+  it does today is `false`; the note names the screen or view that changes.
+- **Config** — `defaults.yaml`: `pipeline: [design, plan, implement]` and the row `design: {prompt:
+  design, check: design-file, provider: claude, model: opus, effort: high, timeout: 1h}`, no
+  fallback, no reviewers. `--provider`, `--model` and `--effort` accept `design=`. `intake.md` lists
+  `design` among the steps.
+- **Faces** — the TUI shows the design step on the phase's row like any step; `step-skipped` leaves it
+  out of the row and adds no feed line; `design-skipped` and `design` add a feed line
+  (`design skipped: <reason>`, `design: <intent>`). Plain prints `step-skipped`, `design-skipped` and
+  `design` as lines.

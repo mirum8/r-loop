@@ -164,7 +164,7 @@ section:target > h2 { color: var(--clay); }
       </ul></li>
     <li class="p"><a href="#p6">Part 6 · Decisions</a>
       <ul>
-        <li class="s"><a href="#adr-index">ADR-1 … ADR-91</a></li>
+        <li class="s"><a href="#adr-index">ADR-1 … ADR-92</a></li>
       </ul></li>
     <li class="p"><a href="#p7">Part 7 · Technical details</a>
       <ul>
@@ -405,6 +405,19 @@ the watchdog shows me the proposal in its own session, and on my confirm the dri
 commands, writes the config, and retries the step in the same run, with no halt and no
 <code>r-loop resume</code>; <em>and</em> when I reject it, or the cause is a bug in r-loop itself, the
 blocker stays with the watchdog and its usual options (<a href="#adr-91">ADR-91</a>).</p>
+
+<h3>Have a phase's UI designed before it is planned</h3>
+<p>As the <strong>maintainer</strong>, I want a phase that changes what a user sees designed by a
+session of its own before the plan step, so that the screens, their states and what they reuse are
+decided once, against the app's design system, and not by an implementer while writing templates.</p>
+<p><em>Given</em> a plan whose phase 7 adds an empty and an error state to a list page and whose
+phase 8 self-hosts the fonts with the pages meant to look the same, <em>when</em> the run starts,
+<em>then</em> the watchdog's triage flags phase 7 for design and not phase 8, with the page it
+changes as the note, and the table I confirm shows both; phase 7 runs <code>design → plan →
+implement</code>, its plan builds what the design decided, and the <code>ui</code> reviewer judges
+the rendered page against the design's stated intent; phase 8 records the design step as skipped
+and goes straight to its plan; <em>and</em> neither the todo nor the issues file carries anything
+that says which phase needs design (<a href="#adr-92">ADR-92</a>).</p>
 
 <h3>Stop a run without losing work</h3>
 <p>As the <strong>maintainer</strong>, I want to stop the loop while leaving sessions and worktrees
@@ -1699,7 +1712,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Eighty-seven decisions, each with the alternative that was live at the time; eleven are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and forty-four carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, ADR-90 keeps an agent's pane size from ever failing a run, and ADR-91 hands a blocker a retry will not clear to a fixer session that proposes a fix the driver applies, on the maintainer's confirmation, without stopping the run.</p>
+<p class="lede">Eighty-seven decisions, each with the alternative that was live at the time; eleven are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and forty-four carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, ADR-90 keeps an agent's pane size from ever failing a run, ADR-91 hands a blocker a retry will not clear to a fixer session that proposes a fix the driver applies, on the maintainer's confirmation, without stopping the run, and ADR-92 adds a design step that a claude session with <code>frontend-design</code> runs before the plan step on the phases the watchdog's triage flags as changing what a user sees.</p>
 
 <div id="adr-index">
 
@@ -2512,7 +2525,7 @@ installed by someone other than the maintainer.</p>
 
 <div class="adr">
 <h3 id="adr-45">ADR-45 — A step kind is a prompt, a config row and an evidence check</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-56">ADR-56</a> — review is no longer an entry; any row may carry a review half, and the findings and verdict checks belong to it</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-56">ADR-56</a> — review is no longer an entry; any row may carry a review half, and the findings and verdict checks belong to it · amended by <a href="#adr-92">ADR-92</a> — an entry whose check is <code>design-file</code> runs only on the phases the triage flagged for design, and is recorded as skipped on the others</p>
 <p><span class="f">Context</span> <em>Add a step to every phase</em> (Part 1) and
 <em>extensibility</em>. With plan, implement and review hard-wired, every extra pass a project
 wants is an edit to <code>RunLoop</code>, which is where <em>determinism of approval</em> lives.</p>
@@ -3264,7 +3277,7 @@ watchdog's pane, or a halt for a gone watchdog costs more than the answer would 
 
 <div class="adr">
 <h3 id="adr-74">ADR-74 — The UI test is a named reviewer on implement, gated on the project's test-app skill</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-23">ADR-23</a> and <a href="#adr-4">ADR-4</a> · amended by <a href="#adr-81">ADR-81</a> — a reviewer with no <code>prompt</code> renders <code>review-plan</code> on the plan row and <code>review</code> elsewhere</p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-23">ADR-23</a> and <a href="#adr-4">ADR-4</a> · amended by <a href="#adr-81">ADR-81</a> — a reviewer with no <code>prompt</code> renders <code>review-plan</code> on the plan row and <code>review</code> elsewhere · amended by <a href="#adr-92">ADR-92</a> — on a phase with a design, the reviewer is given the design's intent and judges the rendered result against it</p>
 <p><span class="f">Context</span> Dropping the Workflows (<a href="#adr-4">ADR-4</a>) lost
 <code>/r:task-review</code>'s UI track: deploy the app, drive what the diff changed through the
 project's own <code>/test-app</code> skill, and look at how it renders — three viewports for a web
@@ -3379,7 +3392,7 @@ reliably, or a provider cannot take a typed message while its turn is over.</p>
 
 <div class="adr">
 <h3 id="adr-77">ADR-77 — Before a run starts, the watchdog verifies the run list and the maintainer confirms a table the driver builds</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-53">ADR-53</a>, <a href="#adr-71">ADR-71</a> and <a href="#adr-72">ADR-72</a> · amended 2026-10-02: relevance verdicts and the item approach</p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-53">ADR-53</a>, <a href="#adr-71">ADR-71</a> and <a href="#adr-72">ADR-72</a> · amended 2026-10-02: relevance verdicts and the item approach · amended by <a href="#adr-92">ADR-92</a> — when the pipeline has a design step, every <code>build</code> phase and every group carries <code>design</code>, the table shows it, the gate may turn it on or off, and the <code>run-list</code> records it</p>
 <p><span class="f">Context</span> Before <code>/r:plan-run</code> or <code>/r:issues-fix</code>
 builds anything, the skill-pack checks the plan's shape, verifies the work against the code, and
 shows a summary table for the maintainer to confirm. r-loop ran straight from preflight into the
@@ -4065,6 +4078,69 @@ run but not undone by anything; the previous config is kept beside the incident.
 confirms nearly every proposal unread.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-92">ADR-92 — A phase that changes what a user sees is designed before it is planned, and the watchdog's triage decides which phases those are</h3>
+<p><span class="f">Status</span> accepted 2026-10-09 · amends <a href="#adr-45">ADR-45</a>, <a href="#adr-74">ADR-74</a> and <a href="#adr-77">ADR-77</a></p>
+<p><span class="f">Context</span> <code>/r:task-run</code> decides a UI before planning it: when the
+rendered result changes, a separate agent loads <code>frontend-design</code>, reads the app's design
+system and writes the screens, their states, the layout, what the change reuses, and a two-sentence
+intent that the plan builds on and the visual review is judged against. It had been a paragraph in
+the planner's prompt, and there it lost to the plan's other sections: the plans carried markup and no
+stated visual intent, the implementer made the visual decisions while writing templates, and the
+review judged the result by general taste. r-loop's plan step has the same paragraph-shaped gap. Which
+phases need a design cannot come from the plan: neither a <code>todo.md</code> written by
+<code>/r:spec-design</code> nor an issues file carries such a criterion, and the driver decides
+nothing that needs judgement (<a href="#adr-71">ADR-71</a>). The question is also narrower than
+"does a frontend file change": self-hosting a font or renaming a class edits templates and decides
+nothing about what the user sees.</p>
+<p><span class="f">Decision</span> Three parts. <em>The flag</em>: when the pipeline has an entry
+whose check is <code>design-file</code>, the triage (<a href="#adr-77">ADR-77</a>) asks the watchdog,
+for every <code>build</code> phase and every backlog group, whether the phase changes what a user sees
+or interacts with — a new or changed screen, view, state, layout, visual treatment or user-facing copy,
+on a web page or in a terminal UI — and not merely whether it edits a template or a stylesheet. A
+<code>design: true</code> verdict needs a <code>design_note</code> naming what changes; a phase meant
+to render as it does today is <code>false</code>. The driver refuses a submission that leaves a flag
+out or sets one with no design step in the pipeline, shows the flag as a column of the table, lets the
+gate turn it on or off by id (<code>design_on</code>, <code>design_off</code>), and records the flags
+and notes on the <code>run-list</code>, so a resumed run keeps them. <em>The step</em>: the shipped
+pipeline is <code>design → plan → implement</code>. The <code>design</code> row is a claude session
+with no reviewers and no fallback; its prompt loads the <code>frontend-design</code> skill and fails
+the step, naming it, when the skill is not listed. It reads the phase block, the watchdog's note and
+the app's design system (<code>DESIGN.md</code>, tokens, the neighbouring screens), changes no file
+but its own, and writes <code>.task-plans/phase-&lt;N&gt;-&lt;slug&gt;.design.md</code> beside the
+phase plan: screens, states, layout with a text wireframe, a reuse map with <code>path:line</code>
+pointers and a do-not-invent list, responsive or terminal geometry, accessibility, copy, and the
+decisions with what each rejected, ending with one <code>DESIGN-INTENT:</code> line. The
+<code>design-file</code> check passes on a file with <code>## States</code>, <code>## Reuse map</code>
+and the intent line, or on <code>status: no-visual-change</code> with a cited
+<code>## Evidence</code>, which records <code>design-skipped</code>. On a phase the triage did not
+flag, the driver records <code>step-skipped</code> for the entry and starts no session. The step's
+file is committed once, like any step's work (<a href="#adr-58">ADR-58</a>). <em>The hand-off</em>:
+the plan prompt carries the design's path and plans its implementation without re-deciding it; the
+implement step and its reviewers carry the intent, and the <code>ui</code> reviewer
+(<a href="#adr-74">ADR-74</a>) judges what it captures against it.</p>
+<p><span class="f">Alternatives</span> A <code>## UI/UX design</code> section in the plan step's
+prompt — rejected: it is the paragraph task-run moved out, for the reason above. A marker on the phase
+written by <code>/r:spec-design</code> or <code>/r:issues-draft</code> — rejected: an issues file has
+no such field and a todo is written before anyone reads the code that decides it; r-loop must work on
+the plans it is given. The design step deciding for itself on every phase — rejected as the gate: it
+spends a session on every backend phase to say there is nothing to design; it stays as the second
+layer, for a flagged phase whose code turns out to change nothing visible. The watchdog deciding in
+each phase check — rejected: the phase check may only warn and has no typed result, while the triage
+has a typed submission, a recorded table and the maintainer's confirmation. A reviewer of the design
+— rejected: the design's bar is the <code>frontend-design</code> rubric the session already works
+against, and the <code>ui</code> reviewer judges the rendered result against the stated intent. A
+codex fallback — rejected: codex has no <code>frontend-design</code>, and a design made without it is
+the one this step exists to replace.</p>
+<p><span class="f">Consequences</span> A flagged phase costs one more claude session before its plan;
+an unflagged one costs nothing. The triage carries one more field per phase and the table one more
+column. A design step that fails is a blocker like any other (<a href="#adr-82">ADR-82</a>); the run
+never plans a flagged phase without its design. A project config whose <code>pipeline</code> names no
+design entry runs as before, and its triage asks nothing about design.</p>
+<p><span class="f">Revisit when</span> the maintainer turns most flags over at the gate, or most
+flagged phases end in <code>no-visual-change</code>.</p>
+</div>
+
 
 
 
@@ -4174,13 +4250,21 @@ named reason on stderr; there is nothing paginated.</p>
 # Every key is optional: a missing one resolves from ~/.config/r-loop/, then from the
 # defaults built into the binary, and the banner names where each value came from.
 pipeline:                     # the phase's steps, in order (ADR-45)
+  - design                    # runs only on a phase the triage flagged for design (ADR-92)
   - plan
   - implement
 
 steps:
+  design:                     # the UI/UX design, with frontend-design, before the plan (ADR-92)
+    prompt: design
+    check: design-file        # the design file, or status: no-visual-change with evidence
+    provider: claude          # no fallback: only claude has frontend-design
+    model: opus
+    effort: high
+    timeout: 1h
   plan:
     prompt: plan              # .r-loop/prompts/plan.md, else the embedded default
-    check: plan-file          # plan-file | diff | report
+    check: plan-file          # plan-file | design-file | diff | report
     provider: claude
     model: opus
     effort: high

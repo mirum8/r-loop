@@ -44,6 +44,10 @@ ADR-91 added Milestone 19, Phases 50–52: a blocker a retry will not clear goes
 that proposes a fix without changing anything; the driver applies it — commands and an r-loop config
 file — on the maintainer's confirmation through the watchdog, reloads the config and retries the step
 in the same run.
+ADR-92 added Milestone 20, Phases 53–55: the watchdog's triage flags each phase or group that changes
+what a user sees, and a `design` step — claude with `frontend-design`, no reviewers — runs before
+`plan` on the flagged ones only; the plan builds its design and the `ui` reviewer judges against its
+intent.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -84,6 +88,9 @@ in the same run.
 - Wave 34: Phase 50
 - Wave 35: Phase 51
 - Wave 36: Phase 52
+- Wave 37: Phase 53
+- Wave 38: Phase 54
+- Wave 39: Phase 55
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -863,6 +870,49 @@ Contracts: `tech-design.md#milestone-19-the-fixer`
 - [x] the TUI shows `fixer · b<n>` on the phase's row from `fix-started` until `fix-proposed` or `fix-failed`, with a feed line for each fix event; the plain face prints each; the run report and `r-loop status` list `fix-b<n> <kind>: <cause> → <state>`; `README.md` describes the flow
 - [x] `fixer_test.go` proves apply with stub commands, the stop at a failing command, a tree changed by a command, the config written with its backup, a failed reload restored, and reject; `blockers_test.go` proves the retry settled by a fix and not counted; `watchdog_test.go` proves the record-then-resume order, the nil-handler refusal and the 404; `app/watchdog_test.go` proves a wired run in which a step fails, the watchdog takes `fix`, a scripted fixer proposes a config change, `apply_fix` applies it and the step's next attempt starts with the new provider flags and the run exits 0; the face, report and status tests prove their lines
 **Done when:** `go test -race ./...` is green and `grep -n "apply_fix" internal/askmcp/watchdog.go internal/prompts/templates/watchdog.md` prints the tool and the prompt section.
+
+## Milestone 20 — The design step
+Contracts: `tech-design.md#milestone-20-the-design-step`
+
+### Phase 53 — The triage flags each phase for design
+**Implements:** Have a phase's UI designed before it is planned
+**Depends on:** Phase 52
+**Files:** `internal/core/kinds.go` (modify) · `internal/core/kinds_test.go` (new) · `internal/core/types.go` (modify) · `internal/core/triage.go` (modify) · `internal/core/triage_test.go` (modify) · `internal/askmcp/watchdog.go` (modify) · `internal/askmcp/watchdog_test.go` (modify) · `internal/app/triage.go` (modify) · `internal/app/triage_test.go` (modify) · `internal/app/resume.go` (modify) · `internal/app/resume_test.go` (modify) · `internal/prompts/templates/watchdog.md` (modify) · `internal/prompts/render_test.go` (modify)
+**Risk:** none
+- [ ] `core.DesignAsked(kinds)` is true when an entry's check is `design-file`; `core.Pipeline` refuses a second `design-file` entry and one that is not before the `plan-file` entry, naming the entry
+- [ ] `PhaseVerdict` and `Group` gain `design` and `design_note`; `core.Phase` gains `Design` and `DesignNote`; `GateDecision` gains `design_on` and `design_off`, and `submit_gate`'s input type carries both
+- [ ] `ValidateTriage` with `designAsked` refuses a `build` phase or a group without `design`, a `design: true` without a note or with a control character in it, and, without `designAsked`, any `design` or `design_note`, each with the reason in `tech-design.md`; a non-`build` phase may omit it
+- [ ] `TriageText` with `designAsked` adds the design line; `ApplyGate` turns flags on and off by id, refusing an unknown id, an id in both lists and either list without `designAsked`; `TriageResult` and `GroupBacklog` carry the flag and note onto the kept phase
+- [ ] `RenderTriage` adds `Design: <note>` or `Design: —` to each kept phase's block and `<n> to design` to the summary, only with `designAsked`
+- [ ] `recordRunList` records `design` as a JSON object of the flagged phases' notes; `core.RunListDesign` reads it; `resume` applies it after `GroupBacklog`, and a run list without it flags nothing
+- [ ] `watchdog.md`'s "Triage" gains the "Design" rule: judge the rendered result, not the file kind; a phase meant to look as it does today is `false`; the note names the screen or view that changes
+- [ ] tests prove the pipeline refusals, every validation refusal and the accepted plan and backlog submissions, the gate's on and off and its refusals, the flags on the kept phases and the group head, the table line, the recorded and resumed flags, a run list without the field, and the prompt rule
+**Done when:** `go test -race ./internal/core/... ./internal/askmcp/... ./internal/app/... ./internal/prompts/...` is green and `grep -n "design_note" internal/core/triage.go` prints the field.
+
+### Phase 54 — The `design` step runs on flagged phases, and its file is judged by code
+**Implements:** Have a phase's UI designed before it is planned
+**Depends on:** Phase 53
+**Files:** `internal/core/loop.go` (modify) · `internal/core/loop_test.go` (modify) · `internal/core/evidence.go` (modify) · `internal/core/evidence_test.go` (modify) · `internal/core/checks.go` (modify) · `internal/core/checks_test.go` (modify)
+**Risk:** none
+- [ ] `phaseDesignPath(n, title)` is the phase plan's path with `.design.md`; `planTouched` lets only the design step change it
+- [ ] `StepVars` adds `DesignPath`, `DesignNote`, `Design` and `DesignIntent`; `RunLoop.ref` sets `Design` and `DesignIntent` once the phase's design step is `ok` with a design, also when that step was `ok` before a resume, so the plan, the implement step and every reviewer get them
+- [ ] in `runPhase`, a `design-file` kind on a phase with `Design` false emits `step-skipped` with its reason, appends no step record and starts no session; a flagged phase runs it like any step, before `plan`
+- [ ] the `design-file` evidence check passes on a design with `## States`, `## Reuse map` and a last `DESIGN-INTENT:` line, or on `status: no-visual-change` with a cited `## Evidence`, and fails with each reason in `tech-design.md`, including any changed file other than the design path; `core.DesignOf` returns the intent or the skip evidence
+- [ ] a passing design emits `design{phase, intent}`; a passing skip emits `design-skipped{phase, reason}` and leaves `Design` and `DesignIntent` empty for the later steps
+- [ ] tests prove, with the fakes: an unflagged phase skipped with no session and no step record, a flagged phase run before plan, the plan and implement refs and a reviewer's vars carrying the design, the skip leaving them empty, the resume re-reading the design from the worktree, every check outcome, and `planTouched` for the design path
+**Done when:** `go test -race ./internal/core/...` is green and `grep -n '"design-file"' internal/core/evidence.go` prints the registration.
+
+### Phase 55 — The design prompt, the shipped row, the hand-offs and the faces
+**Implements:** Have a phase's UI designed before it is planned
+**Depends on:** Phase 54
+**Files:** `internal/prompts/render.go` (modify) · `internal/prompts/templates/design.md` (new) · `internal/prompts/templates/plan.md` (modify) · `internal/prompts/templates/implement.md` (modify) · `internal/prompts/templates/review-ui.md` (modify) · `internal/prompts/templates/intake.md` (modify) · `internal/prompts/render_test.go` (modify) · `internal/config/defaults.yaml` (modify) · `internal/config/reader_test.go` (modify) · `internal/app/wire.go` (modify) · `internal/app/app_test.go` (modify) · `internal/face/tui/model.go` (modify) · `internal/face/tui/model_test.go` (modify) · `internal/face/plain/plain.go` (modify) · `internal/face/plain/plain_test.go` (modify) · `README.md` (modify)
+**Risk:** none
+- [ ] `design.md` is in the renderer's `names` and overridable as `.r-loop/prompts/design.md`; it says: load `frontend-design` first and fail the step naming it when the skill is not listed; read the phase block, the note and the design system, web or terminal, and build on it; write the design file with the sections in `tech-design.md`, sized to the change but never without `## States` and `## Reuse map`, ending with `DESIGN-INTENT:`; or `status: no-visual-change` with a cited `## Evidence`; change no other file and decide no code structure
+- [ ] `plan.md` and `implement.md` gain the `{{if .Design}}` block, `review-ui.md` the `{{if .DesignIntent}}` block, and `intake.md` lists `design` among the steps
+- [ ] `defaults.yaml` ships `pipeline: [design, plan, implement]` and the `design` row (claude, opus, high, 1h, no fallback, no reviewers); `--provider`, `--model` and `--effort` accept `design=`; a project config whose pipeline has no design entry runs and triages as before
+- [ ] the TUI leaves a skipped design step out of the phase's row and adds a feed line for `design` and `design-skipped`; plain prints `step-skipped`, `design` and `design-skipped`; `README.md` describes the step, its row and the triage flag
+- [ ] `render_test.go` proves each template's wording with and without a design; `reader_test.go` the shipped pipeline and row and the pipeline-order refusal; the face tests their lines; `app_test.go` proves a wired run of a two-phase plan in which the scripted watchdog flags phase 1 only, phase 1 runs `design → plan → implement` with the design path in the plan prompt and the intent in the `ui` reviewer's, and phase 2 records the design step skipped and runs `plan → implement`
+**Done when:** `go test -race ./...` is green and `grep -n "^  - design" internal/config/defaults.yaml` prints the entry.
 
 ## Open questions
 
