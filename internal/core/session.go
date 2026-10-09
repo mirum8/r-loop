@@ -642,6 +642,7 @@ func (m *SessionManager) evidence(s *Session) EvidenceContext {
 		StartSHA:    s.StartSHA,
 		StartTree:   s.StartTree,
 		PlanPath:    str("PlanPath"),
+		DesignPath:  str("DesignPath"),
 		TodoPath:    repoRel(m.Repo.Root(), str("TodoPath")),
 		VerdictPath: str("VerdictPath"),
 		RoundTree:   str("RoundTree"),

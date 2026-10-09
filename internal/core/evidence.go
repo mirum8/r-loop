@@ -18,7 +18,7 @@ import (
 type EvidenceContext struct {
 	Repo                               Repo
 	Worktree, StartSHA, StartTree      string
-	PlanPath, TodoPath                 string
+	PlanPath, TodoPath, DesignPath     string
 	FindingsFiles                      []string
 	NativeOutput, ReviewCommand        string
 	VerdictPath, RoundTree, ReportPath string
@@ -31,11 +31,12 @@ type EvidenceCheck func(ctx EvidenceContext) (ok bool, missing string)
 var (
 	checksMu sync.RWMutex
 	checks   = map[string]EvidenceCheck{
-		"plan-file": planFileCheck,
-		"diff":      diffCheck,
-		"report":    reportCheck,
-		"findings":  findingsCheck,
-		"verdict":   verdictCheck,
+		"plan-file":   planFileCheck,
+		"design-file": designFileCheck,
+		"diff":        diffCheck,
+		"report":      reportCheck,
+		"findings":    findingsCheck,
+		"verdict":     verdictCheck,
 	}
 )
 
@@ -107,6 +108,76 @@ var (
 	itemSkipStatus = map[string]bool{"already-done": true, "not-work": true}
 	citationRe     = regexp.MustCompile(`[\w./-]+\.\w+:\d+`)
 )
+
+const designSkipStatus = "no-visual-change"
+
+var designHeadings = []string{"## States", "## Reuse map"}
+
+func designFileCheck(ctx EvidenceContext) (bool, string) {
+	data, err := fs.ReadFile(ctx.FS, ctx.DesignPath)
+	if err != nil {
+		return false, "no design at " + ctx.DesignPath
+	}
+	lines := splitLines(string(data))
+	if planStatus(lines) == designSkipStatus {
+		evidence, _ := section(lines, "## Evidence")
+		if !citationRe.MatchString(strings.Join(evidence, "\n")) {
+			return false, "design: no-visual-change needs a cited ## Evidence"
+		}
+	} else {
+		for _, h := range designHeadings {
+			if _, ok := section(lines, h); !ok {
+				return false, "design: missing " + h
+			}
+		}
+		if designIntent(lines) == "" {
+			return false, "design: no DESIGN-INTENT line"
+		}
+	}
+	changed, missing := stepChanges(ctx)
+	if missing != "" {
+		return false, missing
+	}
+	for _, p := range changed {
+		if p != ctx.DesignPath {
+			return false, "design step changed " + p
+		}
+	}
+	return true, ""
+}
+
+func designIntent(lines []string) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if lines[i] == "" {
+			continue
+		}
+		intent, _ := strings.CutPrefix(lines[i], "DESIGN-INTENT:")
+		if intent == lines[i] {
+			return ""
+		}
+		return strings.TrimSpace(intent)
+	}
+	return ""
+}
+
+func DesignOf(path string, fsys fs.FS) (string, string) {
+	data, err := fs.ReadFile(fsys, path)
+	if err != nil {
+		return "", ""
+	}
+	lines := splitLines(string(data))
+	if planStatus(lines) != designSkipStatus {
+		return designIntent(lines), ""
+	}
+	evidence, _ := section(lines, "## Evidence")
+	var parts []string
+	for _, l := range evidence {
+		if l != "" {
+			parts = append(parts, strings.TrimPrefix(l, "- "))
+		}
+	}
+	return "", strings.Join(parts, "; ")
+}
 
 func PlanSkip(path string, fsys fs.FS) (string, string) {
 	data, err := fs.ReadFile(fsys, path)

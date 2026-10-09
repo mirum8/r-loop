@@ -43,15 +43,24 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 		h.mu.Unlock()
 	case "abort":
 		h.store.MarkAbort(spec.Env["R_LOOP_RUN"])
+	case "no-visual-change":
+		design := strings.TrimSuffix(text, ".md") + ".design.md"
+		writeFile(filepath.Join(spec.CWD, design), "status: no-visual-change\n\n## Evidence\n- the page renders the same: web/list.html:4\n")
+		h.repo.setChanges(design)
+		writeFile(sentinel, `{"outcome":"ok","reason":"","commit":"docs(design): no visual change"}`)
 	case "already-done":
 		writeFile(filepath.Join(spec.CWD, text), "status: already-done\n\n## Evidence\n- do it: store/store.go:12\n")
 		h.repo.setChanges(text)
 		writeFile(sentinel, `{"outcome":"ok","reason":"","commit":"feat(core): add the widget store"}`)
 	default:
 		changed := "code.go"
-		if spec.Env["R_LOOP_STEP"] == "plan" {
+		switch spec.Env["R_LOOP_STEP"] {
+		case "plan":
 			changed = text
 			writeFile(filepath.Join(spec.CWD, text), "status: planned\n\n## Summary\nx\n## Changes\nx\n## Tests\n- a test\n## Assumptions\n- phase "+spec.Env["R_LOOP_PHASE"]+" keeps state in memory\n")
+		case "design":
+			changed = strings.TrimSuffix(text, ".md") + ".design.md"
+			writeFile(filepath.Join(spec.CWD, changed), designFile(spec.Env["R_LOOP_PHASE"]))
 		}
 		h.repo.setChanges(changed)
 		writeFile(sentinel, `{"outcome":"ok","reason":"","commit":"feat(core): add the widget store for p`+spec.Env["R_LOOP_PHASE"]+` `+spec.Env["R_LOOP_STEP"]+`"}`)
@@ -1563,6 +1572,7 @@ func TestStepVarsFillsEveryTemplateVariable(t *testing.T) {
 		"ReviewCommand": "", "ReviewRan": false, "FindingsPath": "", "ArtifactsDir": "", "RequiredPath": "", "FindingsFiles": []FindingsFile(nil), "PriorFindings": "", "PriorVerdicts": "",
 		"RoundTree": "", "VerdictPath": "", "ReportPath": "", "MilestoneName": "Core", "MilestonePhases": "1, 2, 3, 4",
 		"Addendum": "", "GroupItems": "", "TriageNotes": "",
+		"DesignPath": ".task-plans/phase-3-runloop-phases-steps-halts-and-the-re.design.md", "DesignNote": "", "Design": "", "DesignIntent": "",
 	}
 	if !reflect.DeepEqual(vars, want) {
 		for k, v := range want {
@@ -1813,5 +1823,164 @@ func TestResumeSkipsADependentOfAPhaseBlockedAgain(t *testing.T) {
 	}
 	if got := r.calls("Land "); !reflect.DeepEqual(got, []string{"2"}) {
 		t.Errorf("landed = %v", got)
+	}
+}
+
+func designFile(phase string) string {
+	return "## Screens\nthe list\n## States\n- empty: a hint\n## Reuse map\n- web/list.html:4\n\nDESIGN-INTENT: phase " + phase + " reads calm and dense.\n"
+}
+
+type stepVarsPrompts struct {
+	mu   sync.Mutex
+	vars map[string]map[string]any
+}
+
+func (p *stepVarsPrompts) Render(name string, vars map[string]any) (string, string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.vars == nil {
+		p.vars = map[string]map[string]any{}
+	}
+	key := name
+	if phase, ok := vars["PhaseNumber"].(string); ok {
+		key = phase + "/" + name
+	}
+	p.vars[key] = vars
+	return vars["PlanPath"].(string), "embedded:" + name, nil
+}
+
+func (p *stepVarsPrompts) of(key string) map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.vars[key]
+}
+
+func withDesign(r *loopRig, flagged ...string) *stepVarsPrompts {
+	row := StepRow{Provider: "claude", Timeout: 1000 * time.Hour}
+	r.loop.Kinds = append([]StepKind{{Name: "design", Prompt: "design", Check: "design-file", Row: row}}, r.loop.Kinds...)
+	r.loop.Runners = DefaultRunners(r.loop.Sessions, r.loop.Kinds)
+	for i, ph := range r.loop.Plan.Phases {
+		if slices.Contains(flagged, ph.ID) {
+			r.loop.Plan.Phases[i].Design, r.loop.Plan.Phases[i].DesignNote = true, "the "+ph.Title+" screen"
+		}
+	}
+	prompts := &stepVarsPrompts{}
+	r.loop.Sessions.Prompts = prompts
+	return prompts
+}
+
+func spawned(r *loopRig) []string {
+	var out []string
+	for _, a := range r.host.Agents {
+		out = append(out, role(a))
+	}
+	return out
+}
+
+func TestAPhaseNotFlaggedForDesignSkipsTheDesignStepWithNoSession(t *testing.T) {
+	r := newLoopRig(t)
+	withDesign(r)
+
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if got := spawned(r); !slices.Equal(got, []string{"rloop-p2-plan", "rloop-p2-implement"}) {
+		t.Errorf("spawned %v", got)
+	}
+	skips := r.events("step-skipped")
+	want := map[string]string{"phase": "2", "step": "design", "reason": "not flagged for design at triage"}
+	if len(skips) != 1 || skips[0].Phase != "2" || skips[0].Step != "design" || !reflect.DeepEqual(skips[0].Fields, want) {
+		t.Fatalf("step-skipped = %+v", skips)
+	}
+	for _, rec := range r.store.Records["run-1"] {
+		if rec.Step != nil && rec.Step.Kind == "design" {
+			t.Errorf("a skipped design step left a step record: %+v", rec)
+		}
+	}
+}
+
+func TestAFlaggedPhaseRunsDesignBeforePlanAndHandsTheDesignOn(t *testing.T) {
+	r := newLoopRig(t)
+	prompts := withDesign(r, "2")
+	design := phaseDesignPath("2", "Store")
+
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if got := spawned(r); !slices.Equal(got, []string{"rloop-p2-design", "rloop-p2-plan", "rloop-p2-implement"}) {
+		t.Errorf("spawned %v", got)
+	}
+	if d := prompts.of("2/design"); d["DesignPath"] != design || d["DesignNote"] != "the Store screen" || d["Design"] != "" {
+		t.Errorf("design vars %v %v %v", d["DesignPath"], d["DesignNote"], d["Design"])
+	}
+	for _, step := range []string{"2/plan", "2/implement"} {
+		v := prompts.of(step)
+		if v["Design"] != design || v["DesignIntent"] != "phase 2 reads calm and dense." {
+			t.Errorf("%s: Design %q, DesignIntent %q", step, v["Design"], v["DesignIntent"])
+		}
+	}
+	got := r.events("design")
+	if len(got) != 1 || got[0].Phase != "2" || got[0].Fields["intent"] != "phase 2 reads calm and dense." {
+		t.Errorf("design events %+v", got)
+	}
+	if len(r.events("step-skipped")) != 0 {
+		t.Errorf("step-skipped %+v", r.events("step-skipped"))
+	}
+}
+
+func TestANoVisualChangeDesignLeavesTheLaterStepsWithoutADesign(t *testing.T) {
+	r := newLoopRig(t)
+	prompts := withDesign(r, "2")
+	r.host.behaviour["rloop-p2-design"] = "no-visual-change"
+
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	skips := r.events("design-skipped")
+	if len(skips) != 1 || skips[0].Fields["reason"] != "the page renders the same: web/list.html:4" {
+		t.Fatalf("design-skipped %+v", skips)
+	}
+	if v := prompts.of("2/plan"); v["Design"] != "" || v["DesignIntent"] != "" {
+		t.Errorf("plan got a design: %q %q", v["Design"], v["DesignIntent"])
+	}
+	if len(r.events("design")) != 0 {
+		t.Errorf("design events %+v", r.events("design"))
+	}
+}
+
+func TestAResumeReadsAnEarlierDesignFromTheWorktree(t *testing.T) {
+	r := newLoopRig(t)
+	prompts := withDesign(r, "2")
+	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: "2", Kind: "design", Attempt: 1}, State: StepOK})
+	writeFile(filepath.Join(r.repo.RootDir, ".r-loop/wt/phase-2", phaseDesignPath("2", "Store")), designFile("2"))
+
+	code := r.run(RunOptions{Phases: []string{"2"}, Resume: true})
+
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if got := spawned(r); !slices.Equal(got, []string{"rloop-p2-plan", "rloop-p2-implement"}) {
+		t.Errorf("spawned %v", got)
+	}
+	if v := prompts.of("2/plan"); v["Design"] != phaseDesignPath("2", "Store") || v["DesignIntent"] != "phase 2 reads calm and dense." {
+		t.Errorf("plan vars %q %q", v["Design"], v["DesignIntent"])
+	}
+	if len(r.events("design")) != 0 {
+		t.Errorf("a resumed design was announced again: %+v", r.events("design"))
+	}
+}
+
+func TestPipelineAcceptsADesignStepBeforeThePlanStep(t *testing.T) {
+	kinds, err := Pipeline([]string{"design", "plan"}, map[string]StepRow{"design": {}, "plan": {}},
+		map[string]string{"design": "design", "plan": "plan"}, map[string]string{"design": "design-file", "plan": "plan-file"})
+
+	if err != nil || len(kinds) != 2 || kinds[0].Check != "design-file" {
+		t.Fatalf("kinds = %+v, err = %v", kinds, err)
 	}
 }

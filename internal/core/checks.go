@@ -180,8 +180,12 @@ func planTouched(ctx CheckContext) string {
 	}
 	todo := todoRel(ctx)
 	own := phasePlanPath(ctx.Step.Phase.ID, ctx.Step.Phase.Title)
+	design := ""
+	if ctx.Step.Kind.Check == designCheck {
+		design = phaseDesignPath(ctx.Step.Phase.ID, ctx.Step.Phase.Title)
+	}
 	for _, p := range changed {
-		if (todo != "" && p == todo) || (strings.HasPrefix(p, ".task-plans/") && p != own) {
+		if (todo != "" && p == todo) || (strings.HasPrefix(p, ".task-plans/") && p != own && p != design) {
 			return "plan file changed during " + stepName(ctx.Step.Key) + ": " + p
 		}
 	}

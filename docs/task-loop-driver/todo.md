@@ -894,12 +894,12 @@ Contracts: `tech-design.md#milestone-20-the-design-step`
 **Depends on:** Phase 53
 **Files:** `internal/core/loop.go` (modify) · `internal/core/loop_test.go` (modify) · `internal/core/evidence.go` (modify) · `internal/core/evidence_test.go` (modify) · `internal/core/checks.go` (modify) · `internal/core/checks_test.go` (modify)
 **Risk:** none
-- [ ] `phaseDesignPath(n, title)` is the phase plan's path with `.design.md`; `planTouched` lets only the design step change it
-- [ ] `StepVars` adds `DesignPath`, `DesignNote`, `Design` and `DesignIntent`; `RunLoop.ref` sets `Design` and `DesignIntent` once the phase's design step is `ok` with a design, also when that step was `ok` before a resume, so the plan, the implement step and every reviewer get them
-- [ ] in `runPhase`, a `design-file` kind on a phase with `Design` false emits `step-skipped` with its reason, appends no step record and starts no session; a flagged phase runs it like any step, before `plan`
-- [ ] the `design-file` evidence check passes on a design with `## States`, `## Reuse map` and a last `DESIGN-INTENT:` line, or on `status: no-visual-change` with a cited `## Evidence`, and fails with each reason in `tech-design.md`, including any changed file other than the design path; `core.DesignOf` returns the intent or the skip evidence
-- [ ] a passing design emits `design{phase, intent}`; a passing skip emits `design-skipped{phase, reason}` and leaves `Design` and `DesignIntent` empty for the later steps
-- [ ] tests prove, with the fakes: an unflagged phase skipped with no session and no step record, a flagged phase run before plan, the plan and implement refs and a reviewer's vars carrying the design, the skip leaving them empty, the resume re-reading the design from the worktree, every check outcome, and `planTouched` for the design path
+- [x] `phaseDesignPath(n, title)` is the phase plan's path with `.design.md`; `planTouched` lets only the design step change it
+- [x] `StepVars` adds `DesignPath`, `DesignNote`, `Design` and `DesignIntent`; `RunLoop.ref` sets `Design` and `DesignIntent` once the phase's design step is `ok` with a design, also when that step was `ok` before a resume, so the plan, the implement step and every reviewer get them
+- [x] in `runPhase`, a `design-file` kind on a phase with `Design` false emits `step-skipped` with its reason, appends no step record and starts no session; a flagged phase runs it like any step, before `plan`
+- [x] the `design-file` evidence check passes on a design with `## States`, `## Reuse map` and a last `DESIGN-INTENT:` line, or on `status: no-visual-change` with a cited `## Evidence`, and fails with each reason in `tech-design.md`, including any changed file other than the design path; `core.DesignOf` returns the intent or the skip evidence
+- [x] a passing design emits `design{phase, intent}`; a passing skip emits `design-skipped{phase, reason}` and leaves `Design` and `DesignIntent` empty for the later steps
+- [x] tests prove, with the fakes: an unflagged phase skipped with no session and no step record, a flagged phase run before plan, the plan and implement refs and a reviewer's vars carrying the design, the skip leaving them empty, the resume re-reading the design from the worktree, every check outcome, and `planTouched` for the design path
 **Done when:** `go test -race ./internal/core/...` is green and `grep -n '"design-file"' internal/core/evidence.go` prints the registration.
 
 ### Phase 55 — The design prompt, the shipped row, the hand-offs and the faces

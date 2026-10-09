@@ -107,6 +107,7 @@ type RunLoop struct {
 	dialogSeq   int
 	blockerSeq  int
 	warnings    map[string]string
+	designs     map[string]phaseDesign
 	halted      *Signal
 	haltLanded  bool
 	nextHalt    *Signal
@@ -363,9 +364,16 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 		if cur, ok := l.kind(kind.Name); ok {
 			kind = cur
 		}
+		if kind.Check == designCheck && !ph.Design {
+			l.emit(Event{Kind: "step-skipped", Phase: n, Step: kind.Name, Fields: map[string]string{"phase": n, "step": kind.Name, "reason": "not flagged for design at triage"}})
+			continue
+		}
 		attempt, state := latestAttempt(prior, l.RunID, n, kind.Name)
 		rerunPlan := replan && kind.Name == "plan"
 		if state == StepOK && !rerunPlan {
+			if kind.Check == designCheck {
+				l.noteDesign(ph, last.Dir, false)
+			}
 			l.advance(n, kind.Name)
 			if l.itemSkipped(ph, kind, last.Dir) {
 				l.closeWorkspaces(n, EveryWorkspace)
@@ -399,6 +407,9 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 			l.fire(l.Hooks.OnWarn, "warning", n, kind.Name, out.Warning)
 		}
 		l.advance(n, kind.Name)
+		if kind.Check == designCheck && out.Session != nil {
+			l.noteDesign(ph, out.Session.Dir, true)
+		}
 		if kind.Name == "plan" && out.Session != nil {
 			planPath, _ := ref.Vars["PlanPath"].(string)
 			for _, a := range PlanAssumptions(planPath, os.DirFS(out.Session.Dir)) {
@@ -926,12 +937,39 @@ func (l *RunLoop) ref(ph Phase, kind StepKind, attempt int, base string) StepRef
 	}
 	ref.Vars = StepVars(ref, l.Plan, l.TodoPath, l.runDir)
 	ref.Vars["ItemGate"] = l.Sessions.ItemGates && ph.DoneWhen == ""
+	l.mu.Lock()
 	if kind.Name == "plan" {
-		l.mu.Lock()
 		ref.Vars["PhaseWarnings"] = l.warnings[n]
+	}
+	if d, ok := l.designs[n]; ok {
+		ref.Vars["Design"], ref.Vars["DesignIntent"] = d.path, d.intent
+	}
+	l.mu.Unlock()
+	return ref
+}
+
+type phaseDesign struct {
+	path, intent string
+}
+
+func (l *RunLoop) noteDesign(ph Phase, dir string, fresh bool) {
+	path := phaseDesignPath(ph.ID, ph.Title)
+	intent, skip := DesignOf(path, os.DirFS(dir))
+	if intent != "" {
+		l.mu.Lock()
+		if l.designs == nil {
+			l.designs = map[string]phaseDesign{}
+		}
+		l.designs[ph.ID] = phaseDesign{path: path, intent: intent}
 		l.mu.Unlock()
 	}
-	return ref
+	switch {
+	case !fresh:
+	case intent != "":
+		l.emit(Event{Kind: "design", Phase: ph.ID, Fields: map[string]string{"phase": ph.ID, "intent": intent}})
+	case skip != "":
+		l.emit(Event{Kind: "design-skipped", Phase: ph.ID, Fields: map[string]string{"phase": ph.ID, "reason": skip}})
+	}
 }
 
 func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
@@ -2011,7 +2049,15 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 		"Addendum":        "",
 		"GroupItems":      strings.Join(ph.Members, ", "),
 		"TriageNotes":     ph.Triage,
+		"DesignPath":      phaseDesignPath(ph.ID, ph.Title),
+		"DesignNote":      ph.DesignNote,
+		"Design":          "",
+		"DesignIntent":    "",
 	}
+}
+
+func phaseDesignPath(n, title string) string {
+	return strings.TrimSuffix(phasePlanPath(n, title), ".md") + ".design.md"
 }
 
 func phasePlanPath(n, title string) string {

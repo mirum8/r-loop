@@ -314,3 +314,22 @@ func TestFilesScopedChecksAreQuietForAPhaseWithoutFiles(t *testing.T) {
 	noWarning(t, shipped(t, "files-outside-plan").Run(ctx))
 	noWarning(t, shipped(t, "foreign-test-edit").Run(ctx))
 }
+
+func TestPlanTouchedLetsTheDesignStepWriteItsOwnDesign(t *testing.T) {
+	repo := &fakeRepo{RootDir: "/repo", Changed: []string{".task-plans/phase-3-third-thing.design.md"}}
+	ctx := checkCtx(&fakeStore{}, repo, "design", 1, time.Minute)
+	ctx.Step.Kind.Check = "design-file"
+
+	noWarning(t, shipped(t, "plan-touched").Run(ctx))
+}
+
+func TestPlanTouchedFiresOnTheDesignChangedByAnotherStep(t *testing.T) {
+	repo := &fakeRepo{RootDir: "/repo", Changed: []string{".task-plans/phase-3-third-thing.design.md"}}
+	ctx := checkCtx(&fakeStore{}, repo, "implement", 1, time.Minute)
+
+	sig := oneWarning(t, shipped(t, "plan-touched").Run(ctx), ctx)
+
+	if !strings.Contains(sig.Reason, "phase-3-third-thing.design.md") {
+		t.Errorf("reason = %q", sig.Reason)
+	}
+}

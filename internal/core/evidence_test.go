@@ -679,3 +679,89 @@ func TestPlanFileCheckRefusesAnItemSkipOutsideABacklog(t *testing.T) {
 		t.Fatalf("ok = %v, missing = %q", ok, missing)
 	}
 }
+
+const designPath = ".task-plans/phase-3-plan-reader.design.md"
+
+const goodDesign = `## Screens
+the run list
+
+## States
+- empty: "no runs yet"
+
+## Reuse map
+- internal/face/tui/view.go:383
+
+DESIGN-INTENT: the list reads calm and dense.
+`
+
+func designCtx(design string, changed ...string) EvidenceContext {
+	return EvidenceContext{
+		Repo:       &fakeRepo{Tree: "tree-now", TreeChanges: changed},
+		Worktree:   "/wt",
+		StartTree:  "tree-start",
+		DesignPath: designPath,
+		FS:         fstest.MapFS{designPath: {Data: []byte(design)}},
+	}
+}
+
+func TestDesignFileCheckPassesOnADesignOrACitedNoVisualChange(t *testing.T) {
+	for name, design := range map[string]string{
+		"design":           goodDesign,
+		"no-visual-change": "status: no-visual-change\n\n## Evidence\n- the page renders the same: web/list.html:4\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			ok, missing := runCheck(t, "design-file", designCtx(design, designPath))
+
+			if !ok || missing != "" {
+				t.Fatalf("ok = %v, missing = %q", ok, missing)
+			}
+		})
+	}
+}
+
+func TestDesignFileCheckFails(t *testing.T) {
+	for _, c := range []struct {
+		name, design string
+		changed      []string
+		want         string
+	}{
+		{"absent", "", nil, "no design at " + designPath},
+		{"no states", strings.Replace(goodDesign, "## States", "## Status", 1), []string{designPath}, "design: missing ## States"},
+		{"no reuse map", strings.Replace(goodDesign, "## Reuse map", "## Reuse", 1), []string{designPath}, "design: missing ## Reuse map"},
+		{"no intent", strings.Replace(goodDesign, "DESIGN-INTENT: the list reads calm and dense.", "", 1), []string{designPath}, "design: no DESIGN-INTENT line"},
+		{"empty intent", strings.Replace(goodDesign, "DESIGN-INTENT: the list reads calm and dense.", "DESIGN-INTENT:", 1), []string{designPath}, "design: no DESIGN-INTENT line"},
+		{"intent not last", goodDesign + "\nmore text\n", []string{designPath}, "design: no DESIGN-INTENT line"},
+		{"uncited skip", "status: no-visual-change\n\n## Evidence\n- nothing renders differently\n", []string{designPath}, "design: no-visual-change needs a cited ## Evidence"},
+		{"another file", goodDesign, []string{designPath, "web/list.html"}, "design step changed web/list.html"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := designCtx(c.design, c.changed...)
+			if c.design == "" {
+				ctx.FS = fstest.MapFS{}
+			}
+
+			ok, missing := runCheck(t, "design-file", ctx)
+
+			if ok || missing != c.want {
+				t.Fatalf("ok = %v, missing = %q, want %q", ok, missing, c.want)
+			}
+		})
+	}
+}
+
+func TestDesignOfReturnsTheIntentOrTheSkipEvidence(t *testing.T) {
+	fsys := fstest.MapFS{
+		"d.md":    {Data: []byte(goodDesign)},
+		"skip.md": {Data: []byte("status: no-visual-change\n\n## Evidence\n- same page: web/list.html:4\n- same copy: web/i18n.go:9\n")},
+	}
+
+	if intent, skip := DesignOf("d.md", fsys); intent != "the list reads calm and dense." || skip != "" {
+		t.Errorf("design: %q %q", intent, skip)
+	}
+	if intent, skip := DesignOf("skip.md", fsys); intent != "" || skip != "same page: web/list.html:4; same copy: web/i18n.go:9" {
+		t.Errorf("skip: %q %q", intent, skip)
+	}
+	if intent, skip := DesignOf("missing.md", fsys); intent != "" || skip != "" {
+		t.Errorf("missing: %q %q", intent, skip)
+	}
+}
