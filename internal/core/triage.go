@@ -41,9 +41,11 @@ var (
 )
 
 type PhaseVerdict struct {
-	Phase  string `json:"phase"`
-	Status string `json:"status"`
-	Note   string `json:"note,omitempty"`
+	Phase      string `json:"phase"`
+	Status     string `json:"status"`
+	Note       string `json:"note,omitempty"`
+	Design     *bool  `json:"design,omitempty"`
+	DesignNote string `json:"design_note,omitempty"`
 }
 
 type ItemVerdict struct {
@@ -77,6 +79,8 @@ type GateDecision struct {
 	Split          []Split    `json:"split,omitempty"`
 	Merge          [][]string `json:"merge,omitempty"`
 	MaintainerSaid string     `json:"maintainer_said,omitempty"`
+	DesignOn       []string   `json:"design_on,omitempty"`
+	DesignOff      []string   `json:"design_off,omitempty"`
 }
 
 type Group struct {
@@ -87,6 +91,8 @@ type Group struct {
 	Rationale  string        `json:"rationale,omitempty"`
 	Confidence string        `json:"confidence,omitempty"`
 	Findings   []ItemFinding `json:"findings,omitempty"`
+	Design     *bool         `json:"design,omitempty"`
+	DesignNote string        `json:"design_note,omitempty"`
 }
 
 type ItemFinding struct {
@@ -101,6 +107,31 @@ func RunListGroups(fields map[string]string) []Group {
 		return nil
 	}
 	return groups
+}
+
+func RunListDesign(fields map[string]string) map[string]string {
+	design := map[string]string{}
+	if err := json.Unmarshal([]byte(fields["design"]), &design); err != nil {
+		return nil
+	}
+	return design
+}
+
+func ApplyRunListDesign(p Plan, design map[string]string) Plan {
+	out := p
+	out.Phases = slices.Clone(p.Phases)
+	for i, ph := range out.Phases {
+		note, ok := design[ph.ID]
+		out.Phases[i].Design, out.Phases[i].DesignNote = ok, note
+	}
+	return out
+}
+
+func designOf(flag *bool, note string) (bool, string) {
+	if flag == nil || !*flag {
+		return false, ""
+	}
+	return true, note
 }
 
 func GroupBacklog(p Plan, groups []Group) Plan {
@@ -123,6 +154,7 @@ func GroupBacklog(p Plan, groups []Group) Plan {
 		slices.SortFunc(ids, ComparePhaseIDs)
 		head := byID[ids[0]]
 		head.Triage = triageNotes(ids, g.Findings)
+		head.Design, head.DesignNote = designOf(g.Design, g.DesignNote)
 		if len(ids) < 2 {
 			merged[head.ID] = head
 			continue
@@ -170,12 +202,19 @@ func triageNotes(ids []string, findings []ItemFinding) string {
 	return strings.Join(lines, "\n")
 }
 
-func TriageText(plan Plan, list []Phase, ask bool) string {
+func TriageText(plan Plan, list []Phase, ask, designAsked bool) string {
 	var b strings.Builder
 	if plan.Backlog {
 		fmt.Fprintf(&b, "triage backlog %s items %s. Follow your prompt's \"Triage\" section: verify each item against the code, group the fixes, and call submit_triage with one verdict per item and the groups.\n", plan.Path, joinIDs(phaseIDs(list)))
 	} else {
 		fmt.Fprintf(&b, "triage plan %s phases %s. Follow your prompt's \"Triage\" section: verify each phase against the code and call submit_triage with one verdict per phase.\n", plan.Path, joinIDs(phaseIDs(list)))
+	}
+	if designAsked {
+		what := "build phase"
+		if plan.Backlog {
+			what = "group"
+		}
+		fmt.Fprintf(&b, "The pipeline has a design step: give every %s design true or false, as your prompt's \"Design\" rule says.\n", what)
 	}
 	if ask {
 		b.WriteString("When submit_triage is accepted, end your turn without printing or summarising the table: the driver types it into this pane. When it arrives, ask the maintainer, then call submit_gate.\n")
@@ -185,14 +224,30 @@ func TriageText(plan Plan, list []Phase, ask bool) string {
 	return b.String()
 }
 
-func ValidateTriage(plan Plan, list []Phase, t Triage, cite func(string) string) (Triage, error) {
+func ValidateTriage(plan Plan, list []Phase, t Triage, cite func(string) string, designAsked bool) (Triage, error) {
 	if plan.Backlog {
-		return validateBacklog(list, t, cite)
+		return validateBacklog(list, t, cite, designAsked)
 	}
-	return validatePlan(list, t, cite)
+	return validatePlan(list, t, cite, designAsked)
 }
 
-func validatePlan(list []Phase, t Triage, cite func(string) string) (Triage, error) {
+func checkDesign(what string, built bool, flag *bool, note string, designAsked bool) error {
+	switch {
+	case !designAsked && (flag != nil || note != ""):
+		return fmt.Errorf("%s: the pipeline has no design step: leave design out", what)
+	case !designAsked:
+		return nil
+	case hasControl(note):
+		return fmt.Errorf("%s: design_note contains a control character", what)
+	case flag == nil && built:
+		return fmt.Errorf("%s: design is required — does it change what a user sees?", what)
+	case flag != nil && *flag && strings.TrimSpace(note) == "":
+		return fmt.Errorf("%s: design true needs a design_note naming what changes", what)
+	}
+	return nil
+}
+
+func validatePlan(list []Phase, t Triage, cite func(string) string, designAsked bool) (Triage, error) {
 	if len(t.Items) > 0 || len(t.Groups) > 0 {
 		return Triage{}, errors.New("a plan triage carries phases only, not items or groups")
 	}
@@ -216,6 +271,9 @@ func validatePlan(list []Phase, t Triage, cite func(string) string) (Triage, err
 				return Triage{}, fmt.Errorf("phase %s: already-done needs a path:line in the note that exists: %s", v.Phase, reason)
 			}
 		}
+		if err := checkDesign("phase "+v.Phase, v.Status == VerdictBuild, v.Design, v.DesignNote, designAsked); err != nil {
+			return Triage{}, err
+		}
 		seen[v.Phase] = true
 	}
 	for _, id := range ids {
@@ -226,7 +284,7 @@ func validatePlan(list []Phase, t Triage, cite func(string) string) (Triage, err
 	return t, nil
 }
 
-func validateBacklog(list []Phase, t Triage, cite func(string) string) (Triage, error) {
+func validateBacklog(list []Phase, t Triage, cite func(string) string, designAsked bool) (Triage, error) {
 	if len(t.Phases) > 0 {
 		return Triage{}, errors.New("a backlog triage carries items and groups, not phases")
 	}
@@ -263,6 +321,9 @@ func validateBacklog(list []Phase, t Triage, cite func(string) string) (Triage, 
 		}
 		if len(g.Items) > 1 && strings.TrimSpace(g.Rationale) == "" {
 			return Triage{}, fmt.Errorf("group %s holds %d items but gives no rationale", g.ID, len(g.Items))
+		}
+		if err := checkDesign("group "+g.ID, true, g.Design, g.DesignNote, designAsked); err != nil {
+			return Triage{}, err
 		}
 		g.Items = slices.Clone(g.Items)
 		g.Risk, g.Confidence, g.Findings = "", "", nil
@@ -383,12 +444,20 @@ func mixesCosmeticAndDeep(g Group, byID map[string]ItemVerdict) bool {
 	return cosmetic && deep
 }
 
-func ApplyGate(plan Plan, list []Phase, t Triage, g GateDecision) (Triage, error) {
+func ApplyGate(plan Plan, list []Phase, t Triage, g GateDecision, designAsked bool) (Triage, error) {
 	if !slices.Contains([]string{GateGo, GateRevise, GateAbort}, g.Decision) {
 		return Triage{}, fmt.Errorf("decision %q is not one of go, revise, abort", g.Decision)
 	}
 	if strings.TrimSpace(g.MaintainerSaid) == "" {
 		return Triage{}, errors.New("maintainer_said is empty: quote the maintainer's reply")
+	}
+	if len(g.DesignOn)+len(g.DesignOff) > 0 && !designAsked {
+		return Triage{}, errors.New("design_on and design_off need a design step in the pipeline")
+	}
+	for _, id := range g.DesignOn {
+		if slices.Contains(g.DesignOff, id) {
+			return Triage{}, fmt.Errorf("design: %s is in both design_on and design_off", id)
+		}
 	}
 	out := Triage{Phases: slices.Clone(t.Phases), Items: slices.Clone(t.Items), Dropped: slices.Clone(t.Dropped)}
 	for _, gr := range t.Groups {
@@ -408,7 +477,17 @@ func ApplyGate(plan Plan, list []Phase, t Triage, g GateDecision) (Triage, error
 				out.Dropped = append(out.Dropped, id)
 			}
 		}
-		return validatePlan(list, out, acceptAll)
+		if err := gateDesign(g, func(id string, on bool) error {
+			i := slices.IndexFunc(out.Phases, func(v PhaseVerdict) bool { return v.Phase == id })
+			if i < 0 || out.Phases[i].Status != VerdictBuild || slices.Contains(out.Dropped, id) {
+				return fmt.Errorf("design: phase %s is not a phase this run builds", id)
+			}
+			out.Phases[i].Design, out.Phases[i].DesignNote = turned(on, out.Phases[i].Design, out.Phases[i].DesignNote)
+			return nil
+		}); err != nil {
+			return Triage{}, err
+		}
+		return validatePlan(list, out, acceptAll, designAsked)
 	}
 	for _, id := range g.Drop {
 		if err := dropFromBacklog(&out, id); err != nil {
@@ -425,7 +504,41 @@ func ApplyGate(plan Plan, list []Phase, t Triage, g GateDecision) (Triage, error
 			return Triage{}, err
 		}
 	}
-	return validateBacklog(list, out, acceptAll)
+	if err := gateDesign(g, func(id string, on bool) error {
+		i := groupIndex(out.Groups, id)
+		if i < 0 {
+			return fmt.Errorf("design: group %s does not exist", id)
+		}
+		out.Groups[i].Design, out.Groups[i].DesignNote = turned(on, out.Groups[i].Design, out.Groups[i].DesignNote)
+		return nil
+	}); err != nil {
+		return Triage{}, err
+	}
+	return validateBacklog(list, out, acceptAll, designAsked)
+}
+
+func gateDesign(g GateDecision, set func(id string, on bool) error) error {
+	for _, id := range g.DesignOn {
+		if err := set(id, true); err != nil {
+			return err
+		}
+	}
+	for _, id := range g.DesignOff {
+		if err := set(id, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func turned(on bool, was *bool, note string) (*bool, string) {
+	if !on {
+		return &on, ""
+	}
+	if was == nil || !*was || strings.TrimSpace(note) == "" {
+		note = "turned on by the maintainer"
+	}
+	return &on, note
 }
 
 func acceptAll(string) string { return "" }
@@ -479,7 +592,7 @@ func splitGroup(t *Triage, sp Split) error {
 			}
 			seen = append(seen, id)
 		}
-		parts[n] = Group{ID: fmt.Sprintf("%s.%d", g.ID, n+1), Items: slices.Clone(part), Subsystem: g.Subsystem, Rationale: g.Rationale}
+		parts[n] = Group{ID: fmt.Sprintf("%s.%d", g.ID, n+1), Items: slices.Clone(part), Subsystem: g.Subsystem, Rationale: g.Rationale, Design: g.Design, DesignNote: g.DesignNote}
 	}
 	for _, id := range g.Items {
 		if !slices.Contains(seen, id) {
@@ -513,6 +626,11 @@ func mergeGroups(t *Triage, ids []string) error {
 		merged.Items = append(merged.Items, t.Groups[i].Items...)
 		if r := t.Groups[i].Rationale; r != "" {
 			rationales = append(rationales, r)
+		}
+		if other := t.Groups[i]; other.Design != nil && *other.Design && (merged.Design == nil || !*merged.Design) {
+			merged.Design, merged.DesignNote = other.Design, other.DesignNote
+		} else if merged.Design == nil {
+			merged.Design = other.Design
 		}
 	}
 	merged.Rationale = strings.Join(slices.DeleteFunc(rationales, func(r string) bool { return r == "" }), "; ")
@@ -561,6 +679,7 @@ func TriageResult(plan Plan, list []Phase, t Triage) ([]Phase, []Event, []Group)
 	for _, ph := range list {
 		r, drop := reason[ph.ID]
 		if !drop {
+			ph.Design, ph.DesignNote = designOf(status[ph.ID].Design, status[ph.ID].DesignNote)
 			kept = append(kept, ph)
 			continue
 		}
@@ -632,6 +751,11 @@ func renderPlan(v TriageView, t *Triage) (string, string) {
 	for _, ev := range skipped {
 		why[ev.Phase] = ev.Fields["reason"]
 	}
+	design := map[string]Phase{}
+	for _, ph := range kept {
+		design[ph.ID] = ph
+	}
+	designAsked := DesignAsked(v.Kinds)
 	notes := map[string]string{}
 	var done, blocked, dropped int
 	if t != nil {
@@ -674,6 +798,9 @@ func renderPlan(v TriageView, t *Triage) (string, string) {
 				}
 			}
 			writeWrapped(&b, "  Verified:  ", verified)
+			if ph, ok := design[ph.ID]; ok && designAsked {
+				writeWrapped(&b, "  Design:    ", designCell(ph))
+			}
 		}
 		b.WriteString("\n")
 	}
@@ -691,7 +818,7 @@ func renderPlan(v TriageView, t *Triage) (string, string) {
 	for _, d := range v.Deferrals {
 		writeWrapped(&b, "Resolve first: ", d.Entry+" → phases "+joinIDs(d.Phases))
 	}
-	fmt.Fprintf(&b, "%s: %s (%s), up to %s\n", Plural(len(kept), "phase"), Plural(len(kept)*len(v.Kinds), "step session"),
+	fmt.Fprintf(&b, "%s: %s (%s), up to %s\n", Plural(len(kept), "phase"), Plural(stepSessions(kept, v.Kinds, t != nil), "step session"),
 		strings.Join(kindNames(v.Kinds), ", "), Plural(len(kept)*reviewRounds(v.Kinds), "review round"))
 	if withMilestones {
 		fmt.Fprintf(&b, "Milestones completed by this run: %s\n", orNone(strings.Join(completedMilestones(v.Plan, unticked, kept), ", ")))
@@ -704,7 +831,39 @@ func renderPlan(v TriageView, t *Triage) (string, string) {
 	if dropped > 0 {
 		summary += fmt.Sprintf(", %d dropped", dropped)
 	}
-	return summary, b.String()
+	return summary + toDesign(kept, designAsked), b.String()
+}
+
+func designCell(ph Phase) string {
+	if !ph.Design {
+		return "—"
+	}
+	return ph.DesignNote
+}
+
+func toDesign(kept []Phase, designAsked bool) string {
+	if !designAsked {
+		return ""
+	}
+	n := 0
+	for _, ph := range kept {
+		if ph.Design {
+			n++
+		}
+	}
+	return fmt.Sprintf(", %d to design", n)
+}
+
+func stepSessions(kept []Phase, kinds []StepKind, verified bool) int {
+	n := 0
+	for _, k := range kinds {
+		for _, ph := range kept {
+			if k.Check != designCheck || ph.Design || !verified {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func renderBacklog(v TriageView, t *Triage) (string, string) {
@@ -737,6 +896,10 @@ func renderBacklog(v TriageView, t *Triage) (string, string) {
 		if g.Rationale != "" {
 			writeWrapped(&b, "Why together: ", g.Rationale)
 		}
+		if DesignAsked(v.Kinds) {
+			on, note := designOf(g.Design, g.DesignNote)
+			writeWrapped(&b, "Design: ", designCell(Phase{Design: on, DesignNote: note}))
+		}
 		b.WriteString("\n")
 		for _, id := range ids {
 			it := verdicts[id]
@@ -758,7 +921,7 @@ func renderBacklog(v TriageView, t *Triage) (string, string) {
 		}
 	}
 	fmt.Fprintf(&b, "%s: %s, up to %s\n", Plural(len(groups), "group"), Plural(len(kept), "phase"), Plural(len(kept)*rounds, "review round"))
-	return fmt.Sprintf("%s from %s, %d skipped", Plural(len(groups), "group"), Plural(len(v.List), "item"), len(skipped)), b.String()
+	return fmt.Sprintf("%s from %s, %d skipped", Plural(len(groups), "group"), Plural(len(v.List), "item"), len(skipped)) + toDesign(kept, DesignAsked(v.Kinds)), b.String()
 }
 
 func itemTitle(id, title string) string {

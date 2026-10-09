@@ -765,6 +765,33 @@ func TestSubmitGateHandsTheDecisionToItsHandler(t *testing.T) {
 	}
 }
 
+func TestTheTriageToolsCarryTheDesignFlags(t *testing.T) {
+	s := serveWatchdog(t, &memStore{})
+	var tr core.Triage
+	var g core.GateDecision
+	s.Handle(WatchdogHandlers{
+		SubmitTriage: func(in core.Triage) (bool, string, string) { tr = in; return true, "", "t" },
+		SubmitGate:   func(in core.GateDecision) (bool, string, string) { g = in; return true, "", "t" },
+	})
+	cs := connect(t, s.WatchdogURL())
+
+	call(t, cs, "submit_triage", map[string]any{
+		"phases": []any{map[string]any{"phase": "3", "status": "build", "design": true, "design_note": "the list page"}},
+		"groups": []any{map[string]any{"group_id": "G1", "items": []any{"3"}, "subsystem": "s", "design": false}},
+	})
+	call(t, cs, "submit_gate", map[string]any{"decision": "revise", "design_on": []any{"4"}, "design_off": []any{"3"}, "maintainer_said": "design 4"})
+
+	if v := tr.Phases[0]; v.Design == nil || !*v.Design || v.DesignNote != "the list page" {
+		t.Errorf("phase verdict = %+v", v)
+	}
+	if gr := tr.Groups[0]; gr.Design == nil || *gr.Design {
+		t.Errorf("group = %+v", gr)
+	}
+	if !slices.Equal(g.DesignOn, []string{"4"}) || !slices.Equal(g.DesignOff, []string{"3"}) {
+		t.Errorf("gate = %+v", g)
+	}
+}
+
 func TestTriageToolsReturnTheTableAsPlainText(t *testing.T) {
 	s := serveWatchdog(t, &memStore{})
 	s.Handle(WatchdogHandlers{

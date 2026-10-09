@@ -30,6 +30,8 @@ type Phase struct {
 	Block      string
 	Members    []string
 	Triage     string
+	Design     bool
+	DesignNote string
 }
 
 func (p Phase) TickIDs() []string {

@@ -194,7 +194,7 @@ func TestValidateTriageRefuses(t *testing.T) {
 			if c.plan.Backlog {
 				list = backlogList
 			}
-			_, err := ValidateTriage(c.plan, list, c.tr, citeAGo)
+			_, err := ValidateTriage(c.plan, list, c.tr, citeAGo, false)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("err = %v, want %q", err, c.want)
 			}
@@ -206,7 +206,7 @@ func TestValidateTriageNormalisesGroupRiskAndConfidence(t *testing.T) {
 	in := backlogTriage()
 	in.Groups[0].Risk, in.Groups[0].Confidence = "cosmetic", "high"
 
-	got, err := ValidateTriage(triageBacklog(), triageBacklog().Phases, in, citeAGo)
+	got, err := ValidateTriage(triageBacklog(), triageBacklog().Phases, in, citeAGo, false)
 
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +227,7 @@ func TestValidateTriageAcceptsCitedNotABugAndNotRelevantSkips(t *testing.T) {
 		tr := backlogTriage()
 		tr.Items[2].Category, tr.Items[2].SkipReason = category, "see a.go:7"
 
-		if _, err := ValidateTriage(triageBacklog(), triageBacklog().Phases, tr, citeAGo); err != nil {
+		if _, err := ValidateTriage(triageBacklog(), triageBacklog().Phases, tr, citeAGo, false); err != nil {
 			t.Errorf("%s: %v", category, err)
 		}
 	}
@@ -237,7 +237,7 @@ func TestValidateTriageDerivesGroupFindingsFromItems(t *testing.T) {
 	in := backlogTriage()
 	in.Groups[0].Findings = []ItemFinding{{Item: "9", RootCause: "made up"}}
 
-	got, err := ValidateTriage(triageBacklog(), triageBacklog().Phases, in, citeAGo)
+	got, err := ValidateTriage(triageBacklog(), triageBacklog().Phases, in, citeAGo, false)
 
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +293,7 @@ func TestValidateTriageAcceptsACitedAlreadyDonePhase(t *testing.T) {
 	tr := planTriage()
 	tr.Phases[0] = PhaseVerdict{Phase: "2", Status: VerdictAlreadyDone, Note: "built in c.go:1 and a.go:40-52"}
 
-	if _, err := ValidateTriage(triagePlan(), triagePlan().Phases[1:], tr, citeAGo); err != nil {
+	if _, err := ValidateTriage(triagePlan(), triagePlan().Phases[1:], tr, citeAGo, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -302,7 +302,7 @@ func TestApplyGateDropSplitMerge(t *testing.T) {
 	plan, backlog := triagePlan(), triageBacklog()
 	said := "ok"
 
-	dropped, err := ApplyGate(plan, plan.Phases[1:], planTriage(), GateDecision{Decision: GateRevise, Drop: []string{"4"}, MaintainerSaid: said})
+	dropped, err := ApplyGate(plan, plan.Phases[1:], planTriage(), GateDecision{Decision: GateRevise, Drop: []string{"4"}, MaintainerSaid: said}, false)
 	if err != nil || !slices.Equal(dropped.Dropped, []string{"4"}) {
 		t.Fatalf("plan drop = %+v, %v", dropped, err)
 	}
@@ -316,7 +316,7 @@ func TestApplyGateDropSplitMerge(t *testing.T) {
 	tr := backlogTriage()
 	tr.Items = append(tr.Items, fixItem("5", RiskLocal, "low"))
 	tr.Groups[0].Items = append(tr.Groups[0].Items, "5")
-	split, err := ApplyGate(five, five.Phases, tr, GateDecision{Decision: GateRevise, Split: []Split{{Group: "G1", Into: [][]string{{"2"}, {"1", "5"}}}}, MaintainerSaid: said})
+	split, err := ApplyGate(five, five.Phases, tr, GateDecision{Decision: GateRevise, Split: []Split{{Group: "G1", Into: [][]string{{"2"}, {"1", "5"}}}}, MaintainerSaid: said}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +335,7 @@ func TestApplyGateDropSplitMerge(t *testing.T) {
 		t.Errorf("input changed: %+v", tr.Groups[0])
 	}
 
-	merged, err := ApplyGate(five, five.Phases, split, GateDecision{Decision: GateRevise, Merge: [][]string{{"G1.2", "G2"}}, MaintainerSaid: said})
+	merged, err := ApplyGate(five, five.Phases, split, GateDecision{Decision: GateRevise, Merge: [][]string{{"G1.2", "G2"}}, MaintainerSaid: said}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func TestApplyGateDropSplitMerge(t *testing.T) {
 		t.Errorf("merged = %+v", merged.Groups)
 	}
 
-	droppedGroup, err := ApplyGate(backlog, backlog.Phases, backlogTriage(), GateDecision{Decision: GateGo, Drop: []string{"G2", "1"}, MaintainerSaid: said})
+	droppedGroup, err := ApplyGate(backlog, backlog.Phases, backlogTriage(), GateDecision{Decision: GateGo, Drop: []string{"G2", "1"}, MaintainerSaid: said}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestApplyGateRefuses(t *testing.T) {
 			if c.plan.Backlog {
 				list, tr = c.plan.Phases, backlogTriage()
 			}
-			_, err := ApplyGate(c.plan, list, tr, c.gate)
+			_, err := ApplyGate(c.plan, list, tr, c.gate, false)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("err = %v, want %q", err, c.want)
 			}
@@ -393,7 +393,7 @@ func TestApplyGateSplitNeedsEveryItem(t *testing.T) {
 	tr.Items[2] = fixItem("3", RiskLocal, "high")
 	tr.Groups[0].Items = []string{"1", "2", "3"}
 
-	_, err := ApplyGate(backlog, backlog.Phases, tr, GateDecision{Decision: GateRevise, Split: []Split{{Group: "G1", Into: [][]string{{"1"}, {"2"}}}}, MaintainerSaid: "y"})
+	_, err := ApplyGate(backlog, backlog.Phases, tr, GateDecision{Decision: GateRevise, Split: []Split{{Group: "G1", Into: [][]string{{"1"}, {"2"}}}}, MaintainerSaid: "y"}, false)
 
 	if err == nil || err.Error() != "split: item 3 of group G1 is in no part" {
 		t.Fatalf("err = %v", err)
@@ -536,7 +536,7 @@ verification: not run (--dry-run starts no sessions)
 	}
 
 	backlog := triageBacklog()
-	btr, err := ValidateTriage(backlog, backlog.Phases, backlogTriage(), citeAGo)
+	btr, err := ValidateTriage(backlog, backlog.Phases, backlogTriage(), citeAGo, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -609,8 +609,8 @@ func TestRenderTriageStripsControlCharactersFromCells(t *testing.T) {
 func TestTriageTextAsksOnlyWhenAttended(t *testing.T) {
 	plan, backlog := triagePlan(), triageBacklog()
 
-	attended := TriageText(plan, plan.Phases[2:], true)
-	unattended := TriageText(backlog, backlog.Phases, false)
+	attended := TriageText(plan, plan.Phases[2:], true, false)
+	unattended := TriageText(backlog, backlog.Phases, false, false)
 
 	wantAttended := "triage plan docs/x/todo.md phases 3, 4, 5. Follow your prompt's \"Triage\" section: verify each phase against the code and call submit_triage with one verdict per phase.\n" +
 		"When submit_triage is accepted, end your turn without printing or summarising the table: the driver types it into this pane. When it arrives, ask the maintainer, then call submit_gate.\n"
@@ -650,7 +650,7 @@ func TestBacklogTriageWrapsLongTextAndDropsTheLabelThatRepeatsTheID(t *testing.T
 	fix := ItemVerdict{ID: "3", Verdict: VerdictFix, Category: "feature", Confidence: "high", Risk: RiskLocal, Touches: []string{"V015.sql"}, Approach: "add the index in a new migration",
 		RootCause: "lockBatch orders by mass_mailing_id with no matching index; a new migration adds a partial expression index WHERE status IN ('NEW', 'FAILED') on message"}
 	tr := Triage{Items: []ItemVerdict{fix}, Groups: []Group{{ID: "g-indexes", Items: []string{"3"}, Subsystem: "migrations"}}}
-	tr, err := ValidateTriage(backlog, backlog.Phases, tr, citeAGo)
+	tr, err := ValidateTriage(backlog, backlog.Phases, tr, citeAGo, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -692,5 +692,249 @@ Plan check: 1 note
 `
 	if !strings.Contains(table, want) {
 		t.Errorf("table =\n%s\nwant it to contain\n%s", table, want)
+	}
+}
+
+func flag(b bool) *bool { return &b }
+
+func designedPlanTriage() Triage {
+	tr := planTriage()
+	for i := range tr.Phases {
+		tr.Phases[i].Design = flag(false)
+	}
+	tr.Phases[0] = PhaseVerdict{Phase: "2", Status: VerdictBuild, Design: flag(true), DesignNote: "the store screen gains an empty state"}
+	return tr
+}
+
+func designedBacklogTriage() Triage {
+	tr := backlogTriage()
+	tr.Groups[0].Design, tr.Groups[0].DesignNote = flag(true), "the run list page"
+	tr.Groups[1].Design = flag(false)
+	return tr
+}
+
+func TestValidateTriageRefusesDesignFlags(t *testing.T) {
+	plan, backlog := triagePlan(), triageBacklog()
+	withPhase := func(base Triage, edit func(*PhaseVerdict)) Triage {
+		edit(&base.Phases[1])
+		return base
+	}
+	withGroup := func(base Triage, edit func(*Group)) Triage {
+		edit(&base.Groups[1])
+		return base
+	}
+	for _, c := range []struct {
+		name   string
+		plan   Plan
+		tr     Triage
+		design bool
+		want   string
+	}{
+		{"build phase without design", plan, withPhase(designedPlanTriage(), func(v *PhaseVerdict) { v.Design = nil }), true, "phase 3: design is required — does it change what a user sees?"},
+		{"design true without a note", plan, withPhase(designedPlanTriage(), func(v *PhaseVerdict) { v.Design, v.DesignNote = flag(true), " " }), true, "phase 3: design true needs a design_note naming what changes"},
+		{"design note with a newline", plan, withPhase(designedPlanTriage(), func(v *PhaseVerdict) { v.Design, v.DesignNote = flag(true), "a\nb" }), true, "phase 3: design_note contains a control character"},
+		{"group without design", backlog, withGroup(designedBacklogTriage(), func(g *Group) { g.Design = nil }), true, "group G2: design is required — does it change what a user sees?"},
+		{"group design true without a note", backlog, withGroup(designedBacklogTriage(), func(g *Group) { g.Design = flag(true) }), true, "group G2: design true needs a design_note naming what changes"},
+		{"phase design without a design step", plan, withPhase(planTriage(), func(v *PhaseVerdict) { v.Design = flag(false) }), false, "phase 3: the pipeline has no design step: leave design out"},
+		{"design note alone without a design step", plan, withPhase(planTriage(), func(v *PhaseVerdict) { v.DesignNote = "x" }), false, "phase 3: the pipeline has no design step: leave design out"},
+		{"group design without a design step", backlog, withGroup(backlogTriage(), func(g *Group) { g.Design = flag(false) }), false, "group G2: the pipeline has no design step: leave design out"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			list := plan.Phases[1:]
+			if c.plan.Backlog {
+				list = backlog.Phases
+			}
+			_, err := ValidateTriage(c.plan, list, c.tr, citeAGo, c.design)
+			if err == nil || err.Error() != c.want {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+		})
+	}
+}
+
+func TestValidateTriageLetsAPhaseThatIsNotBuiltLeaveDesignOut(t *testing.T) {
+	plan := triagePlan()
+	tr := designedPlanTriage()
+	tr.Phases[2] = PhaseVerdict{Phase: "4", Status: VerdictBlocked, Note: "needs a key"}
+
+	if _, err := ValidateTriage(plan, plan.Phases[1:], tr, citeAGo, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyGateTurnsDesignOnAndOff(t *testing.T) {
+	plan, backlog := triagePlan(), triageBacklog()
+
+	got, err := ApplyGate(plan, plan.Phases[1:], designedPlanTriage(), GateDecision{Decision: GateRevise, DesignOn: []string{"3"}, DesignOff: []string{"2"}, MaintainerSaid: "ok"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []PhaseVerdict{
+		{Phase: "2", Status: VerdictBuild, Design: flag(false)},
+		{Phase: "3", Status: VerdictBuild, Design: flag(true), DesignNote: "turned on by the maintainer"},
+		{Phase: "4", Status: VerdictBuild, Design: flag(false)},
+		{Phase: "5", Status: VerdictBuild, Design: flag(false)},
+	}
+	if !reflect.DeepEqual(got.Phases, want) {
+		t.Errorf("phases =\n%+v\nwant\n%+v", got.Phases, want)
+	}
+
+	groups, err := ApplyGate(backlog, backlog.Phases, designedBacklogTriage(), GateDecision{Decision: GateRevise, DesignOn: []string{"G1", "G2"}, MaintainerSaid: "ok"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := groups.Groups; *g[0].Design != true || g[0].DesignNote != "the run list page" || *g[1].Design != true || g[1].DesignNote != "turned on by the maintainer" {
+		t.Errorf("groups = %+v", g)
+	}
+}
+
+func TestApplyGateSplitAndMergeKeepTheDesignFlag(t *testing.T) {
+	backlog := triageBacklog()
+	backlog.Phases = append(backlog.Phases, backlogItem("5", "five", "e"))
+	tr := designedBacklogTriage()
+	tr.Items = append(tr.Items, fixItem("5", RiskLocal, "high"))
+	tr.Groups[0].Items = []string{"2", "1", "5"}
+
+	split, err := ApplyGate(backlog, backlog.Phases, tr, GateDecision{Decision: GateRevise, Split: []Split{{Group: "G1", Into: [][]string{{"2"}, {"1", "5"}}}}, MaintainerSaid: "ok"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range split.Groups[:2] {
+		if g.Design == nil || !*g.Design || g.DesignNote != "the run list page" {
+			t.Errorf("split part %s lost the flag: %+v", g.ID, g)
+		}
+	}
+
+	tr.Groups[1].Items, tr.Items[3].Risk = []string{"4"}, RiskLocal
+	merged, err := ApplyGate(backlog, backlog.Phases, tr, GateDecision{Decision: GateRevise, Merge: [][]string{{"G2", "G1"}}, MaintainerSaid: "ok"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := merged.Groups[0]; g.Design == nil || !*g.Design || g.DesignNote != "the run list page" {
+		t.Errorf("merged = %+v", g)
+	}
+}
+
+func TestApplyGateRefusesDesign(t *testing.T) {
+	plan, backlog := triagePlan(), triageBacklog()
+	for _, c := range []struct {
+		name   string
+		plan   Plan
+		gate   GateDecision
+		design bool
+		want   string
+	}{
+		{"no design step", plan, GateDecision{Decision: GateRevise, DesignOn: []string{"2"}, MaintainerSaid: "y"}, false, "design_on and design_off need a design step in the pipeline"},
+		{"unknown phase", plan, GateDecision{Decision: GateRevise, DesignOn: []string{"9"}, MaintainerSaid: "y"}, true, "design: phase 9 is not a phase this run builds"},
+		{"dropped phase", plan, GateDecision{Decision: GateRevise, Drop: []string{"3"}, DesignOn: []string{"3"}, MaintainerSaid: "y"}, true, "design: phase 3 is not a phase this run builds"},
+		{"both lists", plan, GateDecision{Decision: GateRevise, DesignOn: []string{"2"}, DesignOff: []string{"2"}, MaintainerSaid: "y"}, true, "design: 2 is in both design_on and design_off"},
+		{"unknown group", backlog, GateDecision{Decision: GateRevise, DesignOff: []string{"G9"}, MaintainerSaid: "y"}, true, "design: group G9 does not exist"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			list, tr := c.plan.Phases[1:], designedPlanTriage()
+			if c.plan.Backlog {
+				list, tr = c.plan.Phases, designedBacklogTriage()
+			}
+			if !c.design {
+				tr = planTriage()
+			}
+			_, err := ApplyGate(c.plan, list, tr, c.gate, c.design)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+		})
+	}
+}
+
+func TestTriageResultCarriesTheDesignFlagOntoTheKeptPhases(t *testing.T) {
+	plan, backlog := triagePlan(), triageBacklog()
+
+	kept, _, _ := TriageResult(plan, plan.Phases[1:], designedPlanTriage())
+	if !kept[0].Design || kept[0].DesignNote != "the store screen gains an empty state" || kept[1].Design || kept[1].DesignNote != "" {
+		t.Errorf("plan kept = %+v", kept[:2])
+	}
+
+	heads, _, _ := TriageResult(backlog, backlog.Phases, designedBacklogTriage())
+	if heads[0].ID != "1" || !heads[0].Design || heads[0].DesignNote != "the run list page" || heads[1].Design {
+		t.Errorf("backlog kept = %+v", heads)
+	}
+}
+
+func TestRenderTriageShowsTheDesignFlag(t *testing.T) {
+	plan, backlog := triagePlan(), triageBacklog()
+	view := triageView(plan, plan.Phases[1:3])
+	view.Kinds = append([]StepKind{{Name: "design", Check: "design-file"}}, view.Kinds...)
+	tr := designedPlanTriage()
+	tr.Phases = tr.Phases[:2]
+
+	summary, table := RenderTriage(view, &tr)
+
+	for _, want := range []string{
+		"  Verified:  build\n  Design:    the store screen gains an empty state\n",
+		"  Verified:  build\n  Design:    —\n",
+		"2 phases: 7 step sessions (design, plan, implement, land)",
+	} {
+		if !strings.Contains(table, want) {
+			t.Errorf("table missing %q:\n%s", want, table)
+		}
+	}
+	if summary != "2 phases to run, 0 already done, 0 blocked, 1 to design" {
+		t.Errorf("summary = %q", summary)
+	}
+
+	_, plain := RenderTriage(triageView(plan, plan.Phases[1:3]), &Triage{Phases: planTriage().Phases[:2]})
+	if strings.Contains(plain, "Design:") {
+		t.Errorf("a pipeline without a design step shows a Design line:\n%s", plain)
+	}
+
+	bview := triageView(backlog, backlog.Phases)
+	bview.Kinds = view.Kinds
+	btr, err := ValidateTriage(backlog, backlog.Phases, designedBacklogTriage(), citeAGo, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bsummary, btable := RenderTriage(bview, &btr)
+	if !strings.Contains(btable, "Why together: same writer\nDesign: the run list page\n") || !strings.Contains(btable, "G2 → phase 4 · face · cosmetic risk · high confidence\nDesign: —\n") {
+		t.Errorf("backlog table:\n%s", btable)
+	}
+	if !strings.HasSuffix(bsummary, ", 1 to design") {
+		t.Errorf("backlog summary = %q", bsummary)
+	}
+}
+
+func TestTriageTextAsksForDesignOnlyWithADesignStep(t *testing.T) {
+	plan, backlog := triagePlan(), triageBacklog()
+	line := "The pipeline has a design step: give every build phase design true or false, as your prompt's \"Design\" rule says.\n"
+	groupLine := "The pipeline has a design step: give every group design true or false, as your prompt's \"Design\" rule says.\n"
+
+	if got := TriageText(plan, plan.Phases[2:], true, true); !strings.Contains(got, line) {
+		t.Errorf("plan text =\n%s", got)
+	}
+	if got := TriageText(backlog, backlog.Phases, false, true); !strings.Contains(got, groupLine) {
+		t.Errorf("backlog text =\n%s", got)
+	}
+	if got := TriageText(plan, plan.Phases[2:], true, false); strings.Contains(got, "design") {
+		t.Errorf("text without a design step =\n%s", got)
+	}
+}
+
+func TestRunListDesignReadsTheFlaggedPhases(t *testing.T) {
+	got := RunListDesign(map[string]string{"design": `{"2":"the store screen","7a":"the feed"}`})
+
+	if want := map[string]string{"2": "the store screen", "7a": "the feed"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("design = %v", got)
+	}
+	if got := RunListDesign(map[string]string{"phases": "2"}); len(got) != 0 {
+		t.Errorf("a run list without design = %v", got)
+	}
+}
+
+func TestApplyRunListDesignFlagsOnlyTheRecordedPhases(t *testing.T) {
+	plan := triagePlan()
+
+	got := ApplyRunListDesign(plan, map[string]string{"3": "the loop view"})
+
+	if !got.Phases[2].Design || got.Phases[2].DesignNote != "the loop view" || got.Phases[1].Design || plan.Phases[2].Design {
+		t.Errorf("phases = %+v", got.Phases)
 	}
 }

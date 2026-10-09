@@ -413,7 +413,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "submit_triage",
-		Description: "Submit your triage before the run starts: one verdict per phase for a plan, or one per item plus the groups for a backlog. A refusal carries the reason; fix it and submit again. An accepted call returns the table the driver built.",
+		Description: "Submit your triage before the run starts: one verdict per phase for a plan, or one per item plus the groups for a backlog; when the pipeline has a design step, every build phase or group also carries design and, when true, a design_note. A refusal carries the reason; fix it and submit again. An accepted call returns the table the driver built.",
 	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in triageInput) (*mcp.CallToolResult, tableOutput, error) {
 		if err := s.record("submit_triage", "", map[string]string{"triage": marshal(in)}); err != nil {
 			return s.tableResult(tableOutput{Reason: err.Error()})
@@ -430,7 +430,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "submit_gate",
-		Description: "Submit the maintainer's decision on the table: go, revise (drop, split, merge; returns the new table) or abort, with maintainer_said quoted.",
+		Description: "Submit the maintainer's decision on the table: go, revise (drop, split, merge, design_on, design_off; returns the new table) or abort, with maintainer_said quoted.",
 	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in core.GateDecision) (*mcp.CallToolResult, tableOutput, error) {
 		if err := s.record("submit_gate", "", map[string]string{"gate": marshal(in), "decision": in.Decision, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return s.tableResult(tableOutput{Reason: err.Error()})

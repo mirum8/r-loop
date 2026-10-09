@@ -51,7 +51,33 @@ type GateFix struct {
 
 var reviewHalfChecks = map[string]bool{"findings": true, "verdict": true}
 
+const designCheck = "design-file"
+
+func DesignAsked(kinds []StepKind) bool {
+	for _, k := range kinds {
+		if k.Check == designCheck {
+			return true
+		}
+	}
+	return false
+}
+
 func Pipeline(entries []string, rows map[string]StepRow, prompts, checks map[string]string) ([]StepKind, error) {
+	designAt, planned := "", false
+	for _, name := range entries {
+		switch checks[name] {
+		case designCheck:
+			if designAt != "" {
+				return nil, fmt.Errorf("pipeline entry %q: a second design-file step after %q", name, designAt)
+			}
+			if planned {
+				return nil, fmt.Errorf("pipeline entry %q: a design-file step must come before the plan-file step", name)
+			}
+			designAt = name
+		case "plan-file":
+			planned = true
+		}
+	}
 	kinds := make([]StepKind, 0, len(entries))
 	for _, name := range entries {
 		row, ok := rows[name]

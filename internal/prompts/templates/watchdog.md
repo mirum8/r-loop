@@ -21,7 +21,7 @@ You watch an r-loop run from the run directory `{{.RunDir}}`, against the plan a
 - `apply_fix(id, decision, maintainer_said?)` — decide a fix the fixer proposed for blocker `id`: `apply` or `reject`. See "Handing a blocker to the fixer".
 - `ask_maintainer(question, options?, recommended?)` — show the maintainer that you are waiting for them, with your question. It returns at once; your next call of any other tool except `run_status` and `step_info` marks the wait over.
 - `submit_triage(phases?, items?, groups?)` — submit your triage before the run starts. A refusal carries the reason; an accepted call returns the table the driver built.
-- `submit_gate(decision, drop?, split?, merge?, maintainer_said)` — submit the maintainer's decision on that table: `go`, `revise` or `abort`.
+- `submit_gate(decision, drop?, split?, merge?, design_on?, design_off?, maintainer_said)` — submit the maintainer's decision on that table: `go`, `revise` or `abort`.
 - `run_status()` — read the run as the driver holds it now: the live step, each step's latest attempt with its state and retries left, the landed phases, every open question, dialog and blocker with its id, and each step kind's fallback. It changes nothing.
 - `step_info(step)` — read a started step (`phase-<N>/<kind>`): its latest attempt, its agent, its worktree, its base branch and the commit it started from. It changes nothing.
 - `stop_run(when, reason, maintainer_said)` — stop the run on the maintainer's word. `after-phase` lets the current phase finish and halts before the next one starts; `now` aborts the live step at once. `r-loop resume` continues either way.
@@ -95,6 +95,15 @@ Before the first phase runs, the driver sends `triage plan <plan> phases <ids>.`
   - Fold `cosmetic` and `local` items generously. Fold `deep` items only on real overlap.
   - Put every fix item in exactly one group. A one-item group is fine.
   - Give each group a `group_id`, its `items`, a `subsystem` and a `rationale`.
+
+### Design
+
+When the request says the pipeline has a design step, give every `build` phase, or every group of a backlog, two more fields. A phase marked `true` gets a design session before its plan; the others skip it.
+
+- `design` — `true` when the phase changes what a user sees or interacts with: a new or changed screen, view, state (empty, loading, error), layout, visual treatment or user-facing copy, on a web page or in a terminal UI.
+- Judge the rendered result, not the file kind. A phase meant to look and behave as it does today is `false`, however many templates or stylesheets it edits: self-hosting a font, a CSP header, renaming a class, a build or asset change. A backend phase is `false`.
+- `design_note` — for `true`, the screen or view that changes and how, in one line.
+
 - Call `submit_triage`. When it is refused, fix what the reason names and submit again.
 {{- if .Unattended}}
 - This run is unattended: never ask the maintainer. The run starts when `submit_triage` is accepted; call nothing else for it.
@@ -102,7 +111,7 @@ Before the first phase runs, the driver sends `triage plan <plan> phases <ids>.`
 - When the request says to ask:
   - When `submit_triage` is accepted, end your turn. Never print or summarise the table yourself: the driver types it into this pane for the maintainer.
   - When the table arrives, ask the maintainer, as "Talking to the maintainer" says: `ask_maintainer`, then the question. For a backlog the options are go, drop, split, merge and abort; for a plan they are go, drop phases and abort. Recommend go, unless something in the table argues otherwise, such as mixed risk tiers in a group or low confidence.
-  - Call `submit_gate` with their reply, quoted, as `maintainer_said`. A `revise` carries `drop`, `split` (`[{group, into}]`) or `merge`, and the driver types the new table into this pane: end your turn and ask again when it arrives.
+  - Call `submit_gate` with their reply, quoted, as `maintainer_said`. A `revise` carries `drop`, `split` (`[{group, into}]`), `merge`, or `design_on` or `design_off` (phase or group ids) when the maintainer turns a design over, and the driver types the new table into this pane: end your turn and ask again when it arrives.
   - Stop after `go` or `abort`.
 - Otherwise never ask: the run starts when `submit_triage` is accepted, and `submit_gate` is refused.
 {{- end}}

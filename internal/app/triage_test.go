@@ -550,3 +550,76 @@ func TestNoTriageTableIsTypedIntoTheWatchdogPaneWithoutAGate(t *testing.T) {
 		})
 	}
 }
+
+func designKind() core.StepKind {
+	return core.StepKind{Name: "design", Prompt: "design", Check: "design-file", Row: core.StepRow{Provider: "claude"}}
+}
+
+func TestATriageWithADesignStepNeedsAFlagPerPhaseAndTheGateCanTurnItOver(t *testing.T) {
+	var text, refused, first, revised string
+	k := startTriage(t, func(w *Wiring, sent string) {
+		text = sent
+		_, refused, _ = w.submitTriage(allBuild(sent))
+		yes, no := true, false
+		first = submit(t, w, core.Triage{Phases: []core.PhaseVerdict{
+			{Phase: "1", Status: core.VerdictBuild, Design: &yes, DesignNote: "the list page gains an empty state"},
+			{Phase: "2", Status: core.VerdictBuild, Design: &no},
+			{Phase: "3", Status: core.VerdictBuild, Design: &no},
+		}})
+		revised = gate(t, w, core.GateDecision{Decision: core.GateRevise, DesignOn: []string{"2"}, DesignOff: []string{"1"}, MaintainerSaid: "design 2, not 1"})
+		gate(t, w, core.GateDecision{Decision: core.GateAbort, MaintainerSaid: "stop"})
+	})
+	k.w.Loop.Kinds = append([]core.StepKind{designKind()}, k.w.Loop.Kinds...)
+
+	if code := k.run(); code != 1 {
+		t.Fatalf("exit %d\n%s", code, k.f.err)
+	}
+
+	if !strings.Contains(text, "The pipeline has a design step: give every build phase design true or false") {
+		t.Errorf("triage text:\n%s", text)
+	}
+	if refused != "phase 1: design is required — does it change what a user sees?" {
+		t.Errorf("refused %q", refused)
+	}
+	if !strings.Contains(first, "Phase 1 · one\n") || !strings.Contains(first, "  Design:    the list page gains an empty state\n") {
+		t.Errorf("first table:\n%s", first)
+	}
+	if !strings.Contains(revised, "  Verified:  build\n  Design:    turned on by the maintainer\n") || strings.Contains(revised, "empty state") {
+		t.Errorf("revised table:\n%s", revised)
+	}
+}
+
+func TestTheRunListRecordsTheDesignFlagsAndResumeRestoresThem(t *testing.T) {
+	sim := newSim()
+	sim.fail["rloop-p2-implement"] = true
+	k := startTriage(t, func(w *Wiring, text string) {
+		submit(t, w, allBuild(text))
+		gate(t, w, core.GateDecision{Decision: core.GateGo, MaintainerSaid: "go"})
+	})
+	k.land = k.f.sim(k.w, sim)
+	if code := k.run(); code == 0 {
+		t.Fatalf("the first run did not stop on phase 2")
+	}
+	ev := core.Event{At: time.Now(), Kind: "run-list", Fields: map[string]string{"phases": "2,3", "design": `{"2":"the list page"}`}}
+	if err := k.w.Store.Append(k.w.Loop.RunID, core.Record{Kind: core.RecordEvent, At: ev.At, Event: &ev}); err != nil {
+		t.Fatal(err)
+	}
+
+	resumed, _, err := PrepareResume([]string{"--plain"}, k.f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, ph := range resumed.Plan.Phases {
+		want := ph.ID == "2"
+		if ph.Design != want || (want && ph.DesignNote != "the list page") {
+			t.Errorf("phase %s: design %v %q", ph.ID, ph.Design, ph.DesignNote)
+		}
+	}
+	if err := resumed.recordRunList(resumed.Plan.Phases[1:], nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := recordedDesign(k.f.load(k.w.Loop.RunID)); len(got) != 1 || got["2"] != "the list page" {
+		t.Errorf("recorded design %v", got)
+	}
+}

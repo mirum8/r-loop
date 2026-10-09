@@ -57,7 +57,7 @@ func (w *Wiring) triage(ctx context.Context, opts core.RunOptions, kept []core.P
 		w.triaging = nil
 		w.triageMu.Unlock()
 	}()
-	if err := w.Dog.Notify(core.TriageText(w.Plan, kept, run.ask), false, w.Config.Watchdog.TriageTimeout); err != nil {
+	if err := w.Dog.Notify(core.TriageText(w.Plan, kept, run.ask, core.DesignAsked(w.Loop.Kinds)), false, w.Config.Watchdog.TriageTimeout); err != nil {
 		w.record(core.Event{Kind: "warning", Fields: map[string]string{"reason": "triage: " + err.Error()}})
 	}
 	end, err := w.awaitTriage(ctx, run)
@@ -136,6 +136,7 @@ func (w *Wiring) startAfterTriage(opts core.RunOptions, run *triageRun, end tria
 	if w.Plan.Backlog {
 		w.setPlan(core.GroupBacklog(w.Plan, groups))
 	}
+	w.setPlan(core.ApplyRunListDesign(w.Plan, designNotes(kept)))
 	w.groups = groups
 	if err := w.recordRunList(kept, groups); err != nil {
 		return opts, false, err
@@ -166,7 +167,7 @@ func (w *Wiring) acceptTriage(t core.Triage) (bool, string, string, string) {
 	if run == nil || run.closed {
 		return false, "no triage is open", "", ""
 	}
-	checked, err := core.ValidateTriage(w.Plan, run.list, t, func(c string) string { return core.CheckCitation(w.Repo.Root(), c) })
+	checked, err := core.ValidateTriage(w.Plan, run.list, t, func(c string) string { return core.CheckCitation(w.Repo.Root(), c) }, core.DesignAsked(w.Loop.Kinds))
 	if err != nil {
 		return false, err.Error(), "", ""
 	}
@@ -206,7 +207,7 @@ func (w *Wiring) applyGate(g core.GateDecision) (bool, string, string, string) {
 	case run.current == nil:
 		return false, "no triage accepted yet: call submit_triage first", "", ""
 	}
-	next, err := core.ApplyGate(w.Plan, run.list, *run.current, g)
+	next, err := core.ApplyGate(w.Plan, run.list, *run.current, g, core.DesignAsked(w.Loop.Kinds))
 	if err != nil {
 		return false, err.Error(), "", ""
 	}
@@ -260,12 +261,37 @@ func (w *Wiring) recordRunList(list []core.Phase, groups []core.Group) error {
 			fields["groups"] = string(data)
 		}
 	}
+	if design := designNotes(list); len(design) > 0 {
+		if data, err := json.Marshal(design); err == nil {
+			fields["design"] = string(data)
+		}
+	}
 	ev := core.Event{At: time.Now(), Kind: "run-list", Fields: fields}
 	if err := w.recordFatal(core.Record{Kind: core.RecordEvent, At: ev.At, Event: &ev}); err != nil {
 		return err
 	}
 	w.Face.Emit(ev)
 	return nil
+}
+
+func designNotes(list []core.Phase) map[string]string {
+	design := map[string]string{}
+	for _, ph := range list {
+		if ph.Design {
+			design[ph.ID] = ph.DesignNote
+		}
+	}
+	return design
+}
+
+func recordedDesign(run core.RunState) map[string]string {
+	var design map[string]string
+	for _, e := range run.Events {
+		if e.Kind == "run-list" {
+			design = core.RunListDesign(e.Fields)
+		}
+	}
+	return design
 }
 
 func recordedGroups(run core.RunState) []core.Group {

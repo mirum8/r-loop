@@ -400,6 +400,9 @@ func (w *Wiring) resume(run core.RunState, replan bool) (core.RunOptions, error)
 		w.groups = groups
 		w.setPlan(core.GroupBacklog(w.Plan, groups))
 	}
+	if design := recordedDesign(run); len(design) > 0 {
+		w.setPlan(core.ApplyRunListDesign(w.Plan, design))
+	}
 	recorded := recordedRunList(run)
 	w.Triaged = len(recorded) > 0
 	if len(recorded) > 0 {

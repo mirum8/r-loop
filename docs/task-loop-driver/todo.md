@@ -879,14 +879,14 @@ Contracts: `tech-design.md#milestone-20-the-design-step`
 **Depends on:** Phase 52
 **Files:** `internal/core/kinds.go` (modify) · `internal/core/kinds_test.go` (new) · `internal/core/types.go` (modify) · `internal/core/triage.go` (modify) · `internal/core/triage_test.go` (modify) · `internal/askmcp/watchdog.go` (modify) · `internal/askmcp/watchdog_test.go` (modify) · `internal/app/triage.go` (modify) · `internal/app/triage_test.go` (modify) · `internal/app/resume.go` (modify) · `internal/app/resume_test.go` (modify) · `internal/prompts/templates/watchdog.md` (modify) · `internal/prompts/render_test.go` (modify)
 **Risk:** none
-- [ ] `core.DesignAsked(kinds)` is true when an entry's check is `design-file`; `core.Pipeline` refuses a second `design-file` entry and one that is not before the `plan-file` entry, naming the entry
-- [ ] `PhaseVerdict` and `Group` gain `design` and `design_note`; `core.Phase` gains `Design` and `DesignNote`; `GateDecision` gains `design_on` and `design_off`, and `submit_gate`'s input type carries both
-- [ ] `ValidateTriage` with `designAsked` refuses a `build` phase or a group without `design`, a `design: true` without a note or with a control character in it, and, without `designAsked`, any `design` or `design_note`, each with the reason in `tech-design.md`; a non-`build` phase may omit it
-- [ ] `TriageText` with `designAsked` adds the design line; `ApplyGate` turns flags on and off by id, refusing an unknown id, an id in both lists and either list without `designAsked`; `TriageResult` and `GroupBacklog` carry the flag and note onto the kept phase
-- [ ] `RenderTriage` adds `Design: <note>` or `Design: —` to each kept phase's block and `<n> to design` to the summary, only with `designAsked`
-- [ ] `recordRunList` records `design` as a JSON object of the flagged phases' notes; `core.RunListDesign` reads it; `resume` applies it after `GroupBacklog`, and a run list without it flags nothing
-- [ ] `watchdog.md`'s "Triage" gains the "Design" rule: judge the rendered result, not the file kind; a phase meant to look as it does today is `false`; the note names the screen or view that changes
-- [ ] tests prove the pipeline refusals, every validation refusal and the accepted plan and backlog submissions, the gate's on and off and its refusals, the flags on the kept phases and the group head, the table line, the recorded and resumed flags, a run list without the field, and the prompt rule
+- [x] `core.DesignAsked(kinds)` is true when an entry's check is `design-file`; `core.Pipeline` refuses a second `design-file` entry and one that is not before the `plan-file` entry, naming the entry
+- [x] `PhaseVerdict` and `Group` gain `design` and `design_note`; `core.Phase` gains `Design` and `DesignNote`; `GateDecision` gains `design_on` and `design_off`, and `submit_gate`'s input type carries both
+- [x] `ValidateTriage` with `designAsked` refuses a `build` phase or a group without `design`, a `design: true` without a note or with a control character in it, and, without `designAsked`, any `design` or `design_note`, each with the reason in `tech-design.md`; a non-`build` phase may omit it
+- [x] `TriageText` with `designAsked` adds the design line; `ApplyGate` turns flags on and off by id, refusing an unknown id, an id in both lists and either list without `designAsked`; `TriageResult` and `GroupBacklog` carry the flag and note onto the kept phase
+- [x] `RenderTriage` adds `Design: <note>` or `Design: —` to each kept phase's block and `<n> to design` to the summary, only with `designAsked`
+- [x] `recordRunList` records `design` as a JSON object of the flagged phases' notes; `core.RunListDesign` reads it; `resume` applies it after `GroupBacklog`, and a run list without it flags nothing
+- [x] `watchdog.md`'s "Triage" gains the "Design" rule: judge the rendered result, not the file kind; a phase meant to look as it does today is `false`; the note names the screen or view that changes
+- [x] tests prove the pipeline refusals, every validation refusal and the accepted plan and backlog submissions, the gate's on and off and its refusals, the flags on the kept phases and the group head, the table line, the recorded and resumed flags, a run list without the field, and the prompt rule
 **Done when:** `go test -race ./internal/core/... ./internal/askmcp/... ./internal/app/... ./internal/prompts/...` is green and `grep -n "design_note" internal/core/triage.go` prints the field.
 
 ### Phase 54 — The `design` step runs on flagged phases, and its file is judged by code

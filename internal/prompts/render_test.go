@@ -997,6 +997,25 @@ func TestWatchdogTriageJudgesWhetherAnItemIsReal(t *testing.T) {
 	}
 }
 
+func TestWatchdogTriageFlagsThePhasesThatNeedADesign(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"### Design",
+		"When the request says the pipeline has a design step",
+		"`design` — `true` when the phase changes what a user sees or interacts with",
+		"Judge the rendered result, not the file kind",
+		"A phase meant to look and behave as it does today is `false`",
+		"`design_note` — for `true`, the screen or view that changes",
+		"submit_gate(decision, drop?, split?, merge?, design_on?, design_off?, maintainer_said)",
+		"`design_on` or `design_off` (phase or group ids)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q", want)
+		}
+	}
+}
+
 func TestWatchdogTriagesTheRunListAndAsksAtTheGate(t *testing.T) {
 	text := render(t, New(t.TempDir()), "watchdog", fullVars())
 
@@ -1008,7 +1027,7 @@ func TestWatchdogTriagesTheRunListAndAsksAtTheGate(t *testing.T) {
 		"Never put `cosmetic` and `deep` in one group",
 		"Put every fix item in exactly one group",
 		"submit_triage(phases?, items?, groups?)",
-		"submit_gate(decision, drop?, split?, merge?, maintainer_said)",
+		"submit_gate(decision, drop?, split?, merge?, design_on?, design_off?, maintainer_said)",
 		"When `submit_triage` is accepted, end your turn. Never print or summarise the table yourself: the driver types it into this pane for the maintainer.",
 		"When the table arrives, ask the maintainer",
 		"go, drop, split, merge and abort",
