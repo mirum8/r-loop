@@ -1350,3 +1350,32 @@ func TestTheFeedNamesTheDesignAndItsSkip(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentTextCannotDriveTheTerminal(t *testing.T) {
+	bad := "x\x1b[2J\x1b[Hy\x1b]0;PWNED\x07z\rw"
+	phases := []core.Phase{{ID: "1", Title: "calc" + bad}}
+	m := NewModel(Header{RunID: "20260918-140000", Todo: "docs/x/todo.md", Started: t0, Steps: []string{"plan", "implement"}}, phases, NewTheme(lipgloss.NewRenderer(io.Discard), false))
+	m.Width, m.Height = 120, 40
+	for _, ev := range []core.Event{
+		{Kind: "design", Phase: "1", Fields: map[string]string{"intent": bad}},
+		{Kind: "design-skipped", Phase: "1", Fields: map[string]string{"reason": bad}},
+		{Kind: "warning", Phase: "1", Step: "plan", Fields: map[string]string{"reason": bad}},
+		{Kind: "assumption", Phase: "1", Step: "plan", Fields: map[string]string{"text": bad}},
+		{Kind: "error", Fields: map[string]string{"reason": bad}},
+		{Kind: "watchdog-waiting", Fields: map[string]string{"question": bad}},
+	} {
+		ev.At = at(5)
+		m = m.Apply(ev)
+	}
+
+	view := m.View()
+
+	for _, seq := range []string{"\x1b[2J", "\x1b[H", "\x1b]", "\x07", "\r"} {
+		if strings.Contains(view, seq) {
+			t.Errorf("view carries %q:\n%q", seq, view)
+		}
+	}
+	if !strings.Contains(view, "PWNED") {
+		t.Errorf("the text itself is gone:\n%s", view)
+	}
+}

@@ -22,7 +22,13 @@ type Face struct {
 func (f *Face) Emit(ev core.Event) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.closeGate(ev)
+	var b strings.Builder
+	f.closeGate(&b, ev)
+	f.emit(&b, ev)
+	io.WriteString(f.Out, core.Displayable(b.String()))
+}
+
+func (f *Face) emit(w io.Writer, ev core.Event) {
 	switch ev.Kind {
 	case "step":
 		detail := ev.Fields["reason"]
@@ -31,7 +37,7 @@ func (f *Face) Emit(ev core.Event) {
 		}
 		line := fmt.Sprintf("%s  phase %s  %s  %s  %s  %s", ev.At.Format("15:04:05"), ev.Phase, ev.Step,
 			ev.Fields["state"], ev.Fields["provider"], detail)
-		fmt.Fprintln(f.Out, strings.TrimRight(line, " "))
+		fmt.Fprintln(w, strings.TrimRight(line, " "))
 	case "land-stage":
 		line := fmt.Sprintf("%s  phase %s  land  %s", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["stage"])
 		if cmd := ev.Fields["command"]; cmd != "" {
@@ -41,59 +47,59 @@ func (f *Face) Emit(ev core.Event) {
 		if log := ev.Fields["log"]; log != "" {
 			line += "  log " + log
 		}
-		fmt.Fprintln(f.Out, line)
+		fmt.Fprintln(w, line)
 	case "nudge":
-		fmt.Fprintf(f.Out, "%s  phase %s  %s  nudge\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step)
+		fmt.Fprintf(w, "%s  phase %s  %s  nudge\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step)
 	case "watchdog-waiting":
 		if q := ev.Fields["question"]; q != "" {
-			fmt.Fprintln(f.Out, "!  watchdog waiting for you: "+q)
+			fmt.Fprintln(w, "!  watchdog waiting for you: "+q)
 		} else {
-			fmt.Fprintln(f.Out, "!  watchdog waiting for you")
+			fmt.Fprintln(w, "!  watchdog waiting for you")
 		}
 	case "phase-check-start", "phase-check", "phase-check-timeout", "phase-check-skipped":
-		fmt.Fprintf(f.Out, "%s  phase %s  phase check  %s\n", ev.At.Format("15:04:05"), ev.Phase, checkDetail(ev))
+		fmt.Fprintf(w, "%s  phase %s  phase check  %s\n", ev.At.Format("15:04:05"), ev.Phase, checkDetail(ev))
 	case "triage-start":
 		noun := "phase"
 		if ev.Fields["kind"] == "backlog" {
 			noun = "item"
 		}
-		fmt.Fprintf(f.Out, "%s  triage: watchdog verifying %s\n", ev.At.Format("15:04:05"), core.Plural(len(strings.Split(ev.Fields["phases"], ", ")), noun))
+		fmt.Fprintf(w, "%s  triage: watchdog verifying %s\n", ev.At.Format("15:04:05"), core.Plural(len(strings.Split(ev.Fields["phases"], ", ")), noun))
 	case "triage":
-		fmt.Fprintf(f.Out, "%s  triage: %s\n%s", ev.At.Format("15:04:05"), ev.Fields["summary"], ev.Fields["table"])
+		fmt.Fprintf(w, "%s  triage: %s\n%s", ev.At.Format("15:04:05"), ev.Fields["summary"], ev.Fields["table"])
 	case core.TriageSkipped:
-		fmt.Fprintf(f.Out, "%s  phase %s  skipped by triage: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["reason"])
+		fmt.Fprintf(w, "%s  phase %s  skipped by triage: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["reason"])
 	case "run-list":
-		fmt.Fprintf(f.Out, "run list: %s\n", runList(ev.Fields))
+		fmt.Fprintf(w, "run list: %s\n", runList(ev.Fields))
 	case "warning", "error":
-		fmt.Fprintf(f.Out, "!  %s%s\n", where(ev.Phase, ev.Step), ev.Fields["reason"])
+		fmt.Fprintf(w, "!  %s%s\n", where(ev.Phase, ev.Step), ev.Fields["reason"])
 	case "review-round":
-		fmt.Fprintf(f.Out, "%s  phase %s  %s  review r%s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["round"])
+		fmt.Fprintf(w, "%s  phase %s  %s  review r%s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["round"])
 	case "agent-named":
-		fmt.Fprintf(f.Out, "%s  phase %s  %s  reviewer %s r%s  agent %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["reviewer"], ev.Fields["round"], ev.Fields["agent"])
+		fmt.Fprintf(w, "%s  phase %s  %s  reviewer %s r%s  agent %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["reviewer"], ev.Fields["round"], ev.Fields["agent"])
 	case "finding":
 		fields := ev.Fields
-		fmt.Fprintf(f.Out, "%s  phase %s  %s  r%s %s %s  %s %s fixed=%s: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fields["round"], fields["reviewer"], fields["id"], fields["verdict"], fields["severity"], fields["fixed"], fields["title"])
+		fmt.Fprintf(w, "%s  phase %s  %s  r%s %s %s  %s %s fixed=%s: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fields["round"], fields["reviewer"], fields["id"], fields["verdict"], fields["severity"], fields["fixed"], fields["title"])
 	case "review-clean":
-		fmt.Fprintf(f.Out, "%s  phase %s  %s  review r%s clean\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["round"])
+		fmt.Fprintf(w, "%s  phase %s  %s  review r%s clean\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["round"])
 	case "blocked-on":
-		fmt.Fprintf(f.Out, "%s  phase %s  %s  blocker %s (%s): %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["id"], ev.Fields["source"], ev.Fields["reason"])
+		fmt.Fprintf(w, "%s  phase %s  %s  blocker %s (%s): %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["id"], ev.Fields["source"], ev.Fields["reason"])
 	case "blocker-resolved":
-		fmt.Fprintf(f.Out, "%s  phase %s  %s  blocker %s → %s (%s)\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["id"], ev.Fields["action"], ev.Fields["by"])
+		fmt.Fprintf(w, "%s  phase %s  %s  blocker %s → %s (%s)\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["id"], ev.Fields["action"], ev.Fields["by"])
 	case core.EventFixStarted, core.EventFixProposed, core.EventFixApplied, core.EventFixRejected, core.EventFixFailed:
-		fmt.Fprintf(f.Out, "%s  phase %s  %s  %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fixDetail(ev))
+		fmt.Fprintf(w, "%s  phase %s  %s  %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fixDetail(ev))
 	case "step-skipped":
-		fmt.Fprintf(f.Out, "%s  phase %s  %s  skipped: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["reason"])
+		fmt.Fprintf(w, "%s  phase %s  %s  skipped: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["reason"])
 	case "design":
-		fmt.Fprintf(f.Out, "%s  phase %s  design: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["intent"])
+		fmt.Fprintf(w, "%s  phase %s  design: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["intent"])
 	case "design-skipped":
-		fmt.Fprintf(f.Out, "%s  phase %s  design skipped: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["reason"])
+		fmt.Fprintf(w, "%s  phase %s  design skipped: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["reason"])
 	case "review-find":
 		fields := ev.Fields
-		fmt.Fprintf(f.Out, "%s  phase %s  %s  reviewer %s r%s  %s  %s findings", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fields["reviewer"], fields["round"], fields["state"], fields["findings"])
+		fmt.Fprintf(w, "%s  phase %s  %s  reviewer %s r%s  %s  %s findings", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fields["reviewer"], fields["round"], fields["state"], fields["findings"])
 		if fields["command"] != "" {
-			fmt.Fprintf(f.Out, "  ran `%s`", fields["command"])
+			fmt.Fprintf(w, "  ran `%s`", fields["command"])
 		}
-		fmt.Fprintln(f.Out)
+		fmt.Fprintln(w)
 	default:
 		keys := make([]string, 0, len(ev.Fields))
 		for k := range ev.Fields {
@@ -108,7 +114,7 @@ func (f *Face) Emit(ev core.Event) {
 		if ev.Phase != "" {
 			phase = fmt.Sprintf("phase %s  ", ev.Phase)
 		}
-		fmt.Fprintf(f.Out, "%s  %s%s  %s\n", ev.At.Format("15:04:05"), phase, ev.Kind, strings.Join(pairs, " "))
+		fmt.Fprintf(w, "%s  %s%s  %s\n", ev.At.Format("15:04:05"), phase, ev.Kind, strings.Join(pairs, " "))
 	}
 }
 
@@ -167,7 +173,7 @@ func where(phase, step string) string {
 	return fmt.Sprintf("phase %s %s: ", phase, step)
 }
 
-func (f *Face) closeGate(ev core.Event) {
+func (f *Face) closeGate(w io.Writer, ev core.Event) {
 	g := f.gate
 	if g == nil || ev.Phase != g.Phase {
 		return
@@ -175,7 +181,7 @@ func (f *Face) closeGate(ev core.Event) {
 	switch ev.Kind {
 	case "land-stage", "landed", "gate-fix", "blocked-on", "phase-blocked", "error":
 		f.gate = nil
-		fmt.Fprintf(f.Out, "%s  phase %s  land  %s took %s\n", ev.At.Format("15:04:05"), g.Phase, g.Fields["stage"], ev.At.Sub(g.At).Truncate(time.Second))
+		fmt.Fprintf(w, "%s  phase %s  land  %s took %s\n", ev.At.Format("15:04:05"), g.Phase, g.Fields["stage"], ev.At.Sub(g.At).Truncate(time.Second))
 	}
 }
 

@@ -2,6 +2,7 @@ package plain
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -314,5 +315,32 @@ func TestDesignLinesNameTheSkipTheIntentAndTheNoVisualChange(t *testing.T) {
 		"14:03:09  phase 4  design skipped: the page renders the same: web/list.html:4\n"
 	if out.String() != want {
 		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
+func TestAgentTextCannotDriveTheTerminal(t *testing.T) {
+	bad := "x\x1b[2J\x1b[Hy\x1b]0;PWNED\x07z\rw"
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+	for _, ev := range []core.Event{
+		{Kind: "design", Phase: "1", Fields: map[string]string{"intent": bad}},
+		{Kind: "design-skipped", Phase: "1", Fields: map[string]string{"reason": bad}},
+		{Kind: "warning", Phase: "1", Step: "plan", Fields: map[string]string{"reason": bad}},
+		{Kind: "assumption", Phase: "1", Step: "plan", Fields: map[string]string{"text": bad}},
+		{Kind: "watchdog-waiting", Fields: map[string]string{"question": bad}},
+		{Kind: "triage-skipped", Phase: "1", Fields: map[string]string{"reason": bad}},
+		{Kind: "something-new", Phase: "1", Fields: map[string]string{"note": bad}},
+	} {
+		ev.At = at
+		f.Emit(ev)
+	}
+
+	for _, c := range out.String() {
+		if c < 0x20 && c != '\n' && c != '\t' || c == 0x7f {
+			t.Fatalf("output carries control %q:\n%q", c, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), "PWNED") {
+		t.Errorf("the text itself is gone:\n%s", out.String())
 	}
 }

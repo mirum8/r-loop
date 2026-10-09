@@ -971,6 +971,15 @@ func Printable(s string) string {
 	}, s)
 }
 
+func Displayable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && r != '\t' && unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func filesCell(files []string) string {
 	if len(files) <= 3 {
 		return orDash(strings.Join(files, ", "))

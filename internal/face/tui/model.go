@@ -156,9 +156,19 @@ func NewModel(h Header, phases []core.Phase, th Theme) Model {
 		if landed(ph) {
 			state = core.PhaseLanded
 		}
-		m.Phases = append(m.Phases, Row{ID: ph.ID, Title: ph.Title, State: state})
+		m.Phases = append(m.Phases, Row{ID: ph.ID, Title: core.Printable(ph.Title), State: state})
 	}
 	return m
+}
+
+func displayable(ev core.Event) core.Event {
+	ev.Phase, ev.Step = core.Printable(ev.Phase), core.Printable(ev.Step)
+	fields := make(map[string]string, len(ev.Fields))
+	for k, v := range ev.Fields {
+		fields[k] = core.Displayable(v)
+	}
+	ev.Fields = fields
+	return ev
 }
 
 func landed(ph core.Phase) bool {
@@ -171,6 +181,7 @@ func landed(ph core.Phase) bool {
 }
 
 func (m Model) Apply(ev core.Event) Model {
+	ev = displayable(ev)
 	switch ev.Kind {
 	case "phase-start":
 		m.landing = ""
@@ -369,7 +380,7 @@ func (m *Model) group(groups []core.Group) {
 	}
 	rows := make([]Row, 0, len(m.Phases))
 	for _, ph := range core.GroupBacklog(pl, groups).Phases {
-		rows = append(rows, Row{ID: ph.ID, Title: ph.Title, State: state[ph.ID]})
+		rows = append(rows, Row{ID: ph.ID, Title: core.Printable(ph.Title), State: state[ph.ID]})
 	}
 	m.Phases = rows
 }
@@ -662,7 +673,7 @@ func (f *Face) Emit(ev core.Event) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if ev.Kind == "halt" || ev.Kind == "aborted" {
-		f.endKind, f.endReason = ev.Kind, ev.Fields["reason"]
+		f.endKind, f.endReason = ev.Kind, core.Displayable(ev.Fields["reason"])
 	}
 	if f.prog == nil {
 		f.backlog = append(f.backlog, ev)
