@@ -3,10 +3,11 @@
 #   A  codex implement writes its sentinel with no approval dialog (ADR-79)
 #   B  codex implement asks to write outside the repo; a watchdog.dialogs rule approves it (ADR-80)
 #   C  same dialog, no rule: the unattended watchdog declines with esc
-# CODEX_APPROVALS=user overrides the codex provider so its approvals go to the pane, not codex's auto reviewer
+# CODEX_APPROVALS (default user for B and C) overrides the codex provider so its approvals go to the pane, not codex's auto reviewer
 set -u
 MODE="${1:-A}"
 case "$MODE" in A|B|C) ;; *) echo "usage: $0 A|B|C"; exit 2 ;; esac
+case "$MODE" in B|C) export CODEX_APPROVALS="${CODEX_APPROVALS:-user}" ;; esac
 [ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
 case "$PWD" in */.r-loop/wt/*) echo "NOT RUN: inside an r-loop worktree"; exit 3 ;; esac
@@ -161,9 +162,15 @@ grep -q 'writable_roots=\["'"$S"'/.r-loop/runs/[^"]*/phase-1' "$OUT/argv.txt" \
   || fail "no codex argv with writable_roots on the phase run folder"
 grep -q -- '--add-dir '"$S"'/.r-loop/runs/[^ ]*/phase-1' "$OUT/argv.txt" \
   && ok "claude argv carries --add-dir on the phase run folder" || fail "no claude argv with --add-dir on the phase run folder"
-[ -n "$declined_halt" ] || { grep -q '^state 1 running' "$OUT/implement-events.txt" && grep -q '^state [0-9]* ok' "$OUT/implement-events.txt"; } \
-  && ok "implement running -> ok: $(grep '^state' "$OUT/implement-events.txt" | cut -d' ' -f2,3 | tr '\n' ' ')" \
-  || fail "implement did not go running -> ok: $(grep '^state' "$OUT/implement-events.txt" | tr '\n' ';')"
+if [ -n "$declined_halt" ]; then
+  grep -q '^state 1 running' "$OUT/implement-events.txt" && grep -q '^state [0-9]* failed' "$OUT/implement-events.txt" \
+    && ok "implement running -> failed: $(grep '^state' "$OUT/implement-events.txt" | cut -d' ' -f2,3 | tr '\n' ' ')" \
+    || fail "implement did not go running -> failed: $(grep '^state' "$OUT/implement-events.txt" | tr '\n' ';')"
+else
+  grep -q '^state 1 running' "$OUT/implement-events.txt" && grep -q '^state [0-9]* ok' "$OUT/implement-events.txt" \
+    && ok "implement running -> ok: $(grep '^state' "$OUT/implement-events.txt" | cut -d' ' -f2,3 | tr '\n' ' ')" \
+    || fail "implement did not go running -> ok: $(grep '^state' "$OUT/implement-events.txt" | tr '\n' ';')"
+fi
 grep -q '^state [0-9]* stalled' "$OUT/implement-events.txt" && fail "implement went stalled" || ok "implement never stalled"
 ls "$RUN"/phase-1/implement-a*.sentinel > /dev/null 2>&1 && ok "implement sentinel in the run folder: $(cat "$RUN"/phase-1/implement-a*.sentinel | cut -c1-200 | tr '\n' ' ')" || fail "no implement sentinel in $RUN/phase-1"
 for k in stalled nudge; do
