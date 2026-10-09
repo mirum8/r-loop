@@ -81,7 +81,7 @@ Read `references/subagent-prompt.md` and substitute `{WHAT_TO_TEST}` with a conc
 - *Functional:* "In a fresh sandbox, `start` `"$BIN" docs/plan/todo-tiny.md` at 120x40. `wait-for` `Subtract`. Confirm the phase row turns bold as it goes live, the plan step's state moves off `queued`, and after the run the footer says it finished. Then `git log --oneline` in the sandbox shows the phase commit, and `docs/plan/todo-tiny.md` has its box ticked."
 - *Rendering:* "Capture the live frame at 160x50, 120x40 and 80x24. At 80x24 confirm each phase is still one line, the step column is not truncated away, and amber appears only on a row that is waiting for the maintainer."
 - *Keys:* "While the run is live, send `C-c`: the stop prompt appears. Send `n`: the notice clears and the run continues. Press `q` while live: nothing happens. After the end, `q` quits."
-- *Restoration:* "Quit with the documented key and confirm the terminal is restored — alternate screen off, non-zero exit only if the app meant it. `stop --expect-exited` is the check; an aborted run (`C-c` → `y`) exits 1 by design, so it is `stop --expect-exited --status 1`."
+- *Restoration:* "Quit with the documented key and confirm the terminal is restored — alternate screen off, non-zero exit only if the app meant it. `stop --expect-exited` is the check; an aborted run (`C-c` → `y`, then `q`) exits 1 by design, so it is `stop --expect-exited --status 1`."
 
 ### 3. Surface scan → persisted e2e scripts
 
@@ -89,10 +89,11 @@ Read the real contract before testing it, the way the web pair reads controllers
 
 | key | what it does | when |
 | --- | --- | --- |
-| `C-c` | opens the stop prompt: `stop the run? the live step's session and worktree are left for resume [y/n]` | while the run is live |
-| `y` | at the stop prompt: requests an abort; the run stops before its next step | stop prompt open |
+| `C-c` | opens the stop prompt: `stop the run? keep session for resume [y/n; ctrl+c again to quit now]` | while the run is live |
+| `y` | at the stop prompt: requests an abort (`abort requested; stopping now`); the run halts and the end banner reads `halted · aborted · resume: r-loop resume`. The TUI stays up until `q` | stop prompt open |
+| `C-c` again | at the stop prompt: requests the abort and quits the TUI at once | stop prompt open |
 | any other key | at the stop prompt: cancels it and clears the notice | stop prompt open |
-| `q` | quits the TUI | **only after the run has ended** (finished, halted, aborted); ignored while live |
+| `q`, `Esc`, `C-c` | quits the TUI | **only after the run has ended** (finished, halted, aborted); `q` and `Esc` are ignored while live |
 
 There is no other binding: no scrolling, no focus, no help screen. Every other key while the run is live must be ignored. The TUI renders only during a real run, which starts after preflight and the watchdog, so every frame check is a live run in the sandbox. The binding table is `Model.Update` in `internal/face/tui/model.go`.
 

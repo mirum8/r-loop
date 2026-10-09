@@ -53,7 +53,7 @@ If a flow needs one that is **not** there, stop and ask the parent agent — the
     "$TUI" resize    "$H" 80x24
     "$TUI" status    "$H"                    # running|exited|absent exit=N geom=WxH alt=0|1
     "$TUI" stop      "$H" --expect-exited    # the terminal-restoration check
-    "$TUI" stop      "$H" --expect-exited --status 1   # same, for an aborted run (C-c → y exits 1 by design)
+    "$TUI" stop      "$H" --expect-exited --status 1   # same, for an aborted run (C-c → y, then q: exits 1 by design)
 
 Its exit codes are the contract, and each one exists because the failure it names otherwise comes back looking like success. Read them rather than only checking for zero:
 
@@ -74,10 +74,11 @@ Never treat a non-zero exit from the driver as "the check passed anyway". Each o
 
 | key | what it does | when |
 | --- | --- | --- |
-| `C-c` | opens the stop prompt: `stop the run? the live step's session and worktree are left for resume [y/n]` | while the run is live |
-| `y` | at the stop prompt: requests an abort; the run stops before its next step | stop prompt open |
+| `C-c` | opens the stop prompt: `stop the run? keep session for resume [y/n; ctrl+c again to quit now]` | while the run is live |
+| `y` | at the stop prompt: requests an abort (`abort requested; stopping now`); the run halts and the end banner reads `halted · aborted · resume: r-loop resume`. The TUI stays up until `q` | stop prompt open |
+| `C-c` again | at the stop prompt: requests the abort and quits the TUI at once | stop prompt open |
 | any other key | at the stop prompt: cancels it and clears the notice | stop prompt open |
-| `q` | quits the TUI | **only after the run has ended** (finished, halted, aborted); ignored while live |
+| `q`, `Esc`, `C-c` | quits the TUI | **only after the run has ended** (finished, halted, aborted); `q` and `Esc` are ignored while live |
 
 There is no other binding: no scrolling, no focus, no help screen. Every other key while the run is live must be ignored. The TUI renders only during a real run, which starts after preflight and the watchdog, so every frame check is a live run in the sandbox. The binding table is `Model.Update` in `internal/face/tui/model.go`.
 
@@ -164,7 +165,7 @@ A check **passes** when all of these hold:
 
 - The expected text is in the captured frame, and nothing in that frame is broken by the rendering list above.
 - The app is still running when it should be, and the driver returned 0 for every call you made.
-- After the quit path, `stop --expect-exited` returned 0 — the terminal was restored. After an abort (`C-c` → `y`), r-loop exits 1 by design (tech-design: an aborted run exits 1), so the check is `stop --expect-exited --status 1`.
+- After the quit path, `stop --expect-exited` returned 0 — the terminal was restored. After an abort (`C-c` → `y`, then `q`), r-loop exits 1 by design (tech-design: an aborted run exits 1), so the check is `stop --expect-exited --status 1`.
 - No new error-level entries appeared in the logs during the test window.
 
 A check **fails** if any of that is wrong, or the driver returned a non-zero code you did not expect. A check is **skipped** — never passed — if the tool it needed was not there; say which, and why.
