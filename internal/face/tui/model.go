@@ -135,6 +135,7 @@ type Model struct {
 	Feed       []Entry
 	Status     string
 	Blocked    string
+	Aborted    bool
 	Resume     string
 	Notice     string
 	Paused     string
@@ -341,7 +342,7 @@ func (m Model) Apply(ev core.Event) Model {
 		}
 	case "aborted":
 		m.end("halted", ev.At)
-		m.Resume = "r-loop resume"
+		m.Aborted, m.Resume = true, "r-loop resume"
 	}
 	return m
 }
@@ -350,7 +351,7 @@ func replay(m Model, history []core.Event) Model {
 	for _, ev := range history {
 		m = m.Apply(ev)
 	}
-	m.Status, m.Blocked, m.Resume, m.Current, m.Live, m.past = "", "", "", "", nil, nil
+	m.Status, m.Blocked, m.Aborted, m.Resume, m.Current, m.Live, m.past = "", "", false, "", "", nil, nil
 	m.ended = time.Time{}
 	m.checking, m.landing = "", ""
 	m.Questions, m.DogGone, m.DogWaiting, m.Paused = nil, false, false, ""

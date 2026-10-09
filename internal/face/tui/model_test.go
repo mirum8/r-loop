@@ -1393,3 +1393,12 @@ func TestAPhaseDeferredByAnOpenResolveFirstEntryIsMarkedAndNamed(t *testing.T) {
 		t.Errorf("single phase feed = %+v", m.Feed)
 	}
 }
+
+func TestAnAbortedRunSaysSoInItsEndBanner(t *testing.T) {
+	m := newModel([]core.Event{{At: at(3), Kind: "aborted"}})
+	m.Width, m.Height = 120, 40
+
+	if view := m.View(); !strings.Contains(view, "halted · aborted · resume: r-loop resume") {
+		t.Errorf("view:\n%s", view)
+	}
+}

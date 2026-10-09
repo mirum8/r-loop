@@ -496,6 +496,9 @@ func (m Model) footer(w int) []string {
 		return nil
 	case "halted":
 		banner := "halted"
+		if m.Aborted {
+			banner += " · aborted"
+		}
 		if m.Blocked != "" {
 			banner += " · blocked " + m.Blocked
 		}
