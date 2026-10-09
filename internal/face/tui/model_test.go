@@ -1379,3 +1379,17 @@ func TestAgentTextCannotDriveTheTerminal(t *testing.T) {
 		t.Errorf("the text itself is gone:\n%s", view)
 	}
 }
+
+func TestAPhaseDeferredByAnOpenResolveFirstEntryIsMarkedAndNamed(t *testing.T) {
+	m := newModel([]core.Event{{At: at(1), Kind: "entry-deferred", Fields: map[string]string{"entry": "Custom delimiter syntax", "phases": "2, 4"}}})
+
+	if m.Phases[1].State != core.PhaseBlocked || m.Phases[3].State != core.PhaseBlocked || m.Phases[0].State == core.PhaseBlocked {
+		t.Errorf("phases = %+v", m.Phases)
+	}
+	if len(m.Feed) != 1 || !strings.HasSuffix(m.Feed[0].Text, "Resolve first open: Custom delimiter syntax · skipped phases 2, 4") {
+		t.Errorf("feed = %+v", m.Feed)
+	}
+	if m := newModel([]core.Event{{At: at(1), Kind: "entry-deferred", Fields: map[string]string{"entry": "e", "phases": "3"}}}); !strings.HasSuffix(m.Feed[0].Text, "skipped phase 3") {
+		t.Errorf("single phase feed = %+v", m.Feed)
+	}
+}

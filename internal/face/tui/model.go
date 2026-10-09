@@ -304,6 +304,16 @@ func (m Model) Apply(ev core.Event) Model {
 		m.log(ev, toneDim, "triage: watchdog verifying "+core.Plural(len(strings.Split(ev.Fields["phases"], ", ")), noun))
 	case "triage":
 		m.log(ev, toneDim, "triage: "+ev.Fields["summary"])
+	case "entry-deferred":
+		ids := strings.Split(ev.Fields["phases"], ", ")
+		for _, id := range ids {
+			m.setPhase(id, core.PhaseBlocked)
+		}
+		noun := "phase "
+		if len(ids) > 1 {
+			noun = "phases "
+		}
+		m.log(ev, toneDim, "Resolve first open: "+ev.Fields["entry"]+" · skipped "+noun+ev.Fields["phases"])
 	case core.TriageSkipped:
 		m.setPhase(ev.Phase, core.PhaseBlocked)
 		m.log(ev, toneDim, "skipped by triage: "+ev.Fields["reason"])
