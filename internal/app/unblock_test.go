@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -379,5 +380,70 @@ func TestUnblockMessageNamesTheSettledEntries(t *testing.T) {
 				t.Fatalf("unblockMessage = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+func TestAResumeThatWalksResolveFirstKeepsTheRecordedDesignFlags(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	w, err := f.preflight(f.todo, "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := newSim()
+	first.fail["rloop-p1-design"] = true
+	f.sim(w, first)
+	w.Dog.Host = &dogHost{triage: func(text string) {
+		tr := allBuild(text)
+		yes := true
+		tr.Phases[0].Design, tr.Phases[0].DesignNote = &yes, "the list page gains an empty state"
+		submit(t, w, tr)
+		gate(t, w, core.GateDecision{Decision: core.GateGo, MaintainerSaid: "go"})
+	}}
+	if code := w.Execute(core.RunOptions{Phases: []string{"1"}}); code == 0 {
+		t.Fatalf("the first run did not stop on phase 1's design\n%s", f.err)
+	}
+	id := w.Loop.RunID
+	if err := os.Remove(filepath.Join(f.root, ".r-loop/wt/phase-1/wip.txt")); err != nil {
+		t.Fatal(err)
+	}
+	f.write("docs/topic/todo.md", strings.Replace(resumeTodo, "# t\n", "# t\n\n## Resolve first\n- [ ] **Pick the database** — which one backs the store?\n      Owner: me. Blocks: Phase 1. Timebox: an hour. Output: a line in the spec.\n", 1))
+	f.commit()
+
+	resumed, opts, err := PrepareResume([]string{"--plain"}, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sim := newSim()
+	land := f.sim(resumed, sim)
+	k := &walk{f: f, w: resumed}
+	resumed.Dog.Host = &dogHost{onPrompt: func(text string) {
+		if !strings.HasPrefix(text, "resolve first:") {
+			return
+		}
+		k.edit("- [ ] **Pick the database**", "- [x] **Pick the database**")
+		k.edit("Output: a line in the spec.\n", "Output: a line in the spec.\n      Resolved: 2026-10-09 — Postgres.\n")
+		if err := os.WriteFile(filepath.Join(resumed.Store.Dir(id), "unblock.done"), nil, 0o644); err != nil {
+			t.Error(err)
+		}
+	}}
+	code := resumed.Execute(opts)
+
+	if code != 0 {
+		t.Fatalf("resume exit %d\n%s%s", code, f.out, f.err)
+	}
+	run := f.load(id)
+	if got := stepEvents(run, "entry-resolved"); len(got) != 1 {
+		t.Fatalf("the resume did not walk: entry-resolved %+v", got)
+	}
+	for _, e := range stepEvents(run, "step-skipped") {
+		if e.Phase == "1" {
+			t.Errorf("phase 1 skipped a step after the walk: %+v", e)
+		}
+	}
+	if !slices.Contains(sim.startedAgents(), "rloop-p1-design-a2") {
+		t.Errorf("phase 1's design did not run on resume: %v", sim.startedAgents())
+	}
+	if len(land.landed) != 1 || land.landed[0] != "1" {
+		t.Errorf("landed %v", land.landed)
 	}
 }

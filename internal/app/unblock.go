@@ -99,7 +99,10 @@ func (w *Wiring) walk(ctx context.Context, blocking []core.Entry, list []core.Ph
 	for _, e := range resolved {
 		w.record(core.Event{Kind: "entry-resolved", Fields: map[string]string{"entry": e.Name, "resolved": e.Resolved}})
 	}
-	w.setPlan(pl)
+	if len(w.groups) > 0 {
+		pl = core.GroupBacklog(pl, w.groups)
+	}
+	w.setPlan(core.ApplyRunListDesign(pl, designNotes(w.Plan.Phases)))
 	return nil
 }
 
