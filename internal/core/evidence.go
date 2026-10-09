@@ -577,7 +577,8 @@ func checkEntry(ctx EvidenceContext, e VerdictEntry, changed *[]string) string {
 		*changed = append([]string{}, diff...)
 	}
 	for _, f := range e.Files {
-		if !slices.Contains(*changed, f) {
+		dir := strings.TrimSuffix(f, "/") + "/"
+		if !slices.ContainsFunc(*changed, func(c string) bool { return c == f || strings.HasPrefix(c, dir) }) {
 			return "fixed finding " + e.ID + ": " + f + " did not change in this round"
 		}
 	}

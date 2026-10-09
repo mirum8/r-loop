@@ -477,3 +477,29 @@ func TestWaitAllReportsActiveTimeExcludingAnOpenQuestion(t *testing.T) {
 		t.Fatalf("outcome = %+v", out)
 	}
 }
+
+func TestVerdictCheckAcceptsAFixedDirectoryWhenAFileUnderItChanged(t *testing.T) {
+	for _, dir := range []string{"target/", "target"} {
+		body := strings.Replace(goodVerdict, `"files":["a.go"]`, `"files":["`+dir+`"]`, 1)
+		f := newVerdictFixture(t, body)
+		f.ctx.Repo.(*roundRepo).diffs["tree-round tree-now"] = []string{"a.go", "target/classes/calc/Calc.class"}
+
+		ok, missing := runCheck(t, "verdict", f.ctx)
+
+		if !ok || missing != "" {
+			t.Errorf("%s: ok = %v, missing = %q", dir, ok, missing)
+		}
+	}
+}
+
+func TestVerdictCheckRefusesADirectoryWithNoChangeUnderIt(t *testing.T) {
+	body := strings.Replace(goodVerdict, `"files":["a.go"]`, `"files":["target"]`, 1)
+	f := newVerdictFixture(t, body)
+	f.ctx.Repo.(*roundRepo).diffs["tree-round tree-now"] = []string{"a.go", "targets/x.go"}
+
+	ok, missing := runCheck(t, "verdict", f.ctx)
+
+	if ok || missing != "fixed finding codex-r2-1: target did not change in this round" {
+		t.Fatalf("ok = %v, missing = %q", ok, missing)
+	}
+}
