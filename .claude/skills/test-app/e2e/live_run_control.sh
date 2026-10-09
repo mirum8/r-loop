@@ -10,6 +10,7 @@ case "$MODE" in A|B|C|D) ;; *) echo "usage: $0 A|B|C|D"; exit 2 ;; esac
 [ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
 herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+. "$(dirname "$0")/own_workspace.sh"
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../../.." && pwd)

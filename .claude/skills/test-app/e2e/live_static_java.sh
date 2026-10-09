@@ -13,6 +13,7 @@ UNIGNORED=""
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
 case "$PWD" in */.r-loop/wt/*) echo "NOT RUN: inside an r-loop worktree"; exit 3 ;; esac
 herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+. "$(dirname "$0")/own_workspace.sh"
 command -v mvn > /dev/null 2>&1 || { echo "NOT RUN: mvn not on PATH"; exit 3; }
 command -v java > /dev/null 2>&1 || { echo "NOT RUN: java not on PATH"; exit 3; }
 command -v semgrep > /dev/null 2>&1 || { echo "NOT RUN: semgrep not on PATH"; exit 3; }
