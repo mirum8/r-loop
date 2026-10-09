@@ -155,3 +155,53 @@ func TestMigrateLeavesAPipelineWithDesignOrWithoutPlanAlone(t *testing.T) {
 		}
 	}
 }
+
+const mockupConfig = "pipeline:\n  - mockup\n  - plan\n  - implement\nsteps:\n  mockup:\n    prompt: design\n    check: design-file\n    provider: claude\n    model: opus\n    effort: high\n    timeout: 1h\n"
+
+func TestMigrateLeavesAPipelineWithADesignFileStepUnderAnotherNameAlone(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, mockupConfig)
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	m, err := Migrate(path)
+
+	if err != nil || len(m.Changes) != 0 {
+		t.Errorf("migration = %+v, %v", m, err)
+	}
+	if got := d.load(t).Pipeline; !reflect.DeepEqual(got, []string{"mockup", "plan", "implement"}) {
+		t.Errorf("pipeline = %q", got)
+	}
+}
+
+func TestResetModelsLeavesAPipelineWithADesignFileStepUnderAnotherNameAlone(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, mockupConfig)
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	changes, err := ResetModels(path)
+
+	if err != nil || len(changes) != 0 {
+		t.Errorf("changes = %q, %v", changes, err)
+	}
+	if got := d.load(t).Pipeline; !reflect.DeepEqual(got, []string{"mockup", "plan", "implement"}) {
+		t.Errorf("pipeline = %q", got)
+	}
+}
+
+func TestMigrateAddsTheDesignStepBeforeAPlanFileStepUnderAnotherName(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "pipeline:\n  - blueprint\n  - implement\nsteps:\n  blueprint:\n    prompt: plan\n    check: plan-file\n    provider: claude\n    model: opus\n    effort: high\n    timeout: 1h\n")
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	m, err := Migrate(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"pipeline: blueprint, implement → design, blueprint, implement"}; !reflect.DeepEqual(m.Changes, want) {
+		t.Errorf("changes = %q", m.Changes)
+	}
+	if got := d.load(t).Pipeline; !reflect.DeepEqual(got, []string{"design", "blueprint", "implement"}) {
+		t.Errorf("pipeline = %q", got)
+	}
+}

@@ -110,8 +110,22 @@ func addDesign(root *yaml.Node) []string {
 	if pipeline == nil || pipeline.Kind != yaml.SequenceNode {
 		return nil
 	}
-	plan := slices.IndexFunc(pipeline.Content, func(n *yaml.Node) bool { return n.Value == "plan" })
-	if plan < 0 || slices.ContainsFunc(pipeline.Content, func(n *yaml.Node) bool { return n.Value == "design" }) {
+	var defaults yaml.Node
+	if err := yaml.Unmarshal(defaultsYAML, &defaults); err != nil {
+		return nil
+	}
+	checkIs := func(want string) func(*yaml.Node) bool {
+		return func(n *yaml.Node) bool {
+			row := child(child(root, "steps"), n.Value)
+			if row == nil || child(row, "check") == nil {
+				row = child(child(defaults.Content[0], "steps"), n.Value)
+			}
+			check := child(row, "check")
+			return check != nil && check.Value == want
+		}
+	}
+	plan := slices.IndexFunc(pipeline.Content, checkIs("plan-file"))
+	if plan < 0 || slices.ContainsFunc(pipeline.Content, checkIs("design-file")) {
 		return nil
 	}
 	before := roleText(pipeline)
