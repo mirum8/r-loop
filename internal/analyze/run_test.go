@@ -1121,10 +1121,10 @@ func TestAnalyzeFailsWhenTheAnalysisOutlivesTheTimeout(t *testing.T) {
 	dir := goRepo(t)
 
 	// when
-	actual := analyzeErr(t, New(300*time.Millisecond), dir)
+	actual := analyzeErr(t, New(3*time.Second), dir)
 
 	// then
-	if expected := "golangci-lint: timed out after 300ms: context deadline exceeded\nstarted\n"; actual != expected {
+	if expected := "golangci-lint: timed out after 3s: context deadline exceeded\nstarted\n"; actual != expected {
 		t.Fatalf("actual %q, expected %q", actual, expected)
 	}
 }
