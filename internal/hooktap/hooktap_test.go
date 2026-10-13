@@ -128,3 +128,38 @@ func TestFeedSkipsAMalformedLine(t *testing.T) {
 		t.Fatalf("events = %+v, err %v", events, err)
 	}
 }
+
+func TestTapKeepsACappedUserPromptSubmitPromptAndMarksACut(t *testing.T) {
+	tests := []struct {
+		name           string
+		prompt         string
+		expectedPrompt string
+		expectedCut    bool
+	}{
+		{"short", "r-loop: answer to q1 (by watchdog): sqlite", "r-loop: answer to q1 (by watchdog): sqlite", false},
+		{"exactly the cap", strings.Repeat("x", 512), strings.Repeat("x", 512), false},
+		{"long", strings.Repeat("x", 600), strings.Repeat("x", 512), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// given
+			out := filepath.Join(t.TempDir(), "hooks.jsonl")
+			feed := NewFeed(out)
+
+			// when
+			Tap(strings.NewReader(`{"hook_event_name":"UserPromptSubmit","prompt":"`+tt.prompt+`"}`), out, env("rloop-a"))
+			events, _ := feed.Read()
+
+			// then
+			if len(events) != 1 {
+				t.Fatalf("events = %+v", events)
+			}
+			if actualPrompt := events[0].Prompt; actualPrompt != tt.expectedPrompt {
+				t.Errorf("prompt = %q, want %q", actualPrompt, tt.expectedPrompt)
+			}
+			if actualCut := events[0].PromptCut; actualCut != tt.expectedCut {
+				t.Errorf("cut = %t, want %t", actualCut, tt.expectedCut)
+			}
+		})
+	}
+}

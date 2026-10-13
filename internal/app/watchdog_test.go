@@ -1301,3 +1301,5 @@ func TestAWiredRunAppliesAFixersConfigChangeAndRetriesTheStepWithTheNewProviderF
 		t.Errorf("restarts %+v", restarts)
 	}
 }
+
+func (h *dogHost) Submit(agent, text string) error { return h.Prompt(agent, text, false, 0) }

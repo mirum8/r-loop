@@ -2403,3 +2403,5 @@ func TestAMilestoneBlockerResolvedStopRecordsNoSkip(t *testing.T) {
 		t.Errorf("primary tree not clean:\n%s", st)
 	}
 }
+
+func (h *reportHost) Submit(agent, text string) error { return h.Prompt(agent, text, false, 0) }

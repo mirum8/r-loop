@@ -1369,6 +1369,7 @@ func (l *RunLoop) answer(id, text, by, citation string) (openAsk, bool) {
 }
 
 func (l *RunLoop) hand(open openAsk, text string) {
+	gate := l.Sessions.handOff(open.agent)
 	defer func() {
 		if r := recover(); r != nil {
 			ev, err := panicked(open.q.Step.Phase, open.q.Step.Kind, "answer hand-off "+open.q.ID, r)
@@ -1378,30 +1379,26 @@ func (l *RunLoop) hand(open openAsk, text string) {
 			if withdrawn {
 				quietly(func() {
 					open.s.live(func() {
-						l.Sessions.Host.Prompt(open.agent, answerMessage(open.q.ID, "withdrawn ("+err.Error()+"); continue without an answer", "r-loop", ""), false, 0)
+						l.Sessions.prompt(open.agent, answerMessage(open.q.ID, "withdrawn ("+err.Error()+"); continue without an answer", "r-loop", ""), gate)
 					})
 				})
 			}
 		}
 	}()
 	id := open.q.ID
-	poll := l.Sessions.Poll
-	if poll <= 0 {
-		poll = defaultPoll
-	}
 	for l.asking(id) {
-		state, err := l.Sessions.Host.State(open.agent)
+		state, ready, err := gate.check()
 		if err == nil && state == AgentGone {
 			l.undeliverable(open, "agent gone")
 			return
 		}
-		if err == nil && state != AgentWorking {
+		if err == nil && ready {
 			delivered := false
 			open.s.live(func() {
 				if !l.asking(id) {
 					return
 				}
-				if err = l.Sessions.Host.Prompt(open.agent, text, false, 0); err == nil {
+				if err = l.Sessions.prompt(open.agent, text, gate); err == nil {
 					delivered = true
 					l.claim(id)
 					l.release(open.s)
@@ -1410,13 +1407,13 @@ func (l *RunLoop) hand(open openAsk, text string) {
 			if delivered {
 				return
 			}
-			if err != nil && !blocked(err) {
+			if err != nil && !blocked(err) && !errors.Is(err, errTurnNotOver) {
 				l.emit(Event{Kind: "warning", Phase: open.q.Step.Phase, Step: open.q.Step.Kind, Fields: map[string]string{"reason": "answer " + id + " not delivered: " + err.Error()}})
 				l.undeliverable(open, "not delivered: "+err.Error())
 				return
 			}
 		}
-		time.Sleep(poll)
+		gate.wait()
 	}
 }
 

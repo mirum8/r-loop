@@ -45,6 +45,7 @@ type SessionManager struct {
 	ReviewRunner ReviewRunner
 	Hooks        HookFeed
 	hooks        hookLog
+	typing       map[string]*sync.Mutex
 	mu           sync.Mutex
 }
 
@@ -300,7 +301,7 @@ func (m *SessionManager) start(s *Session, stepDir string) error {
 	if err != nil {
 		return err
 	}
-	return m.Host.Prompt(s.Agent, text, false, 0)
+	return m.prompt(s.Agent, text, nil)
 }
 
 type watch struct {
@@ -466,7 +467,7 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 		return m.fail(s, "record: "+err.Error()), true
 	}
 	w.obs.Stalled(s)
-	if err := m.Host.Prompt(s.Agent, nudge(grace, s.Ref.AskURL != ""), false, 0); err != nil {
+	if err := m.prompt(s.Agent, nudge(grace, s.Ref.AskURL != ""), nil); err != nil {
 		out := m.fail(s, "stalled: nudge not delivered: "+err.Error())
 		out.Stalled = true
 		return out, true

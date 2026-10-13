@@ -4143,7 +4143,7 @@ flagged phases end in <code>no-visual-change</code>.</p>
 
 <div class="adr">
 <h3 id="adr-93">ADR-93 — Claude sessions report through hooks: telemetry and turn timing, never evidence</h3>
-<p><span class="f">Status</span> accepted 2026-10-13 · amends <a href="#adr-1">ADR-1</a></p>
+<p><span class="f">Status</span> accepted 2026-10-13 · amends <a href="#adr-1">ADR-1</a> · amended 2026-10-13 — prompt confirmation and answer hand-off; amends <a href="#adr-76">ADR-76</a></p>
 <p><span class="f">Context</span> The driver saw a claude pane only through herdr's agent state and
 a screen scrape. The TUI could show nothing but <code>running</code>; the watchdog got a 40-line screen
 for every dialog; every tree change during a review round was blamed on the reviewer, though it was
@@ -4153,14 +4153,22 @@ usually the step editing after its sentinel; and a step's turn end was herdr's i
 <code>Notification</code> and <code>Stop</code> hooks, each running <code>r-loop hook-tap
 &lt;runDir&gt;/hooks.jsonl</code>. The tap appends one line naming the pane's
 <code>R_LOOP_AGENT</code>, prints nothing and always exits 0; a session without that variable (the
-watchdog) is not recorded. The driver reads new lines every tick and uses them for four things only:
+watchdog) is not recorded. The driver reads new lines every tick and uses them for six things only:
 a face-only <code>activity</code> event (never journalled) that the TUI shows in the agent's state
 column; the notification's one-line message, put above the screen in the watchdog's dialog prompt
 and printed instead of the screen by <code>--plain</code>; naming which session edited a file a
 review round changed; and the turn end — once a session has reported a hook, its ok sentinel is
 judged at its <code>Stop</code> or its <code>idle_prompt</code> notification (claude may run tools
 after a <code>Stop</code> without a new prompt), not at herdr idle, with the existing grace as the
-fallback. A step's
+fallback; whether a typed prompt was submitted — once a session has reported a hook, a prompt counts
+as delivered only on its <code>UserPromptSubmit</code> carrying the prompt's text (the tap keeps the
+first 512 bytes), stamped after the send, and on herdr's <code>agent_prompt_stalled</code> Enter is
+pressed only when none was seen; a session's first prompt, typed before any hook can fire, keeps
+herdr's check; and when an answer, a withdrawal or a decline follow-up may be typed — for such a
+session, only after the asking turn's <code>Stop</code> or <code>idle_prompt</code>, acted on at the
+hook read that brings it (any reader's read wakes the waiting hand-off, and it reads the hooks itself
+every 200 ms), with herdr's not-<code>working</code> rule back once the session has stayed busy past
+the stall grace. Prompts to one session are typed one at a time. A step's
 outcome is still judged from its sentinel and the evidence (<em>Determinism</em>, Part 3), and the
 TUI still shows no question text (<a href="#adr-73">ADR-73</a>).</p>
 <p><span class="f">Alternatives</span> One settings file per session — rejected: the pane's inherited
@@ -4169,7 +4177,9 @@ not what is on disk. A <code>Notification</code>-only dialog detector — reject
 needs herdr's blocked state and its sequence, so herdr stays the gate.</p>
 <p><span class="f">Consequences</span> Codex and any provider without hooks keep herdr's view and show
 no activity. A hook that never fires costs only the grace wait. Edits made through a shell command
-are not attributed and keep the old <code>reviewer modified the tree</code> wording.</p>
+are not attributed and keep the old <code>reviewer modified the tree</code> wording. A declined
+dialog's follow-up waits for <code>idle_prompt</code>, about a minute, since claude sends no
+<code>Stop</code> for a turn interrupted by esc.</p>
 <p><span class="f">Revisit when</span> codex grows a hook surface the tap can read, or herdr reports
 turn ends exactly.</p>
 </div>

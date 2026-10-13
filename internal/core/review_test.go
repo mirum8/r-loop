@@ -31,6 +31,11 @@ type reviewRig struct {
 
 func newReviewRig(t *testing.T, reviewers ...Reviewer) *reviewRig {
 	r := &reviewRig{rig: newRig(t), noReview: map[string]bool{}, reviewCmd: map[string]string{}}
+	r.host.onSubmit = func(agent, text string) {
+		if feed, ok := r.sm.Hooks.(*fakeHookFeed); ok {
+			feed.push(promptSubmit(agent, text, r.sm.now()))
+		}
+	}
 	r.sm.Prompts = promptsFunc(func(name string, vars map[string]any) (string, string, error) {
 		if name != "review" && name != "review-plan" && name != "review-ui" && name != "review-security" && name != "fix" {
 			return "do phase 3", "embedded", nil

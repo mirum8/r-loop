@@ -8,6 +8,8 @@ import (
 
 var ErrMergeConflict = errors.New("merge conflict")
 
+var ErrPromptStalled = errors.New("prompt stalled")
+
 type PlanSource interface {
 	Read(path string) (Plan, error)
 	Tick(path string, ph Phase) error
@@ -17,6 +19,8 @@ type HookEvent struct {
 	At                                 time.Time
 	Agent, Event, Tool, Target, Notice string
 	Type                               string
+	Prompt                             string
+	PromptCut                          bool
 }
 
 type HookFeed interface {
@@ -57,6 +61,7 @@ type SessionHost interface {
 	Open(spec OpenSpec) (Workspace, error)
 	Start(pane, name, kind string, args []string) (Agent, error)
 	Prompt(agent, text string, wait bool, timeout time.Duration) error
+	Submit(agent, text string) error
 	State(agent string) (AgentState, error)
 	StateSeq(agent string) (AgentState, int64, error)
 	AgentPane(agent string) (string, error)

@@ -338,3 +338,5 @@ func TestASecondSubmitIsRefusedEvenAfterTheFirstWasTaken(t *testing.T) {
 		t.Fatalf("first %v second %v reason %q", first, second, reason)
 	}
 }
+
+func (h *intakeHost) Submit(agent, text string) error { return h.Prompt(agent, text, false, 0) }

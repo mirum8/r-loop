@@ -190,7 +190,7 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, files []FindingsFi
 	}
 	text, _, err := sm.Prompts.Render("fix", vars)
 	if err == nil {
-		err = sm.Host.Prompt(worker.Agent, text, false, 0)
+		err = sm.prompt(worker.Agent, text, nil)
 	}
 	if err != nil {
 		return false, sm.fail(worker, "fix: "+err.Error())
@@ -556,7 +556,7 @@ func (h ReviewHalf) prompt(r *reviewerRun) *reviewerFail {
 	s := r.s
 	text, _, err := sm.Prompts.Render(s.Ref.Kind.Prompt, s.Ref.Vars)
 	if err == nil {
-		err = sm.Host.Prompt(s.Agent, text, false, 0)
+		err = sm.prompt(s.Agent, text, nil)
 	}
 	if err != nil {
 		return &reviewerFail{reason: "reviewer " + s.Reviewer + ": " + err.Error()}

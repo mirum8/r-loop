@@ -15,13 +15,15 @@ import (
 const fieldCap = 512
 
 type line struct {
-	At     time.Time `json:"at"`
-	Agent  string    `json:"agent"`
-	Event  string    `json:"event"`
-	Tool   string    `json:"tool,omitempty"`
-	Target string    `json:"target,omitempty"`
-	Notice string    `json:"notice,omitempty"`
-	Type   string    `json:"type,omitempty"`
+	At        time.Time `json:"at"`
+	Agent     string    `json:"agent"`
+	Event     string    `json:"event"`
+	Tool      string    `json:"tool,omitempty"`
+	Target    string    `json:"target,omitempty"`
+	Notice    string    `json:"notice,omitempty"`
+	Type      string    `json:"type,omitempty"`
+	Prompt    string    `json:"prompt,omitempty"`
+	PromptCut bool      `json:"prompt_cut,omitempty"`
 }
 
 func Tap(stdin io.Reader, out string, getenv func(string) string) {
@@ -35,6 +37,7 @@ func Tap(stdin io.Reader, out string, getenv func(string) string) {
 		Tool      string `json:"tool_name"`
 		Message   string `json:"message"`
 		Type      string `json:"notification_type"`
+		Prompt    string `json:"prompt"`
 		ToolInput struct {
 			FilePath     string `json:"file_path"`
 			NotebookPath string `json:"notebook_path"`
@@ -53,7 +56,7 @@ func Tap(stdin io.Reader, out string, getenv func(string) string) {
 			target = v
 		}
 	}
-	data, err := json.Marshal(line{At: time.Now(), Agent: capped(agent), Event: capped(hook.Event), Tool: capped(hook.Tool), Target: capped(target), Notice: capped(hook.Message), Type: capped(hook.Type)})
+	data, err := json.Marshal(line{At: time.Now(), Agent: capped(agent), Event: capped(hook.Event), Tool: capped(hook.Tool), Target: capped(target), Notice: capped(hook.Message), Type: capped(hook.Type), Prompt: capped(hook.Prompt), PromptCut: len(hook.Prompt) > fieldCap})
 	if err != nil {
 		return
 	}
@@ -123,7 +126,7 @@ func (f *Feed) Read() ([]core.HookEvent, error) {
 		if json.Unmarshal(raw, &l) != nil || l.Agent == "" || l.Event == "" {
 			continue
 		}
-		events = append(events, core.HookEvent{At: l.At, Agent: l.Agent, Event: l.Event, Tool: l.Tool, Target: l.Target, Notice: l.Notice, Type: l.Type})
+		events = append(events, core.HookEvent{At: l.At, Agent: l.Agent, Event: l.Event, Tool: l.Tool, Target: l.Target, Notice: l.Notice, Type: l.Type, Prompt: l.Prompt, PromptCut: l.PromptCut})
 	}
 	return events, nil
 }

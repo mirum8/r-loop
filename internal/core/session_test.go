@@ -19,6 +19,15 @@ type scriptedHost struct {
 	StateErr error
 	script   func(n int) AgentState
 	polls    int
+	onSubmit func(agent, text string)
+}
+
+func (h *scriptedHost) Submit(agent, text string) error {
+	err := h.fakeSessionHost.Submit(agent, text)
+	if err == nil && h.onSubmit != nil {
+		h.onSubmit(agent, text)
+	}
+	return err
 }
 
 func (h *scriptedHost) Start(pane, name, kind string, args []string) (Agent, error) {
@@ -52,6 +61,12 @@ func (c *stepClock) Now() time.Time {
 	defer c.mu.Unlock()
 	c.t = c.t.Add(c.step)
 	return c.t
+}
+
+func (c *stepClock) set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = t
 }
 
 type rig struct {

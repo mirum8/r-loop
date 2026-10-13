@@ -7,13 +7,13 @@ suggestion's own numbering.
 
 Verified against `r-loop` @ `main` `0e188e3`.
 
-- [ ] [#1] Prompt delivery
+- [x] [#1] Prompt delivery  <!-- fixed: r-loop/phase-1 -->
       - The hook tap keeps a capped copy of the `UserPromptSubmit` prompt text per agent, and `core.HookEvent` carries it
       - For a session that reports hooks, a prompt counts as delivered only when a matching `UserPromptSubmit` from that agent arrives after the send; herdr reporting working alone is not confirmation
       - When herdr reports `agent_prompt_stalled` but the matching `UserPromptSubmit` was already seen, no Enter is pressed and no "not submitted" error is returned
       - Sessions without hooks (codex, the watchdog) keep today's herdr-only submit path unchanged
 
-- [ ] [#2] Answer hand-off
+- [x] [#2] Answer hand-off  <!-- fixed: r-loop/phase-1 -->
       - For an agent that reports hooks, a watchdog answer (and a withdrawal) is typed only after the asking turn's `Stop` or `idle_prompt` has been read; herdr idle while hooks say busy does not deliver it
       - Delivery happens within one hook read of the `Stop`, without depending on a 2s herdr poll or a session-wait tick running
       - The decline follow-up in `declined()` uses the same gate

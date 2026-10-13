@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -163,33 +164,30 @@ func (l *RunLoop) declined(open openAsk) {
 			quietly(func() { l.emit(ev) })
 		}
 	}()
-	poll := l.Sessions.Poll
-	if poll <= 0 {
-		poll = defaultPoll
-	}
+	gate := l.Sessions.handOff(open.agent)
 	for {
-		state, err := l.Sessions.Host.State(open.agent)
+		state, ready, err := gate.check()
 		if err == nil && state == AgentGone {
 			return
 		}
 		var typeErr error
 		sent := false
 		if !open.s.live(func() {
-			if err != nil || state == AgentWorking || state == AgentBlocked {
+			if err != nil || !ready || state == AgentBlocked {
 				return
 			}
-			if typeErr = l.Sessions.Host.Prompt(open.agent, declinedMessage(q.ID), false, 0); typeErr == nil {
+			if typeErr = l.Sessions.prompt(open.agent, declinedMessage(q.ID), gate); typeErr == nil {
 				sent = true
 				l.emit(Event{Kind: "note", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": fmt.Sprintf("dialog %s declined: told %s to finish another way", q.ID, open.agent)}})
 			}
 		}) || sent {
 			return
 		}
-		if typeErr != nil && !blocked(typeErr) {
+		if typeErr != nil && !blocked(typeErr) && !errors.Is(typeErr, errTurnNotOver) {
 			l.emit(Event{Kind: "warning", Phase: q.Step.Phase, Step: q.Step.Kind, Fields: map[string]string{"reason": fmt.Sprintf("decline follow-up for dialog %s not typed: %s", q.ID, typeErr)}})
 			return
 		}
-		time.Sleep(poll)
+		gate.wait()
 	}
 }
 

@@ -372,8 +372,22 @@ func (c Client) Prompt(agent, text string, wait bool, timeout time.Duration) err
 	return c.PromptContext(context.Background(), agent, text, wait, timeout)
 }
 
+func startedArgs() []string {
+	return []string{"--until", "working", "--until", "blocked", "--timeout", strconv.FormatInt(submitTimeout.Milliseconds(), 10)}
+}
+
+func (c Client) Submit(agent, text string) error {
+	var out struct{}
+	err := c.callWithinContext(context.Background(), callTimeout+submitTimeout, &out, append([]string{"agent", "prompt", agent, text, "--wait"}, startedArgs()...)...)
+	var herr Error
+	if errors.As(err, &herr) && herr.Code == "agent_prompt_stalled" {
+		return fmt.Errorf("%w: %w", core.ErrPromptStalled, err)
+	}
+	return err
+}
+
 func (c Client) PromptContext(ctx context.Context, agent, text string, wait bool, timeout time.Duration) error {
-	started := []string{"--until", "working", "--until", "blocked", "--timeout", strconv.FormatInt(submitTimeout.Milliseconds(), 10)}
+	started := startedArgs()
 	finished := []string{"--timeout", strconv.FormatInt(timeout.Milliseconds(), 10)}
 	args := append([]string{"agent", "prompt", agent, text, "--wait"}, started...)
 	limit := callTimeout + submitTimeout

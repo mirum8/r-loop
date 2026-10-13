@@ -1,6 +1,8 @@
 package core
 
 import (
+	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -13,13 +15,25 @@ type hookAgent struct {
 	tool, target string
 	notice       string
 	edits        map[string]time.Time
+	expect       string
+	expectSince  time.Time
+	matched      bool
+	turn         int
 }
 
 type hookLog struct {
-	mu     sync.Mutex
-	agents map[string]*hookAgent
-	warned bool
+	mu      sync.Mutex
+	agents  map[string]*hookAgent
+	warned  bool
+	changed chan struct{}
 }
+
+var (
+	hookPoll   = 200 * time.Millisecond
+	submitWait = 10 * time.Second
+)
+
+var errTurnNotOver = errors.New("turn not over")
 
 func isEditTool(tool string) bool {
 	switch tool {
@@ -38,9 +52,18 @@ func (h *hookLog) apply(ev HookEvent) {
 		a = &hookAgent{edits: map[string]time.Time{}}
 		h.agents[ev.Agent] = a
 	}
+	wasBusy := a.busy
+	defer func() {
+		if a.busy && (!wasBusy || ev.Event == "UserPromptSubmit") {
+			a.turn++
+		}
+	}()
 	switch ev.Event {
 	case "UserPromptSubmit":
 		a.busy, a.notice = true, ""
+		if a.expect != "" && !ev.At.Before(a.expectSince) && sameText(a.expect, ev.Prompt, ev.PromptCut) {
+			a.matched = true
+		}
 	case "PreToolUse":
 		a.busy, a.notice, a.tool, a.target = true, "", ev.Tool, ev.Target
 	case "PostToolUse":
@@ -70,11 +93,181 @@ func (m *SessionManager) drainHooks() error {
 	for _, ev := range events {
 		h.apply(ev)
 	}
+	if len(events) > 0 && h.changed != nil {
+		close(h.changed)
+		h.changed = nil
+	}
 	if err != nil && !h.warned {
 		h.warned = true
 		return err
 	}
 	return nil
+}
+
+func (m *SessionManager) hookChanged() <-chan struct{} {
+	h := &m.hooks
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.changed == nil {
+		h.changed = make(chan struct{})
+	}
+	return h.changed
+}
+
+func sameText(sent, seen string, cut bool) bool {
+	norm := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+	a, b := norm(sent), norm(seen)
+	if b == "" {
+		return false
+	}
+	if !cut {
+		return a == b
+	}
+	return strings.HasPrefix(a, b)
+}
+
+func (m *SessionManager) expectPrompt(agent, text string, since time.Time) {
+	m.hookAgent(agent, func(a *hookAgent) {
+		a.expect, a.expectSince, a.matched = text, since, false
+	})
+}
+
+func (m *SessionManager) submitted(agent string) bool {
+	_ = m.drainHooks()
+	var matched bool
+	m.hookAgent(agent, func(a *hookAgent) { matched = a.matched })
+	return matched
+}
+
+func (m *SessionManager) awaitSubmit(agent string, wait time.Duration) bool {
+	deadline := time.Now().Add(wait)
+	for {
+		if m.submitted(agent) {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(hookPoll)
+	}
+}
+
+func (m *SessionManager) typingLock(agent string) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.typing == nil {
+		m.typing = map[string]*sync.Mutex{}
+	}
+	if m.typing[agent] == nil {
+		m.typing[agent] = &sync.Mutex{}
+	}
+	return m.typing[agent]
+}
+
+func (m *SessionManager) prompt(agent, text string, gate *handOff) error {
+	lock := m.typingLock(agent)
+	lock.Lock()
+	defer lock.Unlock()
+	_ = m.drainHooks()
+	if seen, _ := m.hookTurn(agent); !seen {
+		return m.Host.Prompt(agent, text, false, 0)
+	}
+	if gate != nil {
+		if _, ready, err := gate.check(); err != nil || !ready {
+			return errTurnNotOver
+		}
+	}
+	m.expectPrompt(agent, text, m.now())
+	defer m.expectPrompt(agent, "", time.Time{})
+	err := m.Host.Submit(agent, text)
+	stalled := errors.Is(err, ErrPromptStalled)
+	if err != nil && !stalled {
+		return err
+	}
+	wait := submitWait
+	if stalled {
+		wait = 0
+	}
+	if m.awaitSubmit(agent, wait) {
+		return nil
+	}
+	if err := m.Host.SendKeys(agent, "enter"); err != nil {
+		return err
+	}
+	if m.awaitSubmit(agent, submitWait) {
+		return nil
+	}
+	return fmt.Errorf("prompt to %s not submitted: no matching UserPromptSubmit", agent)
+}
+
+type handOff struct {
+	m         *SessionManager
+	agent     string
+	fast      bool
+	busySince time.Time
+	busyTurn  int
+	changed   <-chan struct{}
+}
+
+func (m *SessionManager) handOff(agent string) *handOff {
+	return &handOff{m: m, agent: agent}
+}
+
+func (g *handOff) check() (AgentState, bool, error) {
+	g.changed = g.m.hookChanged()
+	if _, _, held := g.turn(); held {
+		return "", false, nil
+	}
+	state, err := g.m.Host.State(g.agent)
+	if err != nil {
+		return state, false, err
+	}
+	seen, busy, held := g.turn()
+	if held {
+		return state, false, nil
+	}
+	if seen && !busy {
+		return state, state != AgentGone, nil
+	}
+	return state, state != AgentWorking && state != AgentGone, nil
+}
+
+func (g *handOff) turn() (seen, busy, held bool) {
+	_ = g.m.drainHooks()
+	var turn int
+	seen = g.m.hookAgent(g.agent, func(a *hookAgent) { busy, turn = a.busy, a.turn })
+	g.fast = seen
+	if !busy {
+		g.busySince = time.Time{}
+		return seen, busy, false
+	}
+	if !seen {
+		return seen, busy, false
+	}
+	grace := g.m.StallGrace
+	if grace <= 0 {
+		grace = defaultStallGrace
+	}
+	now := g.m.now()
+	if g.busySince.IsZero() || turn != g.busyTurn {
+		g.busySince, g.busyTurn = now, turn
+	}
+	return seen, busy, now.Sub(g.busySince) < grace
+}
+
+func (g *handOff) wait() {
+	if g.fast {
+		select {
+		case <-g.changed:
+		case <-time.After(hookPoll):
+		}
+		return
+	}
+	poll := g.m.Poll
+	if poll <= 0 {
+		poll = defaultPoll
+	}
+	time.Sleep(poll)
 }
 
 func (m *SessionManager) hookAgent(agent string, fn func(a *hookAgent)) bool {

@@ -1268,3 +1268,50 @@ func TestStateSeqOfMissingAgentIsGone(t *testing.T) {
 		t.Fatalf("got %q %d, %v", st, seq, err)
 	}
 }
+
+func TestSubmitTypesThePromptAndReturnsOnceTheAgentStarts(t *testing.T) {
+	// given
+	c, argv := fake(t, `{"id":"cli:agent:prompt","result":{"type":"ok"}}`)
+
+	// when
+	err := c.Submit("a1", "go")
+
+	// then
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	assertArgv(t, argv(), []string{"agent", "prompt", "a1", "go", "--wait", "--until", "working", "--until", "blocked", "--timeout", "10000"})
+}
+
+func TestSubmitReportsAStalledPromptWithoutPressingEnter(t *testing.T) {
+	// given
+	c, calls := stalledPrompt(t, true)
+
+	// when
+	err := c.Submit("a1", "go")
+
+	// then
+	if !errors.Is(err, core.ErrPromptStalled) {
+		t.Fatalf("Submit: %v", err)
+	}
+	assertCalls(t, calls(), [][]string{
+		{"agent", "prompt", "a1", "go", "--wait", "--until", "working", "--until", "blocked", "--timeout", "10000"},
+	})
+}
+
+func TestSubmitReturnsAnAgentBlockedErrorAsHerdrReportsIt(t *testing.T) {
+	// given
+	c, _ := fakeExit(t, "", `{"error":{"code":"agent_blocked","message":"m"},"id":"cli:agent:prompt"}`, 1)
+
+	// when
+	err := c.Submit("a1", "go")
+
+	// then
+	var actual Error
+	if !errors.As(err, &actual) || actual.Code != "agent_blocked" {
+		t.Fatalf("Submit: %#v", err)
+	}
+	if errors.Is(err, core.ErrPromptStalled) {
+		t.Errorf("an agent_blocked error reads as a stall: %v", err)
+	}
+}
