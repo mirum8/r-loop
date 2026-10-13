@@ -308,6 +308,63 @@ for arg in '../../etc/passwd.md' "x; touch $T/pwned.md" "\`touch $T/pwned\`.md" 
   else fail "hostile .md path rc=$rc: $arg"; fi
 done
 
+R=$("$ROOT/testdata/sandbox/make-sandbox.sh") && cd "$R"
+cat > docs/plan/todo-rework.md <<'EOF'
+# Calc — Rework Plan
+<!-- changes: 2026-10-12 — Finance approves invoices -->
+
+Sources: this file · Status: draft
+
+## Milestone 1 — Calculator
+
+### Phase 1 — Subtract
+**Implements:** Subtract numbers
+**Depends on:** —
+**Files:** `subtract.go` (new) · `subtract_test.go` (new)
+- [x] `Subtract(a, b int) int` returns `a - b`
+**Done when:** `go test ./...` is green.
+
+### Phase 2 — Subtract saturates
+**Implements:** Subtract numbers without going below zero
+**Done when:** `go test ./...` is green
+  and the saturation table test passes.
+**Reworks:** Phase 1
+**Depends on:** Phase 1
+**Files:** `subtract.go` (modify) · `subtract_test.go` (modify)
+- [ ] `Subtract(a, b int) int` returns `0` when `b > a`
+EOF
+git add -A && git commit -qm rework
+run docs/plan/todo-rework.md --dry-run --plain
+if [ "$rc" = 0 ] && grep -q '^Plan: .* — 2 phases, 1 already done' "$T/out" && [ "$(grep -c '^phase [0-9]' "$T/out")" = 1 ] \
+  && grep -q '^phase 2  Subtract saturates ' "$T/out" && grep -q '^Plan check: no notes' "$T/out" \
+  && grep -qx '  Done when: `go test ./...` is green' "$T/out" && ! grep -q 'Reworks' "$T/out"; then
+  ok "rework plan: changes comment ignored, only phase 2 runs, no note"
+else fail "rework plan dry-run rc=$rc: $(head -1 "$T/err")"; fi
+rework_variant() {
+  FROM="$1" TO="$2" perl -0pi -e 's/\Q$ENV{FROM}\E/$ENV{TO}/' docs/plan/todo-rework.md && git commit -qam variant
+  run docs/plan/todo-rework.md --dry-run --plain
+  git reset -q --hard HEAD~1
+}
+rework_variant '**Reworks:** Phase 1
+**Depends on:** Phase 1' '**Reworks:** Phase 1
+**Depends on:** —'
+[ "$rc" = 0 ] && grep -q '^- Phase 2 — Subtract saturates: reworks phase 1 but does not depend on it$' "$T/out" \
+  && ok "rework without depends on is a plan-check note, exit 0" || fail "rework note rc=$rc: $(head -1 "$T/err")"
+rework_variant '**Reworks:** Phase 1' '**Reworks:** Phase 5'
+[ "$rc" = 2 ] && [ ! -s "$T/out" ] && grep -q 'todo-rework.md line 19: phase 2 reworks phase 5, which does not exist$' "$T/err" \
+  && ok "reworks a missing phase exits 2: $(cat "$T/err")" || fail "reworks missing rc=$rc: $(cat "$T/err")"
+rework_variant '**Reworks:** Phase 1' '**Reworks:** Phase 2'
+[ "$rc" = 2 ] && grep -q 'line 19: phase 2 reworks itself$' "$T/err" \
+  && ok "reworks itself exits 2: $(cat "$T/err")" || fail "reworks itself rc=$rc: $(cat "$T/err")"
+rework_variant '**Depends on:** —' '**Depends on:** —
+**Reworks:** Phase 2'
+[ "$rc" = 2 ] && grep -q 'line 11: phase 1 reworks phase 2, which comes after it' "$T/err" \
+  && ok "reworks a later phase exits 2: $(cat "$T/err")" || fail "reworks later rc=$rc: $(cat "$T/err")"
+rework_variant '**Reworks:** Phase 1' '**Reworks:** the approval flow'
+[ "$rc" = 2 ] && grep -q 'line 19: reworks names no phase: "the approval flow"$' "$T/err" \
+  && ok "reworks naming no phase exits 2: $(cat "$T/err")" || fail "reworks prose rc=$rc: $(cat "$T/err")"
+cd "$ROOT"; rm -rf "$R"
+
 D=$("$ROOT/testdata/sandbox/make-sandbox.sh") && cd "$D"
 run docs/plan/todo-tiny.md --dry-run --plain
 [ "$rc" = 0 ] && grep -q '^phase 1  Subtract  plan (review ×1) → implement' "$T/out" && ! grep -q '^design ' "$T/out" \
