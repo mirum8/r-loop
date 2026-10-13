@@ -154,6 +154,7 @@ func landedLines(st RunState) []string {
 }
 
 func haltLines(st RunState) []string {
+	seen := transcripts(st)
 	var out []string
 	reasons := map[string]bool{}
 	for _, ev := range st.Events {
@@ -164,17 +165,46 @@ func haltLines(st RunState) []string {
 			reasons = map[string]bool{}
 		case ev.Kind == "phase-blocked":
 			reasons[f["reason"]] = true
-			out = append(out, where(ev.Phase, ev.Step)+": "+f["reason"]+place(f))
+			out = append(out, where(ev.Phase, ev.Step)+": "+f["reason"]+place(f)+transcriptList(seen[ev.Phase+"\x00"+ev.Step]))
 		case ev.Kind == "halt" && f["reason"] != "" && !reasons[f["reason"]]:
 			reasons[f["reason"]] = true
 			out = append(out, f["reason"])
 		case ev.Kind == "phase-skipped":
 			out = append(out, skippedLine(ev))
 		case ev.Kind == "aborted":
-			out = append(out, "aborted during "+where(ev.Phase, ev.Step)+place(f))
+			out = append(out, "aborted during "+where(ev.Phase, ev.Step)+place(f)+transcriptList(seen[ev.Phase+"\x00"+ev.Step]))
 		}
 	}
 	return out
+}
+
+func transcripts(st RunState) map[string][]string {
+	out := map[string][]string{}
+	for _, ev := range st.Events {
+		if ev.Kind != "agent-transcript" {
+			continue
+		}
+		f := ev.Fields
+		who := "worker a" + f["attempt"]
+		if f["reviewer"] != "" {
+			who = "reviewer " + f["reviewer"] + " a" + f["attempt"] + " r" + f["round"]
+		}
+		key := ev.Phase + "\x00" + ev.Step
+		out[key] = append(out[key], who+" "+f["transcript_path"])
+		switch ev.Step {
+		case "gatefix", "gate", "milestone":
+			land := ev.Phase + "\x00land"
+			out[land] = append(out[land], ev.Step+" "+who+" "+f["transcript_path"])
+		}
+	}
+	return out
+}
+
+func transcriptList(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	return " — transcripts: " + strings.Join(paths, ", ")
 }
 
 func place(f map[string]string) string {

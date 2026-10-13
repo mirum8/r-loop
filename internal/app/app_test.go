@@ -1311,6 +1311,34 @@ func registryDirWithPdev(t *testing.T) string {
 	return dir
 }
 
+func TestResolveMarksOnlyACodexProviderAsWritingARollout(t *testing.T) {
+	tests := []struct {
+		provider        string
+		expectedRollout bool
+	}{
+		{"codex", true},
+		{"claude", false},
+		{"pdev", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			// given
+			w := &Wiring{Registry: providers.NewRegistry(nil, nil, registryDirWithPdev(t))}
+
+			// when
+			args, err := w.resolve(tt.provider, "", "", "", "", "")
+
+			// then
+			if err != nil {
+				t.Fatal(err)
+			}
+			if actualRollout := args.Rollout; actualRollout != tt.expectedRollout {
+				t.Fatalf("rollout = %t, want %t", actualRollout, tt.expectedRollout)
+			}
+		})
+	}
+}
+
 func TestResolveMarksOnlyAClaudeProviderGivenTheHookSettingsAsHooked(t *testing.T) {
 	tests := []struct {
 		name          string

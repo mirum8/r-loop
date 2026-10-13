@@ -353,4 +353,5 @@ type ProviderArgs struct {
 	Review     string
 	ReviewExec string
 	Hooks      bool
+	Rollout    bool
 }

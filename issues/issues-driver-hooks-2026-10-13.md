@@ -36,7 +36,7 @@ Verified against `r-loop` @ `main` `0e188e3`.
       - `SessionEnd` with reason clear or resume does not fail the step
       - A test with a herdr fake that never reports gone shows the step ending from the hook alone, well before the stall grace or the backstop
 
-- [ ] [#6] Transcripts for post-mortems
+- [x] [#6] Transcripts for post-mortems  <!-- fixed: r-loop/phase-6 -->
       - When a claude agent sends its first hook, the run log gets one non-fatal `agent-transcript` event with the agent name, `session_id` and `transcript_path`
       - For a codex worker or reviewer, the same event names its rollout file under `~/.codex/sessions`, matched by the session's worktree and start time, not by "newest file"
       - A blocked or aborted step's line in `report.md` lists the transcript paths of its worker and every reviewer recorded for that phase and step; a step with none renders as today

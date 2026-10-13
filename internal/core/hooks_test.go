@@ -245,10 +245,10 @@ func TestAReviewersActivityReachesTheLiveObserver(t *testing.T) {
 	reads := 0
 	r.sm.Hooks = &fakeHookFeed{next: func() []HookEvent {
 		reads++
-		if reads == 2 {
+		if reads == 3 {
 			return []HookEvent{hook(reviewer, "PreToolUse", "Read", r.worker.Dir+"/calc.go")}
 		}
-		if reads > 5 {
+		if reads > 6 {
 			return []HookEvent{hook(reviewer, "Stop", "", "")}
 		}
 		return nil
@@ -1012,6 +1012,9 @@ func (h *startingHost) Start(pane, name, kind string, args []string) (Agent, err
 	n := h.n
 	h.n++
 	if n < len(h.errs) && h.errs[n] != nil {
+		if n < len(h.pushes) {
+			h.feed.push(h.pushes[n]...)
+		}
 		return Agent{}, h.errs[n]
 	}
 	a, err := h.SessionHost.Start(pane, name, kind, args)
@@ -1043,6 +1046,15 @@ func hookedResolve(r *reviewRig) {
 	r.sm.Resolve = func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
 		args, err := inner(provider, model, effort, askURL, mcpConfigPath, dir)
 		args.Hooks = true
+		return args, err
+	}
+}
+
+func rolloutResolve(r *reviewRig) {
+	inner := r.sm.Resolve
+	r.sm.Resolve = func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
+		args, err := inner(provider, model, effort, askURL, mcpConfigPath, dir)
+		args.Rollout = provider == "codex"
 		return args, err
 	}
 }

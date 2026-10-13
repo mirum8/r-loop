@@ -25,6 +25,8 @@ type hookAgent struct {
 	heard        bool
 	since        time.Time
 	typed        bool
+	session      string
+	transcript   string
 }
 
 type hookLog struct {
@@ -67,6 +69,9 @@ func (h *hookLog) apply(ev HookEvent) {
 		return
 	}
 	a.heard, a.typed = true, false
+	if a.transcript == "" && ev.Transcript != "" {
+		a.session, a.transcript = ev.Session, ev.Transcript
+	}
 	wasBusy := a.busy
 	defer func() {
 		if a.busy && (!wasBusy || ev.Event == "UserPromptSubmit") {

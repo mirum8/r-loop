@@ -47,9 +47,11 @@ type SessionManager struct {
 	ReviewRunner  ReviewRunner
 	Hooks         HookFeed
 	HookTap       string
+	Rollouts      RolloutFinder
 	Face          Face
 	hooks         hookLog
 	typing        map[string]*sync.Mutex
+	tracked       []*Session
 	mu            sync.Mutex
 }
 
@@ -81,6 +83,9 @@ type Session struct {
 	fix                              *fixHalf
 	prompted                         time.Time
 	warnings                         []string
+	rollout                          bool
+	startedAt                        time.Time
+	transcribed                      atomic.Bool
 
 	mu        sync.Mutex
 	ended     bool
@@ -288,6 +293,8 @@ func (m *SessionManager) start(s *Session, stepDir string) error {
 	if err := m.Store.Append(key.Run, Record{Kind: RecordEvent, At: at, Event: &ev}); err != nil {
 		return err
 	}
+	s.rollout, s.startedAt = args.Rollout, m.now()
+	m.track(s)
 	m.hookReset(s.Agent)
 	if _, err := m.Host.Start(s.Pane, s.Agent, args.Kind, args.Args); err != nil {
 		return err
@@ -309,6 +316,63 @@ func (m *SessionManager) start(s *Session, stepDir string) error {
 		return err
 	}
 	return m.prompt(s.Agent, text, nil)
+}
+
+func (m *SessionManager) track(s *Session) {
+	_ = m.drainHooks()
+	m.mu.Lock()
+	var gone []*Session
+	m.tracked = slices.DeleteFunc(m.tracked, func(t *Session) bool {
+		if t.Agent != s.Agent {
+			return false
+		}
+		gone = append(gone, t)
+		return true
+	})
+	m.tracked = append(m.tracked, s)
+	m.mu.Unlock()
+	for _, t := range gone {
+		m.recordTranscript(t)
+	}
+}
+
+func (m *SessionManager) untrack(key StepKey) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tracked = slices.DeleteFunc(m.tracked, func(s *Session) bool { return s.Ref.Key == key })
+}
+
+func (m *SessionManager) recordTranscripts() {
+	m.mu.Lock()
+	sessions := slices.Clone(m.tracked)
+	m.mu.Unlock()
+	for _, s := range sessions {
+		m.recordTranscript(s)
+	}
+}
+
+func (m *SessionManager) recordTranscript(s *Session) {
+	if s.transcribed.Load() {
+		return
+	}
+	var id, path string
+	m.hookAgent(s.Agent, func(a *hookAgent) { id, path = a.session, a.transcript })
+	if path == "" && s.rollout && m.Rollouts != nil {
+		path, id = m.Rollouts.Find(s.Dir, s.Sentinel, s.startedAt)
+	}
+	if path == "" || !s.transcribed.CompareAndSwap(false, true) {
+		return
+	}
+	key := s.Ref.Key
+	fields := map[string]string{"agent": s.Agent, "attempt": strconv.Itoa(key.Attempt), "session_id": id, "transcript_path": path}
+	if s.Reviewer != "" {
+		fields["reviewer"], fields["round"] = s.Reviewer, fmt.Sprint(s.Ref.Vars["Round"])
+	}
+	at := m.now()
+	ev := Event{At: at, Kind: "agent-transcript", Phase: key.Phase, Step: key.Kind, Fields: fields}
+	if err := m.Store.Append(key.Run, Record{Kind: RecordEvent, At: at, Event: &ev}); err != nil && m.Face != nil {
+		m.Face.Emit(Event{At: at, Kind: "warning", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"reason": "transcript: " + err.Error()}})
+	}
 }
 
 type watch struct {
@@ -374,6 +438,7 @@ func (m *SessionManager) waitAll(ctx context.Context, sessions []*Session, obs O
 		dt := now.Sub(last)
 		last = now
 		hookErr := m.drainHooks()
+		m.recordTranscripts()
 		for i, w := range watches {
 			if w == nil {
 				continue
@@ -719,6 +784,9 @@ func (m *SessionManager) evidence(s *Session) EvidenceContext {
 }
 
 func (m *SessionManager) Finish(s *Session, out Outcome) Outcome {
+	_ = m.drainHooks()
+	m.recordTranscripts()
+	m.untrack(s.Ref.Key)
 	s.end()
 	key := s.Ref.Key
 	recorded, done := m.terminal(key)

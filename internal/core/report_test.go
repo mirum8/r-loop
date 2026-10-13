@@ -156,3 +156,78 @@ func TestReportListsEachFixWithItsKindCauseAndState(t *testing.T) {
 		t.Errorf("report lacks %q:\n%s", want, rep)
 	}
 }
+
+func TestAHaltLineOfABlockedStepListsTheTranscriptsOfItsWorkerAndReviewers(t *testing.T) {
+	// given
+	st := RunState{ID: "run-1", Status: RunHalted, Events: []Event{
+		{Kind: "agent-transcript", Phase: "2", Step: "implement", Fields: map[string]string{"attempt": "1", "agent": "w", "transcript_path": "/home/.claude/projects/-wt/s-1.jsonl"}},
+		{Kind: "agent-transcript", Phase: "2", Step: "implement", Fields: map[string]string{"attempt": "1", "reviewer": "codex", "round": "1", "transcript_path": "/home/.codex/sessions/2026/10/13/rollout-a.jsonl"}},
+		{Kind: "agent-transcript", Phase: "2", Step: "implement", Fields: map[string]string{"attempt": "1", "reviewer": "claude", "round": "1", "transcript_path": "/home/.claude/projects/-wt/s-2.jsonl"}},
+		{Kind: "agent-transcript", Phase: "2", Step: "plan", Fields: map[string]string{"attempt": "1", "transcript_path": "/home/.claude/projects/-wt/s-0.jsonl"}},
+		{Kind: "agent-transcript", Phase: "3", Step: "implement", Fields: map[string]string{"attempt": "1", "transcript_path": "/home/.claude/projects/-wt/s-9.jsonl"}},
+		{Kind: "phase-blocked", Phase: "2", Step: "implement", Fields: map[string]string{"phase": "2", "reason": "tests red", "workspace": "ws-2", "worktree": "/wt/phase-2"}},
+	}}
+
+	// when
+	actual := Report(st, threePhasePlan())
+
+	// then
+	expected := "- phase 2 implement: tests red — workspace ws-2, worktree /wt/phase-2 — transcripts: worker a1 /home/.claude/projects/-wt/s-1.jsonl, reviewer codex a1 r1 /home/.codex/sessions/2026/10/13/rollout-a.jsonl, reviewer claude a1 r1 /home/.claude/projects/-wt/s-2.jsonl\n"
+	if !strings.Contains(actual, expected) {
+		t.Fatalf("report missing %q:\n%s", expected, actual)
+	}
+}
+
+func TestAHaltLineOfAnAbortedStepListsItsTranscripts(t *testing.T) {
+	// given
+	st := RunState{ID: "run-1", Status: RunHalted, Events: []Event{
+		{Kind: "agent-transcript", Phase: "2", Step: "implement", Fields: map[string]string{"attempt": "1", "transcript_path": "/t/w.jsonl"}},
+		{Kind: "aborted", Phase: "2", Step: "implement", Fields: map[string]string{"workspace": "ws-2", "worktree": "/wt/phase-2"}},
+	}}
+
+	// when
+	actual := Report(st, threePhasePlan())
+
+	// then
+	expected := "- aborted during phase 2 implement — workspace ws-2, worktree /wt/phase-2 — transcripts: worker a1 /t/w.jsonl\n"
+	if !strings.Contains(actual, expected) {
+		t.Fatalf("report missing %q:\n%s", expected, actual)
+	}
+}
+
+func TestAHaltLineOfAStepWithoutTranscriptsRendersAsBefore(t *testing.T) {
+	// given
+	st := RunState{ID: "run-1", Status: RunHalted, Events: []Event{
+		{Kind: "agent-transcript", Phase: "1", Step: "plan", Fields: map[string]string{"attempt": "1", "transcript_path": "/t/p.jsonl"}},
+		{Kind: "phase-blocked", Phase: "2", Step: "implement", Fields: map[string]string{"phase": "2", "reason": "tests red", "workspace": "ws-2", "worktree": "/wt/phase-2"}},
+	}}
+
+	// when
+	actual := Report(st, threePhasePlan())
+
+	// then
+	expected := "- phase 2 implement: tests red — workspace ws-2, worktree /wt/phase-2\n"
+	if !strings.Contains(actual, expected) {
+		t.Fatalf("report missing %q:\n%s", expected, actual)
+	}
+}
+
+func TestAHaltLineOfALandingStepListsTheTranscriptsOfItsGateAndMilestoneSessions(t *testing.T) {
+	// given
+	st := RunState{ID: "run-1", Status: RunHalted, Events: []Event{
+		{Kind: "agent-transcript", Phase: "2", Step: "implement", Fields: map[string]string{"attempt": "1", "transcript_path": "/t/w.jsonl"}},
+		{Kind: "agent-transcript", Phase: "2", Step: "gatefix", Fields: map[string]string{"attempt": "1", "transcript_path": "/t/gf.jsonl"}},
+		{Kind: "agent-transcript", Phase: "2", Step: "milestone", Fields: map[string]string{"attempt": "2", "transcript_path": "/t/m.jsonl"}},
+		{Kind: "agent-transcript", Phase: "3", Step: "gatefix", Fields: map[string]string{"attempt": "1", "transcript_path": "/t/gf3.jsonl"}},
+		{Kind: "phase-blocked", Phase: "2", Step: "land", Fields: map[string]string{"phase": "2", "reason": "land: gate red", "workspace": "ws-2", "worktree": "/wt/phase-2"}},
+	}}
+
+	// when
+	actual := Report(st, threePhasePlan())
+
+	// then
+	expected := "- phase 2 land: land: gate red — workspace ws-2, worktree /wt/phase-2 — transcripts: gatefix worker a1 /t/gf.jsonl, milestone worker a2 /t/m.jsonl\n"
+	if !strings.Contains(actual, expected) {
+		t.Fatalf("report missing %q:\n%s", expected, actual)
+	}
+}
