@@ -323,6 +323,11 @@ func (h *eventsHost) Prompt(agent, text string, wait bool, timeout time.Duration
 	return h.agentSim.Prompt(agent, text, wait, timeout)
 }
 
+func (h *eventsHost) Submit(agent, text string) error {
+	h.record("SessionHost.Submit %s %q", agent, text)
+	return h.Prompt(agent, text, false, 0)
+}
+
 func (h *eventsHost) spec(agent string) OpenSpec {
 	return h.Started[agent]
 }

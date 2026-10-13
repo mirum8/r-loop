@@ -1963,3 +1963,5 @@ func TestResumeAbortsALocalTodoMergeTheCrashLeftDuringTheGate(t *testing.T) {
 		t.Errorf("local todo changed:\n%s", todo)
 	}
 }
+
+func (h *simHost) Submit(agent, text string) error { return h.Prompt(agent, text, false, 0) }

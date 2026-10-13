@@ -105,6 +105,11 @@ func (f *fakeSessionHost) Prompt(agent, text string, wait bool, timeout time.Dur
 	return f.Err
 }
 
+func (f *fakeSessionHost) Submit(agent, text string) error {
+	f.record("SessionHost.Submit %s %q", agent, text)
+	return f.Err
+}
+
 func (f *fakeSessionHost) State(agent string) (AgentState, error) {
 	f.record("SessionHost.State %s", agent)
 	if s, ok := f.States[agent]; ok {
@@ -598,15 +603,32 @@ var (
 )
 
 type fakeHookFeed struct {
-	mu   sync.Mutex
-	next func() []HookEvent
+	mu     sync.Mutex
+	next   func() []HookEvent
+	queued []HookEvent
+	reads  int
 }
 
 func (f *fakeHookFeed) Read() ([]HookEvent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.next == nil {
-		return nil, nil
+	f.reads++
+	out := f.queued
+	f.queued = nil
+	if f.next != nil {
+		out = append(out, f.next()...)
 	}
-	return f.next(), nil
+	return out, nil
+}
+
+func (f *fakeHookFeed) push(evs ...HookEvent) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.queued = append(f.queued, evs...)
+}
+
+func (f *fakeHookFeed) readCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reads
 }

@@ -114,7 +114,10 @@ so.
     screen it does not recognise: that fails `herdr: agent <name> never became ready (state S)`
     when the budget runs out (spec ADR-90; the driver arranging trust for the sessions it
     opens, spec ADR-1) · `Prompt(agent, text string, wait
-    bool, timeout time.Duration) error` · `State(agent) (AgentState, error)` with `AgentState ∈
+    bool, timeout time.Duration) error` · `Submit(agent, text string) error` (herdr `agent prompt
+    --wait --until working --until blocked`, no Enter retry: `agent_prompt_stalled` returns an
+    error wrapping `core.ErrPromptStalled`; core uses it for sessions that have reported a hook,
+    spec ADR-93) · `State(agent) (AgentState, error)` with `AgentState ∈
     {idle, working, blocked, done, unknown, gone}` · `Read(agent string, lines int) (string,
     error)` · `Interrupt(agent) error` · `Close(workspaceID) error` · `Split(pane, direction,
     cwd string, ratio float64, env map[string]string) (pane string, error)` (an empty `pane` splits the pane herdr calls current; `ratio` is the share the split pane keeps, `--ratio`, 0 for herdr's half; `env` becomes `--env K=V` on the split pane's shell, `nil` for none) ·
@@ -606,6 +609,10 @@ so.
   `<kind>-rv-<name>`. It types only once `Host.State` reports the agent not `working`, checking at
   the session poll interval and retrying on `agent_blocked`; then the step returns to `running`.
   An agent found gone first withdraws the question (`Answer: agent gone`) and releases the step.
+  For an agent that has reported a hook, it types only after that agent's `Stop` or
+  `idle_prompt`, waking at any hook read and reading the hooks itself every 200 ms, and falls back
+  to the herdr rule once the agent has stayed busy past the stall grace; the prompt counts as typed
+  only on a matching `UserPromptSubmit` (ADR-93).
 - **Withdrawal** — when a step ends (`ok`, `failed`, `stalled`, a halt or an abort) its open
   questions, answered but not yet typed included, are withdrawn: each is recorded `AnsweredBy:
   withdrawn`, `Answer: step <state>`, and closed on the server; nothing is typed. `r-loop resume`
