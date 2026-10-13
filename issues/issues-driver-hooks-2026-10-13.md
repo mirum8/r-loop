@@ -19,18 +19,18 @@ Verified against `r-loop` @ `main` `0e188e3`.
       - The decline follow-up in `declined()` uses the same gate
       - Agents with no hook events keep today's herdr polling, and a busy flag that never clears falls back to herdr after the stall grace, so an answer is never held forever
 
-- [ ] [#3] Stalls
+- [x] [#3] Stalls  <!-- fixed: r-loop/phase-3 -->
       - With hooks on, a step whose last hook event is `Stop` (or `idle_prompt`) and that has no sentinel gets the nudge on the next tick instead of after the 2-minute grace; it counts as the step's single nudge
       - A second turn end with still no sentinel, or a further grace of quiet, fails the step with `stalled: no response to nudge`, as today
       - Sessions without hooks keep today's herdr-state stall rule exactly, and tests cover both paths
 
-- [ ] [#4] Startup and hook health
+- [x] [#4] Startup and hook health  <!-- fixed: r-loop/phase-3 -->
       - The run's claude settings register a `SessionStart` hook, and `hooks.jsonl` gets a `SessionStart` line for each claude agent before its first prompt
       - A claude agent that sends no `SessionStart` within a fixed time after start produces exactly one warning naming the agent and the hook-tap executable, and its turn end is then decided by herdr even if hook events arrive later
       - An agent counted as hook-enabled is busy from the moment its prompt is typed, so a sentinel written before any `UserPromptSubmit` is read cannot be judged early
       - Providers without hooks and runs without a hook feed never get the warning
 
-- [ ] [#5] Gone agents
+- [x] [#5] Gone agents  <!-- fixed: r-loop/phase-3 -->
       - The run's claude settings register a `SessionEnd` hook, and the tap records its `reason`
       - A step with no sentinel whose agent reports `SessionEnd` with reason exit, logout, prompt_input_exit or other fails on the next tick with a reason naming it (e.g. `agent exited: logout`); with a sentinel present it is judged instead
       - `SessionEnd` with reason clear or resume does not fail the step

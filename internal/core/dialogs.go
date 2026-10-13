@@ -144,6 +144,7 @@ func (l *RunLoop) DeliverKeys(id string, keys []string, by, rule string) error {
 			l.screens[open.agent] = q.Text
 			l.mu.Unlock()
 			if rule == declineRule {
+				open.s.declining.Add(1)
 				go l.declined(open)
 			}
 		}
@@ -157,6 +158,7 @@ func declinedMessage(id string) string {
 }
 
 func (l *RunLoop) declined(open openAsk) {
+	defer open.s.declining.Add(-1)
 	q := open.q
 	defer func() {
 		if r := recover(); r != nil {

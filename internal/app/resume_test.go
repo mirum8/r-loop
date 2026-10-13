@@ -221,6 +221,7 @@ func newResumeFixture(t *testing.T, config string) *fixture {
 func (f *fixture) sim(w *Wiring, sim *simHost) *landRecorder {
 	w.Loop.Sessions.Host = sim
 	w.Loop.Sessions.Poll = 5 * time.Millisecond
+	w.Loop.Sessions.HookStartWait = 5 * time.Millisecond
 	w.Dog.Host = answeringDog(w, "sqlite", "docs/topic/todo.md:1")
 	triagers.Store(core.WatchdogName(w.Dog.Root, w.Loop.RunID), w)
 	w.Config.Watchdog.TriageTimeout = 10 * time.Second

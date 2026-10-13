@@ -533,6 +533,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Label:        cfg.Label,
 		Analyzer:     analyzer,
 		ReviewRunner: reviewexec.New(),
+		Face:         w.Face,
 	}
 	runners := core.DefaultRunners(sm, kinds)
 	fixKind := k.fix
@@ -812,6 +813,7 @@ func (w *Wiring) writeStatusSettings() error {
 	}
 	w.settings = path
 	w.Loop.Sessions.Hooks = hooktap.NewFeed(hookFile)
+	w.Loop.Sessions.HookTap = exe
 	return nil
 }
 
@@ -1036,7 +1038,9 @@ func (w *Wiring) resolve(provider, model, effort, askURL, mcpConfigPath, dir str
 	if err != nil {
 		return core.ProviderArgs{}, err
 	}
-	return providers.ToCore(p, model, effort, askURL, mcpConfigPath, dir), nil
+	args := providers.ToCore(p, model, effort, askURL, mcpConfigPath, dir)
+	args.Hooks = p.Kind == "claude" && p.SettingsFlag != "" && w.settings != ""
+	return args, nil
 }
 
 func coreRow(r config.StepRow) core.StepRow {

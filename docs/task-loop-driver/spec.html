@@ -2915,7 +2915,7 @@ maintainer would have refused, or unattended runs still need a person more than 
 <p><span class="f">Status</span> accepted · amends <a href="#adr-14">ADR-14</a> ·
 amended 2026-09-19 — the nudge offers the ask tool only to a session that has
 an ask channel · amended by <a href="#adr-73">ADR-73</a> — the tool it names is
-<code>ask_watchdog</code> · amended by <a href="#adr-80">ADR-80</a> — a step or reviewer agent blocked on a dialog of its own CLI is not nudged: the dialog goes to the watchdog, and the driver presses the keys an authorised answer names, the one input into a session the watchdog chooses · amended by <a href="#adr-82">ADR-82</a> — a step failed by a stall raises a blocker, as any failed step does</p>
+<code>ask_watchdog</code> · amended by <a href="#adr-80">ADR-80</a> — a step or reviewer agent blocked on a dialog of its own CLI is not nudged: the dialog goes to the watchdog, and the driver presses the keys an authorised answer names, the one input into a session the watchdog chooses · amended by <a href="#adr-82">ADR-82</a> — a step failed by a stall raises a blocker, as any failed step does · amended by <a href="#adr-93">ADR-93</a> (2026-10-13) — a session that reports hooks gets its nudge at the tick after a turn end with no sentinel, with the text <code>your turn ended with no sentinel</code>, and fails at its next such turn end or after a grace of quiet</p>
 <p><span class="f">Context</span> <a href="#adr-14">ADR-14</a> left a stalled step standing and the
 run paused until a person came. Since questions became explicit (<a href="#adr-29">ADR-29</a>), a
 stall is an agent that went quiet without asking — most often one that finished and never wrote its
@@ -4143,17 +4143,17 @@ flagged phases end in <code>no-visual-change</code>.</p>
 
 <div class="adr">
 <h3 id="adr-93">ADR-93 — Claude sessions report through hooks: telemetry and turn timing, never evidence</h3>
-<p><span class="f">Status</span> accepted 2026-10-13 · amends <a href="#adr-1">ADR-1</a> · amended 2026-10-13 — prompt confirmation and answer hand-off; amends <a href="#adr-76">ADR-76</a></p>
+<p><span class="f">Status</span> accepted 2026-10-13 · amends <a href="#adr-1">ADR-1</a> · amended 2026-10-13 — prompt confirmation and answer hand-off; amends <a href="#adr-76">ADR-76</a> · amended 2026-10-13 — session start and end, and the turn-end nudge; amends <a href="#adr-62">ADR-62</a></p>
 <p><span class="f">Context</span> The driver saw a claude pane only through herdr's agent state and
 a screen scrape. The TUI could show nothing but <code>running</code>; the watchdog got a 40-line screen
 for every dialog; every tree change during a review round was blamed on the reviewer, though it was
 usually the step editing after its sentinel; and a step's turn end was herdr's idle guess.</p>
 <p><span class="f">Decision</span> The run's <code>claude.settings.json</code> adds
 <code>UserPromptSubmit</code>, <code>PreToolUse</code>, <code>PostToolUse</code> (edit tools),
-<code>Notification</code> and <code>Stop</code> hooks, each running <code>r-loop hook-tap
+<code>Notification</code>, <code>Stop</code>, <code>SessionStart</code> and <code>SessionEnd</code> hooks, each running <code>r-loop hook-tap
 &lt;runDir&gt;/hooks.jsonl</code>. The tap appends one line naming the pane's
-<code>R_LOOP_AGENT</code>, prints nothing and always exits 0; a session without that variable (the
-watchdog) is not recorded. The driver reads new lines every tick and uses them for six things only:
+<code>R_LOOP_AGENT</code>, prints nothing and always exits 0; it keeps a <code>SessionEnd</code>'s <code>reason</code>; a session without that variable (the
+watchdog) is not recorded. The driver reads new lines every tick and uses them for nine things only:
 a face-only <code>activity</code> event (never journalled) that the TUI shows in the agent's state
 column; the notification's one-line message, put above the screen in the watchdog's dialog prompt
 and printed instead of the screen by <code>--plain</code>; naming which session edited a file a
@@ -4163,12 +4163,23 @@ after a <code>Stop</code> without a new prompt), not at herdr idle, with the exi
 fallback; whether a typed prompt was submitted — once a session has reported a hook, a prompt counts
 as delivered only on its <code>UserPromptSubmit</code> carrying the prompt's text (the tap keeps the
 first 512 bytes), stamped after the send, and on herdr's <code>agent_prompt_stalled</code> Enter is
-pressed only when none was seen; a session's first prompt, typed before any hook can fire, keeps
-herdr's check; and when an answer, a withdrawal or a decline follow-up may be typed — for such a
+pressed only when none was seen; a claude session's first prompt waits up to 10 s after its start
+for its <code>SessionStart</code>, and is then confirmed the same way; and when an answer, a withdrawal or a decline follow-up may be typed — for such a
 session, only after the asking turn's <code>Stop</code> or <code>idle_prompt</code>, acted on at the
 hook read that brings it (any reader's read wakes the waiting hand-off, and it reads the hooks itself
 every 200 ms), with herdr's not-<code>working</code> rule back once the session has stayed busy past
-the stall grace. Prompts to one session are typed one at a time. A step's
+the stall grace; startup health — a claude session launched with these settings that sends no
+<code>SessionStart</code> within those 10 s gets one warning naming it and the hook tap, and herdr
+decides its turn ends, prompt confirmation and hand-offs for the rest of the session, whatever hooks
+arrive later; no <code>SessionStart</code> changes turn state, a typed prompt makes the session busy
+at once, and every start forgets the hooks of an earlier process under the same name; the stall
+nudge — a session whose turn ends (<code>Stop</code> or <code>idle_prompt</code>) with no sentinel
+gets <a href="#adr-62">ADR-62</a>'s single nudge at the next tick, unless a question or a decline
+follow-up is pending for it or a tool starts before it is typed, and fails as stalled at its next
+turn end with no sentinel or after a grace of quiet; the exit — a <code>SessionEnd</code> with reason
+<code>exit</code>, <code>logout</code>, <code>prompt_input_exit</code> or <code>other</code> ends the
+step at the next tick, judged by its sentinel when one exists and otherwise failed <code>agent
+exited: &lt;reason&gt;</code>; <code>clear</code> and <code>resume</code> are ignored. Prompts to one session are typed one at a time. A step's
 outcome is still judged from its sentinel and the evidence (<em>Determinism</em>, Part 3), and the
 TUI still shows no question text (<a href="#adr-73">ADR-73</a>).</p>
 <p><span class="f">Alternatives</span> One settings file per session — rejected: the pane's inherited
@@ -4176,7 +4187,7 @@ environment already names the agent. Hooks as evidence — rejected: they report
 not what is on disk. A <code>Notification</code>-only dialog detector — rejected: answering keys
 needs herdr's blocked state and its sequence, so herdr stays the gate.</p>
 <p><span class="f">Consequences</span> Codex and any provider without hooks keep herdr's view and show
-no activity. A hook that never fires costs only the grace wait. Edits made through a shell command
+no activity. A hook tap that never fires costs 10 s per claude session start and one warning, and that session falls back to herdr. Edits made through a shell command
 are not attributed and keep the old <code>reviewer modified the tree</code> wording. A declined
 dialog's follow-up waits for <code>idle_prompt</code>, about a minute, since claude sends no
 <code>Stop</code> for a turn interrupted by esc.</p>

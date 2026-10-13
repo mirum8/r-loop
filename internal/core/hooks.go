@@ -19,6 +19,12 @@ type hookAgent struct {
 	expectSince  time.Time
 	matched      bool
 	turn         int
+	started      bool
+	pinned       bool
+	exit         string
+	heard        bool
+	since        time.Time
+	typed        bool
 }
 
 type hookLog struct {
@@ -43,15 +49,24 @@ func isEditTool(tool string) bool {
 	return false
 }
 
-func (h *hookLog) apply(ev HookEvent) {
+func (h *hookLog) agent(name string) *hookAgent {
 	if h.agents == nil {
 		h.agents = map[string]*hookAgent{}
 	}
-	a := h.agents[ev.Agent]
+	a := h.agents[name]
 	if a == nil {
 		a = &hookAgent{edits: map[string]time.Time{}}
-		h.agents[ev.Agent] = a
+		h.agents[name] = a
 	}
+	return a
+}
+
+func (h *hookLog) apply(ev HookEvent) {
+	a := h.agent(ev.Agent)
+	if ev.At.Before(a.since) {
+		return
+	}
+	a.heard, a.typed = true, false
 	wasBusy := a.busy
 	defer func() {
 		if a.busy && (!wasBusy || ev.Event == "UserPromptSubmit") {
@@ -79,6 +94,13 @@ func (h *hookLog) apply(ev HookEvent) {
 		}
 	case "Stop":
 		a.busy, a.notice, a.tool, a.target = false, "", "", ""
+	case "SessionStart":
+		a.started = true
+	case "SessionEnd":
+		switch ev.Reason {
+		case "exit", "logout", "prompt_input_exit", "other":
+			a.exit = ev.Reason
+		}
 	}
 }
 
@@ -129,6 +151,12 @@ func sameText(sent, seen string, cut bool) bool {
 func (m *SessionManager) expectPrompt(agent, text string, since time.Time) {
 	m.hookAgent(agent, func(a *hookAgent) {
 		a.expect, a.expectSince, a.matched = text, since, false
+		switch {
+		case text != "" && !a.busy:
+			a.busy, a.typed = true, true
+		case text == "" && a.typed:
+			a.busy, a.typed = false, false
+		}
 	})
 }
 
@@ -169,7 +197,7 @@ func (m *SessionManager) prompt(agent, text string, gate *handOff) error {
 	lock.Lock()
 	defer lock.Unlock()
 	_ = m.drainHooks()
-	if seen, _ := m.hookTurn(agent); !seen {
+	if seen, _, _ := m.hookTurn(agent); !seen {
 		return m.Host.Prompt(agent, text, false, 0)
 	}
 	if gate != nil {
@@ -234,8 +262,7 @@ func (g *handOff) check() (AgentState, bool, error) {
 
 func (g *handOff) turn() (seen, busy, held bool) {
 	_ = g.m.drainHooks()
-	var turn int
-	seen = g.m.hookAgent(g.agent, func(a *hookAgent) { busy, turn = a.busy, a.turn })
+	seen, busy, turn := g.m.hookTurn(g.agent)
 	g.fast = seen
 	if !busy {
 		g.busySince = time.Time{}
@@ -282,9 +309,68 @@ func (m *SessionManager) hookAgent(agent string, fn func(a *hookAgent)) bool {
 	return true
 }
 
-func (m *SessionManager) hookTurn(agent string) (seen, busy bool) {
-	seen = m.hookAgent(agent, func(a *hookAgent) { busy = a.busy })
-	return seen, busy
+func (m *SessionManager) hookTurn(agent string) (seen, busy bool, turn int) {
+	var heard, pinned bool
+	seen = m.hookAgent(agent, func(a *hookAgent) { busy, turn, heard, pinned = a.busy, a.turn, a.heard, a.pinned })
+	return seen && heard && !pinned, busy, turn
+}
+
+func (m *SessionManager) hookExit(agent string) string {
+	var exit string
+	m.hookAgent(agent, func(a *hookAgent) { exit = a.exit })
+	return exit
+}
+
+func (m *SessionManager) hookReset(agent string) {
+	if m.Hooks == nil {
+		return
+	}
+	_ = m.drainHooks()
+	h := &m.hooks
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	a := h.agent(agent)
+	*a = hookAgent{edits: a.edits, since: m.now()}
+}
+
+func (m *SessionManager) hookStart(s *Session, hooks bool) {
+	if !hooks || m.Hooks == nil {
+		return
+	}
+	wait := m.HookStartWait
+	if wait <= 0 {
+		wait = defaultHookStartWait
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		_ = m.drainHooks()
+		var started bool
+		m.hookAgent(s.Agent, func(a *hookAgent) { started = a.started })
+		if started {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(hookPoll)
+	}
+	m.hooks.mu.Lock()
+	m.hooks.agent(s.Agent).pinned = true
+	m.hooks.mu.Unlock()
+	if m.Face == nil {
+		return
+	}
+	key := s.Ref.Key
+	if s.Reviewer != "" {
+		key = reviewerKey(key, s.Reviewer)
+	}
+	m.Face.Emit(Event{
+		At:     m.now(),
+		Kind:   "warning",
+		Phase:  key.Phase,
+		Step:   key.Kind,
+		Fields: map[string]string{"reason": fmt.Sprintf("hook events: no SessionStart from %s within %s (hook tap %s hook-tap); its turn ends follow herdr", s.Agent, wait, m.HookTap)},
+	})
 }
 
 func (m *SessionManager) hookNotice(agent string) string {

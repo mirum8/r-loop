@@ -19,6 +19,7 @@ type HookEvent struct {
 	At                                 time.Time
 	Agent, Event, Tool, Target, Notice string
 	Type                               string
+	Reason                             string
 	Prompt                             string
 	PromptCut                          bool
 }

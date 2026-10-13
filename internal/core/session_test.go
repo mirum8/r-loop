@@ -1415,3 +1415,47 @@ func TestAnAgentThatLeavesBlockedTellsTheDialogs(t *testing.T) {
 		t.Fatalf("dialogs = %+v", dialogs)
 	}
 }
+
+func hooklessStallRig(t *testing.T, script func(n int) AgentState) (*rig, *Session) {
+	t.Helper()
+	r := newRig(t)
+	r.sm.Hooks = &fakeHookFeed{queued: []HookEvent{{At: t0, Agent: "rloop-2kuxv-p3-plan", Event: "Stop"}}}
+	s := r.spawn(t, 1)
+	r.sm.Now = (&stepClock{t: t0, step: 30 * time.Second}).Now
+	r.host.script = script
+	return r, s
+}
+
+func TestAnAgentWithoutHookEventsIsNudgedAtTheStallGraceAndFailsAGraceLater(t *testing.T) {
+	// given
+	r, s := hooklessStallRig(t, func(int) AgentState { return AgentIdle })
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertEqual(t, "states before each nudge", statesBeforeEach(r.shared.Calls(), stepPrompt(graceNudgeText)), []int{4})
+	assertEqual(t, "polls", r.host.polls, 8)
+	assertEqual(t, "reason", out.Reason, "stalled: no response to nudge")
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), nil)
+}
+
+func TestAnAgentWithoutHookEventsThatWorksAgainRestartsItsQuietAndIsNudgedAfterAFreshGrace(t *testing.T) {
+	// given
+	r, s := hooklessStallRig(t, func(n int) AgentState {
+		if n == 2 || n == 7 {
+			return AgentWorking
+		}
+		return AgentIdle
+	})
+	obs := &recObserver{}
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, obs)
+
+	// then
+	assertEqual(t, "states before each nudge", statesBeforeEach(r.shared.Calls(), stepPrompt(graceNudgeText)), []int{6, 11})
+	assertEqual(t, "polls", r.host.polls, 15)
+	assertEqual(t, "resumed", obs.resumed, 1)
+	assertEqual(t, "reason", out.Reason, "stalled: no response to nudge")
+}
