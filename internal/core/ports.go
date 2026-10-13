@@ -22,10 +22,15 @@ type HookEvent struct {
 	Reason                             string
 	Prompt                             string
 	PromptCut                          bool
+	Session, Transcript                string
 }
 
 type HookFeed interface {
 	Read() ([]HookEvent, error)
+}
+
+type RolloutFinder interface {
+	Find(dir, marker string, since time.Time) (path, session string)
 }
 
 type OpenSpec struct {

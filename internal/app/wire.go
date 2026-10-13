@@ -35,6 +35,7 @@ import (
 	"r-loop/internal/providers"
 	"r-loop/internal/quota"
 	"r-loop/internal/reviewexec"
+	"r-loop/internal/rollout"
 	"r-loop/internal/store"
 )
 
@@ -533,6 +534,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Label:        cfg.Label,
 		Analyzer:     analyzer,
 		ReviewRunner: reviewexec.New(),
+		Rollouts:     rollout.Finder{Home: codexHome(env.Home)},
 		Face:         w.Face,
 	}
 	runners := core.DefaultRunners(sm, kinds)
@@ -819,12 +821,16 @@ func (w *Wiring) writeStatusSettings() error {
 
 const usagePoll = 30 * time.Second
 
+func codexHome(home string) string {
+	if h := os.Getenv("CODEX_HOME"); h != "" {
+		return h
+	}
+	return filepath.Join(home, ".codex")
+}
+
 func (w *Wiring) pollUsage(ctx context.Context) {
 	kinds := w.providerKinds()
-	codexHome := os.Getenv("CODEX_HOME")
-	if codexHome == "" {
-		codexHome = filepath.Join(w.Env.Home, ".codex")
-	}
+	home := codexHome(w.Env.Home)
 	claudeFile := filepath.Join(w.Store.Dir(w.Loop.RunID), "usage", "claude.json")
 	ticker := time.NewTicker(usagePoll)
 	defer ticker.Stop()
@@ -837,7 +843,7 @@ func (w *Wiring) pollUsage(ctx context.Context) {
 			}
 		}
 		if kinds["codex"] {
-			if l, ok := quota.Codex(codexHome, now); ok {
+			if l, ok := quota.Codex(home, now); ok {
 				limits = append(limits, l)
 			}
 		}
@@ -1040,6 +1046,7 @@ func (w *Wiring) resolve(provider, model, effort, askURL, mcpConfigPath, dir str
 	}
 	args := providers.ToCore(p, model, effort, askURL, mcpConfigPath, dir)
 	args.Hooks = p.Kind == "claude" && p.SettingsFlag != "" && w.settings != ""
+	args.Rollout = p.Kind == "codex"
 	return args, nil
 }
 

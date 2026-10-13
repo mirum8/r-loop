@@ -194,3 +194,21 @@ func TestTapRecordsSessionStartAndTheSessionEndReason(t *testing.T) {
 		})
 	}
 }
+
+func TestTapRecordsTheSessionIdAndTranscriptPath(t *testing.T) {
+	// given
+	out := filepath.Join(t.TempDir(), "hooks.jsonl")
+	feed := NewFeed(out)
+
+	// when
+	Tap(strings.NewReader(`{"hook_event_name":"SessionStart","session_id":"s-1","transcript_path":"/home/.claude/projects/-wt/s-1.jsonl"}`), out, env("rloop-a"))
+	actual, err := feed.Read()
+
+	// then
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actual) != 1 || actual[0].Session != "s-1" || actual[0].Transcript != "/home/.claude/projects/-wt/s-1.jsonl" {
+		t.Fatalf("events = %+v, want one with session s-1 and transcript /home/.claude/projects/-wt/s-1.jsonl", actual)
+	}
+}

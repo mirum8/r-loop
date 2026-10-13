@@ -4143,7 +4143,7 @@ flagged phases end in <code>no-visual-change</code>.</p>
 
 <div class="adr">
 <h3 id="adr-93">ADR-93 — Claude sessions report through hooks: telemetry and turn timing, never evidence</h3>
-<p><span class="f">Status</span> accepted 2026-10-13 · amends <a href="#adr-1">ADR-1</a> · amended 2026-10-13 — prompt confirmation and answer hand-off; amends <a href="#adr-76">ADR-76</a> · amended 2026-10-13 — session start and end, and the turn-end nudge; amends <a href="#adr-62">ADR-62</a></p>
+<p><span class="f">Status</span> accepted 2026-10-13 · amends <a href="#adr-1">ADR-1</a> · amended 2026-10-13 — prompt confirmation and answer hand-off; amends <a href="#adr-76">ADR-76</a> · amended 2026-10-13 — session start and end, and the turn-end nudge; amends <a href="#adr-62">ADR-62</a> · amended 2026-10-13 — transcripts for post-mortems</p>
 <p><span class="f">Context</span> The driver saw a claude pane only through herdr's agent state and
 a screen scrape. The TUI could show nothing but <code>running</code>; the watchdog got a 40-line screen
 for every dialog; every tree change during a review round was blamed on the reviewer, though it was
@@ -4153,7 +4153,7 @@ usually the step editing after its sentinel; and a step's turn end was herdr's i
 <code>Notification</code>, <code>Stop</code>, <code>SessionStart</code> and <code>SessionEnd</code> hooks, each running <code>r-loop hook-tap
 &lt;runDir&gt;/hooks.jsonl</code>. The tap appends one line naming the pane's
 <code>R_LOOP_AGENT</code>, prints nothing and always exits 0; it keeps a <code>SessionEnd</code>'s <code>reason</code>; a session without that variable (the
-watchdog) is not recorded. The driver reads new lines every tick and uses them for nine things only:
+watchdog) is not recorded. The driver reads new lines every tick and uses them for ten things only:
 a face-only <code>activity</code> event (never journalled) that the TUI shows in the agent's state
 column; the notification's one-line message, put above the screen in the watchdog's dialog prompt
 and printed instead of the screen by <code>--plain</code>; naming which session edited a file a
@@ -4179,7 +4179,7 @@ follow-up is pending for it or a tool starts before it is typed, and fails as st
 turn end with no sentinel or after a grace of quiet; the exit — a <code>SessionEnd</code> with reason
 <code>exit</code>, <code>logout</code>, <code>prompt_input_exit</code> or <code>other</code> ends the
 step at the next tick, judged by its sentinel when one exists and otherwise failed <code>agent
-exited: &lt;reason&gt;</code>; <code>clear</code> and <code>resume</code> are ignored. Prompts to one session are typed one at a time. A step's
+exited: &lt;reason&gt;</code>; <code>clear</code> and <code>resume</code> are ignored; the transcript — the first hook of a session that carries a <code>transcript_path</code> appends one non-fatal <code>agent-transcript</code> event (agent, attempt, <code>session_id</code>, <code>transcript_path</code>, and reviewer and round for a reviewer); a codex session gets the same event for its rollout under <code>~/.codex/sessions</code>, the one whose <code>session_meta</code> cwd is the session's worktree, whose <code>payload.timestamp</code> is no earlier than its start, whose <code>payload.source</code> is not a sub-agent, and one of whose user messages names its sentinel; <code>report.md</code>'s Halt line for a blocked or aborted step lists every transcript recorded for that phase and step, and a <code>land</code> line also lists that phase's gate, gatefix and milestone transcripts. Prompts to one session are typed one at a time. A step's
 outcome is still judged from its sentinel and the evidence (<em>Determinism</em>, Part 3), and the
 TUI still shows no question text (<a href="#adr-73">ADR-73</a>).</p>
 <p><span class="f">Alternatives</span> One settings file per session — rejected: the pane's inherited

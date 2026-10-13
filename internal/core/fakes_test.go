@@ -590,16 +590,17 @@ func (f *fakeReviewRunner) RunReview(ctx context.Context, dir, command string, t
 }
 
 var (
-	_ PlanSource   = (*fakePlanSource)(nil)
-	_ SessionHost  = (*fakeSessionHost)(nil)
-	_ Repo         = (*fakeRepo)(nil)
-	_ Store        = (*fakeStore)(nil)
-	_ Prompts      = (*fakePrompts)(nil)
-	_ AskChannel   = (*fakeAskChannel)(nil)
-	_ Face         = (*fakeFace)(nil)
-	_ Notifier     = (*fakeNotifier)(nil)
-	_ Analyzer     = (*fakeAnalyzer)(nil)
-	_ ReviewRunner = (*fakeReviewRunner)(nil)
+	_ PlanSource    = (*fakePlanSource)(nil)
+	_ SessionHost   = (*fakeSessionHost)(nil)
+	_ Repo          = (*fakeRepo)(nil)
+	_ Store         = (*fakeStore)(nil)
+	_ Prompts       = (*fakePrompts)(nil)
+	_ AskChannel    = (*fakeAskChannel)(nil)
+	_ Face          = (*fakeFace)(nil)
+	_ Notifier      = (*fakeNotifier)(nil)
+	_ Analyzer      = (*fakeAnalyzer)(nil)
+	_ ReviewRunner  = (*fakeReviewRunner)(nil)
+	_ RolloutFinder = (*fakeRollouts)(nil)
 )
 
 type fakeHookFeed struct {
@@ -631,4 +632,24 @@ func (f *fakeHookFeed) readCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.reads
+}
+
+type rolloutFile struct{ path, session string }
+
+type fakeRollouts struct {
+	mu     sync.Mutex
+	files  map[string]rolloutFile
+	misses int
+	calls  []string
+}
+
+func (f *fakeRollouts) Find(dir, marker string, since time.Time) (string, string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, dir+" "+marker+" "+since.Format(time.RFC3339))
+	if len(f.calls) <= f.misses {
+		return "", ""
+	}
+	r := f.files[marker]
+	return r.path, r.session
 }

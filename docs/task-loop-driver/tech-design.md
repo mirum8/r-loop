@@ -173,7 +173,8 @@ so.
   <yyyymmdd-HHMMSS>`; files: `config.resolved.yaml`, `events.jsonl` (step, run, landing and
   display events, including `baseline`, `snapshot` and `review-round` events), `questions.jsonl`,
   `signals.jsonl`, `remedies.jsonl`, `report.md`, `claude.settings.json`, `hooks.jsonl` (one
-  line per claude hook event from `r-loop hook-tap`, read by the driver each tick; ADR-93),
+  line per claude hook event from `r-loop hook-tap`, carrying the hook's `session_id` and
+  `transcript_path`, read by the driver each tick; ADR-93),
   `usage/claude.json`, and `phase-<N>/` holding sentinels, step logs,
   findings and verdicts. A question's answer is a second line for the same id; `Load` keeps the
   last. `.r-loop/runs/current` holds `<runID> <pid>`. `.r-loop/runs/lock` is `flock`ed exclusively by the live driver from preflight or resume until its loop returns; a run is live only while that lock is held, and `current` names it. `.r-loop/runs/gate` is held exclusively by a driver from before it takes `lock` until its `current` is published, and while it clears `current` and drops `lock`; observers read `lock` and `current` under `gate` shared. `.r-loop/runs/<runID>/abort` is the abort
@@ -510,7 +511,9 @@ so.
   round-limit warnings, nudges, and blocked and skipped phases. A Resolve-first answer — at startup
   or during resume — is an `Event{Kind: "human", Step: "resolve first", Fields{what: answer, id:
   r<n>, entry, answer, by}}`, appended as soon as the run exists, and listed first under Questions
-  as `r<n> resolve first: <entry> → <answer> (<by>)`.
+  as `r<n> resolve first: <entry> → <answer> (<by>)`. A blocked or aborted step's line under
+  **Halt** ends `— transcripts: worker a<attempt> <path>, reviewer <id> a<attempt> r<round> <path>, …`,
+  every `agent-transcript` of that phase and step in log order; a `land` line also lists that phase's `gate`, `gatefix` and `milestone` transcripts, each prefixed with its step; a step with none renders unchanged.
 - **Banner** — one line per pipeline row and the milestone row, `<step> <provider> <model>
   <effort> <timeout> <check> ← <provenance>`; under a row with a review half, `review rounds <n>
   <reviewTimeout>` and one `reviewer <provider> <model> <effort>` line per reviewer and
@@ -1116,6 +1119,7 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
   string, error)`, on `SessionManager.ReviewRunner`; the adapter `internal/reviewexec` runs
   `sh -c command` in `dir` in its own process group, killed on timeout or cancel. Errors:
   `timed out after <d>`, `interrupted: …`, or the exit status, each followed by stderr's last line.
+- **`core.RolloutFinder`** — `Find(dir, marker string, since time.Time) (path, session string)`, on `SessionManager.Rollouts`; the adapter `internal/rollout` (`Finder{Home}`, `$CODEX_HOME` or `~/.codex`) returns the first `sessions/<y>/<m>/<d>/rollout-*.jsonl` in path order, day directories from the day before `since` (UTC) on, whose `session_meta` `payload.cwd` is `dir`, whose `payload.timestamp` is no earlier than `since` (to the millisecond), whose `payload.source` is a string (a sub-agent's object source never matches), and one of whose decoded `response_item` user messages contains `marker` (the session's sentinel path); `ProviderArgs.Rollout` is true for `kind: codex`. A session's first hook transcript, or its rollout, is journalled once as the non-fatal `Event{Kind: "agent-transcript", Phase, Step, Fields{agent, attempt, session_id, transcript_path[, reviewer, round]}}`; a failed append warns `transcript: <err>` and is not retried.
 - **The native exec review** — `ReviewHalf.open`, for a reviewer whose template is `review` and
   whose provider has `ReviewExec`, after `Start` and after the round's other reviewers are prompted,
   one goroutine per reviewer, all at once: `review-running`; `RunReview(ctx, worker.Dir,

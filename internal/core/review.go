@@ -545,6 +545,8 @@ func (h ReviewHalf) launch(worker *Session, r *reviewerRun, rd reviewRound) (*re
 	if err := h.event(worker, "agent-named", map[string]string{"attempt": strconv.Itoa(worker.Ref.Key.Attempt), "agent": s.Agent, "reviewer": s.Reviewer, "round": strconv.Itoa(rd.n)}); err != nil {
 		return nil, sm.fail(worker, "record: "+err.Error())
 	}
+	s.rollout, s.startedAt = r.args.Rollout, sm.now()
+	sm.track(s)
 	sm.hookReset(s.Agent)
 	if _, err := sm.Host.Start(s.Pane, s.Agent, r.args.Kind, r.args.Args); err != nil {
 		return fail(err)
