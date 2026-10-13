@@ -76,6 +76,7 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 		}
 	}
 	for rd.n = start; rd.n <= row.Rounds; rd.n++ {
+		roundAt := sm.now()
 		tree, err := sm.Repo.Snapshot(worker.Dir)
 		if err != nil {
 			return sm.fail(worker, "snapshot: "+err.Error())
@@ -104,7 +105,7 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 			}
 		}
 		worker.Reviewing.Store(true)
-		outs := sm.WaitAll(ctx, sessions)
+		outs := sm.waitAll(ctx, sessions, showsOnly(h.obs))
 		worker.Reviewing.Store(false)
 		for i, r := range waiting {
 			r.out = outs[i]
@@ -134,7 +135,7 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 		if staticFile != nil {
 			files = append(files, *staticFile)
 		}
-		if out := h.checkTree(worker, tree); out.State == StepFailed {
+		if out := h.checkTree(worker, tree, append(sessions, reviewers...), roundAt); out.State == StepFailed {
 			return out
 		}
 		fixed := false
@@ -499,6 +500,7 @@ func (h ReviewHalf) place(worker *Session, r *reviewerRun, at slot, rd reviewRou
 		"R_LOOP_PHASE":    worker.Ref.Key.Phase,
 		"R_LOOP_STEP":     worker.Ref.Key.Kind,
 		"R_LOOP_REVIEWER": id,
+		"R_LOOP_AGENT":    name,
 	}
 	var pane string
 	r.tab = at.pane == ""
@@ -738,7 +740,7 @@ func (h ReviewHalf) reopen(ctx context.Context, worker *Session, runs []*reviewe
 
 func (h ReviewHalf) await(ctx context.Context, worker *Session, r *reviewerRun, rd reviewRound) Outcome {
 	worker.Reviewing.Store(true)
-	r.out = h.Sessions.WaitAll(ctx, []*Session{r.s})[0]
+	r.out = h.Sessions.waitAll(ctx, []*Session{r.s}, showsOnly(h.obs))[0]
 	worker.Reviewing.Store(false)
 	if err := h.judge(worker, r, rd.n); err != nil {
 		return h.Sessions.fail(worker, "record: "+err.Error())
@@ -850,7 +852,7 @@ func reviewCommand(s *Session) string {
 	return "prompt " + s.Ref.Kind.Prompt
 }
 
-func (h ReviewHalf) checkTree(worker *Session, roundTree string) Outcome {
+func (h ReviewHalf) checkTree(worker *Session, roundTree string, reviewers []*Session, since time.Time) Outcome {
 	sm := h.Sessions
 	now, err := sm.Repo.Snapshot(worker.Dir)
 	if err != nil {
@@ -861,7 +863,7 @@ func (h ReviewHalf) checkTree(worker *Session, roundTree string) Outcome {
 		return sm.fail(worker, "tree diff: "+err.Error())
 	}
 	if len(changed) > 0 {
-		return sm.fail(worker, "reviewer modified the tree: "+strings.Join(changed, ", "))
+		return sm.fail(worker, sm.treeBlame(worker, reviewers, changed, since))
 	}
 	return Outcome{}
 }

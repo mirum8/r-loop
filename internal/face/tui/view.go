@@ -322,11 +322,16 @@ func (m Model) stepNode(s *Step) (glyph, name, state lipgloss.Style, text string
 	if q := m.waiting(s); q != "" {
 		return th.Current, th.Current, th.Text, "waiting ⇢ " + strings.ReplaceAll(strings.TrimPrefix(q, "watchdog · "), " · ", " ")
 	}
+	activity := m.activity[activityKey(s.Phase, s.Kind)]
 	switch {
+	case s.Round > 0 && s.timedHalf == "fix" && activity != "":
+		return th.Current, th.Current, th.Text, fmt.Sprintf("fixing r%d · %s", s.Round, activity)
 	case s.Round > 0 && s.timedHalf == "fix":
 		return th.Current, th.Current, th.Text, fmt.Sprintf("fixing r%d", s.Round)
 	case s.Round > 0:
 		return th.Current, th.Current, th.Idle, fmt.Sprintf("awaits r%d", s.Round)
+	case s.State == string(core.StepRunning) && activity != "":
+		return th.Current, th.Current, th.Text, activity
 	}
 	return th.Current, th.Current, th.Text, s.State
 }
@@ -370,7 +375,11 @@ func (m Model) reviewNodes(s *Step, w int) []string {
 		name := fmt.Sprintf("r%d %s", r.N, rv.ID)
 		switch rv.State {
 		case "":
-			lines = append(lines, m.node(w, prefix(), th.Current, th.Current, th.Current, "●", name, rv.Agent, "reviewing"))
+			text := "reviewing"
+			if a := m.activity[activityKey(s.Phase, s.Kind+"-rv-"+rv.ID)]; a != "" {
+				text = a
+			}
+			lines = append(lines, m.node(w, prefix(), th.Current, th.Current, th.Current, "●", name, rv.Agent, text))
 		case string(core.StepOK):
 			lines = append(lines, m.node(w, prefix(), th.Landed, th.Text, th.Text, "✓", name, rv.Agent, core.Plural(rv.Findings, "finding")))
 		default:

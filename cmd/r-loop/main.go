@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"r-loop/internal/app"
+	"r-loop/internal/hooktap"
 	"r-loop/internal/quota"
 )
 
@@ -28,6 +29,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		quota.Tap(os.Stdin, args[1], claudeSettings(), stdout)
+		return 0
+	}
+	if len(args) > 0 && args[0] == "hook-tap" {
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, "r-loop: usage: r-loop hook-tap <file>")
+			return 2
+		}
+		hooktap.Tap(os.Stdin, args[1], os.Getenv)
 		return 0
 	}
 	dir, err := os.Getwd()

@@ -169,7 +169,9 @@ so.
 - **Run directory** (`Store` adapter) — `.r-loop/runs/<runID>/` with `runID =
   <yyyymmdd-HHMMSS>`; files: `config.resolved.yaml`, `events.jsonl` (step, run, landing and
   display events, including `baseline`, `snapshot` and `review-round` events), `questions.jsonl`,
-  `signals.jsonl`, `remedies.jsonl`, `report.md`, and `phase-<N>/` holding sentinels, step logs,
+  `signals.jsonl`, `remedies.jsonl`, `report.md`, `claude.settings.json`, `hooks.jsonl` (one
+  line per claude hook event from `r-loop hook-tap`, read by the driver each tick; ADR-93),
+  `usage/claude.json`, and `phase-<N>/` holding sentinels, step logs,
   findings and verdicts. A question's answer is a second line for the same id; `Load` keeps the
   last. `.r-loop/runs/current` holds `<runID> <pid>`. `.r-loop/runs/lock` is `flock`ed exclusively by the live driver from preflight or resume until its loop returns; a run is live only while that lock is held, and `current` names it. `.r-loop/runs/gate` is held exclusively by a driver from before it takes `lock` until its `current` is published, and while it clears `current` and drops `lock`; observers read `lock` and `current` under `gate` shared. `.r-loop/runs/<runID>/abort` is the abort
   marker. `.r-loop/runs/` and `.r-loop/wt/` are appended to `<git-common-dir>/info/exclude` when

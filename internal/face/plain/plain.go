@@ -30,6 +30,13 @@ func (f *Face) Emit(ev core.Event) {
 
 func (f *Face) emit(w io.Writer, ev core.Event) {
 	switch ev.Kind {
+	case "activity":
+	case "dialog":
+		if ev.Fields["notice"] == "" {
+			fields(w, ev)
+			return
+		}
+		fmt.Fprintf(w, "%s  phase %s  %s  dialog %s  %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["id"], strings.Join(strings.Fields(ev.Fields["notice"]), " "))
 	case "step":
 		detail := ev.Fields["reason"]
 		if r := ev.Fields["round"]; r != "" {
@@ -101,21 +108,25 @@ func (f *Face) emit(w io.Writer, ev core.Event) {
 		}
 		fmt.Fprintln(w)
 	default:
-		keys := make([]string, 0, len(ev.Fields))
-		for k := range ev.Fields {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		pairs := make([]string, len(keys))
-		for i, k := range keys {
-			pairs[i] = k + "=" + ev.Fields[k]
-		}
-		phase := ""
-		if ev.Phase != "" {
-			phase = fmt.Sprintf("phase %s  ", ev.Phase)
-		}
-		fmt.Fprintf(w, "%s  %s%s  %s\n", ev.At.Format("15:04:05"), phase, ev.Kind, strings.Join(pairs, " "))
+		fields(w, ev)
 	}
+}
+
+func fields(w io.Writer, ev core.Event) {
+	keys := make([]string, 0, len(ev.Fields))
+	for k := range ev.Fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, len(keys))
+	for i, k := range keys {
+		pairs[i] = k + "=" + ev.Fields[k]
+	}
+	phase := ""
+	if ev.Phase != "" {
+		phase = fmt.Sprintf("phase %s  ", ev.Phase)
+	}
+	fmt.Fprintf(w, "%s  %s%s  %s\n", ev.At.Format("15:04:05"), phase, ev.Kind, strings.Join(pairs, " "))
 }
 
 func (f *Face) Close() {

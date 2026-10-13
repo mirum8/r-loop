@@ -159,7 +159,7 @@ func TestAReviewerOfARetriedStepGetsTheSameStepEnv(t *testing.T) {
 	if out := r.run(); out.State != StepOK {
 		t.Fatalf("outcome = %+v", out)
 	}
-	want := map[string]string{"R_LOOP_RUN": "run-1", "R_LOOP_PHASE": "3", "R_LOOP_STEP": "implement", "R_LOOP_REVIEWER": "codex"}
+	want := reviewerEnv("codex", "rloop-2kuxv-p3-imple-8lgad-r1-a2")
 	if len(r.host.Splits) != 1 || !reflect.DeepEqual(r.host.Splits[0], want) {
 		t.Fatalf("splits = %v, want [%v]", r.host.Splits, want)
 	}
@@ -393,9 +393,12 @@ func TestReviewerPanesAreSplitWithTheStepsRunPhaseStepAndReviewerEnv(t *testing.
 	if out := r.run(); out.State != StepOK {
 		t.Fatalf("outcome = %+v", out)
 	}
-	first := map[string]string{"R_LOOP_RUN": "run-1", "R_LOOP_PHASE": "3", "R_LOOP_STEP": "implement", "R_LOOP_REVIEWER": "claude"}
-	second := map[string]string{"R_LOOP_RUN": "run-1", "R_LOOP_PHASE": "3", "R_LOOP_STEP": "implement", "R_LOOP_REVIEWER": "second"}
-	want := []map[string]string{first, second, first, second}
+	want := []map[string]string{
+		reviewerEnv("claude", "rloop-2kuxv-p3-implemen-q1s68-r1"),
+		reviewerEnv("second", "rloop-2kuxv-p3-implemen-m1fm6-r1"),
+		reviewerEnv("claude", "rloop-2kuxv-p3-implemen-q1s68-r2"),
+		reviewerEnv("second", "rloop-2kuxv-p3-implemen-m1fm6-r2"),
+	}
 	if !reflect.DeepEqual(r.host.Splits, want) {
 		t.Fatalf("splits = %v, want %v", r.host.Splits, want)
 	}
@@ -1732,8 +1735,8 @@ func TestAFixRoundSentinelCommitDecidesTheSubjectFinishCommitsUnder(t *testing.T
 	}
 }
 
-func reviewerEnv(id string) map[string]string {
-	return map[string]string{"R_LOOP_RUN": "run-1", "R_LOOP_PHASE": "3", "R_LOOP_STEP": "implement", "R_LOOP_REVIEWER": id}
+func reviewerEnv(id, agent string) map[string]string {
+	return map[string]string{"R_LOOP_RUN": "run-1", "R_LOOP_PHASE": "3", "R_LOOP_STEP": "implement", "R_LOOP_REVIEWER": id, "R_LOOP_AGENT": agent}
 }
 
 func TestOneReviewerSplitsRightOfTheStepPane(t *testing.T) {
@@ -1787,7 +1790,7 @@ func TestReviewersBeyondTheColumnsRoomOpenInTabsOfTheStepsWorkspace(t *testing.T
 		"SessionHost.Split pane-1 right " + wt,
 		"SessionHost.Split pane-2 down " + wt,
 		"SessionHost.Split pane-3 down " + wt,
-		fmt.Sprintf("SessionHost.OpenTab %s %s ◆ p3 implement-rv-c4 %v", r.worker.Workspace, wt, reviewerEnv("c4")),
+		fmt.Sprintf("SessionHost.OpenTab %s %s ◆ p3 implement-rv-c4 %v", r.worker.Workspace, wt, reviewerEnv("c4", "rloop-2kuxv-p3-implemen-q5zk5-r1")),
 	}
 	if got := r.callsFrom("SessionHost.Split", "SessionHost.OpenTab"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("placements =\n%s", strings.Join(got, "\n"))
@@ -1815,7 +1818,7 @@ func TestReviewersBesideATooSmallStepPaneAllOpenInTabs(t *testing.T) {
 				t.Fatalf("calls = %q", r.shared.Calls())
 			}
 			for i, id := range []string{"claude", "codex", "third"} {
-				if !reflect.DeepEqual(r.host.Tabs[i].Env, reviewerEnv(id)) {
+				if !reflect.DeepEqual(r.host.Tabs[i].Env, reviewerEnv(id, r.host.Tabs[i].Env["R_LOOP_AGENT"])) || !strings.HasPrefix(r.host.Tabs[i].Env["R_LOOP_AGENT"], "rloop-2kuxv-p3-implemen-") {
 					t.Fatalf("tab %d env = %v", i, r.host.Tabs[i].Env)
 				}
 			}
@@ -1858,14 +1861,16 @@ func TestRound2ClosesTabReviewersAndPlacesTheColumnAgain(t *testing.T) {
 	}
 
 	wt := "/repo/.r-loop/wt/phase-3"
-	tab := fmt.Sprintf("SessionHost.OpenTab %s %s ◆ p3 implement-rv-codex %v", r.worker.Workspace, wt, reviewerEnv("codex"))
+	tab := func(agent string) string {
+		return fmt.Sprintf("SessionHost.OpenTab %s %s ◆ p3 implement-rv-codex %v", r.worker.Workspace, wt, reviewerEnv("codex", agent))
+	}
 	want := []string{
 		"SessionHost.Split pane-1 right " + wt,
-		tab,
+		tab("rloop-2kuxv-p3-implemen-8lgad-r1"),
 		"SessionHost.ClosePane pane-2",
 		"SessionHost.ClosePane pane-3",
 		"SessionHost.Split pane-1 right " + wt,
-		tab,
+		tab("rloop-2kuxv-p3-implemen-8lgad-r2"),
 	}
 	if got := r.callsFrom("SessionHost.Split", "SessionHost.OpenTab", "SessionHost.ClosePane"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("placements =\n%s", strings.Join(got, "\n"))
@@ -1907,7 +1912,7 @@ func TestRetryOfATabReviewerOpensANewTab(t *testing.T) {
 	if out.State != StepOK {
 		t.Fatalf("outcome = %+v", out)
 	}
-	tab := fmt.Sprintf("SessionHost.OpenTab %s %s ◆ p3 implement-rv-codex %v", r.worker.Workspace, "/repo/.r-loop/wt/phase-3", reviewerEnv("codex"))
+	tab := fmt.Sprintf("SessionHost.OpenTab %s %s ◆ p3 implement-rv-codex %v", r.worker.Workspace, "/repo/.r-loop/wt/phase-3", reviewerEnv("codex", "rloop-2kuxv-p3-implemen-8lgad-r1"))
 	want := []string{tab, "SessionHost.ClosePane pane-2", tab}
 	if got := r.callsFrom("SessionHost.Split", "SessionHost.OpenTab", "SessionHost.ClosePane"); !reflect.DeepEqual(got[:len(want)], want) {
 		t.Fatalf("placements =\n%s", strings.Join(got, "\n"))

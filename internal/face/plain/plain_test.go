@@ -344,3 +344,25 @@ func TestAgentTextCannotDriveTheTerminal(t *testing.T) {
 		t.Errorf("the text itself is gone:\n%s", out.String())
 	}
 }
+
+func TestActivityPrintsNothing(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	f.Emit(core.Event{At: at, Kind: "activity", Phase: "4", Step: "implement", Fields: map[string]string{"agent": "rloop-x", "text": "editing a.go"}})
+
+	if out.Len() != 0 {
+		t.Fatalf("got %q", out.String())
+	}
+}
+
+func TestADialogWithANoticePrintsTheNoticeNotTheScreen(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	f.Emit(core.Event{At: at, Kind: "dialog", Phase: "4", Step: "implement", Fields: map[string]string{"id": "d1", "agent": "rloop-x", "text": "line 1\nline 2", "notice": "Claude needs your permission to use Bash"}})
+
+	if want := "14:03:09  phase 4  implement  dialog d1  Claude needs your permission to use Bash\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}

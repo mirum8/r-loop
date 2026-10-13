@@ -177,10 +177,18 @@ func WriteMCPConfig(path, url string) error {
 
 var mcpPermissions = map[string]any{"allow": []string{"mcp__r-loop"}}
 
-func WriteStatusSettings(path, exe, tapFile string) error {
+func WriteStatusSettings(path, exe, tapFile, hookFile string) error {
+	hook := []any{map[string]any{"type": "command", "command": shellWord(exe) + " hook-tap " + shellWord(hookFile), "timeout": 5}}
 	return writeSettings(path, map[string]any{
 		"permissions": mcpPermissions,
 		"statusLine":  map[string]any{"type": "command", "command": shellWord(exe) + " statusline-tap " + shellWord(tapFile)},
+		"hooks": map[string]any{
+			"UserPromptSubmit": []any{map[string]any{"hooks": hook}},
+			"PreToolUse":       []any{map[string]any{"matcher": "*", "hooks": hook}},
+			"PostToolUse":      []any{map[string]any{"matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": hook}},
+			"Notification":     []any{map[string]any{"hooks": hook}},
+			"Stop":             []any{map[string]any{"hooks": hook}},
+		},
 	})
 }
 

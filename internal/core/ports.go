@@ -13,6 +13,16 @@ type PlanSource interface {
 	Tick(path string, ph Phase) error
 }
 
+type HookEvent struct {
+	At                                 time.Time
+	Agent, Event, Tool, Target, Notice string
+	Type                               string
+}
+
+type HookFeed interface {
+	Read() ([]HookEvent, error)
+}
+
 type OpenSpec struct {
 	CWD, Label string
 	Env        map[string]string

@@ -373,7 +373,7 @@ func runRecords(st RunState) []Record {
 func (f *Fixer) launch(fx *Fix) error {
 	s := fx.Session
 	label := "◆ " + labelPrefix(f.Label) + "fixer " + fx.ID
-	pane, ws, err := openTab(f.Host, f.Pane, OpenSpec{CWD: f.Root, Label: label})
+	pane, ws, err := openTab(f.Host, f.Pane, OpenSpec{CWD: f.Root, Label: label, Env: map[string]string{"R_LOOP_AGENT": s.Agent}})
 	if err != nil {
 		return err
 	}

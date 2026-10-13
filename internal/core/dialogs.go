@@ -49,6 +49,7 @@ func (l *RunLoop) Blocked(s *Session) bool {
 	if err != nil || state != AgentBlocked {
 		return false
 	}
+	notice := l.Sessions.hookNotice(s.Agent)
 	var q Question
 	raised := false
 	admitted := owner.live(func() {
@@ -64,10 +65,14 @@ func (l *RunLoop) Blocked(s *Session) bool {
 			return
 		}
 		raised = true
-		q = Question{ID: id, Kind: QuestionDialog, Step: key, Text: screen, AskedAt: time.Now()}
+		q = Question{ID: id, Kind: QuestionDialog, Step: key, Text: screen, Notice: notice, AskedAt: time.Now()}
 		l.recordQuestion(q)
 		l.trackOpen(openAsk{q: q, s: owner, agent: s.Agent, seq: seq})
-		l.emit(Event{Kind: "dialog", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"id": q.ID, "agent": s.Agent, "text": screen}})
+		fields := map[string]string{"id": q.ID, "agent": s.Agent, "text": screen}
+		if notice != "" {
+			fields["notice"] = notice
+		}
+		l.emit(Event{Kind: "dialog", Phase: key.Phase, Step: key.Kind, Fields: fields})
 		if l.openQuestion(owner, 1) == 1 {
 			l.stepState(owner, StepWaitingInput)
 		}

@@ -123,7 +123,7 @@ type Question struct {
 	ID                           string
 	Kind                         string
 	Step                         StepKey
-	Text                         string
+	Text, Notice                 string
 	Options                      []string
 	Recommended                  string
 	AskedAt                      time.Time

@@ -28,6 +28,7 @@ import (
 	"r-loop/internal/face/tui"
 	"r-loop/internal/gitrepo"
 	"r-loop/internal/herdr"
+	"r-loop/internal/hooktap"
 	"r-loop/internal/notify"
 	"r-loop/internal/plan"
 	"r-loop/internal/prompts"
@@ -805,10 +806,12 @@ func (w *Wiring) writeStatusSettings() error {
 	}
 	dir := w.Store.Dir(w.Loop.RunID)
 	path := filepath.Join(dir, "claude.settings.json")
-	if err := providers.WriteStatusSettings(path, exe, filepath.Join(dir, "usage", "claude.json")); err != nil {
+	hookFile := filepath.Join(dir, "hooks.jsonl")
+	if err := providers.WriteStatusSettings(path, exe, filepath.Join(dir, "usage", "claude.json"), hookFile); err != nil {
 		return exit(2, "status settings: %v", err)
 	}
 	w.settings = path
+	w.Loop.Sessions.Hooks = hooktap.NewFeed(hookFile)
 	return nil
 }
 

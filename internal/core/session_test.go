@@ -419,7 +419,7 @@ func TestSpawnRecordsSpawnedBeforeOpenThenStartsPromptsAndRecordsRunning(t *test
 		"SessionHost.AgentPane rloop-2kuxv-p3-implement",
 		"Store.Load run-1",
 		"Store.Append run-1 step",
-		"SessionHost.Open /repo/.r-loop/wt/phase-3 ◆ p3 implement map[GIT_COMMITTER_NAME:r-loop rloop-2kuxv-p3-implement R_LOOP_PHASE:3 R_LOOP_RUN:run-1 R_LOOP_SENTINEL:" + sentinel + " R_LOOP_STEP:implement]",
+		"SessionHost.Open /repo/.r-loop/wt/phase-3 ◆ p3 implement map[GIT_COMMITTER_NAME:r-loop rloop-2kuxv-p3-implement R_LOOP_AGENT:rloop-2kuxv-p3-implement R_LOOP_PHASE:3 R_LOOP_RUN:run-1 R_LOOP_SENTINEL:" + sentinel + " R_LOOP_STEP:implement]",
 		"Store.Append run-1 event",
 		"SessionHost.Start pane-1 rloop-2kuxv-p3-implement codex [-c model=gpt-5.6-sol]",
 		"Prompts.Render implement",

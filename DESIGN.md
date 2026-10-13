@@ -112,11 +112,13 @@ name · provider · model · workspace · state (the provider column drops below
 watchdog` (`live` dim, `checking phase <n>` in `primary`, `asking you <age>` in `secondary` — the
 only amber row — or `gone` in `error`), then the phase's steps and attempts in order (`✓ <kind>`
 `ok <elapsed>` dim, `× <kind>` `failed` in `error`, the live `● <kind>` in `primary` with its state:
-`waiting ⇢ <id> <age>`, `awaits r<n>`, `fixing r<n>` or the raw state), and under the live step its
+`waiting ⇢ <id> <age>`, `awaits r<n>`, `fixing r<n>[ · <activity>]`, the agent's activity while it
+runs — `editing <file> · <n> files`, `running <command>`, from its claude hooks (spec ADR-93) — or
+the raw state), and under the live step its
 reviewers: each finished round folded into one `✓ r<n>  <reviewer> <findings> · … → fixed <n>
 (<severities>) · <n> dismissed` line (`×` if a reviewer failed) — a round folds once every reviewer
 has reported — and the open round one `● r<n> <id>` line per reviewer with its herdr agent and
-`reviewing`, `<n> findings` or `failed`. When the tree would push the frame past the terminal's
+`reviewing` (or its activity), `<n> findings` or `failed`. When the tree would push the frame past the terminal's
 height, the oldest steps fold into one dim `… <n> earlier steps` line. Below that an
 `EVENTS` feed of the last six things the run did (the oldest dropped when the frame would be taller than the terminal) — warnings and the watchdog's question to you
 (`watchdog asks you: <question>`, on one line) amber, errors, stalls and a gone

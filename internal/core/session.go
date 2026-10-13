@@ -43,6 +43,8 @@ type SessionManager struct {
 	Dialogs      Dialogs
 	Analyzer     Analyzer
 	ReviewRunner ReviewRunner
+	Hooks        HookFeed
+	hooks        hookLog
 	mu           sync.Mutex
 }
 
@@ -189,6 +191,7 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 		"R_LOOP_RUN":         key.Run,
 		"R_LOOP_PHASE":       key.Phase,
 		"R_LOOP_STEP":        key.Kind,
+		"R_LOOP_AGENT":       s.Agent,
 		"GIT_COMMITTER_NAME": "r-loop " + s.Agent,
 	}})
 	s.Workspace, s.Pane = ws.ID, ws.RootPane
@@ -307,6 +310,7 @@ type watch struct {
 	stalled        bool
 	malformedAt    time.Time
 	okAt           time.Time
+	activity       string
 }
 
 func (m *SessionManager) Wait(ctx context.Context, s *Session, obs Observer) Outcome {
@@ -359,15 +363,22 @@ func (m *SessionManager) waitAll(ctx context.Context, sessions []*Session, obs O
 		now := m.now()
 		dt := now.Sub(last)
 		last = now
+		hookErr := m.drainHooks()
 		for i, w := range watches {
 			if w == nil {
 				continue
+			}
+			if hookErr != nil {
+				m.hookWarning(w, hookErr)
+				hookErr = nil
 			}
 			if out, done := m.tick(w, now, dt); done {
 				out.active = w.elapsed
 				outs[i], watches[i] = out, nil
 				pending--
+				continue
 			}
+			m.showActivity(w)
 		}
 	}
 	return outs
@@ -473,8 +484,14 @@ func (m *SessionManager) settle(w *watch, sentinel Sentinel, now time.Time, grac
 		w.okAt = now
 	}
 	state, err := m.Host.State(s.Agent)
+	ended := err != nil || state == AgentIdle || state == AgentDone || state == AgentGone
+	if m.drainHooks() == nil {
+		if seen, busy := m.hookTurn(s.Agent); seen {
+			ended = err != nil || state == AgentGone || !busy
+		}
+	}
 	switch {
-	case err != nil, state == AgentIdle, state == AgentDone, state == AgentGone:
+	case ended:
 	case now.Sub(w.okAt) >= grace:
 		if err := m.event(now, s, Event{Kind: "turn-overran-sentinel", Fields: map[string]string{"state": string(state), "after": grace.String()}}); err != nil {
 			return m.fail(s, "record: "+err.Error()), true

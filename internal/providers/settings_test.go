@@ -37,15 +37,22 @@ func TestSettingsFlagWithoutThePlaceholderIsRejected(t *testing.T) {
 	}
 }
 
-func TestWriteStatusSettingsPointsTheStatuslineAtTheTap(t *testing.T) {
+func TestWriteStatusSettingsPointsTheStatuslineAndHooksAtTheTaps(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "claude.settings.json")
 
-	if err := WriteStatusSettings(path, "/opt/r loop/r-loop", "/run/usage/claude.json"); err != nil {
+	if err := WriteStatusSettings(path, "/opt/r loop/r-loop", "/run/usage/claude.json", "/run/hooks.jsonl"); err != nil {
 		t.Fatal(err)
 	}
 
 	data, _ := os.ReadFile(path)
-	want := `{"permissions":{"allow":["mcp__r-loop"]},"statusLine":{"command":"'/opt/r loop/r-loop' statusline-tap /run/usage/claude.json","type":"command"}}`
+	hook := `[{"command":"'/opt/r loop/r-loop' hook-tap /run/hooks.jsonl","timeout":5,"type":"command"}]`
+	want := `{"hooks":{` +
+		`"Notification":[{"hooks":` + hook + `}],` +
+		`"PostToolUse":[{"hooks":` + hook + `,"matcher":"Edit|Write|MultiEdit|NotebookEdit"}],` +
+		`"PreToolUse":[{"hooks":` + hook + `,"matcher":"*"}],` +
+		`"Stop":[{"hooks":` + hook + `}],` +
+		`"UserPromptSubmit":[{"hooks":` + hook + `}]},` +
+		`"permissions":{"allow":["mcp__r-loop"]},"statusLine":{"command":"'/opt/r loop/r-loop' statusline-tap /run/usage/claude.json","type":"command"}}`
 	if string(data) != want {
 		t.Fatalf("settings = %s\nwant %s", data, want)
 	}

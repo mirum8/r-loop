@@ -596,3 +596,17 @@ var (
 	_ Analyzer     = (*fakeAnalyzer)(nil)
 	_ ReviewRunner = (*fakeReviewRunner)(nil)
 )
+
+type fakeHookFeed struct {
+	mu   sync.Mutex
+	next func() []HookEvent
+}
+
+func (f *fakeHookFeed) Read() ([]HookEvent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.next == nil {
+		return nil, nil
+	}
+	return f.next(), nil
+}

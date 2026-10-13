@@ -57,7 +57,11 @@ func (r *QuestionRouter) Route(ctx context.Context, q Question) bool {
 	text := fmt.Sprintf("question %s from phase-%s/%s: %s options: %s recommended: %s", q.ID, q.Step.Phase, q.Step.Kind, q.Text, strings.Join(q.Options, ", "), q.Recommended)
 	switch q.Kind {
 	case QuestionDialog:
-		text = fmt.Sprintf("dialog %s from phase-%s/%s: answer with answer_dialog\n\n%s", q.ID, q.Step.Phase, q.Step.Kind, q.Text)
+		screen := q.Text
+		if q.Notice != "" {
+			screen = "notice: " + q.Notice + "\n\n" + screen
+		}
+		text = fmt.Sprintf("dialog %s from phase-%s/%s: answer with answer_dialog\n\n%s", q.ID, q.Step.Phase, q.Step.Kind, screen)
 	case QuestionBlocker:
 		text = q.Text
 	}

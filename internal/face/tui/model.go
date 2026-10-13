@@ -129,6 +129,7 @@ type Model struct {
 	landFrom   time.Time
 	Questions  []Question
 	fixing     map[string]string
+	activity   map[string]string
 	DogGone    bool
 	DogWaiting bool
 	dogSince   time.Time
@@ -196,8 +197,17 @@ func (m Model) Apply(ev core.Event) Model {
 		m.setPhase(ev.Phase, core.PhaseBlocked)
 	case "step":
 		m.checking, m.landing = "", ""
+		switch core.StepState(ev.Fields["state"]) {
+		case core.StepQueued, core.StepSpawned, core.StepOK, core.StepFailed:
+			m.setActivity(ev.Phase, ev.Step, "")
+		}
 		m.step(ev)
-	case "review-round", "agent-named", "review-find", "finding", "review-clean":
+	case "activity":
+		m.setActivity(ev.Phase, ev.Step, ev.Fields["text"])
+	case "review-round":
+		m.activity = nil
+		m.review(ev)
+	case "agent-named", "review-find", "finding", "review-clean":
 		m.review(ev)
 	case "phase-check-start":
 		m.retire(ev.Phase, "", 0)
@@ -355,8 +365,28 @@ func replay(m Model, history []core.Event) Model {
 	m.ended = time.Time{}
 	m.checking, m.landing = "", ""
 	m.Questions, m.DogGone, m.DogWaiting, m.Paused = nil, false, false, ""
-	m.fixing = nil
+	m.fixing, m.activity = nil, nil
 	return m
+}
+
+func activityKey(phase, step string) string {
+	return phase + "/" + step
+}
+
+func (m *Model) setActivity(phase, step, text string) {
+	key := activityKey(phase, step)
+	if m.activity[key] == text {
+		return
+	}
+	m.activity = maps.Clone(m.activity)
+	if text == "" {
+		delete(m.activity, key)
+		return
+	}
+	if m.activity == nil {
+		m.activity = map[string]string{}
+	}
+	m.activity[key] = text
 }
 
 func (m *Model) unfix(ev core.Event) {

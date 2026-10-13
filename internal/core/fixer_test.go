@@ -189,7 +189,7 @@ func TestAFixStartsTheFixerInANewTabWithTheIncident(t *testing.T) {
 	if got := r.calls("SessionHost.Split "); len(got) != 0 {
 		t.Errorf("splits %q", got)
 	}
-	if got := r.calls("SessionHost.OpenTab "); !reflect.DeepEqual(got, []string{"ws-of-driver-pane " + r.repo.RootDir + " ◆ fixer b1 map[]"}) {
+	if got := r.calls("SessionHost.OpenTab "); !reflect.DeepEqual(got, []string{"ws-of-driver-pane " + r.repo.RootDir + " ◆ fixer b1 map[R_LOOP_AGENT:rloop-fix-b1-run-1]"}) {
 		t.Errorf("tabs %q", got)
 	}
 	if got := r.calls("SessionHost.Start "); !reflect.DeepEqual(got, []string{"pane-1 rloop-fix-b1-run-1 claude [--model opus]"}) {

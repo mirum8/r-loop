@@ -1730,7 +1730,7 @@ in-session prose loop — rejected, the context still grows per phase and the lo
 model follows.</p>
 <p><span class="f">Consequences</span> The loop becomes testable and stoppable, and gains nothing
 from Claude Code's permissions, hooks or trust model — which it must therefore arrange itself for
-the sessions it opens. A second entry point exists beside <code>/r:plan-run</code>.</p>
+the sessions it opens (its hooks, <a href="#adr-93">ADR-93</a>). A second entry point exists beside <code>/r:plan-run</code>.</p>
 <p><span class="f">Revisit when</span> a single blocking harness call can exceed one implement
 step's duration.</p>
 </div>
@@ -4139,6 +4139,39 @@ never plans a flagged phase without its design. A project config whose <code>pip
 design entry runs as before, and its triage asks nothing about design.</p>
 <p><span class="f">Revisit when</span> the maintainer turns most flags over at the gate, or most
 flagged phases end in <code>no-visual-change</code>.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-93">ADR-93 — Claude sessions report through hooks: telemetry and turn timing, never evidence</h3>
+<p><span class="f">Status</span> accepted 2026-10-13 · amends <a href="#adr-1">ADR-1</a></p>
+<p><span class="f">Context</span> The driver saw a claude pane only through herdr's agent state and
+a screen scrape. The TUI could show nothing but <code>running</code>; the watchdog got a 40-line screen
+for every dialog; every tree change during a review round was blamed on the reviewer, though it was
+usually the step editing after its sentinel; and a step's turn end was herdr's idle guess.</p>
+<p><span class="f">Decision</span> The run's <code>claude.settings.json</code> adds
+<code>UserPromptSubmit</code>, <code>PreToolUse</code>, <code>PostToolUse</code> (edit tools),
+<code>Notification</code> and <code>Stop</code> hooks, each running <code>r-loop hook-tap
+&lt;runDir&gt;/hooks.jsonl</code>. The tap appends one line naming the pane's
+<code>R_LOOP_AGENT</code>, prints nothing and always exits 0; a session without that variable (the
+watchdog) is not recorded. The driver reads new lines every tick and uses them for four things only:
+a face-only <code>activity</code> event (never journalled) that the TUI shows in the agent's state
+column; the notification's one-line message, put above the screen in the watchdog's dialog prompt
+and printed instead of the screen by <code>--plain</code>; naming which session edited a file a
+review round changed; and the turn end — once a session has reported a hook, its ok sentinel is
+judged at its <code>Stop</code> or its <code>idle_prompt</code> notification (claude may run tools
+after a <code>Stop</code> without a new prompt), not at herdr idle, with the existing grace as the
+fallback. A step's
+outcome is still judged from its sentinel and the evidence (<em>Determinism</em>, Part 3), and the
+TUI still shows no question text (<a href="#adr-73">ADR-73</a>).</p>
+<p><span class="f">Alternatives</span> One settings file per session — rejected: the pane's inherited
+environment already names the agent. Hooks as evidence — rejected: they report what the agent did,
+not what is on disk. A <code>Notification</code>-only dialog detector — rejected: answering keys
+needs herdr's blocked state and its sequence, so herdr stays the gate.</p>
+<p><span class="f">Consequences</span> Codex and any provider without hooks keep herdr's view and show
+no activity. A hook that never fires costs only the grace wait. Edits made through a shell command
+are not attributed and keep the old <code>reviewer modified the tree</code> wording.</p>
+<p><span class="f">Revisit when</span> codex grows a hook surface the tap can read, or herdr reports
+turn ends exactly.</p>
 </div>
 
 
