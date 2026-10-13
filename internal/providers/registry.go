@@ -188,6 +188,8 @@ func WriteStatusSettings(path, exe, tapFile, hookFile string) error {
 			"PostToolUse":      []any{map[string]any{"matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": hook}},
 			"Notification":     []any{map[string]any{"hooks": hook}},
 			"Stop":             []any{map[string]any{"hooks": hook}},
+			"SessionStart":     []any{map[string]any{"hooks": hook}},
+			"SessionEnd":       []any{map[string]any{"hooks": hook}},
 		},
 	})
 }

@@ -1301,3 +1301,43 @@ func TestADesignStepAfterThePlanStepIsRefusedWithExit2(t *testing.T) {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
 }
+
+func registryDirWithPdev(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pdev.yaml"), []byte("kind: pdev\ndoneSignal: sentinel\nsettingsFlag: \"--settings {settings}\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestResolveMarksOnlyAClaudeProviderGivenTheHookSettingsAsHooked(t *testing.T) {
+	tests := []struct {
+		name          string
+		provider      string
+		settings      string
+		expectedHooks bool
+	}{
+		{"claude with the hook settings", "claude", "/run/claude.settings.json", true},
+		{"codex", "codex", "/run/claude.settings.json", false},
+		{"a custom kind with a settingsFlag", "pdev", "/run/claude.settings.json", false},
+		{"claude without the hook settings", "claude", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// given
+			w := &Wiring{Registry: providers.NewRegistry(nil, nil, registryDirWithPdev(t)), settings: tt.settings}
+
+			// when
+			args, err := w.resolve(tt.provider, "", "", "", "", "")
+
+			// then
+			if err != nil {
+				t.Fatal(err)
+			}
+			if actualHooks := args.Hooks; actualHooks != tt.expectedHooks {
+				t.Fatalf("hooks = %t, want %t", actualHooks, tt.expectedHooks)
+			}
+		})
+	}
+}

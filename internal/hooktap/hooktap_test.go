@@ -163,3 +163,34 @@ func TestTapKeepsACappedUserPromptSubmitPromptAndMarksACut(t *testing.T) {
 		})
 	}
 }
+
+func TestTapRecordsSessionStartAndTheSessionEndReason(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedEvent  string
+		expectedReason string
+	}{
+		{"session start", `{"hook_event_name":"SessionStart","source":"startup"}`, "SessionStart", ""},
+		{"session end", `{"hook_event_name":"SessionEnd","reason":"logout"}`, "SessionEnd", "logout"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// given
+			out := filepath.Join(t.TempDir(), "hooks.jsonl")
+			feed := NewFeed(out)
+
+			// when
+			Tap(strings.NewReader(tt.input), out, env("rloop-a"))
+			actual, err := feed.Read()
+
+			// then
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(actual) != 1 || actual[0].Event != tt.expectedEvent || actual[0].Reason != tt.expectedReason {
+				t.Fatalf("events = %+v, want event %q reason %q", actual, tt.expectedEvent, tt.expectedReason)
+			}
+		})
+	}
+}

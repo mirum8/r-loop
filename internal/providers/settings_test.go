@@ -50,6 +50,8 @@ func TestWriteStatusSettingsPointsTheStatuslineAndHooksAtTheTaps(t *testing.T) {
 		`"Notification":[{"hooks":` + hook + `}],` +
 		`"PostToolUse":[{"hooks":` + hook + `,"matcher":"Edit|Write|MultiEdit|NotebookEdit"}],` +
 		`"PreToolUse":[{"hooks":` + hook + `,"matcher":"*"}],` +
+		`"SessionEnd":[{"hooks":` + hook + `}],` +
+		`"SessionStart":[{"hooks":` + hook + `}],` +
 		`"Stop":[{"hooks":` + hook + `}],` +
 		`"UserPromptSubmit":[{"hooks":` + hook + `}]},` +
 		`"permissions":{"allow":["mcp__r-loop"]},"statusLine":{"command":"'/opt/r loop/r-loop' statusline-tap /run/usage/claude.json","type":"command"}}`

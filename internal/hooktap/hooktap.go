@@ -22,6 +22,7 @@ type line struct {
 	Target    string    `json:"target,omitempty"`
 	Notice    string    `json:"notice,omitempty"`
 	Type      string    `json:"type,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
 	Prompt    string    `json:"prompt,omitempty"`
 	PromptCut bool      `json:"prompt_cut,omitempty"`
 }
@@ -37,6 +38,7 @@ func Tap(stdin io.Reader, out string, getenv func(string) string) {
 		Tool      string `json:"tool_name"`
 		Message   string `json:"message"`
 		Type      string `json:"notification_type"`
+		Reason    string `json:"reason"`
 		Prompt    string `json:"prompt"`
 		ToolInput struct {
 			FilePath     string `json:"file_path"`
@@ -56,7 +58,7 @@ func Tap(stdin io.Reader, out string, getenv func(string) string) {
 			target = v
 		}
 	}
-	data, err := json.Marshal(line{At: time.Now(), Agent: capped(agent), Event: capped(hook.Event), Tool: capped(hook.Tool), Target: capped(target), Notice: capped(hook.Message), Type: capped(hook.Type), Prompt: capped(hook.Prompt), PromptCut: len(hook.Prompt) > fieldCap})
+	data, err := json.Marshal(line{At: time.Now(), Agent: capped(agent), Event: capped(hook.Event), Tool: capped(hook.Tool), Target: capped(target), Notice: capped(hook.Message), Type: capped(hook.Type), Reason: capped(hook.Reason), Prompt: capped(hook.Prompt), PromptCut: len(hook.Prompt) > fieldCap})
 	if err != nil {
 		return
 	}
@@ -126,7 +128,7 @@ func (f *Feed) Read() ([]core.HookEvent, error) {
 		if json.Unmarshal(raw, &l) != nil || l.Agent == "" || l.Event == "" {
 			continue
 		}
-		events = append(events, core.HookEvent{At: l.At, Agent: l.Agent, Event: l.Event, Tool: l.Tool, Target: l.Target, Notice: l.Notice, Type: l.Type, Prompt: l.Prompt, PromptCut: l.PromptCut})
+		events = append(events, core.HookEvent{At: l.At, Agent: l.Agent, Event: l.Event, Tool: l.Tool, Target: l.Target, Notice: l.Notice, Type: l.Type, Reason: l.Reason, Prompt: l.Prompt, PromptCut: l.PromptCut})
 	}
 	return events, nil
 }

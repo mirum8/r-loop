@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -244,10 +245,10 @@ func TestAReviewersActivityReachesTheLiveObserver(t *testing.T) {
 	reads := 0
 	r.sm.Hooks = &fakeHookFeed{next: func() []HookEvent {
 		reads++
-		if reads == 1 {
+		if reads == 2 {
 			return []HookEvent{hook(reviewer, "PreToolUse", "Read", r.worker.Dir+"/calc.go")}
 		}
-		if reads > 4 {
+		if reads > 5 {
 			return []HookEvent{hook(reviewer, "Stop", "", "")}
 		}
 		return nil
@@ -985,4 +986,874 @@ func TestAHandOffIsNotTypedWhenAToolStartsWhileHerdrIsAsked(t *testing.T) {
 	// then
 	assertErrorIs(t, actualErr, errTurnNotOver)
 	assertCalls(t, inner.Calls(), []string{"SessionHost.State rloop-p3-implement"})
+}
+
+var (
+	t0 = time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	t1 = time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)
+)
+
+const (
+	stepAgent      = "rloop-2kuxv-p3-implement"
+	codexReviewer  = "rloop-2kuxv-p3-implemen-8lgad-r1"
+	hookNudgeText  = "r-loop: your turn ended with no sentinel. If your work is done, write the sentinel now. If you are blocked, write a failed sentinel with the reason."
+	graceNudgeText = "r-loop: no sentinel and no activity for 2m0s. If your work is done, write the sentinel now. If you are blocked, write a failed sentinel with the reason."
+)
+
+type startingHost struct {
+	SessionHost
+	feed   *fakeHookFeed
+	pushes [][]HookEvent
+	errs   []error
+	n      int
+}
+
+func (h *startingHost) Start(pane, name, kind string, args []string) (Agent, error) {
+	n := h.n
+	h.n++
+	if n < len(h.errs) && h.errs[n] != nil {
+		return Agent{}, h.errs[n]
+	}
+	a, err := h.SessionHost.Start(pane, name, kind, args)
+	if n < len(h.pushes) {
+		h.feed.push(h.pushes[n]...)
+	}
+	return a, err
+}
+
+func hookStepRig(t *testing.T, onStart ...HookEvent) (*rig, *fakeHookFeed, *fakeFace) {
+	t.Helper()
+	r := newRig(t)
+	feed := &fakeHookFeed{}
+	face := &fakeFace{}
+	r.sm.Hooks = feed
+	r.sm.Host = &startingHost{SessionHost: r.host, feed: feed, pushes: [][]HookEvent{onStart}}
+	r.sm.Face = face
+	r.sm.HookTap = "/usr/local/bin/r-loop"
+	r.sm.Now = (&stepClock{t: t0}).Now
+	r.sm.Resolve = func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
+		return ProviderArgs{Kind: "claude", Hooks: true}, nil
+	}
+	r.host.onSubmit = func(agent, text string) { feed.push(promptSubmit(agent, text, t1)) }
+	return r, feed, face
+}
+
+func hookedResolve(r *reviewRig) {
+	inner := r.sm.Resolve
+	r.sm.Resolve = func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
+		args, err := inner(provider, model, effort, askURL, mcpConfigPath, dir)
+		args.Hooks = true
+		return args, err
+	}
+}
+
+func sessionStart(agent string) HookEvent {
+	return HookEvent{At: t0, Agent: agent, Event: "SessionStart"}
+}
+
+func sessionEnd(agent, reason string) HookEvent {
+	return HookEvent{At: t0, Agent: agent, Event: "SessionEnd", Reason: reason}
+}
+
+func stop(agent string) HookEvent {
+	return HookEvent{At: t0, Agent: agent, Event: "Stop"}
+}
+
+func idlePrompt(agent string) HookEvent {
+	return HookEvent{At: t0, Agent: agent, Event: "Notification", Type: "idle_prompt", Notice: "Claude is waiting for your input"}
+}
+
+func shortHookStartWait(sm *SessionManager) {
+	sm.HookStartWait = 10 * time.Millisecond
+}
+
+func fastHookPoll(t *testing.T) {
+	old := hookPoll
+	hookPoll = time.Millisecond
+	t.Cleanup(func() { hookPoll = old })
+}
+
+func waitCtx(t *testing.T) context.Context {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+func warnings(face *fakeFace) []string {
+	var out []string
+	for _, ev := range face.events() {
+		if ev.Kind == "warning" {
+			out = append(out, ev.Fields["reason"])
+		}
+	}
+	return out
+}
+
+func pinnedWarning(agent string) string {
+	return "hook events: no SessionStart from " + agent + " within 10ms (hook tap /usr/local/bin/r-loop hook-tap); its turn ends follow herdr"
+}
+
+func prefixed(calls []string, prefix string) []string {
+	var out []string
+	for _, c := range calls {
+		if strings.HasPrefix(c, prefix) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func statesBeforeEach(calls []string, call string) []int {
+	var out []int
+	states := 0
+	for _, c := range calls {
+		if strings.HasPrefix(c, "SessionHost.State ") {
+			states++
+		}
+		if c == call {
+			out = append(out, states)
+		}
+	}
+	return out
+}
+
+func assertState(t *testing.T, actual Outcome, expectedState StepState, expectedReason string) {
+	t.Helper()
+	if actual.State != expectedState || actual.Reason != expectedReason {
+		t.Fatalf("outcome = %s %q, want %s %q", actual.State, actual.Reason, expectedState, expectedReason)
+	}
+}
+
+func assertEqual[T any](t *testing.T, what string, actual, expected T) {
+	t.Helper()
+	if !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("%s = %v, want %v", what, actual, expected)
+	}
+}
+
+func stepPrompt(text string) string {
+	return "SessionHost.Prompt " + stepAgent + " " + strconv.Quote(text) + " false 0s"
+}
+
+func TestAClaudeAgentsFirstPromptIsTypedAfterItsSessionStartIsRead(t *testing.T) {
+	// given
+	fastHookPoll(t)
+	r, feed, _ := hookStepRig(t)
+	reads := 0
+	feed.next = func() []HookEvent {
+		reads++
+		if reads == 4 {
+			return []HookEvent{sessionStart(stepAgent)}
+		}
+		return nil
+	}
+	actualReadsAtSubmit := 0
+	r.host.onSubmit = func(agent, text string) {
+		actualReadsAtSubmit = feed.readCount()
+		feed.push(promptSubmit(agent, text, t1))
+	}
+
+	// when
+	r.spawn(t, 1)
+
+	// then
+	assertEqual(t, "reads at submit", actualReadsAtSubmit, 5)
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), []string{submitCall(stepAgent, "do phase 3")})
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Prompt"), nil)
+}
+
+func TestAClaudeAgentWithoutASessionStartWarnsOnceNamingItAndTheHookTap(t *testing.T) {
+	tests := []struct {
+		name    string
+		onStart []HookEvent
+	}{
+		{"no hook events", nil},
+		{"other hook events only", []HookEvent{{At: t0, Agent: stepAgent, Event: "PreToolUse", Tool: "Read", Target: "/repo/a.go"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// given
+			fastHookPoll(t)
+			r, _, face := hookStepRig(t, tt.onStart...)
+			shortHookStartWait(r.sm)
+
+			// when
+			s := r.spawn(t, 1)
+			r.repo.TreeChanges = []string{"a.go"}
+			r.writeSentinel(t, s, "ok", "")
+			r.host.script = func(int) AgentState { return AgentIdle }
+			r.sm.Wait(waitCtx(t), s, &recObserver{})
+			r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+			// then
+			assertCalls(t, warnings(face), []string{pinnedWarning(stepAgent)})
+		})
+	}
+}
+
+func TestAWorkerWithoutASessionStartIsWarnedAboutEvenWhenItsStartFails(t *testing.T) {
+	// given
+	fastHookPoll(t)
+	r, _, face := hookStepRig(t)
+	shortHookStartWait(r.sm)
+	r.prompts.Err = errors.New("prompt template missing")
+
+	// when
+	_, actualErr := r.sm.Spawn(context.Background(), r.ref(1))
+
+	// then
+	if actualErr == nil || actualErr.Error() != "spawn: prompt template missing" {
+		t.Fatalf("spawn: %v", actualErr)
+	}
+	assertCalls(t, warnings(face), []string{pinnedWarning(stepAgent)})
+}
+
+func TestAReviewerWithoutASessionStartIsWarnedAboutWhenAnotherReviewersStartFails(t *testing.T) {
+	// given
+	fastHookPoll(t)
+	r := newReviewRig(t, Reviewer{Provider: "codex"}, Reviewer{Provider: "claude"})
+	shortHookStartWait(r.sm)
+	feed := &fakeHookFeed{}
+	face := &fakeFace{}
+	r.sm.Hooks, r.sm.Face, r.sm.HookTap = feed, face, "/usr/local/bin/r-loop"
+	hookedResolve(r)
+	r.sm.Host = &startingHost{SessionHost: r.host, feed: feed, errs: []error{nil, errors.New("start refused")}}
+
+	// when
+	out := r.run()
+
+	// then
+	assertEqual(t, "reason", out.Reason, "reviewer claude: start refused")
+	assertCalls(t, warnings(face), []string{pinnedWarning(codexReviewer)})
+}
+
+func TestAReopenedReviewerIsNotFailedByItsPredecessorsSessionEnd(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	feed := &fakeHookFeed{}
+	r.sm.Hooks = feed
+	hookedResolve(r)
+	started := HookEvent{At: t1, Agent: codexReviewer, Event: "SessionStart"}
+	r.sm.Host = &startingHost{SessionHost: r.host, feed: feed, pushes: [][]HookEvent{
+		{started},
+		{{At: time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC), Agent: codexReviewer, Event: "SessionEnd", Reason: "other"}, started},
+	}}
+	reviews := 0
+	r.behave = func(vars map[string]any) {
+		reviews++
+		if reviews == 1 {
+			feed.push(HookEvent{At: t1, Agent: codexReviewer, Event: "SessionEnd", Reason: "logout"})
+			return
+		}
+		writeReview(t, vars, "ok", 0)
+	}
+
+	// when
+	out, obs := r.runRaising(then(Resolution{Action: "retry", By: "watchdog"}, Resolution{Action: "block", By: "watchdog"}))
+
+	// then
+	assertEqual(t, "state", out.State, StepOK)
+	if len(obs.blockers) != 1 || obs.blockers[0].Reason != "reviewer codex: agent exited: logout" {
+		t.Fatalf("blockers = %+v", obs.blockers)
+	}
+}
+
+func TestAReopenedReviewerIsHookEnabledThoughItsPredecessorHadNoSessionStart(t *testing.T) {
+	// given
+	fastHookPoll(t)
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	shortHookStartWait(r.sm)
+	failCodexOnce(t, r)
+	feed := &fakeHookFeed{}
+	face := &fakeFace{}
+	r.sm.Hooks, r.sm.Face, r.sm.HookTap = feed, face, "/usr/local/bin/r-loop"
+	hookedResolve(r)
+	r.sm.Host = &startingHost{SessionHost: r.host, feed: feed, pushes: [][]HookEvent{{}, {{At: t1, Agent: codexReviewer, Event: "SessionStart"}}}}
+
+	// when
+	out, _ := r.runRaising(then(Resolution{Action: "retry", By: "watchdog"}, Resolution{Action: "block", By: "watchdog"}))
+
+	// then
+	assertEqual(t, "state", out.State, StepOK)
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Prompt "+codexReviewer), []string{"SessionHost.Prompt " + codexReviewer + ` "review r1" false 0s`})
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit "+codexReviewer), []string{submitCall(codexReviewer, "review r1")})
+	assertCalls(t, warnings(face), []string{pinnedWarning(codexReviewer)})
+}
+
+func TestAnAgentWithoutASessionStartIsJudgedAtHerdrIdleWhenHookEventsArriveLater(t *testing.T) {
+	// given
+	fastHookPoll(t)
+	r, feed, _ := hookStepRig(t)
+	shortHookStartWait(r.sm)
+	s := r.spawn(t, 1)
+	r.sm.Now = (&stepClock{t: t0, step: time.Minute}).Now
+	r.repo.TreeChanges = []string{"a.go"}
+	r.host.script = func(n int) AgentState {
+		if n == 1 {
+			r.writeSentinel(t, s, "ok", "")
+			feed.push(promptSubmit(stepAgent, "do phase 3", t1))
+		}
+		return AgentIdle
+	}
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertEqual(t, "state", out.State, StepOK)
+	assertEqual(t, "turn-overran-sentinel events", len(r.events("turn-overran-sentinel")), 0)
+}
+
+func TestAnAgentWithoutASessionStartIsNudgedOnlyOnHerdrQuietThroughHerdrPrompt(t *testing.T) {
+	// given
+	fastHookPoll(t)
+	r, feed, _ := hookStepRig(t)
+	shortHookStartWait(r.sm)
+	s := r.spawn(t, 1)
+	r.sm.Now = (&stepClock{t: t0, step: time.Minute}).Now
+	r.host.script = func(n int) AgentState {
+		if n == 1 {
+			feed.push(promptSubmit(stepAgent, "do phase 3", t1), stop(stepAgent))
+		}
+		return AgentIdle
+	}
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertEqual(t, "reason", out.Reason, "stalled: no response to nudge")
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Prompt"), []string{stepPrompt("do phase 3"), stepPrompt(graceNudgeText)})
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), nil)
+	assertEqual(t, "nudges", len(r.events("nudge")), 1)
+}
+
+func TestAHandOffToAnAgentWithoutASessionStartFollowsHerdrThoughItsHooksSayBusy(t *testing.T) {
+	// given
+	fastHookPoll(t)
+	feed := &fakeHookFeed{}
+	sm := hookPromptManager(&fakeSessionHost{States: map[string]AgentState{askingAgent: AgentIdle}}, feed, t0)
+	shortHookStartWait(sm)
+
+	// when
+	sm.hookStart(&Session{Agent: askingAgent}, true)
+	feed.push(promptSubmit(askingAgent, "implement phase 3", t0))
+	actualState, actualReady, actualErr := sm.handOff(askingAgent).check()
+
+	// then
+	assertEqual(t, "state", actualState, AgentIdle)
+	assertEqual(t, "ready", actualReady, true)
+	assertEqual(t, "err", actualErr, nil)
+}
+
+func TestAPromptToAnAgentWithoutASessionStartGoesThroughHerdrPromptThoughItHasHookEvents(t *testing.T) {
+	// given
+	fastHookPoll(t)
+	feed := &fakeHookFeed{}
+	inner := &fakeSessionHost{}
+	sm := hookPromptManager(inner, feed, t0)
+	shortHookStartWait(sm)
+	sm.hookStart(&Session{Agent: askingAgent}, true)
+	feed.push(stop(askingAgent))
+
+	// when
+	actualErr := sm.prompt(askingAgent, "go", nil)
+
+	// then
+	assertEqual(t, "err", actualErr, nil)
+	assertCalls(t, inner.Calls(), []string{`SessionHost.Prompt rloop-p3-implement "go" false 0s`})
+}
+
+func TestNoSessionStartWarningForAProviderWithoutHooksOrARunWithoutAHookFeed(t *testing.T) {
+	tests := []struct {
+		name  string
+		hooks bool
+		feed  bool
+	}{
+		{"provider without hooks", false, true},
+		{"run without a hook feed", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// given
+			fastHookPoll(t)
+			r, _, face := hookStepRig(t)
+			shortHookStartWait(r.sm)
+			r.sm.Resolve = func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
+				return ProviderArgs{Kind: "codex", Hooks: tt.hooks}, nil
+			}
+			if !tt.feed {
+				r.sm.Hooks = nil
+			}
+
+			// when
+			s := r.spawn(t, 1)
+			r.writeSentinel(t, s, "ok", "")
+			r.repo.TreeChanges = []string{"a.go"}
+			r.host.script = func(int) AgentState { return AgentIdle }
+			r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+			// then
+			assertCalls(t, warnings(face), nil)
+		})
+	}
+}
+
+func TestASentinelWrittenBeforeATypedPromptsUserPromptSubmitIsReadIsNotJudged(t *testing.T) {
+	// given
+	r, feed, _ := hookStepRig(t, sessionStart(stepAgent))
+	s := r.spawn(t, 1)
+	feed.push(stop(stepAgent))
+	r.host.onSubmit = nil
+	r.repo.TreeChanges = []string{"a.go"}
+	answer := "r-loop: answer to q1 (by watchdog): sqlite"
+	prompted := make(chan error, 1)
+	waited := make(chan Outcome, 1)
+
+	// when
+	go func() { prompted <- r.sm.prompt(stepAgent, answer, nil) }()
+	waitFor(t, func() bool { return len(prefixed(r.shared.Calls(), submitCall(stepAgent, answer))) == 1 })
+	r.writeSentinel(t, s, "ok", "")
+	go func() { waited <- r.sm.Wait(waitCtx(t), s, &recObserver{}) }()
+	reads := feed.readCount()
+	waitFor(t, func() bool { return feed.readCount() >= reads+3 })
+
+	// then
+	select {
+	case out := <-waited:
+		t.Fatalf("judged before the UserPromptSubmit was read: %+v", out)
+	default:
+	}
+	feed.push(promptSubmit(stepAgent, answer, t1), stop(stepAgent))
+	select {
+	case out := <-waited:
+		assertEqual(t, "state", out.State, StepOK)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the step was never judged")
+	}
+	assertEqual(t, "prompt err", receiveErr(t, prompted), nil)
+}
+
+func TestASessionStartMidTurnDoesNotEndTheTurn(t *testing.T) {
+	// given
+	r, feed, _ := hookStepRig(t, sessionStart(stepAgent))
+	s := r.spawn(t, 1)
+	r.repo.TreeChanges = []string{"a.go"}
+	r.host.script = func(n int) AgentState {
+		switch n {
+		case 1:
+			r.writeSentinel(t, s, "ok", "")
+			feed.push(sessionStart(stepAgent))
+		case 3:
+			feed.push(stop(stepAgent))
+		}
+		return AgentIdle
+	}
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertEqual(t, "state", out.State, StepOK)
+	assertEqual(t, "polls", r.host.polls, 3)
+}
+
+func hookStallRig(t *testing.T) (*rig, *fakeHookFeed, *Session) {
+	t.Helper()
+	r, feed, _ := hookStepRig(t, sessionStart(stepAgent))
+	s := r.spawn(t, 1)
+	r.repo.TreeChanges = []string{"a.go"}
+	return r, feed, s
+}
+
+func recordNudgePoll(r *rig, feed *fakeHookFeed, poll *int) {
+	r.host.onSubmit = func(agent, text string) {
+		feed.push(promptSubmit(agent, text, t1))
+		if text == hookNudgeText {
+			*poll = r.host.polls
+		}
+	}
+}
+
+func TestAHookAgentWhoseTurnEndsWithoutASentinelIsNudgedAtTheNextTick(t *testing.T) {
+	tests := []struct {
+		name    string
+		turnEnd HookEvent
+	}{
+		{"Stop", stop(stepAgent)},
+		{"idle_prompt", idlePrompt(stepAgent)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// given
+			r, feed, s := hookStallRig(t)
+			r.host.script = func(n int) AgentState {
+				switch n {
+				case 1:
+					feed.push(tt.turnEnd)
+				case 5:
+					r.writeSentinel(t, s, "ok", "")
+					feed.push(stop(stepAgent))
+				}
+				return AgentWorking
+			}
+			actualNudgePoll := 0
+			recordNudgePoll(r, feed, &actualNudgePoll)
+			obs := &recObserver{}
+
+			// when
+			r.sm.Wait(waitCtx(t), s, obs)
+
+			// then
+			assertEqual(t, "nudge poll", actualNudgePoll, 3)
+			assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), []string{submitCall(stepAgent, "do phase 3"), submitCall(stepAgent, hookNudgeText)})
+			assertEqual(t, "nudges", len(r.events("nudge")), 1)
+			assertEqual(t, "stalled", obs.stalled, 1)
+		})
+	}
+}
+
+func TestAHookAgentThatEndsASecondTurnWithoutASentinelFailsAsStalled(t *testing.T) {
+	// given
+	r, feed, s := hookStallRig(t)
+	r.host.script = func(n int) AgentState {
+		if n == 1 || n == 5 {
+			feed.push(stop(stepAgent))
+		}
+		return AgentWorking
+	}
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertState(t, out, StepFailed, "stalled: no response to nudge")
+	assertEqual(t, "stalled", out.Stalled, true)
+	assertEqual(t, "nudges", len(r.events("nudge")), 1)
+}
+
+func TestAHookAgentQuietForAGraceAfterItsTurnEndNudgeFailsWithoutASecondNudge(t *testing.T) {
+	// given
+	r, feed, s := hookStallRig(t)
+	r.sm.Now = (&stepClock{t: t0, step: time.Minute}).Now
+	r.host.script = func(n int) AgentState {
+		if n == 1 {
+			feed.push(stop(stepAgent))
+		}
+		if n <= 4 {
+			return AgentWorking
+		}
+		return AgentIdle
+	}
+	obs := &recObserver{}
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, obs)
+
+	// then
+	assertEqual(t, "reason", out.Reason, "stalled: no response to nudge")
+	assertEqual(t, "polls", r.host.polls, 6)
+	assertEqual(t, "nudges", len(r.events("nudge")), 1)
+	assertEqual(t, "resumed", obs.resumed, 1)
+}
+
+func TestATurnEndNudgeIsNotTypedWhenAToolStartsBeforeIt(t *testing.T) {
+	// given
+	r, feed, s := hookStallRig(t)
+	r.host.script = func(n int) AgentState {
+		switch n {
+		case 1:
+			feed.push(stop(stepAgent))
+		case 2:
+			feed.push(HookEvent{At: t0, Agent: stepAgent, Event: "PreToolUse", Tool: "Bash", Target: "go test ./..."})
+		case 3:
+			r.writeSentinel(t, s, "ok", "")
+			feed.push(stop(stepAgent))
+		}
+		return AgentWorking
+	}
+	obs := &recObserver{}
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, obs)
+
+	// then
+	assertEqual(t, "state", out.State, StepOK)
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), []string{submitCall(stepAgent, "do phase 3")})
+	assertEqual(t, "nudges", len(r.events("nudge")), 0)
+	assertEqual(t, "steps", r.steps(), []StepState{StepSpawned, StepRunning, StepStalled, StepRunning})
+	assertEqual(t, "stalled", obs.stalled, 1)
+	assertEqual(t, "resumed", obs.resumed, 1)
+}
+
+func TestAHookAgentsTurnEndDuringAnOpenQuestionIsNotNudged(t *testing.T) {
+	// given
+	r, feed, s := hookStallRig(t)
+	s.OpenQuestion.Store(true)
+	r.host.script = func(n int) AgentState {
+		switch n {
+		case 1:
+			feed.push(stop(stepAgent))
+		case 5:
+			r.writeSentinel(t, s, "ok", "")
+		}
+		return AgentWorking
+	}
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertEqual(t, "state", out.State, StepOK)
+	assertEqual(t, "nudges", len(r.events("nudge")), 0)
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), []string{submitCall(stepAgent, "do phase 3")})
+}
+
+func declineWatchRig(t *testing.T, agents ...string) (*dialogRig, *fakeHookFeed) {
+	t.Helper()
+	r := newDialogRig(t)
+	slowHookPoll(t)
+	r.loop.Sessions.Now = (&stepClock{t: t0}).Now
+	r.loop.Sessions.Poll = time.Millisecond
+	feed := &fakeHookFeed{}
+	onSubmit := map[string][]HookEvent{}
+	for i, agent := range agents {
+		feed.push(HookEvent{At: t0, Agent: agent, Event: "PreToolUse", Tool: "Bash", Target: "go test ./..."})
+		text := declinedMessage("d" + strconv.Itoa(i+1))
+		onSubmit[text] = []HookEvent{promptSubmit(agent, text, t1)}
+	}
+	onSubmit[hookNudgeText] = []HookEvent{promptSubmit(agents[len(agents)-1], hookNudgeText, t1)}
+	r.loop.Sessions.Hooks = feed
+	r.loop.Sessions.Host = &claudeHost{SessionHost: r.dhost, feed: feed, onSubmit: onSubmit}
+	r.serve(t)
+	return r, feed
+}
+
+func watchSession(t *testing.T, r *dialogRig, s *Session) (<-chan Outcome, *recObserver, context.CancelFunc) {
+	t.Helper()
+	s.Sentinel = filepath.Join(t.TempDir(), "implement-a1.sentinel")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	obs := &recObserver{}
+	waited := make(chan Outcome, 1)
+	go func() { waited <- r.loop.Sessions.Wait(ctx, s, obs) }()
+	return waited, obs, cancel
+}
+
+func decline(t *testing.T, r *dialogRig, id, agent string) {
+	t.Helper()
+	if d, reason := r.router.AnswerDialog(id, []string{"esc"}, "decline", ""); d != decisionAuthorised {
+		t.Fatalf("answer %s %q", d, reason)
+	}
+	r.dhost.set(agent, AgentIdle, "Interrupted · What should Claude do instead?")
+}
+
+func waitReads(t *testing.T, feed *fakeHookFeed, n int) {
+	t.Helper()
+	reads := feed.readCount()
+	waitFor(t, func() bool { return feed.readCount() >= reads+n })
+}
+
+func TestADeclineFollowUpIsTypedBeforeAnyTurnEndNudge(t *testing.T) {
+	// given
+	r, feed := declineWatchRig(t, dialogAgent)
+	r.raise(t, r.s)
+	r.waitDog(t, 1)
+
+	// when
+	decline(t, r, "d1", dialogAgent)
+	waited, obs, cancel := watchSession(t, r, r.s)
+	waitReads(t, feed, 3)
+	feed.push(idlePrompt(dialogAgent))
+	waitFor(t, func() bool { return len(r.calls("SessionHost.Submit ")) == 1 })
+	waitReads(t, feed, 3)
+	cancel()
+	<-waited
+
+	// then
+	assertCalls(t, r.calls("SessionHost.Submit "), []string{dialogAgent + " " + strconv.Quote(declinedMessage("d1"))})
+	assertEqual(t, "nudges", len(r.events("nudge")), 0)
+	assertEqual(t, "stalled", obs.stalled, 0)
+}
+
+func TestASecondReviewersDeclineFollowUpStillComesBeforeAnyNudgeWhenTheFirstFinishes(t *testing.T) {
+	// given
+	rvA := &Session{Agent: "rloop-p2-implement-rv-codex", Reviewer: "codex"}
+	rvB := &Session{Agent: "rloop-p2-implement-rv-claude", Reviewer: "claude"}
+	r, feed := declineWatchRig(t, rvA.Agent, rvB.Agent)
+	rvA.Ref, rvA.owner = r.s.Ref, r.s
+	rvB.Ref, rvB.owner = r.s.Ref, r.s
+	r.dhost.set(dialogAgent, AgentWorking, "")
+	r.dhost.set(rvA.Agent, AgentBlocked, "Run tests?\n> yes")
+	r.raise(t, rvA)
+	r.waitDog(t, 1)
+	decline(t, r, "d1", rvA.Agent)
+	r.dhost.set(rvB.Agent, AgentBlocked, "Edit a.go?\n> yes")
+	r.raise(t, rvB)
+	r.waitDog(t, 2)
+	decline(t, r, "d2", rvB.Agent)
+	waited, obs, cancel := watchSession(t, r, rvB)
+
+	// when
+	feed.push(idlePrompt(rvA.Agent))
+	waitFor(t, func() bool { return len(r.calls("SessionHost.Submit ")) == 1 })
+	waitReads(t, feed, 3)
+	feed.push(idlePrompt(rvB.Agent))
+	waitFor(t, func() bool { return len(r.calls("SessionHost.Submit ")) == 2 })
+	waitReads(t, feed, 3)
+	cancel()
+	<-waited
+
+	// then
+	assertCalls(t, r.calls("SessionHost.Submit "), []string{rvA.Agent + " " + strconv.Quote(declinedMessage("d1")), rvB.Agent + " " + strconv.Quote(declinedMessage("d2"))})
+	assertEqual(t, "nudges", len(r.events("nudge")), 0)
+	assertEqual(t, "stalled", obs.stalled, 0)
+}
+
+func TestASessionEndWithAnExitReasonFailsTheStepWhileHerdrNeverReportsGone(t *testing.T) {
+	for _, reason := range []string{"exit", "logout", "prompt_input_exit", "other"} {
+		t.Run(reason, func(t *testing.T) {
+			// given
+			r, feed, s := hookStallRig(t)
+			r.host.script = func(n int) AgentState {
+				if n == 1 {
+					feed.push(sessionEnd(stepAgent, reason))
+				}
+				return AgentWorking
+			}
+
+			// when
+			out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+			// then
+			assertState(t, out, StepFailed, "agent exited: "+reason)
+			assertEqual(t, "polls", r.host.polls, 1)
+			assertEqual(t, "nudges", len(r.events("nudge")), 0)
+		})
+	}
+}
+
+func TestASessionEndWithASentinelPresentJudgesTheSentinel(t *testing.T) {
+	tests := []struct {
+		name           string
+		write          func(t *testing.T, r *rig, s *Session)
+		expectedState  StepState
+		expectedPrefix string
+	}{
+		{"ok sentinel", func(t *testing.T, r *rig, s *Session) { r.writeSentinel(t, s, "ok", "") }, StepOK, ""},
+		{"half-written sentinel", func(t *testing.T, r *rig, s *Session) { r.writeRawSentinel(t, s, `{"outcome":`) }, StepFailed, "sentinel unreadable: "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// given
+			r, feed, s := hookStallRig(t)
+			r.host.script = func(n int) AgentState {
+				if n == 1 {
+					tt.write(t, r, s)
+					feed.push(sessionEnd(stepAgent, "logout"))
+				}
+				return AgentWorking
+			}
+
+			// when
+			out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+			// then
+			assertEqual(t, "state", out.State, tt.expectedState)
+			if actualReason := out.Reason; !strings.HasPrefix(actualReason, tt.expectedPrefix) {
+				t.Fatalf("reason = %q, want prefix %q", actualReason, tt.expectedPrefix)
+			}
+		})
+	}
+}
+
+func pinnedStallRig(t *testing.T) (*rig, *fakeHookFeed, *Session) {
+	t.Helper()
+	fastHookPoll(t)
+	r, feed, _ := hookStepRig(t)
+	shortHookStartWait(r.sm)
+	s := r.spawn(t, 1)
+	r.repo.TreeChanges = []string{"a.go"}
+	return r, feed, s
+}
+
+func TestASessionEndFromAnAgentPinnedToHerdrFailsTheStepAtTheNextTick(t *testing.T) {
+	for _, reason := range []string{"exit", "logout", "prompt_input_exit", "other"} {
+		t.Run(reason, func(t *testing.T) {
+			// given
+			r, feed, s := pinnedStallRig(t)
+			r.host.script = func(n int) AgentState {
+				if n == 1 {
+					feed.push(sessionEnd(stepAgent, reason))
+				}
+				return AgentWorking
+			}
+
+			// when
+			out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+			// then
+			assertEqual(t, "reason", out.Reason, "agent exited: "+reason)
+			assertEqual(t, "polls", r.host.polls, 1)
+		})
+	}
+}
+
+func TestASessionEndFromAnAgentPinnedToHerdrJudgesItsSentinel(t *testing.T) {
+	// given
+	r, feed, s := pinnedStallRig(t)
+	r.host.script = func(n int) AgentState {
+		if n == 1 {
+			r.writeSentinel(t, s, "ok", "")
+			feed.push(sessionEnd(stepAgent, "logout"))
+		}
+		return AgentWorking
+	}
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertEqual(t, "state", out.State, StepOK)
+	assertEqual(t, "polls", r.host.polls, 1)
+}
+
+func TestASessionEndForClearOrResumeDoesNotEndTheStep(t *testing.T) {
+	for _, reason := range []string{"clear", "resume"} {
+		t.Run(reason, func(t *testing.T) {
+			// given
+			r, feed, s := hookStallRig(t)
+			r.host.script = func(n int) AgentState {
+				switch n {
+				case 1:
+					feed.push(sessionEnd(stepAgent, reason))
+				case 3:
+					r.writeSentinel(t, s, "ok", "")
+					feed.push(stop(stepAgent))
+				}
+				return AgentWorking
+			}
+
+			// when
+			out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+			// then
+			assertEqual(t, "state", out.State, StepOK)
+		})
+	}
+}
+
+func TestARefusedPromptLeavesTheAgentNotBusy(t *testing.T) {
+	// given
+	inner := &fakeSessionHost{Err: errors.New("herdr agent prompt: agent_blocked")}
+	sm := hookPromptManager(inner, idleHookAgentFeed(t0), t0)
+
+	// when
+	actualErr := sm.prompt(askingAgent, "go", nil)
+
+	// then
+	assertEqual(t, "err", actualErr.Error(), "herdr agent prompt: agent_blocked")
+	assertCalls(t, inner.Calls(), []string{`SessionHost.Submit rloop-p3-implement "go"`})
+	_, actualBusy, _ := sm.hookTurn(askingAgent)
+	assertEqual(t, "busy", actualBusy, false)
 }

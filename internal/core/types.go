@@ -352,4 +352,5 @@ type ProviderArgs struct {
 	Ask        bool
 	Review     string
 	ReviewExec string
+	Hooks      bool
 }

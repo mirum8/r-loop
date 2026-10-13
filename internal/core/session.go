@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	defaultPoll       = 2 * time.Second
-	defaultStallGrace = 2 * time.Minute
-	sentinelGrace     = 30 * time.Second
+	defaultPoll          = 2 * time.Second
+	defaultStallGrace    = 2 * time.Minute
+	defaultHookStartWait = 10 * time.Second
+	sentinelGrace        = 30 * time.Second
 )
 
 func timedOut(err error) bool {
@@ -29,24 +30,27 @@ func timedOut(err error) bool {
 var errStepEnded = errors.New("step already ended")
 
 type SessionManager struct {
-	Host         SessionHost
-	Repo         Repo
-	Prompts      Prompts
-	Store        Store
-	Ask          AskChannel
-	Resolve      func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error)
-	Now          func() time.Time
-	Poll         time.Duration
-	StallGrace   time.Duration
-	ItemGates    bool
-	Label        string
-	Dialogs      Dialogs
-	Analyzer     Analyzer
-	ReviewRunner ReviewRunner
-	Hooks        HookFeed
-	hooks        hookLog
-	typing       map[string]*sync.Mutex
-	mu           sync.Mutex
+	Host          SessionHost
+	Repo          Repo
+	Prompts       Prompts
+	Store         Store
+	Ask           AskChannel
+	Resolve       func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error)
+	Now           func() time.Time
+	Poll          time.Duration
+	StallGrace    time.Duration
+	HookStartWait time.Duration
+	ItemGates     bool
+	Label         string
+	Dialogs       Dialogs
+	Analyzer      Analyzer
+	ReviewRunner  ReviewRunner
+	Hooks         HookFeed
+	HookTap       string
+	Face          Face
+	hooks         hookLog
+	typing        map[string]*sync.Mutex
+	mu            sync.Mutex
 }
 
 type Dialogs interface {
@@ -72,6 +76,7 @@ type Session struct {
 	Workspace, Pane, Agent, Sentinel string
 	Reviewer, Subject                string
 	OpenQuestion, Reviewing          atomic.Bool
+	declining                        atomic.Int32
 	owner                            *Session
 	fix                              *fixHalf
 	prompted                         time.Time
@@ -283,9 +288,11 @@ func (m *SessionManager) start(s *Session, stepDir string) error {
 	if err := m.Store.Append(key.Run, Record{Kind: RecordEvent, At: at, Event: &ev}); err != nil {
 		return err
 	}
+	m.hookReset(s.Agent)
 	if _, err := m.Host.Start(s.Pane, s.Agent, args.Kind, args.Args); err != nil {
 		return err
 	}
+	m.hookStart(s, args.Hooks)
 	if ref.ReviewFrom > 0 {
 		return nil
 	}
@@ -312,6 +319,8 @@ type watch struct {
 	malformedAt    time.Time
 	okAt           time.Time
 	activity       string
+	turnEnd        int
+	nudged         bool
 }
 
 func (m *SessionManager) Wait(ctx context.Context, s *Session, obs Observer) Outcome {
@@ -391,6 +400,12 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 	if grace <= 0 {
 		grace = defaultStallGrace
 	}
+	if reason := m.hookExit(s.Agent); reason != "" {
+		if sentinel, err := ReadSentinel(s.Sentinel); !errors.Is(err, ErrNoSentinel) {
+			return m.judge(s, sentinel, err), true
+		}
+		return m.fail(s, "agent exited: "+reason), true
+	}
 	sentinel, err := ReadSentinel(s.Sentinel)
 	if err == nil {
 		if sentinel.Outcome != "ok" {
@@ -438,6 +453,16 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 	if timeout > 0 && w.elapsed > timeout {
 		return m.fail(s, "backstop "+timeout.String()), true
 	}
+	seen, busy, turn := m.hookTurn(s.Agent)
+	if seen && !busy && turn > w.turnEnd && s.declining.Load() == 0 && (s.owner == nil || s.owner.declining.Load() == 0) {
+		w.turnEnd = turn
+		if w.nudged {
+			out := m.fail(s, "stalled: no response to nudge")
+			out.Stalled = true
+			return out, true
+		}
+		return m.stallAndNudge(w, now, "your turn ended with no sentinel", m.handOff(s.Agent))
+	}
 	switch state {
 	case AgentWorking:
 		w.quiet = 0
@@ -457,17 +482,31 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 	if w.quiet < grace {
 		return Outcome{}, false
 	}
-	if w.stalled {
+	if w.stalled || (seen && w.nudged) {
 		out := m.fail(s, "stalled: no response to nudge")
 		out.Stalled = true
 		return out, true
 	}
-	w.stalled, w.quiet = true, 0
+	return m.stallAndNudge(w, now, "no sentinel and no activity for "+grace.String(), nil)
+}
+
+func (m *SessionManager) stallAndNudge(w *watch, now time.Time, cause string, gate *handOff) (Outcome, bool) {
+	s := w.s
+	w.stalled, w.nudged, w.quiet = true, true, 0
 	if err := m.recordState(now, s, StepStalled); err != nil && !errors.Is(err, errStepEnded) {
 		return m.fail(s, "record: "+err.Error()), true
 	}
 	w.obs.Stalled(s)
-	if err := m.prompt(s.Agent, nudge(grace, s.Ref.AskURL != ""), nil); err != nil {
+	err := m.prompt(s.Agent, nudge(cause, s.Ref.AskURL != ""), gate)
+	if errors.Is(err, errTurnNotOver) {
+		w.stalled, w.nudged = false, false
+		if err := m.recordState(now, s, StepRunning); err != nil && !errors.Is(err, errStepEnded) {
+			return m.fail(s, "record: "+err.Error()), true
+		}
+		w.obs.Resumed(s)
+		return Outcome{}, false
+	}
+	if err != nil {
 		out := m.fail(s, "stalled: nudge not delivered: "+err.Error())
 		out.Stalled = true
 		return out, true
@@ -487,7 +526,7 @@ func (m *SessionManager) settle(w *watch, sentinel Sentinel, now time.Time, grac
 	state, err := m.Host.State(s.Agent)
 	ended := err != nil || state == AgentIdle || state == AgentDone || state == AgentGone
 	if m.drainHooks() == nil {
-		if seen, busy := m.hookTurn(s.Agent); seen {
+		if seen, busy, _ := m.hookTurn(s.Agent); seen {
 			ended = err != nil || state == AgentGone || !busy
 		}
 	}
@@ -547,12 +586,12 @@ func writeMCPConfig(path, url string) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-func nudge(grace time.Duration, ask bool) string {
+func nudge(cause string, ask bool) string {
 	blocked := "If you are blocked, write a failed sentinel with the reason."
 	if ask {
 		blocked = "If you are blocked, call ask_watchdog and end your turn to wait for its answer, or write a failed sentinel with the reason."
 	}
-	return "r-loop: no sentinel and no activity for " + grace.String() + ". If your work is done, write the sentinel now. " + blocked
+	return "r-loop: " + cause + ". If your work is done, write the sentinel now. " + blocked
 }
 
 func (m *SessionManager) judge(s *Session, sentinel Sentinel, sErr error) Outcome {
