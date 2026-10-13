@@ -22,6 +22,7 @@ type Phase struct {
 	Title      string
 	Implements []string
 	DependsOn  []string
+	Reworks    []string
 	Files      []string
 	Risk       string
 	Items      []Item

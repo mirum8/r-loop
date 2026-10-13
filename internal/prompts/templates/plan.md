@@ -17,6 +17,10 @@ Its open items:
 
 This phase fixes backlog items {{.GroupItems}} with one change. Every member's outcome is an obligation, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done.
 {{- end}}
+{{- if .Reworks}}
+
+This phase reworks phase {{.Reworks}}, which already landed: it changes or removes what that phase built, because the story behind it changed or was retired. Code and tests that pin the old behaviour are rewritten or deleted, not kept passing, even outside the phase's `Files:`. The old behaviour surviving is a defect; its removal is not a regression.
+{{- end}}
 {{- if .TriageNotes}}
 
 ## The watchdog's triage found
@@ -26,7 +30,7 @@ This phase fixes backlog items {{.GroupItems}} with one change. Every member's o
 Each approach is input, not an order: weigh it as one option in step 2.
 {{- end}}
 
-The phase and its items state the outcome to deliver. Where they prescribe the means — a mechanism, a file, a signature, a fix — that is a proposal, not an obligation: plan the best solution for the outcome, whether or not it is the proposed one. Still binding: the spec's invariants and ADRs, every `Resolved:` line, and the phase's `Done when:` command when it has one.
+The phase and its items state the outcome to deliver. Where they prescribe the means — a mechanism, a file, a signature, a fix — that is a proposal, not an obligation: plan the best solution for the outcome, whether or not it is the proposed one. Still binding: the spec's invariants and ADRs, every `Resolved:` line, and the phase's `Done when:` command when it has one. A story the spec marks `<h3 class="retired">` was dropped: never build it or keep it alive.
 {{- if .PhaseWarnings}}
 
 ## The watchdog's phase check warned:

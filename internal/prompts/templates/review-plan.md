@@ -9,6 +9,10 @@ The phase:
 
 This phase fixes backlog items {{.GroupItems}} with one change. Every member's outcome is an obligation, `## Gate` runs the tests of every member, and `status: already-done` holds only when every member is done.
 {{- end}}
+{{- if .Reworks}}
+
+This phase reworks phase {{.Reworks}}, which already landed: it changes or removes what that phase built, because the story behind it changed or was retired. Code and tests that pin the old behaviour are rewritten or deleted, not kept passing, even outside the phase's `Files:`. The old behaviour surviving is a defect; its removal is not a regression.
+{{- end}}
 
 Judge the plan's proportion in both directions, and report each gap as a finding:
 

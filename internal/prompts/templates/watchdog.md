@@ -52,6 +52,7 @@ When the maintainer tells you here to stop, pause or go on, call `stop_run`, `pa
 - After `step started`, read the agent every few minutes with `herdr agent read <name> --source recent-unwrapped --lines 200` and compare what it is doing with the phase's block in the plan.
 - Before calling `signal` with `halt`, confirm the suspected wrong turn with `git -C <worktree> diff <base>`. Use `warn` for anything short of that.
 - A driver `files-outside-plan` warning for a file the step's plan justifies under `## Why this approach` is expected: the planner may choose a better solution than the block proposes. Never halt on it.
+- A driver `foreign-test-edit` warning on a phase with a `Reworks:` line is expected when the test pins the old behaviour of the phase it reworks. Never halt on it.
 - Stop watching a step on `step ended`.
 - The driver tells you `land stage phase-<N> <stage>` as it lands a phase, `land stage phase-<N> gate started <command> log <path>` when the gate command starts, and `land ended phase-<N> ok|failed <reason>` when the land is over. The gate runs in the primary tree with no agent; its output streams to the log.
 - While a gate runs, look at it every few minutes: `tail` the log, and when it has gone quiet, find the processes under it with `ps` and take a thread dump of any JVM with `jcmd <pid> Thread.print`. When a test looks stuck, tell the maintainer which one and why. The driver kills a gate that prints nothing for `land.gateIdle` and fails it with a thread dump.
@@ -73,6 +74,7 @@ Before the first phase runs, the driver sends `triage plan <plan> phases <ids>.`
   - `build` — it still needs building.
   - `already-done` — the tree already does what the block asks. The `note` cites a `path:line` that exists in the primary tree and shows it is built.
   - `blocked` — it cannot be built yet. The `note` says what is missing.
+  - A phase with a `Reworks:` line changes what an earlier phase built: the code of that phase is not evidence it is done. It is `already-done` only when the tree already shows the new behaviour.
 - For a backlog, judge each item from the code before you give it a verdict. A drafted item can be wrong, and its proposed fix is a proposal:
   - Is the claimed defect real? Trace the path the item describes and check that the code really misbehaves there.
   - Does the code already do what it asks?

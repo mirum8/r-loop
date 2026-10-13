@@ -86,6 +86,7 @@ func fullVars() map[string]any {
 		"GateOutput":      "FAIL",
 		"Addendum":        "",
 		"GroupItems":      "",
+		"Reworks":         "",
 		"TriageNotes":     "",
 		"DesignPath":      ".task-plans/phase-7.design.md",
 		"DesignNote":      "",
@@ -547,6 +548,41 @@ func TestPlanListsPhaseWarningsOnlyWhenSet(t *testing.T) {
 	text := render(t, r, "plan", with("PhaseWarnings", "- Files: names a package that does not exist"))
 	if !strings.Contains(text, "The watchdog's phase check warned:") || !strings.Contains(text, "names a package that does not exist") {
 		t.Errorf("warnings not listed:\n%s", text)
+	}
+}
+
+func TestStepPromptsExplainAReworkOnlyForAReworkPhase(t *testing.T) {
+	r := New(t.TempDir())
+	for _, name := range []string{"plan", "implement", "review", "review-plan"} {
+		t.Run(name, func(t *testing.T) {
+			if strings.Contains(render(t, r, name, fullVars()), "This phase reworks") {
+				t.Error("rework paragraph present without Reworks")
+			}
+			text := render(t, r, name, with("Reworks", "3, 4"))
+			for _, want := range []string{"This phase reworks phase 3, 4", "rewritten or deleted, not kept passing", "not a regression"} {
+				if !strings.Contains(text, want) {
+					t.Errorf("missing %q:\n%s", want, text)
+				}
+			}
+		})
+	}
+}
+
+func TestPlanNeverBuildsARetiredStory(t *testing.T) {
+	text := render(t, New(t.TempDir()), "plan", fullVars())
+
+	if !strings.Contains(text, `<h3 class="retired">`) {
+		t.Errorf("plan prompt does not name retired stories:\n%s", text)
+	}
+}
+
+func TestWatchdogJudgesAReworkByItsNewBehaviour(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{"A phase with a `Reworks:` line", "`foreign-test-edit`"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog prompt missing %q", want)
+		}
 	}
 }
 

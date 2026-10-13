@@ -62,9 +62,12 @@ so.
   never reopened. Any other transition returns `ErrIllegalTransition`. A step's review rounds are
   not states: a step stays `running` through them, and each round is recorded as events.
 - **Types** — `StepKey{Run string; Phase string; Kind string; Attempt int}` ·
-  `Phase{ID string; Title string; Implements []string; DependsOn []string; Files []string; Risk
-  string; Items []Item; DoneWhen string; Milestone int; Block string; Members []string}` (`Members`
-  is set only on a backlog group of two or more items, ADR-78; `TickIDs()` returns `Members`, else
+  `Phase{ID string; Title string; Implements []string; DependsOn []string; Reworks []string; Files
+  []string; Risk string; Items []Item; DoneWhen string; Milestone int; Block string; Members
+  []string}` (`Reworks` holds the earlier, landed phases a `**Reworks:** Phase N` line names: a
+  rework or removal leaf `/r:spec-design` writes for a changed or retired story; the reader rejects
+  a missing, later or self target like a `Depends on:` one. `Members` is set only on a backlog
+  group of two or more items, ADR-78; `TickIDs()` returns `Members`, else
   `[ID]`. `ID` is the heading label,
   `\d+[a-z]?` lowercased with leading zeros dropped — `10`, or `10a` for a phase inserted after 10;
   every phase reference below is that label, so the run dir is `phase-10a/`. Labels run in
@@ -900,8 +903,9 @@ and the driver validates that argv before anything of a run exists.
   dry run: a phase with no checklist items (duplicate and missing numbers stay stops in the plan
   reader). Notes, shown in the table: more than 12 open items; no `Done when:`, or one with no
   runnable command; no `Implements:`; a risk word (auth, money, persistence, concurrency, security,
-  migration, payment) without `Risk:`; no `Depends on:`; a forward or self dependency; a cycle; two
-  phases in one wave sharing a `Files:` path. `core.Waves(Plan) (map[string]int, []string)` is the
+  migration, payment) without `Risk:`; no `Depends on:`; a `Reworks:` phase missing from
+  `Depends on:`; a forward or self dependency; a cycle; two phases in one wave sharing a `Files:`
+  path. `core.Waves(Plan) (map[string]int, []string)` is the
   longest path over `Depends on`, and the phases in a cycle.
 - **Types** (`internal/core/triage.go`) — `PhaseVerdict{Phase, Status, Note}` with `Status ∈
   {build, already-done, blocked}` · `ItemVerdict{ID, Title, Verdict, Category, Confidence,

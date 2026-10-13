@@ -34,6 +34,24 @@ func TestCheckPlan(t *testing.T) {
 			plan: func() Plan { return planOf(cleanPhase("1"), cleanPhase("2")) },
 		},
 		{
+			name: "reworks a phase it does not depend on",
+			plan: func() Plan {
+				ph := cleanPhase("2")
+				ph.Reworks = []string{"1"}
+				return planOf(cleanPhase("1"), ph)
+			},
+			notes: []string{"Phase 2 — Title 2: reworks phase 1 but does not depend on it"},
+		},
+		{
+			name: "reworks a phase it depends on",
+			plan: func() Plan {
+				ph := cleanPhase("2")
+				ph.Reworks = []string{"1"}
+				ph.DependsOn = []string{"1"}
+				return planOf(cleanPhase("1"), ph)
+			},
+		},
+		{
 			name: "no checklist",
 			plan: func() Plan {
 				ph := cleanPhase("1")

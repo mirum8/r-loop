@@ -356,6 +356,10 @@ func TestFailClosed(t *testing.T) {
 		},
 		{name: "depends on itself", content: "### Phase 1 — A\n### Phase 2 — B\n**Depends on:** Phase 2\n", want: []string{"line 3", "phase 2 depends on itself"}},
 		{name: "depends on a later phase", content: "### Phase 1 — A\n**Depends on:** Phase 2\n### Phase 2 — B\n", want: []string{"line 2", "phase 1 depends on phase 2, which comes after it"}},
+		{name: "reworks a missing phase", content: "### Phase 1 — A\n### Phase 2 — B\n**Reworks:** Phase 7\n", want: []string{"line 3", "phase 2 reworks phase 7, which does not exist"}},
+		{name: "reworks itself", content: "### Phase 1 — A\n### Phase 2 — B\n**Reworks:** Phase 2\n", want: []string{"line 3", "phase 2 reworks itself"}},
+		{name: "reworks a later phase", content: "### Phase 1 — A\n**Reworks:** Phase 2\n### Phase 2 — B\n", want: []string{"line 2", "phase 1 reworks phase 2, which comes after it"}},
+		{name: "reworks names no phase", content: "### Phase 1 — A\n### Phase 2 — B\n**Reworks:** the approval flow\n", want: []string{"line 3", "reworks names no phase", "the approval flow"}},
 		{name: "unclosed code fence", content: "### Phase 1 — A\n```\n### Phase 2 — B\n", want: []string{"line 2", "code fence is never closed"}},
 	}
 	for _, tc := range cases {
@@ -566,5 +570,51 @@ func TestDependsOnReadsOxfordCommaList(t *testing.T) {
 	}
 	if got := p.Phases[3].DependsOn; !reflect.DeepEqual(got, []string{"1", "2", "3"}) {
 		t.Errorf("DependsOn = %v, want [1 2 3]", got)
+	}
+}
+
+func TestReworksLineIsReadAsAField(t *testing.T) {
+	path := writePlan(t, strings.Join([]string{
+		"# Billing",
+		"<!-- changes: 2026-10-12 — Finance approves invoices; 2026-10-13 — Drop self-approval -->",
+		"",
+		"### Phase 1 — A",
+		"- [x] a",
+		"### Phase 1a — A2",
+		"- [x] a2",
+		"### Phase 2 — B",
+		"- [x] b",
+		"### Phase 3 — Finance approves invoices",
+		"**Implements:** Approve an invoice",
+		"**Done when:** `go test ./approval/...`",
+		"is green.",
+		"**Reworks:** Phase 1a, Phase 2",
+		"**Depends on:** Phase 1a, Phase 2",
+		"- [ ] reject the author with 403",
+		"",
+	}, "\n"))
+
+	p, err := Reader{}.Read(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Backlog || len(p.Phases) != 4 {
+		t.Fatalf("Backlog = %v, phases = %d", p.Backlog, len(p.Phases))
+	}
+	ph := p.Phases[3]
+	if !reflect.DeepEqual(ph.Reworks, []string{"1a", "2"}) {
+		t.Errorf("Reworks = %v", ph.Reworks)
+	}
+	if !reflect.DeepEqual(ph.Items, []core.Item{{Text: "reject the author with 403"}}) {
+		t.Errorf("Items = %v", ph.Items)
+	}
+	if ph.DoneWhen != "`go test ./approval/...`\nis green." {
+		t.Errorf("DoneWhen = %q", ph.DoneWhen)
+	}
+	for _, other := range p.Phases[:3] {
+		if other.Reworks != nil {
+			t.Errorf("phase %s Reworks = %v", other.ID, other.Reworks)
+		}
 	}
 }

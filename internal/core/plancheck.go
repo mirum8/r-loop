@@ -46,6 +46,11 @@ func CheckPlan(p Plan) PlanFindings {
 		if !dependsOnRe.MatchString(ph.Block) {
 			f.Notes = append(f.Notes, title+": no 'Depends on' line — every phase declares its edges, '—' when it has none")
 		}
+		for _, r := range ph.Reworks {
+			if !slices.Contains(ph.DependsOn, r) {
+				f.Notes = append(f.Notes, fmt.Sprintf("%s: reworks phase %s but does not depend on it", title, r))
+			}
+		}
 	}
 	wave, cyclic := Waves(p)
 	if len(cyclic) > 0 {

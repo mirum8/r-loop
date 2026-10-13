@@ -1559,6 +1559,7 @@ func TestStepVarsFillsEveryTemplateVariable(t *testing.T) {
 	ph.Title = "RunLoop: phases, steps, halts and the report"
 	ph.Block = "### Phase 3 — RunLoop"
 	ph.Items = []Item{{Text: "loop", Done: false}, {Text: "done", Done: true}, {Text: "report"}}
+	ph.Reworks = []string{"1", "2"}
 	ref := StepRef{Key: StepKey{Run: "run-1", Phase: "3", Kind: "plan", Attempt: 1}, Phase: ph, Worktree: ".r-loop/wt/phase-3", Branch: "r-loop/phase-3", Base: "main"}
 
 	vars := StepVars(ref, plan, "docs/x/todo.md", "/runs/run-1")
@@ -1571,7 +1572,7 @@ func TestStepVarsFillsEveryTemplateVariable(t *testing.T) {
 		"RunDir": "/runs/run-1", "AskURL": "", "PhaseWarnings": "", "ItemGate": false, "ReviewedKind": "", "Round": 0, "Rounds": 0,
 		"ReviewCommand": "", "ReviewRan": false, "FindingsPath": "", "ArtifactsDir": "", "RequiredPath": "", "FindingsFiles": []FindingsFile(nil), "PriorFindings": "", "PriorVerdicts": "",
 		"RoundTree": "", "VerdictPath": "", "ReportPath": "", "MilestoneName": "Core", "MilestonePhases": "1, 2, 3, 4",
-		"Addendum": "", "GroupItems": "", "TriageNotes": "",
+		"Addendum": "", "GroupItems": "", "Reworks": "1, 2", "TriageNotes": "",
 		"DesignPath": ".task-plans/phase-3-runloop-phases-steps-halts-and-the-re.design.md", "DesignNote": "", "Design": "", "DesignIntent": "",
 	}
 	if !reflect.DeepEqual(vars, want) {

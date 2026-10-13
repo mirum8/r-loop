@@ -32,6 +32,7 @@ type dependsRef struct {
 	line  int
 	phase string
 	from  string
+	verb  string
 }
 
 func (Reader) Read(path string) (core.Plan, error) {
@@ -107,12 +108,14 @@ func (Reader) Read(path string) (core.Plan, error) {
 
 	for _, d := range deps {
 		switch {
+		case d.verb == "reworks" && !seen[d.phase]:
+			return core.Plan{}, fmt.Errorf("%s line %d: phase %s reworks phase %s, which does not exist", path, d.line, d.from, d.phase)
 		case !seen[d.phase]:
 			return core.Plan{}, fmt.Errorf("%s line %d: depends on phase %s, which does not exist", path, d.line, d.phase)
 		case d.phase == d.from:
-			return core.Plan{}, fmt.Errorf("%s line %d: phase %s depends on itself", path, d.line, d.from)
+			return core.Plan{}, fmt.Errorf("%s line %d: phase %s %s itself", path, d.line, d.from, d.verb)
 		case core.ComparePhaseIDs(d.phase, d.from) > 0:
-			return core.Plan{}, fmt.Errorf("%s line %d: phase %s depends on phase %s, which comes after it; a phase may depend only on earlier phases", path, d.line, d.from, d.phase)
+			return core.Plan{}, fmt.Errorf("%s line %d: phase %s %s phase %s, which comes after it; a phase may %s only earlier phases", path, d.line, d.from, d.verb, d.phase, map[string]string{"depends on": "depend on", "reworks": "rework"}[d.verb])
 		}
 	}
 	for i, ph := range p.Phases {
@@ -181,7 +184,16 @@ func parsePhase(path, id, title string, block []string, fence []bool, headingLin
 			}
 			ph.DependsOn = deps
 			for _, d := range deps {
-				refs = append(refs, dependsRef{line: lineNo, phase: d, from: id})
+				refs = append(refs, dependsRef{line: lineNo, phase: d, from: id, verb: "depends on"})
+			}
+		case strings.HasPrefix(line, "**Reworks:**"):
+			rest := field(line, "**Reworks:**")
+			ph.Reworks = phaseRefs(rest)
+			if len(ph.Reworks) == 0 {
+				return core.Phase{}, nil, fmt.Errorf("%s line %d: reworks names no phase: %q", path, lineNo, rest)
+			}
+			for _, r := range ph.Reworks {
+				refs = append(refs, dependsRef{line: lineNo, phase: r, from: id, verb: "reworks"})
 			}
 		case strings.HasPrefix(line, "**Files:**"):
 			for _, m := range backtickRe.FindAllStringSubmatch(line, -1) {
