@@ -26,6 +26,9 @@ else fail "dry-run todo.md rc=$rc"; fi
 run issues.md --dry-run --plain
 [ "$rc" = 0 ] && [ "$(grep -c '^phase ' "$T/out")" = 1 ] && grep -q '^phase 1 .*1, 2' "$T/out" && ok "dry-run issues.md: only #1 open" || fail "dry-run issues.md rc=$rc"
 
+run docs/plan/todo-gate.md --dry-run --plain
+[ "$rc" = 0 ] && grep -q '^  Done when: `go test ./...` is green and `calc` serves `GET /sum`' "$T/out" && ok "dry-run todo-gate.md: Done when shown whole" || fail "dry-run todo-gate.md rc=$rc: $(head -2 "$T/err")"
+
 table_ok() { awk -F'|' '/^\|/ { n = NF; if (w == "") w = n; else if (n != w) bad = 1; rows++ } END { exit !(rows >= 3 && !bad) }' "$T/out"; }
 
 block_ok() { grep -A3 "^Phase $1 · " "$T/out" | grep -q "^  M1 · wave $2\$" && grep -A3 "^Phase $1 · " "$T/out" | grep -q "^  Files: *$3"; }

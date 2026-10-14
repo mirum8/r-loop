@@ -653,3 +653,10 @@ func (f *fakeRollouts) Find(dir, marker string, since time.Time) (string, string
 	r := f.files[marker]
 	return r.path, r.session
 }
+
+type pickAll struct{ g *LandGate }
+
+func (p pickAll) PickGate(_ context.Context, phase Phase, candidates []string) error {
+	p.g.ChooseGate(phase.ID, candidates)
+	return nil
+}

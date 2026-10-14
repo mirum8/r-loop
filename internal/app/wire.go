@@ -574,6 +574,8 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	}
 	w.Loop = &core.RunLoop{
 		Plan:        pl,
+		PlanSource:  w.Gate.Plan,
+		Reload:      w.reloadConfig,
 		TodoPath:    todo,
 		Kinds:       kinds,
 		Sessions:    sm,
@@ -707,9 +709,11 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	w.Watch.Dog = w.Dog
 	w.Dog.OnGone = w.Watch.WatchdogGone
 	w.Watch.PhaseCheck = &core.PhaseCheck{Dog: w.Dog, Repo: w.Loop.Sessions.Repo, Timeout: wd.CheckTimeout, Backlog: w.Plan.Backlog}
+	w.Dog.GateTimeout = wd.CheckTimeout
+	w.Gate.Picker = w.Dog
 	w.Router.Dog = w.Dog
 	w.Watch.Router = w.Router
-	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, ApplyFix: w.Fixer.Apply, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, RunStatus: w.runStatus, StepInfo: w.stepInfo, StopRun: w.Loop.StopRun, PauseRun: w.Loop.PauseRun, ContinueRun: w.Loop.ContinueRun})
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, ApplyFix: w.Fixer.Apply, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, ChooseGate: w.Gate.ChooseGate, RunStatus: w.runStatus, StepInfo: w.stepInfo, StopRun: w.Loop.StopRun, PauseRun: w.Loop.PauseRun, ContinueRun: w.Loop.ContinueRun})
 	return nil
 }
 

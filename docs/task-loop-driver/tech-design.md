@@ -477,6 +477,20 @@ so.
   output streams to `.r-loop/runs/<runID>/phase-<N>/gate.log`; its `ok` commits under the gatefix sentinel's own subject, and the
   landing starts again from the merge. A red gate with no fix round left, or a gatefix step that
   does not end `ok`, raises a blocker (Milestone 17) before the phase is blocked.
+- **Gate choice (ADR-95)** — at the start of every `LandGate.Land` of a phase with a `Done when:`
+  line, before the merge, the driver opens a pick for the phase and calls
+  `Picker.PickGate(ctx, phase, candidates)` (port `GatePicker`, implemented by `Watchdog` through
+  `NotifyContext(…, wait, watchdog.checkTimeout)`). The candidates are the line's clause commands,
+  in line order (the trimmed text when it has no span); the pane text is `choose gate phase <N>`,
+  `Done when: <line>`, a blank line, one line per candidate (`<i>. ` and the candidate in
+  backticks), a blank line and the instruction to call `choose_gate`. `choose_gate(phase, commands)` is accepted only while that phase's pick is open
+  and when every command equals a candidate exactly, none twice; it appends
+  `gate-chosen{phase, line, commands (JSON), command}` (fatal on failure) before the driver acts,
+  and a later accepted call in the same pick replaces it. The gate command is the chosen clauses
+  rendered as below, in line order. No choice → `the watchdog chose no gate for phase <N>: <why>`,
+  a land blocker whose `retry` asks again; an empty choice → `gate-skipped{reason: watchdog chose
+  no command}`. Gate-fix rounds inside one `Land` reuse its choice. An item gate (ADR-70) is not
+  asked.
 - **Land** — in the primary tree: take `message` from the phase's latest implement
   `commit-intent` (none, or not a valid subject → repaired as a step's is, with
   `chore: <phase title>` as the fallback; a subject never refuses a landing); append
@@ -484,9 +498,11 @@ so.
   `MergeNoFF(r-loop/phase-<N>, <todo>)` (`--no-commit`) → the merged tree
   keeps main's copy of the todo, including when the branch deleted it or a conflict is confined
   to it; the merged tree is on disk, uncommitted → `Run(root, gate command, gate timeout)`, the gate command being the
-  `Done when:` line's inline code spans: a span whose prose since the previous span ends in `prints` or `lists` (optionally followed by `the`) is an expected-output literal of the nearest command span before it and is never run; every other span is a command. A command followed by `prints nothing`/`lists nothing`, or carrying literals, runs as `{ out=$( ( <cmd> ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; <checks>; }`, its stdout+stderr judged: `test -z "$out"` for nothing (exit status ignored, so a silent `grep` with no match passes); for literals, `test "$st" = 0` then `printf '%s\n' "$out" | grep -qF -e '<literal>'` per literal. A command containing `#` or a newline is surrounded by newlines inside its subshell so comments and heredocs cannot absorb the wrapper. Clauses are joined with ` && ` (a line of only commands gives its spans joined with ` && `), or the gate is the line's trimmed text when it has no span
+  chosen clauses of the `Done when:` line's inline code spans: a span whose prose since the previous span ends in `prints` or `lists` (optionally followed by `the`) is an expected-output literal of the nearest command span before it and is never run; every other span is a command. A command followed by `prints nothing`/`lists nothing`, or carrying literals, runs as `{ out=$( ( <cmd> ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; <checks>; }`, its stdout+stderr judged: `test -z "$out"` for nothing (exit status ignored, so a silent `grep` with no match passes); for literals, `test "$st" = 0` then `printf '%s\n' "$out" | grep -qF -e '<literal>'` per literal. A command containing `#` or a newline is surrounded by newlines inside its subshell so comments and heredocs cannot absorb the wrapper. Clauses are joined with ` && ` (a line of only commands gives its spans joined with ` && `), or the gate is the line's trimmed text when it has no span
   (the gate fix's `GateCommand` is the same string); exit ≠ 0 → `AbortMerge()`, halt
-  with the output, nothing ticked, a gate-fix round when one is left; no command → `gate-skipped` recorded, never a halt → `Tick`
+  with the output, nothing ticked, a gate-fix round when one is left; exit 127 → the error also
+  wraps `ErrGateCommandMissing`, its first line `gate failed: <cmd> exited 127: a command it names
+  does not exist here`, and goes to the land blocker with no gate-fix round; no command → `gate-skipped` recorded, never a halt → `Tick`
   → append `commit-intent{phase, tree, gateSkipped, added, deleted}` after checking that the
   intended index tree equals the merged and ticked working tree → `Commit("phase <N>: <title>")`
   → `CommitTouches` must include the todo and one other path, else
@@ -706,7 +722,8 @@ so.
   `stop_run(when: after-phase|now, reason, maintainer_said) → {accepted, reason?}` ·
   `pause_run(reason, maintainer_said) → {accepted, reason?}` ·
   `continue_run(maintainer_said) → {accepted, reason?}` (ADR-86: handled by `RunLoop.StopRun`,
-  `PauseRun`, `ContinueRun`, read only between phases; a pause records `RunPaused` and waits); `step` is `phase-<N>/<kind>`,
+  `PauseRun`, `ContinueRun`, read only between phases; a pause records `RunPaused` and waits) ·
+  `choose_gate(phase, commands) → {accepted, reason?}` (ADR-95: handled by `LandGate.ChooseGate`); `step` is `phase-<N>/<kind>`,
   resolved to the latest attempt. None of these is reachable from a step path, and this path
   serves no `ask_watchdog`. Every call is recorded as `watchdog-call` before its handler runs.
 - **Waiting for the maintainer (ADR-73, amended 2026-09-23)** — `ask_maintainer` returns at once;
@@ -1166,15 +1183,26 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
 
   | source | raised when | `retry` means | actions |
   |---|---|---|---|
-  | `step` | a pipeline step ends `failed` or `stalled` (`loop.go` `ended`/`awaitRestart`) | a new attempt: the restart path, with the addendum and provider | retry, switch, block, stop |
+  | `step` | a pipeline step ends `failed` or `stalled` (`loop.go` `ended`/`awaitRestart`) | a new attempt: the restart path, with the addendum and provider | retry, switch, fix, block, stop, continue |
   | `reviewer` | a reviewer fails: a failed `ReviewExec` command, a `failed` sentinel, evidence missing, stalled, gone | that reviewer reopened for this round | retry, keys, switch, skip, block, stop |
-  | `land` | a merge conflict, an unfinished merge, a wrong branch, a dirty or changed tree, a red gate with no fix round left, an item gate green at base or with no test file, a tick or commit failure | `Land` again, after a remedy or the maintainer's own fix | retry, block, stop |
-  | `gatefix` | a gatefix step that does not end `ok` | another gatefix round | retry, switch, block, stop |
-  | `gate-probe` | an error of `GateProbe` itself, not of its step | the probe again | retry, block, stop |
+  | `land` | a merge conflict, an unfinished merge, a wrong branch, a dirty or changed tree, a red gate with no fix round left, an item gate green at base or with no test file, a tick or commit failure | `Land` again, after a remedy or the maintainer's own fix | retry, fix, block, stop, continue |
+  | `gatefix` | a gatefix step that does not end `ok` | another gatefix round | retry, switch, fix, block, stop, continue |
+  | `gate-probe` | an error of `GateProbe` itself, not of its step | the probe again | retry, fix, block, stop, continue |
   | `milestone` | a milestone report that fails | the report again | retry, skip, stop |
 
   `skip` on a reviewer appends `reviewer-skipped{step, reviewer, reason}` and leaves it out of
   this round only; on a milestone it is `report-skipped`, as before.
+
+  `continue` (ADR-96) re-enters the held work in the same process, as `r-loop resume` would, with
+  no addendum. On `step` (`awaitRestart`) it is a restart to attempt N+1 whose `StepRef` takes
+  `ReviewFrom`/`PrevRoundTree` from `recordedRound(Store.Load(RunID), phase, kind, N)` and, when
+  `ReviewFrom > 0`, `Subject` from `recordedSubject`; with no recorded round it is a fresh attempt.
+  Its `restart` event carries `citation: continue`. On `land` and `gate-probe` (`landBlocker`) and
+  on `gatefix` (`Land` returns an error wrapping `ErrContinued`, with no further fix round),
+  `runPhase` reads the phase again with `RunLoop.PlanSource.Read(TodoPath)` (the `Design`,
+  `DesignNote` and `Triage` of the run-time phase kept; a grouped backlog phase is not read again)
+  and calls `Land` again, which asks the watchdog for the gate again; a phase no longer in the plan
+  raises the `land` blocker again with `phase <N> is no longer in <todo>`.
 - **Authorisation** — `QuestionRouter.ResolveBlocker(id, action, rule, addendum, keys, provider,
   model, effort, maintainerSaid) (decision, reason)` decides, in order: not an open blocker →
   refused; an action the source does not list → refused; then
@@ -1185,12 +1213,14 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
   | `keys` | `rule` is exactly one of `watchdog.dialogs`, the rule the keys answer under (keys as in `answer_dialog`, pressed only while the reviewer's screen is unchanged) | `maintainer_said` → authorised; else `ask` |
   | `switch` | the provider is the row's fallback (`remedies.go`'s rule; model and effort default to the fallback's) and the target is within `retry`'s budget, which counts its switches too | `maintainer_said` with `model` and `effort` → authorised; else `ask`; at the budget → refused |
   | `skip` | `maintainer_said` | `ask`; unattended → refused |
+  | `continue` | `--unattended` (`Citation: unattended`), within `retry`'s budget, which counts its continues too; never by the allow-list | `maintainer_said` → authorised; else `ask`; at the budget → refused |
   | `block` | always | |
   | `stop` | always | |
 
-  With `--unattended` nothing returns `ask`: an action that would is refused (`unattended: block
-  or stop`). `ask` calls `Dog.AskMaintainer` with the blocker and its options (`retry, skip, switch
-  provider, block this phase, stop the run`, cut to the source's actions) and records nothing
+  With `--unattended` nothing returns `ask`: an action that would is refused (`unattended:
+  continue, block or stop`). `ask` calls `Dog.AskMaintainer` with the blocker and its options
+  (`retry, skip, switch provider, hand to the fixer, continue as resume would, block this phase,
+  stop the run`, cut to the source's actions) and records nothing
   else. `propose_remedy` stays the way to run a fix before a `retry`; `restart_step` on a step's
   open blocker resolves it as `retry`.
 - **The hold** — `watchdog.blockerTimeout` (duration, default `10m`); `watchdog.remedyWindow` is

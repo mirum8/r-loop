@@ -354,6 +354,11 @@ func (h *dogHost) Prompt(agent, text string, wait bool, timeout time.Duration) e
 			go autoTriage(w.(*Wiring), text)
 		}
 	}
+	if strings.HasPrefix(text, "choose gate phase ") {
+		if w, ok := triagers.Load(agent); ok {
+			chooseEveryCandidate(w.(*Wiring), text)
+		}
+	}
 	if rest, ok := strings.CutPrefix(text, "question "); ok && h.question != nil {
 		id, _, _ := strings.Cut(rest, " ")
 		go h.question(id)
@@ -888,6 +893,17 @@ func autoTriage(w *Wiring, text string) {
 	}
 }
 
+var candidateRe = regexp.MustCompile("(?m)^[0-9]+\\. `(.*)`$")
+
+func chooseEveryCandidate(w *Wiring, text string) {
+	phase := strings.Fields(strings.TrimPrefix(text, "choose gate phase "))[0]
+	commands := []string{}
+	for _, m := range candidateRe.FindAllStringSubmatch(text, -1) {
+		commands = append(commands, m[1])
+	}
+	w.Gate.ChooseGate(phase, commands)
+}
+
 func answeringDog(w *Wiring, answer, citation string) *dogHost {
 	return &dogHost{question: func(id string) {
 		for {
@@ -1081,7 +1097,7 @@ func TestAWiredRunSendsALandBlockerToTheWatchdogWhichBlocksThePhase(t *testing.T
 	if code != 1 {
 		t.Fatalf("exit %d, want 1\n%s", code, f.out)
 	}
-	if !dog.prompted("blocker b1 from phase-1/land (land): merge conflict: a.go\nactions: retry, fix, block, stop; resolve it with resolve_blocker") {
+	if !dog.prompted("blocker b1 from phase-1/land (land): merge conflict: a.go\nactions: retry, fix, block, stop, continue; resolve it with resolve_blocker") {
 		t.Fatalf("the watchdog never heard of the blocker: %q", dog.Calls())
 	}
 	if got := <-decided; got != "authorised " {

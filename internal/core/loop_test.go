@@ -657,6 +657,7 @@ func landGate(t *testing.T, r *loopRig) *LandGate {
 		t.Fatal(err)
 	}
 	g := &LandGate{Repo: r.repo, Plan: &fakePlanSource{}, Store: r.store, Face: r.face, RunID: "run-1", TodoPath: "docs/x/todo.md", GateTimeout: time.Minute}
+	g.Picker = pickAll{g}
 	r.repo.Touched = []string{"docs/x/todo.md", "code.go"}
 	r.loop.Lander = g
 	return g

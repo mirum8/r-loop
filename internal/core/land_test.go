@@ -434,7 +434,7 @@ func (e *landEnv) recordImplementSubject(n int) {
 }
 
 func (e *landEnv) gate() *core.LandGate {
-	return &core.LandGate{
+	g := &core.LandGate{
 		Repo:        e.repo,
 		Plan:        e.plan,
 		Store:       e.store,
@@ -445,6 +445,37 @@ func (e *landEnv) gate() *core.LandGate {
 		FixKind:     core.StepKind{Name: "gatefix", Prompt: "gatefix", Check: "diff"},
 		LocalTodo:   e.localTodo,
 	}
+	g.Picker = &gatePicker{g: g}
+	return g
+}
+
+type gatePicker struct {
+	g      *core.LandGate
+	pick   func(g *core.LandGate, phase core.Phase, candidates []string) error
+	asked  [][]string
+	reason string
+}
+
+func (p *gatePicker) PickGate(_ context.Context, phase core.Phase, candidates []string) error {
+	p.asked = append(p.asked, candidates)
+	if p.pick != nil {
+		return p.pick(p.g, phase, candidates)
+	}
+	if ok, reason := p.g.ChooseGate(phase.ID, candidates); !ok {
+		p.reason = reason
+	}
+	return nil
+}
+
+func choosing(g *core.LandGate, commands ...string) *gatePicker {
+	p := &gatePicker{g: g, pick: func(g *core.LandGate, phase core.Phase, _ []string) error {
+		if ok, reason := g.ChooseGate(phase.ID, commands); !ok {
+			return errors.New(reason)
+		}
+		return nil
+	}}
+	g.Picker = p
+	return p
 }
 
 func (e *landEnv) head() string {
@@ -2217,7 +2248,7 @@ func TestAGatefixThatDoesNotEndOKRaisesAGatefixBlockerAndSwitchRunsAnotherRoundO
 	if err != nil {
 		t.Fatalf("Land: %v", err)
 	}
-	want := core.Blocker{Source: "gatefix", Phase: "1", Step: "gatefix", Reason: "gate failed: gate-fix round 1 ended failed: could not fix", Actions: []string{"retry", "switch", "fix", "block", "stop"}}
+	want := core.Blocker{Source: "gatefix", Phase: "1", Step: "gatefix", Reason: "gate failed: gate-fix round 1 ended failed: could not fix", Actions: []string{"retry", "switch", "fix", "block", "stop", "continue"}}
 	if len(script.blockers) != 1 || !reflect.DeepEqual(script.blockers[0], want) {
 		t.Fatalf("blockers = %+v", script.blockers)
 	}
@@ -2405,3 +2436,261 @@ func TestAMilestoneBlockerResolvedStopRecordsNoSkip(t *testing.T) {
 }
 
 func (h *reportHost) Submit(agent, text string) error { return h.Prompt(agent, text, false, 0) }
+
+const phase46Like = "`test -f feature.txt` is green and `app-api` serves `GET /ui/worklist` rendering the table against the local stack."
+
+func (e *landEnv) recordIndex(kind string, match func(core.Event) bool) int {
+	e.store.mu.Lock()
+	defer e.store.mu.Unlock()
+	for i, r := range e.store.records {
+		if r.Kind == core.RecordEvent && r.Event.Kind == kind && match(*r.Event) {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestLandGateRunsOnlyTheCommandTheWatchdogChose(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	g := e.gate()
+	p := choosing(g, "test -f feature.txt")
+
+	landing, err := g.Land(context.Background(), phaseOne(phase46Like))
+
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if landing.MergeSHA != e.head() || landing.GateSkipped {
+		t.Errorf("landing = %+v", landing)
+	}
+	if want := [][]string{{"test -f feature.txt", "app-api", "GET /ui/worklist"}}; !reflect.DeepEqual(p.asked, want) {
+		t.Errorf("asked %q, want %q", p.asked, want)
+	}
+	chosen := e.store.events("gate-chosen")
+	if len(chosen) != 1 || chosen[0].Phase != "1" || chosen[0].Fields["phase"] != "1" || chosen[0].Fields["line"] != phase46Like ||
+		chosen[0].Fields["commands"] != `["test -f feature.txt"]` || chosen[0].Fields["command"] != "test -f feature.txt" {
+		t.Fatalf("gate-chosen = %+v", chosen)
+	}
+	pick := e.recordIndex("gate-chosen", func(core.Event) bool { return true })
+	stage := e.recordIndex("land-stage", func(ev core.Event) bool { return ev.Fields["stage"] == "gate" })
+	merge := e.recordIndex(core.EventMergeIntent, func(core.Event) bool { return true })
+	if pick < 0 || stage < 0 || merge < 0 || !(pick < merge && merge < stage) {
+		t.Errorf("gate-chosen at %d, merge-intent at %d, land-stage gate at %d", pick, merge, stage)
+	}
+	gates := e.store.events("land-stage")
+	if !slices.ContainsFunc(gates, func(ev core.Event) bool {
+		return ev.Fields["stage"] == "gate" && ev.Fields["command"] == "test -f feature.txt"
+	}) {
+		t.Errorf("land-stage events = %+v", gates)
+	}
+}
+
+func TestChooseGateRefusesAChoiceOutsideAnOpenPickOrOffTheCandidates(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	g := e.gate()
+
+	if ok, reason := g.ChooseGate("1", []string{"test -f feature.txt"}); ok || !strings.Contains(reason, "no gate pick is open for phase 1") {
+		t.Fatalf("outside a pick: %v %q", ok, reason)
+	}
+	var refusals []string
+	g.Picker = &gatePicker{g: g, pick: func(g *core.LandGate, phase core.Phase, candidates []string) error {
+		for _, try := range []struct {
+			phase    string
+			commands []string
+		}{
+			{"1", []string{"rm -rf ."}},
+			{"1", []string{"test -f feature.txt", "test -f feature.txt"}},
+			{"2", []string{"test -f feature.txt"}},
+		} {
+			if ok, reason := g.ChooseGate(try.phase, try.commands); ok {
+				t.Errorf("accepted %s %q", try.phase, try.commands)
+			} else {
+				refusals = append(refusals, reason)
+			}
+		}
+		g.ChooseGate("1", []string{"test -f feature.txt"})
+		return nil
+	}}
+
+	if _, err := g.Land(context.Background(), phaseOne(phase46Like)); err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+
+	if len(refusals) != 3 {
+		t.Fatalf("refusals = %q", refusals)
+	}
+	for _, want := range []string{"`test -f feature.txt`", "`app-api`", "`GET /ui/worklist`", "rm -rf ."} {
+		if !strings.Contains(refusals[0], want) {
+			t.Errorf("refusal %q lacks %q", refusals[0], want)
+		}
+	}
+	if !strings.Contains(refusals[1], "twice") {
+		t.Errorf("duplicate refusal = %q", refusals[1])
+	}
+	if !strings.Contains(refusals[2], "no gate pick is open for phase 2") {
+		t.Errorf("wrong-phase refusal = %q", refusals[2])
+	}
+	if ok, reason := g.ChooseGate("1", []string{"test -f feature.txt"}); ok || !strings.Contains(reason, "no gate pick is open") {
+		t.Errorf("after the pick closed: %v %q", ok, reason)
+	}
+	if chosen := e.store.events("gate-chosen"); len(chosen) != 1 {
+		t.Errorf("gate-chosen = %+v", chosen)
+	}
+}
+
+func TestLandGateWithNoChoiceFromTheWatchdogFailsBeforeTheMerge(t *testing.T) {
+	for name, pickErr := range map[string]error{"nothing called": nil, "timed out": errors.New("timed out after 10m0s")} {
+		t.Run(name, func(t *testing.T) {
+			e := newLandEnv(t)
+			e.phaseWork(1, "feature.txt", "new\n")
+			head := e.head()
+			g := e.gate()
+			g.Picker = &gatePicker{g: g, pick: func(*core.LandGate, core.Phase, []string) error { return pickErr }}
+
+			_, err := g.Land(context.Background(), phaseOne(phase46Like))
+
+			if err == nil || !strings.HasPrefix(err.Error(), "the watchdog chose no gate for phase 1: ") || errors.Is(err, core.ErrGate) {
+				t.Fatalf("err = %v", err)
+			}
+			if pickErr != nil && !strings.Contains(err.Error(), pickErr.Error()) {
+				t.Errorf("err = %v, want the pick's error", err)
+			}
+			if merges := e.store.events(core.EventMergeIntent); len(merges) != 0 {
+				t.Errorf("merge-intent = %+v", merges)
+			}
+			e.assertUntouched(head)
+		})
+	}
+}
+
+func TestLandGateWithAnEmptyChoiceSkipsTheGate(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	g := e.gate()
+	choosing(g)
+
+	landing, err := g.Land(context.Background(), phaseOne("`app-api` serves `GET /ui/worklist`."))
+
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if !landing.GateSkipped || landing.MergeSHA != e.head() {
+		t.Errorf("landing = %+v", landing)
+	}
+	skips := e.store.events("gate-skipped")
+	if len(skips) != 1 || skips[0].Fields["reason"] != "watchdog chose no command" {
+		t.Errorf("gate-skipped = %+v", skips)
+	}
+	if chosen := e.store.events("gate-chosen"); len(chosen) != 1 || chosen[0].Fields["commands"] != "[]" || chosen[0].Fields["command"] != "" {
+		t.Errorf("gate-chosen = %+v", chosen)
+	}
+}
+
+func TestLandGateWhoseChosenCommandIsMissingRunsNoGateFix(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	head := e.head()
+	var refs []core.StepRef
+	g := e.gate()
+	g.FixRounds = 1
+	g.Runner = fixingRunner(e, &refs)
+	choosing(g, "no-such-cmd-xyz")
+
+	_, err := g.Land(context.Background(), phaseOne("`no-such-cmd-xyz` is green."))
+
+	if !errors.Is(err, core.ErrGateCommandMissing) || !errors.Is(err, core.ErrGate) {
+		t.Fatalf("err = %v, want ErrGateCommandMissing", err)
+	}
+	if first, _, _ := strings.Cut(err.Error(), "\n"); first != "gate failed: no-such-cmd-xyz exited 127: a command it names does not exist here" {
+		t.Errorf("first line = %q", first)
+	}
+	if len(refs) != 0 {
+		t.Errorf("gate-fix runs = %d, want 0", len(refs))
+	}
+	if fixes := e.store.events("gate-fix"); len(fixes) != 0 {
+		t.Errorf("gate-fix events = %+v", fixes)
+	}
+	e.assertUntouched(head)
+}
+
+func TestLandGateFixRoundsReuseTheWatchdogChoice(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	var refs []core.StepRef
+	g := e.gate()
+	g.FixRounds = 1
+	g.Runner = fixingRunner(e, &refs)
+	p := choosing(g, "test -f fix1.txt")
+
+	_, err := g.Land(context.Background(), phaseOne("`test -f fix1.txt` is green and `app-api` serves the page."))
+
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if len(p.asked) != 1 {
+		t.Errorf("asked %d times, want 1", len(p.asked))
+	}
+	if len(refs) != 1 || refs[0].Vars["GateCommand"] != "test -f fix1.txt" {
+		t.Errorf("gate-fix runs = %+v", refs)
+	}
+}
+
+func TestLandGateNeverAsksForTheGateOfAPhaseWithoutDoneWhen(t *testing.T) {
+	t.Run("plan", func(t *testing.T) {
+		e := newLandEnv(t)
+		e.phaseWork(1, "feature.txt", "new\n")
+		g := e.gate()
+		p := g.Picker.(*gatePicker)
+
+		if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+			t.Fatalf("Land: %v", err)
+		}
+		if len(p.asked) != 0 {
+			t.Errorf("asked %q", p.asked)
+		}
+	})
+	t.Run("item gate", func(t *testing.T) {
+		e := newLandEnv(t)
+		e.itemWork(1, map[string]string{
+			".task-plans/phase-1-first.md": itemPlan,
+			"feature_test.sh":              "test -f feature.txt\n",
+			"feature.txt":                  "new\n",
+		})
+		g, _ := e.itemGate("true")
+		p := g.Picker.(*gatePicker)
+
+		if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
+			t.Fatalf("Land: %v", err)
+		}
+		if len(p.asked) != 0 {
+			t.Errorf("asked %q", p.asked)
+		}
+	})
+}
+
+func TestAGatefixBlockerResolvedContinueEndsTheLandWithNoFurtherFixRound(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	head := e.head()
+	var refs []core.StepRef
+	g := e.gate()
+	g.FixRounds = 2
+	g.Runner = failingFixThen(e, &refs)
+	script := &blockerScript{answers: []core.Resolution{{Action: "continue", By: "maintainer", Citation: "maintainer"}}}
+	g.Raise = script.raise
+
+	_, err := g.Land(context.Background(), phaseOne("test -f fix2.txt"))
+
+	if !errors.Is(err, core.ErrContinued) || !strings.Contains(err.Error(), "could not fix") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(script.blockers) != 1 || !slices.Contains(script.blockers[0].Actions, "continue") {
+		t.Fatalf("blockers = %+v", script.blockers)
+	}
+	if len(refs) != 1 {
+		t.Errorf("gate-fix runs = %d", len(refs))
+	}
+	e.assertUntouched(head)
+}

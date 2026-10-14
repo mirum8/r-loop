@@ -340,6 +340,33 @@ func TestResolveBlockerIsRecordedThenResumesThenReachesItsHandler(t *testing.T) 
 	}
 }
 
+func TestResolveBlockerPassesContinueThroughWithItsDescription(t *testing.T) {
+	s := serveWatchdog(t, &memStore{})
+	var got string
+	s.Handle(WatchdogHandlers{
+		ResolveBlocker: func(id, action, rule, addendum string, keys []string, provider, model, effort, maintainerSaid string) (string, string) {
+			got = id + "|" + action + "|" + maintainerSaid
+			return "authorised", ""
+		},
+	})
+	cs := connect(t, s.WatchdogURL())
+
+	out := call(t, cs, "resolve_blocker", map[string]any{"id": "b3", "action": "continue", "maintainer_said": "go on"})
+
+	if out["decision"] != "authorised" || got != "b3|continue|go on" {
+		t.Fatalf("out = %+v, handler saw %q", out, got)
+	}
+	tools, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name == "resolve_blocker" && !strings.Contains(tool.Description, "continue re-enters the held step or land as r-loop resume would") {
+			t.Errorf("description %q", tool.Description)
+		}
+	}
+}
+
 func TestApplyFixIsRecordedThenResumesThenReachesItsHandler(t *testing.T) {
 	st := &memStore{}
 	s := serveWatchdog(t, st)
@@ -447,7 +474,7 @@ func TestWatchdogPathListsNoAskTool(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	if want := []string{"answer_dialog", "answer_question", "apply_fix", "ask_maintainer", "continue_run", "pause_run", "propose_remedy", "resolve_blocker", "restart_step", "run_status", "signal", "step_info", "stop_run", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
+	if want := []string{"answer_dialog", "answer_question", "apply_fix", "ask_maintainer", "choose_gate", "continue_run", "pause_run", "propose_remedy", "resolve_blocker", "restart_step", "run_status", "signal", "step_info", "stop_run", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
 		t.Fatalf("watchdog tools = %v, want %v", names, want)
 	}
 }
@@ -497,7 +524,7 @@ func TestWatchdogToolsOnAStepPathAre404(t *testing.T) {
 	if len(tools.Tools) != 1 || tools.Tools[0].Name != "ask_watchdog" {
 		t.Fatalf("step tools = %+v", tools.Tools)
 	}
-	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "apply_fix", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info", "stop_run", "pause_run", "continue_run"} {
+	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "apply_fix", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info", "stop_run", "pause_run", "continue_run", "choose_gate"} {
 		_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{"kind": "halt", "step": "phase-3/implement"}})
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not found") {
 			t.Fatalf("%s on a step path: err = %v", name, err)
@@ -762,6 +789,45 @@ func TestSubmitGateHandsTheDecisionToItsHandler(t *testing.T) {
 	}
 	if f := st.records()[0].Event.Fields; f["tool"] != "submit_gate" || f["decision"] != "revise" || f["maintainer_said"] != "drop 4 and split G1" {
 		t.Fatalf("record = %+v", f)
+	}
+}
+
+func TestChooseGateHandsThePhaseAndCommandsToItsHandler(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	var phase string
+	var commands []string
+	s.Handle(WatchdogHandlers{ChooseGate: func(p string, c []string) (bool, string) {
+		phase, commands = p, c
+		return false, "not a candidate"
+	}})
+
+	out := call(t, connect(t, s.WatchdogURL()), "choose_gate", map[string]any{"phase": "46", "commands": []any{"mvn test", "make"}})
+
+	if out["accepted"] != false || out["reason"] != "not a candidate" {
+		t.Fatalf("out = %+v", out)
+	}
+	if phase != "46" || !slices.Equal(commands, []string{"mvn test", "make"}) {
+		t.Fatalf("handler got %q %q", phase, commands)
+	}
+	if f := st.records()[0].Event.Fields; f["tool"] != "choose_gate" || f["phase"] != "46" || f["commands"] != `["mvn test","make"]` {
+		t.Fatalf("record = %+v", f)
+	}
+}
+
+func TestChooseGatePassesAnEmptyListThrough(t *testing.T) {
+	s := serveWatchdog(t, &memStore{})
+	var commands []string
+	called := false
+	s.Handle(WatchdogHandlers{ChooseGate: func(_ string, c []string) (bool, string) {
+		called, commands = true, c
+		return true, ""
+	}})
+
+	out := call(t, connect(t, s.WatchdogURL()), "choose_gate", map[string]any{"phase": "2", "commands": []any{}})
+
+	if out["accepted"] != true || !called || len(commands) != 0 {
+		t.Fatalf("out = %+v, called %v, commands %q", out, called, commands)
 	}
 }
 

@@ -32,6 +32,7 @@ type WatchdogHandlers struct {
 
 	SubmitTriage func(core.Triage) (bool, string, string)
 	SubmitGate   func(core.GateDecision) (bool, string, string)
+	ChooseGate   func(phase string, commands []string) (bool, string)
 
 	RunStatus func() (core.RunStatusView, error)
 	StepInfo  func(step string) (core.StepInfo, bool)
@@ -67,6 +68,11 @@ type signalInput struct {
 	Step     string `json:"step"`
 	Reason   string `json:"reason"`
 	Evidence string `json:"evidence"`
+}
+
+type chooseGateInput struct {
+	Phase    string   `json:"phase"`
+	Commands []string `json:"commands"`
 }
 
 type proposeInput struct {
@@ -199,7 +205,7 @@ type decisionOutput struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
-var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "apply_fix": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true, "stop_run": true, "pause_run": true, "continue_run": true}
+var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "apply_fix": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true, "stop_run": true, "pause_run": true, "continue_run": true, "choose_gate": true}
 
 func (s *Server) Handle(h WatchdogHandlers) {
 	s.mu.Lock()
@@ -237,6 +243,23 @@ func (s *Server) watchdogServer() *mcp.Server {
 			return nil, acceptedOutput{Reason: notAvailable}, nil
 		}
 		ok, reason := h(core.Signal{Kind: core.SignalKind(in.Kind), Source: core.SourceWatchdog, Step: key, Reason: in.Reason, Evidence: in.Evidence})
+		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "choose_gate",
+		Description: "Choose a phase's gate after `choose gate phase <N>`: the candidates this tree can run as shell commands, verbatim, in any order; an empty list when none is.",
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in chooseGateInput) (*mcp.CallToolResult, acceptedOutput, error) {
+		if err := s.record("choose_gate", "", map[string]string{"phase": in.Phase, "commands": marshal(in.Commands)}); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		if err := s.resume(); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		h := s.handlersNow().ChooseGate
+		if h == nil {
+			return nil, acceptedOutput{Reason: notAvailable}, nil
+		}
+		ok, reason := h(in.Phase, in.Commands)
 		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
@@ -360,7 +383,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "resolve_blocker",
-		Description: "Clear an open blocker the driver holds the run on, with one of its actions: retry, keys, switch, fix, skip, block or stop. retry takes an addendum for the next attempt; keys takes the herdr keys to press in its pane and rule: the text of one configured dialog rule, exactly; switch takes provider, and model and effort for a provider that is not the row's fallback; fix hands it to the fixer session with the addendum as your diagnosis, and the blocker stays open until you call apply_fix. Anything not authorised on its own comes back ask: ask the maintainer in your own session, then call again with maintainer_said: their reply, quoted. block and stop are always authorised.",
+		Description: "Clear an open blocker the driver holds the run on, with one of its actions: retry, keys, switch, fix, skip, continue, block or stop. retry takes an addendum for the next attempt; continue re-enters the held step or land as r-loop resume would, in the same process and with no addendum: a step resumes from its failed attempt's recorded review round, a land reads its phase from the plan again; it is authorised on its own only in an unattended run; keys takes the herdr keys to press in its pane and rule: the text of one configured dialog rule, exactly; switch takes provider, and model and effort for a provider that is not the row's fallback; fix hands it to the fixer session with the addendum as your diagnosis, and the blocker stays open until you call apply_fix. Anything not authorised on its own comes back ask: ask the maintainer in your own session, then call again with maintainer_said: their reply, quoted. block and stop are always authorised.",
 	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in resolveBlockerInput) (*mcp.CallToolResult, decisionOutput, error) {
 		if err := s.record("resolve_blocker", "", map[string]string{"id": in.ID, "action": in.Action, "rule": in.Rule, "addendum": in.Addendum, "keys": strings.Join(in.Keys, " "), "provider": in.Provider, "model": in.Model, "effort": in.Effort, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil

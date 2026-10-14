@@ -31,6 +31,13 @@ file as `config.bak`), reloads the config and retries the blocked step in the sa
 does not count against the step's retries. On reject or a failed apply the blocker stays open for
 the watchdog's other actions. `--unattended` runs never use the fixer.
 
+When the cause was transient (the machine slept, a provider glitched, a pane died) or you fixed it
+yourself (corrected a `Done when:` line on the run branch, changed the config), the watchdog can
+resolve a held step or landing with **continue**: r-loop carries on in the same process the way
+`r-loop resume` would. A step resumes at its recorded review round, with no addendum; a landing
+reads its phase from `todo.md` again and asks the watchdog for the gate again. The watchdog asks
+you first; with `--unattended` it decides alone. A continue counts against the step's retries.
+
 ## Requirements
 
 - Go 1.25 or newer (only to build)
@@ -73,7 +80,7 @@ r-loop reads two kinds of files.
 | `Depends on:` | Phases that must land first. If a phase is blocked, its dependents are skipped. |
 | `Files:` | Files the phase may change. The watchdog warns about changes to other files. |
 | `- [ ]` items | The work of the phase. |
-| `Done when:` | The check command. Code spans in this line are joined with `&&` and run at land time. |
+| `Done when:` | The check. At land time the watchdog picks which code spans in this line are commands; those are joined with `&&` and run. |
 
 A `## Resolve first` section lists open questions and paperwork that block phases. At the start
 of a run, the watchdog walks through these entries with you. Phases blocked by an entry that is

@@ -403,7 +403,7 @@ func TestUnattendedNeverAsksAndStillBlocksOrStops(t *testing.T) {
 		{"keys", []func(*resolveArgs){keysUnder("", "enter")}},
 		{"switch", []func(*resolveArgs){onProvider("gemini", "pro", "high")}},
 	} {
-		if d, reason := r.resolve("b1", c.action, c.opts...); d != decisionRefused || reason != "unattended: block or stop" {
+		if d, reason := r.resolve("b1", c.action, c.opts...); d != decisionRefused || reason != "unattended: continue, block or stop" {
 			t.Errorf("%s: %s %q", c.action, d, reason)
 		}
 	}
@@ -678,7 +678,7 @@ func TestAFailedStepRaisesAStepBlockerAndRetryRerunsItWithTheAddendum(t *testing
 	if code != 0 {
 		t.Fatalf("exit %d, want 0", code)
 	}
-	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b, Blocker{Source: "step", Phase: "2", Step: "implement", Reason: "tests red", Actions: []string{"retry", "switch", "fix", "block", "stop"}}) {
+	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b, Blocker{Source: "step", Phase: "2", Step: "implement", Reason: "tests red", Actions: []string{"retry", "switch", "fix", "block", "stop", "continue"}}) {
 		t.Fatalf("blockers %+v", *seen)
 	}
 	if got := r.agents(); !reflect.DeepEqual(got, []string{"rloop-p2-plan", "rloop-p2-implement", "rloop-p2-implement-a2"}) {
@@ -812,7 +812,7 @@ func TestAMergeConflictRaisesALandBlockerAndRetryLandsAfterTheFix(t *testing.T) 
 	if *calls != 2 {
 		t.Errorf("Land called %d times", *calls)
 	}
-	want := Blocker{Source: "land", Phase: "2", Step: "land", Reason: ErrMergeConflict.Error() + ": a.go", Actions: []string{"retry", "fix", "block", "stop"}}
+	want := Blocker{Source: "land", Phase: "2", Step: "land", Reason: ErrMergeConflict.Error() + ": a.go", Actions: []string{"retry", "fix", "block", "stop", "continue"}}
 	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b, want) {
 		t.Fatalf("blockers %+v", *seen)
 	}
@@ -844,6 +844,33 @@ func TestARedGateRaisesALandBlockerWithItsOutputAndBlockGivesExit1(t *testing.T)
 	}
 }
 
+func TestAGateTheWatchdogDidNotChooseRaisesALandBlockerAndRetryAsksAgain(t *testing.T) {
+	r, seen := newSourceRig(t, resolveAs("retry"))
+	calls := landingOnce(r, noGateChosen("2", "it called no choose_gate"))
+
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	if code != 0 || *calls != 2 {
+		t.Fatalf("exit %d, land calls %d", code, *calls)
+	}
+	want := Blocker{Source: "land", Phase: "2", Step: "land", Reason: "the watchdog chose no gate for phase 2: it called no choose_gate", Actions: []string{"retry", "fix", "block", "stop", "continue"}}
+	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b, want) {
+		t.Fatalf("blockers %+v", *seen)
+	}
+}
+
+func TestAGateCommandMissingRaisesALandBlocker(t *testing.T) {
+	r, seen := newSourceRig(t, resolveAs("block"))
+	landingOnce(r, fmt.Errorf("%w: app-api exited 127: %w\nsh: app-api: command not found", ErrGate, ErrGateCommandMissing))
+
+	if code := r.run(RunOptions{Phases: []string{"2"}}); code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	if len(*seen) != 1 || (*seen)[0].b.Source != "land" || (*seen)[0].b.Reason != "gate failed: app-api exited 127: a command it names does not exist here" {
+		t.Fatalf("blockers %+v", *seen)
+	}
+}
+
 func TestALandBlockerStopHaltsTheRunWithExit5(t *testing.T) {
 	r, _ := newSourceRig(t, resolveAs("stop"))
 	landingOnce(r, errors.New("primary tree is not clean: a.go"))
@@ -871,7 +898,7 @@ func TestAGateProbeErrorRaisesAGateProbeBlockerAndRetryProbesAgain(t *testing.T)
 	if code != 0 || *calls != 2 {
 		t.Fatalf("exit %d, Land calls %d", code, *calls)
 	}
-	if len(*seen) != 1 || (*seen)[0].b.Source != "gate-probe" || (*seen)[0].b.Step != "gate" || !reflect.DeepEqual((*seen)[0].b.Actions, []string{"retry", "fix", "block", "stop"}) {
+	if len(*seen) != 1 || (*seen)[0].b.Source != "gate-probe" || (*seen)[0].b.Step != "gate" || !reflect.DeepEqual((*seen)[0].b.Actions, []string{"retry", "fix", "block", "stop", "continue"}) {
 		t.Fatalf("blockers %+v", *seen)
 	}
 }
@@ -1372,7 +1399,7 @@ func TestAnUnattendedRunRefusesAFix(t *testing.T) {
 
 	d, reason := r.resolve("b1", "fix")
 
-	if d != decisionRefused || reason != "unattended: block or stop" {
+	if d != decisionRefused || reason != "unattended: continue, block or stop" {
 		t.Errorf("fix %s %q", d, reason)
 	}
 	if got := r.events("fix-started"); len(got) != 0 {
@@ -1542,5 +1569,301 @@ func TestAStepAfterAFixInTheSamePhaseStartsOnTheReloadedKind(t *testing.T) {
 	}
 	if want := []string{"codex//", "claude/opus/high", "claude/opus/high"}; !reflect.DeepEqual(r.resolved, want) {
 		t.Errorf("resolved %v, want %v", r.resolved, want)
+	}
+}
+
+func continuable() Blocker {
+	b := stepBlocker()
+	b.Actions = []string{"retry", "switch", "fix", "block", "stop", "continue"}
+	return b
+}
+
+func TestAnUnattendedRunContinuesABlockerOnItsOwn(t *testing.T) {
+	r := newBlockerRig(t)
+	r.router.Dog.Unattended = true
+	r.rem.Allow = nil
+	ch := r.open(t, continuable())
+
+	if d, reason := r.resolve("b1", "continue"); d != decisionAuthorised {
+		t.Fatalf("continue %s %q", d, reason)
+	}
+
+	if res := resolved(t, ch); !reflect.DeepEqual(res, Resolution{ID: "b1", Action: "continue", By: "watchdog", Citation: "unattended"}) {
+		t.Errorf("resolution %+v", res)
+	}
+	if r.waitingEvents() != 0 {
+		t.Error("an unattended run asked the maintainer")
+	}
+}
+
+func TestAnUnattendedRunIsToldItMayContinueBlockOrStop(t *testing.T) {
+	r := newBlockerRig(t)
+	r.router.Dog.Unattended = true
+	r.rem.Allow = nil
+	r.open(t, continuable())
+
+	if d, reason := r.resolve("b1", "retry"); d != decisionRefused || reason != "unattended: continue, block or stop" {
+		t.Errorf("retry %s %q", d, reason)
+	}
+}
+
+func TestAnAttendedContinueAsksTheMaintainerEvenWhenRestartIsAllowListed(t *testing.T) {
+	r := newBlockerRig(t)
+	ch := r.open(t, continuable())
+
+	if d, reason := r.resolve("b1", "continue"); d != decisionAsk || reason != askForBlocker {
+		t.Fatalf("continue %s %q", d, reason)
+	}
+	evs := r.events("watchdog-waiting")
+	if len(evs) != 1 || evs[0].Fields["options"] != "retry; switch provider; hand to the fixer; continue as resume would; block this phase; stop the run" {
+		t.Fatalf("waiting %+v", evs)
+	}
+	stillHeld(t, ch)
+
+	if d, reason := r.resolve("b1", "continue", said("go on, it was a glitch")); d != decisionAuthorised {
+		t.Fatalf("continue %s %q", d, reason)
+	}
+	if res := resolved(t, ch); !reflect.DeepEqual(res, Resolution{ID: "b1", Action: "continue", By: "maintainer", Citation: "maintainer"}) {
+		t.Errorf("resolution %+v", res)
+	}
+}
+
+func TestContinueSharesTheRetryBudget(t *testing.T) {
+	for _, c := range []struct{ before, now string }{{"retry", "continue"}, {"continue", "retry"}, {"switch", "continue"}} {
+		t.Run(c.before+" then "+c.now, func(t *testing.T) {
+			r := newBlockerRig(t)
+			r.rem.MaxRestarts = 1
+			ev := Event{Kind: "blocker-resolved", Fields: map[string]string{"id": "b0", "action": c.before, "by": "maintainer", "source": "step", "step": "phase-2/implement"}}
+			r.store.Append("run-1", Record{Kind: RecordEvent, Event: &ev})
+			ch := r.open(t, continuable())
+
+			want := c.now + " limit 1 reached for phase-2/implement"
+			if d, reason := r.resolve("b1", c.now, said("yes")); d != decisionRefused || reason != want {
+				t.Errorf("%s: %s %q", c.now, d, reason)
+			}
+			stillHeld(t, ch)
+		})
+	}
+}
+
+func continueRun(t *testing.T, recorded bool) (*eventsRig, *[]raised, *[]StepRef) {
+	r, seen := newSourceRig(t, func(Blocker) Resolution {
+		return Resolution{Action: "continue", By: "maintainer", Citation: "maintainer"}
+	})
+	var refs []StepRef
+	r.loop.Runners["diff"] = stepRunnerFunc(func(ctx context.Context, ref StepRef, obs Observer) Outcome {
+		refs = append(refs, ref)
+		if ref.Key.Attempt > 1 {
+			return Outcome{State: StepOK}
+		}
+		if recorded {
+			for _, ev := range []Event{
+				{Kind: "review-round", Phase: "2", Step: "implement", Fields: map[string]string{"round": "1", "attempt": "1", "tree": "tree-r1"}},
+				{Kind: EventCommitSubject, Phase: "2", Step: "implement", Fields: map[string]string{"attempt": "1", "subject": "feat(store): add the store"}},
+				{Kind: "review-round", Phase: "2", Step: "implement", Fields: map[string]string{"round": "2", "attempt": "1", "tree": "tree-r2"}},
+			} {
+				r.store.Append("run-1", Record{Kind: RecordEvent, Event: &ev})
+			}
+		}
+		return Outcome{State: StepFailed, Reason: "reviewer pane died"}
+	})
+	if code := r.run(RunOptions{Phases: []string{"2"}}); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	if len(refs) != 2 || refs[1].Key.Attempt != 2 {
+		t.Fatalf("refs %+v", refs)
+	}
+	return r, seen, &refs
+}
+
+func TestAStepBlockerResolvedContinueResumesTheFailedAttemptAtItsRecordedRound(t *testing.T) {
+	r, seen, refs := continueRun(t, true)
+
+	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b.Actions, []string{"retry", "switch", "fix", "block", "stop", "continue"}) {
+		t.Fatalf("blockers %+v", *seen)
+	}
+	next := (*refs)[1]
+	if next.ReviewFrom != 2 || next.PrevRoundTree != "tree-r1" || next.Subject != "feat(store): add the store" {
+		t.Errorf("resumed ref ReviewFrom %d PrevRoundTree %q Subject %q", next.ReviewFrom, next.PrevRoundTree, next.Subject)
+	}
+	if a, _ := next.Vars["Addendum"].(string); a != "" {
+		t.Errorf("addendum %q", a)
+	}
+	restarts := r.events("restart")
+	want := map[string]string{"step": "phase-2/implement", "attempt": "2", "addendum": "", "provider": "", "remedy": "b1", "citation": "continue"}
+	if len(restarts) != 1 || !reflect.DeepEqual(restarts[0].Fields, want) {
+		t.Errorf("restarts %+v", restarts)
+	}
+	if n := r.loop.restarts["phase-2/implement"]; n != 1 {
+		t.Errorf("restarts spent %d", n)
+	}
+}
+
+func TestAStepBlockerResolvedContinueWithNoRecordedRoundStartsAFreshAttempt(t *testing.T) {
+	_, _, refs := continueRun(t, false)
+
+	next := (*refs)[1]
+	if next.ReviewFrom != 0 || next.PrevRoundTree != "" || next.Subject != "" {
+		t.Errorf("fresh ref ReviewFrom %d PrevRoundTree %q Subject %q", next.ReviewFrom, next.PrevRoundTree, next.Subject)
+	}
+	if a, _ := next.Vars["Addendum"].(string); a != "" {
+		t.Errorf("addendum %q", a)
+	}
+}
+
+func editedPlan(doneWhen string) *fakePlanSource {
+	p := threePhasePlan()
+	p.Phases[1].DoneWhen = doneWhen
+	return &fakePlanSource{Plan: p}
+}
+
+func landingWith(r *eventsRig, errs ...error) *[]string {
+	var doneWhens []string
+	r.loop.Lander = landerFunc(func(ctx context.Context, ph Phase) (Landing, error) {
+		doneWhens = append(doneWhens, ph.DoneWhen)
+		if n := len(doneWhens); n <= len(errs) {
+			return Landing{}, errs[n-1]
+		}
+		l := Landing{Phase: ph.ID, MergeSHA: "merge-" + ph.Title}
+		r.store.Append("run-1", Record{Kind: RecordLanding, Landing: &l})
+		return l, nil
+	})
+	return &doneWhens
+}
+
+func TestALandBlockerResolvedContinueLandsThePhaseReadAgainFromThePlan(t *testing.T) {
+	r, seen := newSourceRig(t, resolveAs("continue"))
+	src := editedPlan("`go test ./store/...`")
+	r.loop.PlanSource = src
+	doneWhens := landingWith(r, fmt.Errorf("%w: app-api exited 127: %w", ErrGate, ErrGateCommandMissing))
+
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b.Actions, []string{"retry", "fix", "block", "stop", "continue"}) {
+		t.Fatalf("blockers %+v", *seen)
+	}
+	if !reflect.DeepEqual(*doneWhens, []string{"", "`go test ./store/...`"}) {
+		t.Errorf("Done when lines handed to Land %q", *doneWhens)
+	}
+	if !slices.Contains(src.Calls(), "PlanSource.Read docs/x/todo.md") {
+		t.Errorf("plan source calls %v", src.Calls())
+	}
+	if landed := r.events("landed"); len(landed) != 1 {
+		t.Errorf("landed %+v", landed)
+	}
+}
+
+func TestALandBlockerContinuedOnAPhaseGoneFromThePlanIsRaisedAgain(t *testing.T) {
+	answers := []string{"continue", "block"}
+	var mu sync.Mutex
+	r, seen := newSourceRig(t, func(Blocker) Resolution {
+		mu.Lock()
+		defer mu.Unlock()
+		a := answers[0]
+		answers = answers[1:]
+		return Resolution{Action: a, Citation: "always"}
+	})
+	p := threePhasePlan()
+	p.Phases = slices.Delete(p.Phases, 1, 2)
+	r.loop.PlanSource = &fakePlanSource{Plan: p}
+	doneWhens := landingWith(r, fmt.Errorf("%w: a.go", ErrMergeConflict))
+
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	if code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	if len(*seen) != 2 || (*seen)[1].b.Source != "land" || (*seen)[1].b.Reason != "phase 2 is no longer in docs/x/todo.md" {
+		t.Fatalf("blockers %+v", *seen)
+	}
+	if len(*doneWhens) != 1 {
+		t.Errorf("Land called %d times", len(*doneWhens))
+	}
+}
+
+func TestAGatefixContinueLandsThePhaseReadAgainWithoutAnotherBlocker(t *testing.T) {
+	r, seen := newSourceRig(t, resolveAs("block"))
+	r.loop.PlanSource = editedPlan("`go test ./store/...`")
+	doneWhens := landingWith(r, fmt.Errorf("%w: %w", ErrContinued, fmt.Errorf("%w: gate-fix round 1 ended failed: x", ErrGate)))
+
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if len(*seen) != 0 {
+		t.Errorf("blockers %+v", *seen)
+	}
+	if !reflect.DeepEqual(*doneWhens, []string{"", "`go test ./store/...`"}) {
+		t.Errorf("Done when lines handed to Land %q", *doneWhens)
+	}
+}
+
+func TestAStepBlockerResolvedContinueTakesTheStepKindReadAgainFromTheConfig(t *testing.T) {
+	r, _ := newSourceRig(t, resolveAs("continue"))
+	reloads := 0
+	r.loop.Reload = func() error {
+		reloads++
+		kinds := slices.Clone(r.loop.kinds())
+		for i := range kinds {
+			kinds[i].Row.Model = "fixed-model"
+		}
+		r.loop.SetKinds(kinds)
+		return nil
+	}
+	var refs []StepRef
+	r.loop.Runners["diff"] = stepRunnerFunc(func(ctx context.Context, ref StepRef, obs Observer) Outcome {
+		refs = append(refs, ref)
+		if ref.Key.Attempt > 1 {
+			return Outcome{State: StepOK}
+		}
+		return Outcome{State: StepFailed, Reason: "model not found"}
+	})
+
+	if code := r.run(RunOptions{Phases: []string{"2"}}); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	if reloads != 1 {
+		t.Errorf("reloads %d, want 1", reloads)
+	}
+	if len(refs) != 2 || refs[1].Kind.Row.Model != "fixed-model" {
+		t.Fatalf("refs %+v", refs)
+	}
+}
+
+func TestAStepBlockerContinuedOnAConfigThatDoesNotLoadFailsTheStep(t *testing.T) {
+	r, _ := newSourceRig(t, resolveAs("continue"))
+	r.loop.Reload = func() error { return errors.New("unknown key steps.plan.modle") }
+	var refs []StepRef
+	r.loop.Runners["diff"] = stepRunnerFunc(func(ctx context.Context, ref StepRef, obs Observer) Outcome {
+		refs = append(refs, ref)
+		return Outcome{State: StepFailed, Reason: "model not found"}
+	})
+
+	if code := r.run(RunOptions{Phases: []string{"2"}}); code == 0 {
+		t.Fatal("exit 0, want a failed run")
+	}
+	if len(refs) != 1 {
+		t.Errorf("attempts %d, want 1", len(refs))
+	}
+	if !slices.ContainsFunc(r.face.events(), func(ev Event) bool { return strings.Contains(ev.Fields["reason"], "unknown key steps.plan.modle") }) {
+		t.Errorf("no event carries the config error: %+v", r.face.events())
+	}
+}
+
+func TestALandBlockerResolvedContinueReadsTheConfigAgain(t *testing.T) {
+	r, _ := newSourceRig(t, resolveAs("continue"))
+	reloads := 0
+	r.loop.Reload = func() error { reloads++; return nil }
+	landingWith(r, fmt.Errorf("%w: app-api exited 127: %w", ErrGate, ErrGateCommandMissing))
+
+	if code := r.run(RunOptions{Phases: []string{"2"}}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if reloads != 1 {
+		t.Errorf("reloads %d, want 1", reloads)
 	}
 }

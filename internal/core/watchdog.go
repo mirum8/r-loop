@@ -26,6 +26,7 @@ type Watchdog struct {
 	Pane, Label                            string
 	Allow, Dialogs                         []string
 	Unattended                             bool
+	GateTimeout                            time.Duration
 	Sleep                                  func(time.Duration)
 	OnGone                                 func()
 
@@ -265,6 +266,19 @@ func (d *Watchdog) NotifyContext(ctx context.Context, text string, wait bool, ti
 	return d.promptWith(ctx, text, wait, timeout, func() error {
 		return d.Host.Prompt(d.agent(), text, wait, timeout)
 	})
+}
+
+func (d *Watchdog) PickGate(ctx context.Context, phase Phase, candidates []string) error {
+	if !d.live() {
+		return errors.New("the watchdog is unreachable")
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "choose gate phase %s\nDone when: %s\n\n", phase.ID, phase.DoneWhen)
+	for i, c := range candidates {
+		fmt.Fprintf(&b, "%d. `%s`\n", i+1, c)
+	}
+	fmt.Fprintf(&b, "\nCall choose_gate with phase %s and the candidates this tree can run as shell commands, verbatim; an empty list when none is.", phase.ID)
+	return d.NotifyContext(ctx, b.String(), true, d.GateTimeout)
 }
 
 func (d *Watchdog) prompt(text string, wait bool, timeout time.Duration) error {

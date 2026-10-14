@@ -23,6 +23,7 @@ var resumeEvents = map[string]bool{
 	"restart":          true,
 	"item-skipped":     true,
 	gateDiscovered:     true,
+	gateChosen:         true,
 }
 
 func FatalRecord(rec Record) bool {

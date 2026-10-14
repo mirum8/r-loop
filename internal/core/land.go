@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,7 +19,13 @@ var codeSpanRe = regexp.MustCompile("`([^`]+)`")
 var printsBeforeRe = regexp.MustCompile(`(?i)\b(prints|lists)(\s+the)?\s*$`)
 var printsNothingRe = regexp.MustCompile(`(?i)^\s*(prints|lists)\s+nothing\b`)
 
-func gateCommand(doneWhen string) string {
+type gateClause struct {
+	cmd      string
+	literals []string
+	nothing  bool
+}
+
+func gateClauses(doneWhen string) []gateClause {
 	var spans [][]int
 	for _, m := range codeSpanRe.FindAllStringSubmatchIndex(doneWhen, -1) {
 		if strings.TrimSpace(doneWhen[m[2]:m[3]]) != "" {
@@ -25,14 +33,12 @@ func gateCommand(doneWhen string) string {
 		}
 	}
 	if len(spans) == 0 {
-		return strings.TrimSpace(doneWhen)
+		if line := strings.TrimSpace(doneWhen); line != "" {
+			return []gateClause{{cmd: line}}
+		}
+		return nil
 	}
-	type clause struct {
-		cmd      string
-		literals []string
-		nothing  bool
-	}
-	var clauses []clause
+	var clauses []gateClause
 	prevEnd := 0
 	for i, m := range spans {
 		gap := doneWhen[prevEnd:m[0]]
@@ -44,12 +50,27 @@ func gateCommand(doneWhen string) string {
 			if i+1 < len(spans) {
 				nextStart = spans[i+1][0]
 			}
-			clauses = append(clauses, clause{cmd: value, nothing: printsNothingRe.MatchString(doneWhen[m[1]:nextStart])})
+			clauses = append(clauses, gateClause{cmd: value, nothing: printsNothingRe.MatchString(doneWhen[m[1]:nextStart])})
 		}
 		prevEnd = m[1]
 	}
+	return clauses
+}
+
+func gateCandidates(doneWhen string) []string {
+	var out []string
+	for _, c := range gateClauses(doneWhen) {
+		out = append(out, c.cmd)
+	}
+	return out
+}
+
+func renderGate(doneWhen string, chosen []string) string {
 	var rendered []string
-	for _, c := range clauses {
+	for _, c := range gateClauses(doneWhen) {
+		if !slices.Contains(chosen, c.cmd) {
+			continue
+		}
 		if !c.nothing && len(c.literals) == 0 {
 			rendered = append(rendered, c.cmd)
 			continue
@@ -68,7 +89,7 @@ func gateCommand(doneWhen string) string {
 		if strings.ContainsAny(cmd, "#\n") {
 			cmd = "\n" + cmd + "\n"
 		}
-		rendered = append(rendered, `{ out=$( ( `+cmd+` ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; `+strings.Join(checks, " && ")+`; }`)
+		rendered = append(rendered, `{ out=$( ( `+cmd+` ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; [ "$st" != 127 ] || exit 127; `+strings.Join(checks, " && ")+`; }`)
 	}
 	return strings.Join(rendered, " && ")
 }
@@ -78,7 +99,16 @@ var (
 	ErrLanding         = errors.New("landing refused")
 	ErrDirtyTree       = errors.New("primary tree is not clean")
 	ErrUnfinishedMerge = errors.New("unfinished merge")
+
+	ErrGateCommandMissing = errors.New("a command it names does not exist here")
+	ErrContinued          = errors.New("continued as resume would")
 )
+
+const gateChosen = "gate-chosen"
+
+func noGateChosen(phase, why string) error {
+	return fmt.Errorf("the watchdog chose no gate for phase %s: %s", phase, why)
+}
 
 func cleanTree(repo Repo) error {
 	dirty, err := repo.Dirty("")
@@ -130,16 +160,97 @@ type LandGate struct {
 	Suite           Suite
 	Raise           func(context.Context, Blocker) (Resolution, bool)
 	Watcher         Watcher
+	Picker          GatePicker
 	LocalTodo       bool
+
+	pickMu  sync.Mutex
+	picking *gatePick
+}
+
+type gatePick struct {
+	phase, line string
+	candidates  []string
+	command     string
+	done        bool
+}
+
+type chosenGate struct {
+	command, skip string
+}
+
+func (g *LandGate) pickGate(ctx context.Context, phase Phase) (chosenGate, error) {
+	candidates := gateCandidates(phase.DoneWhen)
+	if len(candidates) == 0 {
+		return chosenGate{}, nil
+	}
+	if g.Picker == nil {
+		return chosenGate{}, noGateChosen(phase.ID, "no watchdog is running")
+	}
+	p := &gatePick{phase: phase.ID, line: phase.DoneWhen, candidates: candidates}
+	g.pickMu.Lock()
+	g.picking = p
+	g.pickMu.Unlock()
+	err := g.Picker.PickGate(ctx, phase, candidates)
+	g.pickMu.Lock()
+	g.picking = nil
+	g.pickMu.Unlock()
+	if cerr := ctx.Err(); cerr != nil {
+		return chosenGate{}, fmt.Errorf("interrupted: %w", cerr)
+	}
+	if !p.done {
+		why := "it called no choose_gate"
+		if err != nil {
+			why = err.Error()
+		}
+		return chosenGate{}, noGateChosen(phase.ID, why)
+	}
+	if p.command == "" {
+		return chosenGate{skip: "watchdog chose no command"}, nil
+	}
+	return chosenGate{command: p.command}, nil
+}
+
+func (g *LandGate) ChooseGate(phase string, commands []string) (bool, string) {
+	g.pickMu.Lock()
+	defer g.pickMu.Unlock()
+	p := g.picking
+	if p == nil || p.phase != phase {
+		return false, fmt.Sprintf("no gate pick is open for phase %s", phase)
+	}
+	listed := make([]string, len(p.candidates))
+	for i, c := range p.candidates {
+		listed[i] = "`" + c + "`"
+	}
+	for i, c := range commands {
+		if !slices.Contains(p.candidates, c) {
+			return false, fmt.Sprintf("%q is not one of the line's candidates; choose from %s, verbatim", c, strings.Join(listed, ", "))
+		}
+		if slices.Contains(commands[:i], c) {
+			return false, fmt.Sprintf("%q is chosen twice", c)
+		}
+	}
+	command := renderGate(p.line, commands)
+	raw, _ := json.Marshal(append([]string{}, commands...))
+	now := time.Now()
+	ev := Event{At: now, Kind: gateChosen, Phase: phase, Step: "land", Fields: map[string]string{"phase": phase, "line": p.line, "commands": string(raw), "command": command}}
+	if err := g.Store.Append(g.RunID, Record{Kind: RecordEvent, At: now, Event: &ev}); err != nil {
+		return false, "record: " + err.Error()
+	}
+	p.command, p.done = command, true
+	return true, ""
 }
 
 func (g *LandGate) Land(ctx context.Context, phase Phase) (_ Landing, err error) {
 	if g.Watcher != nil {
 		defer func() { g.Watcher.LandEnded(phase.ID, err) }()
 	}
-	landing, command, output, err := g.attempt(ctx, phase)
+	gate, err := g.pickGate(ctx, phase)
+	if err != nil {
+		return Landing{}, err
+	}
+	landing, command, output, err := g.attempt(ctx, phase, gate)
 	kind := g.FixKind
-	for round := 1; errors.Is(err, ErrGate) && round <= g.FixRounds && g.Runner != nil; round++ {
+	for round := 1; errors.Is(err, ErrGate) && !errors.Is(err, ErrGateCommandMissing) && round <= g.FixRounds && g.Runner != nil; round++ {
 		g.emit(Event{Kind: "gate-fix", Phase: phase.ID, Step: "land", Fields: map[string]string{"phase": phase.ID, "round": strconv.Itoa(round)}})
 		out := g.fix(ctx, phase, kind, command, output, "")
 		for out.State != StepOK {
@@ -156,12 +267,14 @@ func (g *LandGate) Land(ctx context.Context, phase Phase) (_ Landing, err error)
 			case actionRetry:
 			case actionSwitch:
 				kind.Row.Provider, kind.Row.Model, kind.Row.Effort = res.Provider, res.Model, res.Effort
+			case actionContinue:
+				return Landing{}, fmt.Errorf("%w: %w", ErrContinued, ferr)
 			default:
 				return Landing{}, &resolvedError{res: res, err: ferr}
 			}
 			out = g.fix(ctx, phase, kind, command, output, res.Addendum)
 		}
-		landing, command, output, err = g.attempt(ctx, phase)
+		landing, command, output, err = g.attempt(ctx, phase, gate)
 	}
 	if err != nil {
 		return Landing{}, err
@@ -175,7 +288,7 @@ func (g *LandGate) Land(ctx context.Context, phase Phase) (_ Landing, err error)
 	return landing, nil
 }
 
-func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ string, err error) {
+func (g *LandGate) attempt(ctx context.Context, phase Phase, gate chosenGate) (_ Landing, _, _ string, err error) {
 	if err := recordFailed(g.Store); err != nil {
 		return Landing{}, "", "", fmt.Errorf("record: %w", err)
 	}
@@ -300,7 +413,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 	if landing.Added, landing.Deleted, err = g.Repo.DiffStat("", "HEAD"); err != nil {
 		return Landing{}, "", "", errors.Join(fmt.Errorf("diff size: %w", err), g.Repo.AbortMerge())
 	}
-	command := gateCommand(phase.DoneWhen)
+	command := gate.command
 	if itemGate {
 		item, err := g.itemCommand(phase)
 		if err != nil {
@@ -314,11 +427,18 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase) (_ Landing, _, _ st
 	}
 	if command == "" {
 		landing.GateSkipped = true
-		g.emit(Event{Kind: "gate-skipped", Phase: n, Step: "land", Fields: map[string]string{"phase": n}})
+		fields := map[string]string{"phase": n}
+		if gate.skip != "" {
+			fields["reason"] = gate.skip
+		}
+		g.emit(Event{Kind: "gate-skipped", Phase: n, Step: "land", Fields: fields})
 	} else {
 		g.stage(n, "gate", command)
 		code, output, err := g.Repo.Gate(ctx, "", command, g.gateLimits(n))
-		if err == nil && code != 0 {
+		switch {
+		case err == nil && code == 127:
+			err = fmt.Errorf("%w: %s exited 127: %w\n%s", ErrGate, command, ErrGateCommandMissing, output)
+		case err == nil && code != 0:
 			err = fmt.Errorf("%w: %s exited %d\n%s", ErrGate, command, code, output)
 		}
 		if err != nil {

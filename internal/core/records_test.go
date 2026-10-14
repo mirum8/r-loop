@@ -230,6 +230,7 @@ func newRecordLand(t *testing.T, store Store) (*LandGate, *fakeRepo, *fakeStore,
 		store = base
 	}
 	g := &LandGate{Repo: repo, Plan: &fakePlanSource{callLog: callLog{Shared: log}}, Store: store, RunID: "run-1", TodoPath: todo}
+	g.Picker = pickAll{g}
 	return g, repo, base, log, todo
 }
 

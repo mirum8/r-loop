@@ -428,14 +428,14 @@ func TestWatchdogClearsBlockers(t *testing.T) {
 		"`propose_remedy`, then `retry`",
 		"`keys` with `rule`",
 		"`switch` to the row's fallback",
-		"`ask_maintainer` with the options: retry, skip, switch provider, hand to the fixer, block this phase, stop the run",
+		"`ask_maintainer` with the options: retry, skip, switch provider, hand to the fixer, continue as resume would, block this phase, stop the run",
 		"Then call `resolve_blocker` again with their reply, quoted, as `maintainer_said`",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "nothing authorised fixes it, call `resolve_blocker` with `block` or `stop`") {
+	if strings.Contains(text, "nothing authorised fixes it, call `resolve_blocker` with `continue` when it fits, else `block` or `stop`") {
 		t.Errorf("attended watchdog told to block without asking:\n%s", text)
 	}
 }
@@ -487,7 +487,7 @@ func TestAnUnattendedWatchdogIsToldTheFixerIsRefused(t *testing.T) {
 func TestAnUnattendedWatchdogBlocksOrStopsWhenNothingAuthorisedClearsABlocker(t *testing.T) {
 	text := render(t, New(t.TempDir()), "watchdog", with("Unattended", true))
 
-	if !strings.Contains(text, "nothing authorised fixes it, call `resolve_blocker` with `block` or `stop`") {
+	if !strings.Contains(text, "nothing authorised fixes it, call `resolve_blocker` with `continue` when it fits, else `block` or `stop`") {
 		t.Errorf("unattended watchdog not told to block or stop:\n%s", text)
 	}
 	if strings.Contains(text, "`ask_maintainer` with the options: retry") {
@@ -525,6 +525,60 @@ func TestWatchdogCarriesThePhaseCheck(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestWatchdogCarriesTheGateChoice(t *testing.T) {
+	for _, unattended := range []bool{false, true} {
+		vars := fullVars()
+		vars["Unattended"] = unattended
+
+		text := render(t, New(t.TempDir()), "watchdog", vars)
+
+		for _, want := range []string{
+			"`choose_gate(phase, commands)`",
+			"## Choosing a phase's gate",
+			"choose gate phase <N>",
+			"shell commands this tree can run",
+			"`command -v <name>`",
+			"module names, URLs, HTTP requests",
+			"never drop one because it might fail",
+			"an empty list only when none of them is a command",
+			"exited 127",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("unattended %v: watchdog missing %q:\n%s", unattended, want, text)
+			}
+		}
+	}
+}
+
+func TestWatchdogCarriesTheBlockerContinue(t *testing.T) {
+	for _, c := range []struct {
+		unattended bool
+		want       string
+	}{
+		{false, "Ask the maintainer before you take `continue`"},
+		{true, "take `continue` on your own"},
+	} {
+		vars := fullVars()
+		vars["Unattended"] = c.unattended
+
+		text := render(t, New(t.TempDir()), "watchdog", vars)
+
+		for _, want := range []string{
+			"`continue` re-enters the held step or land as `r-loop resume` would, with no addendum",
+			"a step resumes from its recorded review round",
+			"a land reads its phase from the plan again",
+			"after a transient failure",
+			"once its cause was fixed",
+			"never when the same check would fail the same way",
+			c.want,
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("unattended %v: watchdog missing %q:\n%s", c.unattended, want, text)
+			}
 		}
 	}
 }

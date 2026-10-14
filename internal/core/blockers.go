@@ -20,6 +20,8 @@ const (
 	actionStop   = "stop"
 	actionFix    = "fix"
 
+	actionContinue = "continue"
+
 	sourceStep      = "step"
 	sourceReviewer  = "reviewer"
 	sourceLand      = "land"
@@ -27,18 +29,19 @@ const (
 	sourceGateProbe = "gate-probe"
 	sourceMilestone = "milestone"
 
-	byTimeout        = "timeout"
-	byWithdrawn      = "withdrawn"
-	citationAlways   = "always"
-	citationFallback = "fallback"
-	runStopped       = "run stopped"
+	byTimeout          = "timeout"
+	byWithdrawn        = "withdrawn"
+	citationAlways     = "always"
+	citationFallback   = "fallback"
+	citationUnattended = "unattended"
+	runStopped         = "run stopped"
 
-	unattendedBlockOrStop = "unattended: block or stop"
+	unattendedBlockOrStop = "unattended: continue, block or stop"
 	askForBlocker         = "ask the maintainer in your session: what blocks, what you tried and the options; then call again with maintainer_said set to their reply"
 )
 
 var blockerOptions = []struct{ action, option string }{
-	{actionRetry, "retry"}, {actionSkip, "skip"}, {actionSwitch, "switch provider"}, {actionFix, "hand to the fixer"}, {actionBlock, "block this phase"}, {actionStop, "stop the run"},
+	{actionRetry, "retry"}, {actionSkip, "skip"}, {actionSwitch, "switch provider"}, {actionFix, "hand to the fixer"}, {actionContinue, "continue as resume would"}, {actionBlock, "block this phase"}, {actionStop, "stop the run"},
 }
 
 var blockerID = regexp.MustCompile(`^b\d+$`)
@@ -509,7 +512,7 @@ func (r *QuestionRouter) ResolveBlocker(id, action, rule, addendum string, keys 
 	if rem == nil {
 		rem = &Remedies{}
 	}
-	if action == actionRetry || action == actionSwitch {
+	if restartAction(action) {
 		target := fmt.Sprintf("phase-%s/%s", b.Phase, b.Step)
 		n, err := r.retries(target)
 		if err != nil {
@@ -525,6 +528,10 @@ func (r *QuestionRouter) ResolveBlocker(id, action, rule, addendum string, keys 
 	switch action {
 	case actionBlock, actionStop:
 		res.Citation, authorised = citationAlways, true
+	case actionContinue:
+		if r.Dog != nil && r.Dog.Unattended {
+			res.Citation, authorised = citationUnattended, true
+		}
 	case actionRetry:
 		res.Addendum = addendum
 		if slices.Contains(rem.Allow, "restart") {
@@ -610,13 +617,17 @@ func retriesUsed(events []Event, target string) int {
 	for _, ev := range events {
 		f := ev.Fields
 		switch {
-		case ev.Kind == "blocker-resolved" && (f["action"] == actionRetry || f["action"] == actionSwitch) && f["step"] == target && f["fix"] == "":
+		case ev.Kind == "blocker-resolved" && restartAction(f["action"]) && f["step"] == target && f["fix"] == "":
 			n++
 		case ev.Kind == "restart" && f["step"] == target && !blockerID.MatchString(f["remedy"]):
 			n++
 		}
 	}
 	return n
+}
+
+func restartAction(action string) bool {
+	return action == actionRetry || action == actionSwitch || action == actionContinue
 }
 
 func blockerChoices(actions []string) []string {

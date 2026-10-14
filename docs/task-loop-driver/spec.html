@@ -765,7 +765,9 @@ a run that then failed to commit. Configurable: no.</em></p>
 <p><strong>A merge is never made on an unproven phase.</strong> When a phase's last step reports
 <code>ok</code>, if the phase's <code>Done when:</code> command does not exit 0 in the primary tree
 within its timeout (<code>land.gateTimeout</code>, default 30 minutes), the driver performs no merge and no tick, per phase; on violation the run halts
-with the command's output. A phase whose block carries no <code>Done when:</code> line is a named
+with the command's output. The command is the spans of the line the watchdog chose as commands
+(<a href="#adr-95">ADR-95</a>); with no choice the phase does not land. A phase whose block carries no
+<code>Done when:</code> line, or whose spans the watchdog found none of to be a command, is a named
 skip recorded in the run report, never a silent pass. <em>Source: 33 recorded
 <code>/r:task-review</code> runs returned <code>build: "n/a"</code>, 31 of them over trees carrying
 42k added lines. Configurable: no.</em></p>
@@ -829,8 +831,8 @@ errors, a gate fix or the gate probe fails, or a milestone report fails, the dri
 and raises a blocker to the watchdog before it blocks, skips or stops anything, per blocker; on
 violation nothing further of that phase runs and the blocker is named. The watchdog clears it only
 with an action the driver authorises — the allow-list, a <code>watchdog.dialogs</code> rule, the
-row's fallback, or the maintainer's quoted reply — or asks the maintainer; unattended, it blocks the
-phase or stops the run. A blocker the watchdog leaves for <code>watchdog.blockerTimeout</code>
+row's fallback, or the maintainer's quoted reply — or asks the maintainer; unattended, it continues
+the held work as a resume would (<a href="#adr-96">ADR-96</a>), blocks the phase or stops the run. A blocker the watchdog leaves for <code>watchdog.blockerTimeout</code>
 while it is not waiting on the maintainer resolves to <code>block</code>. What still halts without a
 blocker — a failed record, the question invariant below, a panic in the land, the question server or
 the signal handler — is posted to the watchdog as <code>run halting: &lt;reason&gt;</code> first; a
@@ -954,7 +956,10 @@ sends it to the watchdog with the reason and the end of the session's screen. Th
 pane and diagnoses. If an authorised action fixes it — a remedy, then a retry within
 <code>watchdog.maxRestarts</code>, or a switch to the row's fallback — it takes it and the step
 restarts as a new attempt. If nothing authorised does, it asks the maintainer in its own session:
-retry, skip, switch provider, block this phase or stop the run; unattended, it blocks or stops. The
+retry, skip, switch provider, continue as resume would, block this phase or stop the run; unattended,
+it continues, blocks or stops. <code>continue</code> re-enters the step as <code>r-loop resume</code>
+would, in the same process: a new attempt with no addendum, resumed at the failed attempt's recorded
+review round when it has one (<a href="#adr-96">ADR-96</a>). The
 hold's clock, <code>watchdog.blockerTimeout</code>, stands still while the maintainer is being asked;
 left silent past it, the blocker resolves to <code>block</code>. A reviewer that fails, a landing
 that errors, a gate fix, the gate probe and a milestone report take the same path, each with its own
@@ -1886,7 +1891,8 @@ resolving agent.</p>
 <p><span class="f">Status</span> accepted · amended by <a href="#adr-64">ADR-64</a> — a red gate gets a bounded fix round before the phase is blocked ·
 amended 2026-09-19 — the command run is the line's inline code spans joined with
 <code>&amp;&amp;</code>, or its whole text when it has none, after a real run handed the
-whole sentence, backticks included, to the shell</p>
+whole sentence, backticks included, to the shell · amended by <a href="#adr-95">ADR-95</a> (2026-10-14) —
+the watchdog chooses which of the line's spans are commands, and only those run</p>
 <p><span class="f">Context</span> The review step already built once, in its own tree. But a review
 step's build is not reliably a build: 33 recorded <code>/r:task-review</code> runs returned
 <code>build: "n/a"</code>, 31 of them over Go worktrees carrying 42k added lines reviewed without a
@@ -3683,7 +3689,7 @@ or a plan review misses something a native pass would have caught.</p>
 
 <div class="adr">
 <h3 id="adr-82">ADR-82 — Anything off plan is a blocker the watchdog clears or asks about</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-35">ADR-35</a>, <a href="#adr-56">ADR-56</a>, <a href="#adr-61">ADR-61</a>, <a href="#adr-62">ADR-62</a>, <a href="#adr-64">ADR-64</a>, <a href="#adr-65">ADR-65</a> and <a href="#adr-80">ADR-80</a> · amended by <a href="#adr-91">ADR-91</a> — every source gains <code>fix</code>, which leaves the blocker open while a fixer session proposes a fix, and a fix the maintainer confirms through <code>apply_fix</code> settles it as <code>retry</code> · amended by <a href="#adr-94">ADR-94</a> (2026-10-14) — a minor failure is retried without asking, within <code>watchdog.maxRestarts</code></p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-35">ADR-35</a>, <a href="#adr-56">ADR-56</a>, <a href="#adr-61">ADR-61</a>, <a href="#adr-62">ADR-62</a>, <a href="#adr-64">ADR-64</a>, <a href="#adr-65">ADR-65</a> and <a href="#adr-80">ADR-80</a> · amended by <a href="#adr-91">ADR-91</a> — every source gains <code>fix</code>, which leaves the blocker open while a fixer session proposes a fix, and a fix the maintainer confirms through <code>apply_fix</code> settles it as <code>retry</code> · amended by <a href="#adr-94">ADR-94</a> (2026-10-14) — a minor failure is retried without asking, within <code>watchdog.maxRestarts</code> · amended by <a href="#adr-96">ADR-96</a> (2026-10-14) — a step, land, gate-fix or gate-probe blocker also takes <code>continue</code>, which re-enters the held work as <code>r-loop resume</code> would, in the same process; it needs the maintainer's quoted reply, or <code>--unattended</code>, and counts against the same budget as a retry</p>
 <p><span class="f">Context</span> The maintainer's rule: "whenever anything in the flow goes off
 plan, the watchdog either fixes it or asks me what to do: stop, or fix it another way." The run did
 not follow it. A failed pipeline step waited a fixed ten-minute remedy window and was then blocked,
@@ -4221,6 +4227,84 @@ attempts before anyone is asked; each retry and its addendum are recorded. A con
 they clear it.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-95">ADR-95 — The watchdog chooses the gate's commands from the line's spans</h3>
+<p><span class="f">Status</span> accepted 2026-10-14 · amends <a href="#adr-10">ADR-10</a></p>
+<p><span class="f">Context</span> The gate ran every code span of a <code>Done when:</code> line. Run
+<code>20261014-113002</code> halted at phase 46, with the code finished and Maven green: the line
+"<code>mvn -pl web-ui-adapter,architecture-tests -am test</code> is green and <code>app-api</code>
+serves <code>GET /ui/worklist</code> …" became <code>mvn … &amp;&amp; app-api &amp;&amp; GET
+/ui/worklist</code>, which exited 127 on <code>app-api: command not found</code>, and a gate-fix
+round was spent on a plan line no agent could fix.</p>
+<p><span class="f">Decision</span> At the start of every landing of a <code>todo.md</code> phase with a
+<code>Done when:</code> line, before the merge, the driver sends the watchdog <code>choose gate phase
+&lt;N&gt;</code>, the line, and the line's clause commands as numbered candidates, and waits for its
+turn. The watchdog answers with <code>choose_gate(phase, commands)</code>. The driver accepts the
+choice only while that phase's pick is open, and only when every command equals a candidate word
+for word, none twice; it records <code>gate-chosen</code> before it acts, then runs the chosen
+clauses in the line's order, with their <code>prints</code>/<code>lists</code>/<code>prints
+nothing</code> checks, joined with <code>&amp;&amp;</code>. An empty choice is the named skip of
+<a href="#adr-48">ADR-48</a>, with the reason <code>watchdog chose no command</code>. No choice is a
+land blocker, and its <code>retry</code> asks again; there is no fallback to every span. Gate-fix
+rounds inside one landing reuse its choice. A gate that exits 127 names a command that does not
+exist here: it goes straight to the land blocker, with no gate-fix round. Item gates of an issues
+file (<a href="#adr-70">ADR-70</a>) are unchanged.</p>
+<p><span class="f">Alternatives</span> Driver heuristics — drop spans that look like HTTP requests,
+or that <code>command -v</code> cannot find — rejected: every new shape of prose needs a new rule,
+and a missing program would be dropped instead of failing. Keep running every span — rejected on
+the run above. Let the watchdog write the gate command freely — rejected: it could weaken or invent
+the check the plan wrote; choosing among the line's own spans can only drop prose.</p>
+<p><span class="f">Consequences</span> Every landing waits for a watchdog turn, up to
+<code>watchdog.checkTimeout</code>, and cannot land while the watchdog is gone. A wrong pick that
+drops a real command lands the phase on a weaker gate; the choice is recorded with the line and the
+command run, so the report shows it.</p>
+<p><span class="f">Revisit when</span> a recorded choice drops a command that the line's author meant
+as the gate.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-96">ADR-96 — A blocker can be continued as a resume would, in the same process</h3>
+<p><span class="f">Status</span> accepted 2026-10-14 · amends <a href="#adr-82">ADR-82</a></p>
+<p><span class="f">Context</span> Run <code>20261014-113002</code> held phase 46 on a land blocker
+after the plan's <code>Done when:</code> line was corrected. The only actions were a
+<code>retry</code>, which carries an addendum and lands the phase it already read, or
+<code>stop</code>; the maintainer had to stop the run and type <code>r-loop resume</code> by hand to
+get what resume does: a step picked up at its recorded review round, a land that reads the plan
+again.</p>
+<p><span class="f">Decision</span> <code>resolve_blocker</code> takes a new action,
+<code>continue</code>, on step, land, gate-fix and gate-probe blockers. While the driver holds the
+run, <code>continue</code> re-enters the held work in the same process, the way
+<code>r-loop resume</code> re-enters a halted phase: no exec, no new process, no commit, no new
+state. On a step blocker it starts attempt N+1 with no addendum, resumed at the failed attempt's
+recorded review round, with that round's previous tree and the attempt's recorded commit subject;
+with no recorded round it is a fresh attempt. On a land or gate-probe blocker the driver reads the
+phase from <code>todo.md</code> again and lands it, which asks the watchdog for the gate again
+(<a href="#adr-95">ADR-95</a>); a phase no longer in the plan raises the land blocker again with
+that reason. On a gate-fix blocker it ends the fix rounds and does the same: the phase read again,
+a fresh landing. Attended, <code>continue</code> is never authorised on its own, by the allow-list
+or otherwise: without <code>maintainer_said</code> it comes back <code>ask</code>. With
+<code>--unattended</code> the watchdog takes it alone; it is the one action besides
+<code>block</code> and <code>stop</code> an unattended run may take without an authorisation, and
+the refusal reads <code>unattended: continue, block or stop</code>. It counts against
+<code>watchdog.maxRestarts</code> with <code>retry</code> and <code>switch</code>. Reviewer and
+milestone blockers do not take it: their <code>retry</code> already opens the same reviewer or
+report again.</p>
+<p><span class="f">Alternatives</span> Have the driver exec <code>r-loop resume</code> on itself —
+rejected: a second process for the same run, and the watchdog's session and the TUI lost on the way.
+Make <code>retry</code> reread the plan and resume the round — rejected: a retry is a fresh attempt
+told what to change; folding both into one action hides which one ran. Let the allow-list authorise
+<code>continue</code> when attended — rejected: it is the action for a cause fixed outside the run,
+which only the maintainer knows was fixed.</p>
+<p><span class="f">Consequences</span> A transient failure — a slept machine, a provider glitch, a
+dead pane — or a cause fixed outside the run no longer costs a stop and a manual resume. A
+<code>continue</code> on a cause that is not fixed fails the same way again, and spends a retry
+doing it; the shared budget bounds that. The restart it starts is recorded with the citation
+<code>continue</code>.</p>
+<p><span class="f">Revisit when</span> continued attempts fail the same way more often than they
+clear.</p>
+</div>
+
+
 
 
 
@@ -4497,7 +4581,9 @@ reason?, table?}</code> carries the maintainer's answer, returning the new table
 neither is recorded nor ends a wait (<a href="#adr-83">ADR-83</a>). <code>stop_run(when: after-phase|now, reason, maintainer_said) → {accepted, reason?}</code>,
 <code>pause_run(reason, maintainer_said) → {accepted, reason?}</code> and
 <code>continue_run(maintainer_said) → {accepted, reason?}</code> stop, pause and continue the run
-between phases on the maintainer's word (<a href="#adr-86">ADR-86</a>). A signal whose effect would move the run forward
+between phases on the maintainer's word (<a href="#adr-86">ADR-86</a>).
+<code>choose_gate(phase, commands) → {accepted, reason?}</code> chooses which of a <code>Done when:</code>
+line's spans the land gate runs, while the driver waits on that phase's pick (<a href="#adr-95">ADR-95</a>). A signal whose effect would move the run forward
 is rejected by <code>Watch</code> and the rejection is recorded — the tool surface is narrow by
 design, but the enforcement is not the surface. A <code>signal</code> whose step is not
 <code>phase-&lt;N&gt;/&lt;kind&gt;</code> goes through <code>Watch</code> too, is rejected, and

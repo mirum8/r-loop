@@ -139,6 +139,10 @@ type AskChannel interface {
 	Answer(id, answer, by, citation string) error
 }
 
+type GatePicker interface {
+	PickGate(ctx context.Context, phase Phase, candidates []string) error
+}
+
 type Face interface {
 	Emit(ev Event)
 	Close()

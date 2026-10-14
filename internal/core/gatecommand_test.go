@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,56 @@ import (
 	"strings"
 	"testing"
 )
+
+const phase46Line = "`mvn -pl web-ui-adapter,architecture-tests -am test` is green and `app-api` serves `GET /ui/worklist` rendering the table against the local stack."
+
+func gateCommand(doneWhen string) string {
+	return renderGate(doneWhen, gateCandidates(doneWhen))
+}
+
+func TestGateCandidatesAreTheLineClauseCommandsInLineOrder(t *testing.T) {
+	cases := []struct {
+		input string
+		want  []string
+	}{
+		{phase46Line, []string{"mvn -pl web-ui-adapter,architecture-tests -am test", "app-api", "GET /ui/worklist"}},
+		{"`a` is green and `b x` prints `lit`.", []string{"a", "b x"}},
+		{"  make check  ", []string{"make check"}},
+		{"   ", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			if got := gateCandidates(tc.input); !slices.Equal(got, tc.want) {
+				t.Errorf("gateCandidates(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRenderGateOfThePhase46LineRunsOnlyTheChosenMavenCommand(t *testing.T) {
+	got := renderGate(phase46Line, []string{"mvn -pl web-ui-adapter,architecture-tests -am test"})
+
+	if want := "mvn -pl web-ui-adapter,architecture-tests -am test"; got != want {
+		t.Errorf("renderGate = %q, want %q", got, want)
+	}
+}
+
+func TestRenderGateKeepsLineOrderAndLiteralChecksOfAChosenSubset(t *testing.T) {
+	line := "`a` is green, `b x` prints `lit`, `c` is green and `d` prints nothing."
+
+	got := renderGate(line, []string{"d", "b x"})
+
+	want := `{ out=$( ( b x ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; [ "$st" != 127 ] || exit 127; test "$st" = 0 && printf '%s\n' "$out" | grep -qF -e 'lit'; } && { out=$( ( d ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; [ "$st" != 127 ] || exit 127; test -z "$out"; }`
+	if got != want {
+		t.Errorf("renderGate = %q, want %q", got, want)
+	}
+}
+
+func TestRenderGateOfNoChosenCommandIsEmpty(t *testing.T) {
+	if got := renderGate(phase46Line, nil); got != "" {
+		t.Errorf("renderGate = %q, want empty", got)
+	}
+}
 
 func TestGateCommandKeepsALineOfOnlyCommands(t *testing.T) {
 	cases := []struct{ input, want string }{
@@ -29,9 +80,9 @@ func TestGateCommandKeepsALineOfOnlyCommands(t *testing.T) {
 
 func TestGateCommandWrapsAPrintCheck(t *testing.T) {
 	cases := []struct{ input, want string }{
-		{"`a` is green and `b x` prints `lit's`.", `a && { out=$( ( b x ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; test "$st" = 0 && printf '%s\n' "$out" | grep -qF -e 'lit'\''s'; }`},
-		{"`a` is green and `b` prints nothing.", `a && { out=$( ( b ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; test -z "$out"; }`},
-		{"`a` lists the `k` line.", `{ out=$( ( a ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; test "$st" = 0 && printf '%s\n' "$out" | grep -qF -e 'k'; }`},
+		{"`a` is green and `b x` prints `lit's`.", `a && { out=$( ( b x ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; [ "$st" != 127 ] || exit 127; test "$st" = 0 && printf '%s\n' "$out" | grep -qF -e 'lit'\''s'; }`},
+		{"`a` is green and `b` prints nothing.", `a && { out=$( ( b ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; [ "$st" != 127 ] || exit 127; test -z "$out"; }`},
+		{"`a` lists the `k` line.", `{ out=$( ( a ) 2>&1; echo ".$?"); st=${out##*.}; out=${out%.*}; printf '%s' "$out"; [ "$st" != 127 ] || exit 127; test "$st" = 0 && printf '%s\n' "$out" | grep -qF -e 'k'; }`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
@@ -129,4 +180,19 @@ func doneWhenOf(t *testing.T, lines []string, phase string) string {
 	}
 	t.Fatalf("no Done when line under phase %s", phase)
 	return ""
+}
+
+func TestRenderGateKeepsAMissingCommandsExit127ThroughAnOutputCheck(t *testing.T) {
+	for _, line := range []string{
+		"`no-such-cmd-r-loop-xyz` prints `ready`.",
+		"`no-such-cmd-r-loop-xyz` prints nothing.",
+	} {
+		t.Run(line, func(t *testing.T) {
+			err := exec.Command("sh", "-c", gateCommand(line)).Run()
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 127 {
+				t.Errorf("exit %v, want 127", err)
+			}
+		})
+	}
 }

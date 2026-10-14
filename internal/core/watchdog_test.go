@@ -1532,3 +1532,34 @@ func TestWatchdogWhoseDriverPaneCannotBeMeasuredOpensItsOwnWorkspace(t *testing.
 		t.Errorf("placed %v", got)
 	}
 }
+
+func TestPickGateAsksTheWatchdogWithTheLineAndTheNumberedCandidates(t *testing.T) {
+	host := &checkHost{}
+	var text string
+	host.onPrompt = func(s string) { text = s }
+	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	dog.GateTimeout = 7 * time.Minute
+	line := "`mvn test` is green and `app-api` serves `GET /ui`."
+
+	err := dog.PickGate(context.Background(), Phase{ID: "46", DoneWhen: line}, []string{"mvn test", "app-api", "GET /ui"})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "choose gate phase 46\nDone when: " + line + "\n\n1. `mvn test`\n2. `app-api`\n3. `GET /ui`\n\nCall choose_gate with phase 46 and the candidates this tree can run as shell commands, verbatim; an empty list when none is."
+	if text != want {
+		t.Fatalf("pane text = %q, want %q", text, want)
+	}
+	if !slices.ContainsFunc(host.Calls(), func(c string) bool { return strings.HasSuffix(c, " true 7m0s") }) {
+		t.Fatalf("calls = %q", host.Calls())
+	}
+}
+
+func TestPickGateOfAGoneWatchdogFails(t *testing.T) {
+	dog := newWatchdog(&checkHost{}, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	dog.gone = true
+
+	if err := dog.PickGate(context.Background(), Phase{ID: "1", DoneWhen: "`a`"}, []string{"a"}); err == nil || !strings.Contains(err.Error(), "watchdog") {
+		t.Fatalf("err = %v", err)
+	}
+}
