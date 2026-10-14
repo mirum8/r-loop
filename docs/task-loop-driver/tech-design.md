@@ -514,6 +514,18 @@ so.
   as `r<n> resolve first: <entry> → <answer> (<by>)`. A blocked or aborted step's line under
   **Halt** ends `— transcripts: worker a<attempt> <path>, reviewer <id> a<attempt> r<round> <path>, …`,
   every `agent-transcript` of that phase and step in log order; a `land` line also lists that phase's `gate`, `gatefix` and `milestone` transcripts, each prefixed with its step; a step with none renders unchanged.
+- **Failure report** — when the run's recorded status is `halted`, `Execute` calls
+  `Watchdog.FailureReport(ctx, watchdog.checkTimeout)` after the run returns and before the
+  watchdog closes; an interrupt (cancelled context) or a gone watchdog skips it. It types
+  `core.FailureReportText(<runDir>/failure-report.md, <halt reason>)` into the watchdog and waits
+  until idle: the watchdog reads the run's logs, `report.md` and the transcripts listed under
+  **Halt**, and writes only that file — verdict (driver bug, plan, agent or environment),
+  timeline, root cause with `path:line` evidence, impact (what was committed, what `r-loop resume`
+  will do) and fix directions; it edits no code, commits nothing and calls no `signal`. A non-empty
+  file appends `Event{Kind: "failure-report", Fields{path}}`, anything else
+  `Event{Kind: "failure-report-missing", Fields{reason}}`; the exit code never changes. **Halt**
+  in `report.md` ends `diagnosis: <path>` from the latest `failure-report` since the last resume;
+  both faces print `diagnosis: <path>` after `report:` on close.
 - **Banner** — one line per pipeline row and the milestone row, `<step> <provider> <model>
   <effort> <timeout> <check> ← <provenance>`; under a row with a review half, `review rounds <n>
   <reviewTimeout>` and one `reviewer <provider> <model> <effort>` line per reviewer and

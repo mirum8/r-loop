@@ -27,6 +27,9 @@ func Report(state RunState, plan Plan) string {
 		for _, l := range haltLines(state) {
 			b.WriteString("- " + l + "\n")
 		}
+		if path := diagnosis(state); path != "" {
+			b.WriteString("- diagnosis: " + path + "\n")
+		}
 		b.WriteString("\nr-loop resume\n")
 	}
 	assumptions(&b, state)
@@ -176,6 +179,19 @@ func haltLines(st RunState) []string {
 		}
 	}
 	return out
+}
+
+func diagnosis(st RunState) string {
+	path := ""
+	for _, ev := range st.Events {
+		switch {
+		case ev.Kind == "human" && ev.Fields["what"] == "resume", ev.Kind == EventFailureReportMissing:
+			path = ""
+		case ev.Kind == EventFailureReport:
+			path = ev.Fields["path"]
+		}
+	}
+	return path
 }
 
 func transcripts(st RunState) map[string][]string {

@@ -13,10 +13,11 @@ import (
 )
 
 type Face struct {
-	Out    io.Writer
-	Report string
-	mu     sync.Mutex
-	gate   *core.Event
+	Out       io.Writer
+	Report    string
+	mu        sync.Mutex
+	gate      *core.Event
+	diagnosis string
 }
 
 func (f *Face) Emit(ev core.Event) {
@@ -24,6 +25,9 @@ func (f *Face) Emit(ev core.Event) {
 	defer f.mu.Unlock()
 	var b strings.Builder
 	f.closeGate(&b, ev)
+	if ev.Kind == core.EventFailureReport {
+		f.diagnosis = ev.Fields["path"]
+	}
 	f.emit(&b, ev)
 	io.WriteString(f.Out, core.Displayable(b.String()))
 }
@@ -134,6 +138,9 @@ func (f *Face) Close() {
 	defer f.mu.Unlock()
 	if f.Report != "" {
 		fmt.Fprintf(f.Out, "report: %s\n", f.Report)
+	}
+	if f.diagnosis != "" {
+		fmt.Fprintf(f.Out, "diagnosis: %s\n", f.diagnosis)
 	}
 }
 

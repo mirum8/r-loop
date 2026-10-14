@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -332,6 +333,10 @@ func (m Model) Apply(ev core.Event) Model {
 		m.group(core.RunListGroups(ev.Fields))
 	case "signal-rejected", "note", "report-skipped", "reviewer-skipped":
 		m.log(ev, toneDim, ev.Fields["reason"])
+	case core.EventFailureReport:
+		m.log(ev, toneDim, "diagnosis: "+filepath.Base(ev.Fields["path"]))
+	case core.EventFailureReportMissing:
+		m.log(ev, toneDim, "no diagnosis: "+ev.Fields["reason"])
 	case "stop-requested":
 		m.log(ev, toneDim, "stop requested after this phase: "+ev.Fields["reason"])
 	case "pause-requested":
@@ -678,6 +683,7 @@ type Face struct {
 	backlog   []core.Event
 	done      chan struct{}
 	report    string
+	diagnosis string
 	endKind   string
 	endReason string
 }
@@ -715,6 +721,9 @@ func (f *Face) Emit(ev core.Event) {
 	defer f.mu.Unlock()
 	if ev.Kind == "halt" || ev.Kind == "aborted" {
 		f.endKind, f.endReason = ev.Kind, core.Displayable(ev.Fields["reason"])
+	}
+	if ev.Kind == core.EventFailureReport {
+		f.diagnosis = core.Displayable(ev.Fields["path"])
 	}
 	if f.prog == nil {
 		f.backlog = append(f.backlog, ev)
@@ -755,7 +764,7 @@ func (f *Face) Close() {
 		<-done
 	}
 	f.mu.Lock()
-	endKind, endReason, report := f.endKind, f.endReason, f.report
+	endKind, endReason, report, diagnosis := f.endKind, f.endReason, f.report, f.diagnosis
 	f.mu.Unlock()
 	switch endKind {
 	case "halt":
@@ -771,6 +780,9 @@ func (f *Face) Close() {
 	}
 	if report != "" {
 		fmt.Fprintf(f.Out, "report: %s\n", report)
+	}
+	if diagnosis != "" {
+		fmt.Fprintf(f.Out, "diagnosis: %s\n", diagnosis)
 	}
 }
 

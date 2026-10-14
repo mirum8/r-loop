@@ -396,6 +396,7 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 	} else {
 		w.startTUI(ctx)
 		code = w.run(ctx, opts)
+		w.Dog.FailureReport(ctx, w.Config.Watchdog.CheckTimeout)
 	}
 	return code
 }

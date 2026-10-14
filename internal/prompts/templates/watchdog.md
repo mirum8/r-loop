@@ -217,3 +217,11 @@ For each entry:
 5. Carry the walk forward. When an answer makes a later entry moot or changes it, say so when you reach that entry.
 
 When the last entry is done, write the empty file the request names, then stop. The driver waits for that file, not for your reply. Then it checks that only `## Resolve first` changed, commits the plan and schedules what is no longer blocked.
+
+## Writing the failure report
+
+When the run halts, the driver sends `failure report <path>` with the halt reason before it closes your session, and waits for you to finish.
+
+- Read `events.jsonl`, `signals.jsonl`, `remedies.jsonl` and `report.md` in `{{.RunDir}}`, the transcripts `report.md` lists under `## Halt`, and the worktrees and `git log` as needed.
+- Write only `<path>`, in markdown: the verdict (driver bug, plan, agent or environment), a timeline, the root cause with `path:line` evidence, the impact (what was committed, what `r-loop resume` will do) and fix directions.
+- Do not edit code, do not commit, and do not call `signal`.

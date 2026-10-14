@@ -1303,3 +1303,70 @@ func TestAWiredRunAppliesAFixersConfigChangeAndRetriesTheStepWithTheNewProviderF
 }
 
 func (h *dogHost) Submit(agent, text string) error { return h.Prompt(agent, text, false, 0) }
+
+func TestAHaltedRunHasTheWatchdogWriteAFailureReportBeforeItCloses(t *testing.T) {
+	f := newResumeFixture(t, noReviewConfig)
+	sim := newSim()
+	sim.hang["rloop-p1-implement"] = true
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, sim)
+	dog := &dogHost{}
+	dog.onPrompt = func(text string) {
+		if rest, ok := strings.CutPrefix(text, "failure report "); ok {
+			path, _, _ := strings.Cut(rest, "\n")
+			_ = os.WriteFile(path, []byte("# Verdict\n\nagent\n"), 0o644)
+		}
+	}
+	w.Dog.Host = dog
+	done := make(chan int, 1)
+	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
+	for deadline := time.Now().Add(10 * time.Second); !dog.prompted("step started phase-1/implement"); {
+		if time.Now().After(deadline) {
+			t.Fatalf("implement never reported to the watchdog: %q", dog.Calls())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: w.Ask.WatchdogURL(), MaxRetries: -1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "signal", Arguments: map[string]any{"kind": "halt", "step": "phase-1/implement", "reason": "off the plan", "evidence": "docs/topic/todo.md:1"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case code := <-done:
+		if code != 5 {
+			t.Errorf("exit %d, want 5\n%s", code, f.out)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("run never halted")
+	}
+	runDir := w.Store.Dir(w.Loop.RunID)
+	path := filepath.Join(runDir, "failure-report.md")
+	calls := dog.Calls()
+	asked, closed := -1, -1
+	for i, c := range calls {
+		if strings.HasPrefix(c, "Prompt rloop-wd-") && strings.Contains(c, "failure report "+path) {
+			asked = i
+		}
+		if c == "ClosePane wd-pane" {
+			closed = i
+		}
+	}
+	if asked < 0 || closed < asked {
+		t.Fatalf("failure report prompt %d, close %d: %q", asked, closed, calls)
+	}
+	report, _ := os.ReadFile(filepath.Join(runDir, "report.md"))
+	if !strings.Contains(string(report), "- diagnosis: "+path+"\n") {
+		t.Errorf("report.md:\n%s", report)
+	}
+	if !strings.Contains(f.out.String(), "diagnosis: "+path+"\n") {
+		t.Errorf("plain output:\n%s", f.out)
+	}
+}

@@ -366,3 +366,16 @@ func TestADialogWithANoticePrintsTheNoticeNotTheScreen(t *testing.T) {
 		t.Fatalf("got %q, want %q", out.String(), want)
 	}
 }
+
+func TestCloseNamesTheDiagnosisAfterTheReport(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out, Report: "/repo/.r-loop/runs/r1/report.md"}
+	f.Emit(core.Event{At: time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC), Kind: "failure-report", Fields: map[string]string{"path": "/repo/.r-loop/runs/r1/failure-report.md"}})
+	out.Reset()
+
+	f.Close()
+
+	if want := "report: /repo/.r-loop/runs/r1/report.md\ndiagnosis: /repo/.r-loop/runs/r1/failure-report.md\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}

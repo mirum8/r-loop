@@ -1402,3 +1402,27 @@ func TestAnAbortedRunSaysSoInItsEndBanner(t *testing.T) {
 		t.Errorf("view:\n%s", view)
 	}
 }
+
+func TestAHaltedRunLogsTheDiagnosis(t *testing.T) {
+	m := newModel(recorded())
+
+	m = m.Apply(core.Event{At: at(90), Kind: "halt", Fields: map[string]string{"reason": "off the plan", "resume": "r-loop resume"}})
+	m = m.Apply(core.Event{At: at(95), Kind: "failure-report", Fields: map[string]string{"path": "/repo/runs/r1/failure-report.md"}})
+
+	if view := m.View(); !strings.Contains(view, "diagnosis: failure-report.md") {
+		t.Fatalf("view:\n%s", view)
+	}
+}
+
+func TestFaceNamesTheDiagnosisOnClose(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+	f.Emit(core.Event{At: at(1), Kind: "halt", Fields: map[string]string{"reason": "off the plan"}})
+	f.Emit(core.Event{At: at(2), Kind: "failure-report", Fields: map[string]string{"path": "/repo/runs/r1/failure-report.md"}})
+
+	f.Close()
+
+	if !strings.Contains(out.String(), "diagnosis: /repo/runs/r1/failure-report.md\n") {
+		t.Fatalf("out:\n%s", out.String())
+	}
+}
