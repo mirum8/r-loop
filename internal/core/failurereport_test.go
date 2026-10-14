@@ -155,6 +155,36 @@ func TestAnInterruptedRunAsksForNoFailureReport(t *testing.T) {
 	}
 }
 
+func TestAnAbortedRunAsksForNoFailureReport(t *testing.T) {
+	dog, host, store, face := haltedDog(t, RunHalted)
+	host.write = "x"
+	if err := store.Append(dog.RunID, Record{Kind: RecordEvent, Event: &Event{Kind: "aborted", Phase: "1", Step: "plan"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	dog.FailureReport(context.Background(), time.Minute)
+
+	if p := failurePrompts(host); len(p) != 0 || len(face.events()) != 0 {
+		t.Errorf("prompts %q, events %+v", p, face.events())
+	}
+}
+
+func TestARunHaltedAfterResumingAnAbortAsksForAFailureReport(t *testing.T) {
+	dog, host, store, _ := haltedDog(t, RunHalted)
+	host.write = "x"
+	for _, ev := range []Event{{Kind: "aborted", Phase: "1", Step: "plan"}, {Kind: "human", Fields: map[string]string{"what": "resume"}}} {
+		if err := store.Append(dog.RunID, Record{Kind: RecordEvent, Event: &ev}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dog.FailureReport(context.Background(), time.Minute)
+
+	if p := failurePrompts(host); len(p) != 1 {
+		t.Errorf("prompts %q", p)
+	}
+}
+
 func TestAGoneWatchdogIsAskedForNoFailureReport(t *testing.T) {
 	dog, host, _, face := haltedDog(t, RunHalted)
 	host.write = "x"

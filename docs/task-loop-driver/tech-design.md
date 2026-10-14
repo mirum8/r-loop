@@ -516,7 +516,7 @@ so.
   every `agent-transcript` of that phase and step in log order; a `land` line also lists that phase's `gate`, `gatefix` and `milestone` transcripts, each prefixed with its step; a step with none renders unchanged.
 - **Failure report** — when the run's recorded status is `halted`, `Execute` calls
   `Watchdog.FailureReport(ctx, watchdog.checkTimeout)` after the run returns and before the
-  watchdog closes; an interrupt (cancelled context) or a gone watchdog skips it. It types
+  watchdog closes; an interrupt (cancelled context), an abort (an `aborted` event since the last resume) or a gone watchdog skips it. It types
   `core.FailureReportText(<runDir>/failure-report.md, <halt reason>)` into the watchdog and waits
   until idle: the watchdog reads the run's logs, `report.md` and the transcripts listed under
   **Halt**, and writes only that file — verdict (driver bug, plan, agent or environment),

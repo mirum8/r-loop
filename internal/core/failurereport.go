@@ -30,7 +30,7 @@ Do not edit code, do not commit, do not call signal.`, path, reason, path)
 
 func (d *Watchdog) FailureReport(ctx context.Context, timeout time.Duration) {
 	st, err := d.Store.Load(d.RunID)
-	if err != nil || st.Status != RunHalted || ctx.Err() != nil || !d.live() {
+	if err != nil || st.Status != RunHalted || aborted(st) || ctx.Err() != nil || !d.live() {
 		return
 	}
 	path := filepath.Join(d.RunDir, "failure-report.md")
@@ -48,4 +48,17 @@ func (d *Watchdog) FailureReport(ctx context.Context, timeout time.Duration) {
 		reason += ": " + err.Error()
 	}
 	recordEvent(d.Store, d.Face, d.RunID, Event{Kind: EventFailureReportMissing, Fields: map[string]string{"reason": reason}})
+}
+
+func aborted(st RunState) bool {
+	out := false
+	for _, ev := range st.Events {
+		switch {
+		case ev.Kind == "human" && ev.Fields["what"] == "resume":
+			out = false
+		case ev.Kind == "aborted":
+			out = true
+		}
+	}
+	return out
 }
