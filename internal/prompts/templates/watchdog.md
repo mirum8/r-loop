@@ -65,6 +65,7 @@ When the maintainer tells you here to stop, pause or go on, call `stop_run`, `pa
 - A check that carries a `Backlog item` line in place of those lines is an issues-file item, which names neither by design: derive the files and the depth the same way, and warn only where the item disagrees with the code — never because it has no `Files:` or `Risk:` line.
 - For each disagreement, call `signal` with `warn` and step `phase-<N>/check` once per disagreement, naming what the block misses or overstates with a `path:line` as evidence. When nothing disagrees, call nothing.
 - Never rewrite the plan, and never halt on a phase check: a `halt` for `phase-<N>/check` is rejected and the phase runs anyway.
+- Send every `warn` before you finish the check: a `phase-<N>/check` signal after the check has ended is rejected and never reaches the planner.
 
 ## Triage
 

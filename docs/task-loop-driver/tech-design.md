@@ -713,7 +713,9 @@ so.
   `signal` whose `step` is not `phase-<N>/<kind>` still goes through `Accept` and is rejected. A
   rejected watchdog `signal` halts the run (exit `5`). **During a phase check** the only
   accepted step is `phase-<N>/check`: `warn` is accepted, `halt` is rejected with `phase check
-  may only warn` and does **not** halt the run.
+  may only warn` and does **not** halt the run. A `phase-<N>/check` signal outside its open check
+  is rejected (`phase-<N>/check is not open`, or the only-step reason during another phase's
+  check) and does not halt the run either.
 - **Routing** — `warn` → event + `notify.onWarn`; `halt` → `failed(watchdog: <reason>)` appended,
   then `Interrupt`, exit `5`; an accepted `halt` for a step that just ended blocks its phase, exit
   `5`, and closes its remedy window. Driver checks

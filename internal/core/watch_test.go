@@ -757,3 +757,34 @@ func TestDrainReturnsHeldAndQueuedSignalsOnce(t *testing.T) {
 	defer w.StepEnded(next, Outcome{State: StepOK})
 	noSignal(t, w)
 }
+
+func TestALateCheckWarnIsRejectedWithoutHaltingTheLiveStep(t *testing.T) {
+	store := &fakeStore{}
+	w := newWatch(store)
+	plan := StepRef{Key: StepKey{Run: "run-1", Phase: "2", Kind: "plan", Attempt: 1}, Phase: Phase{ID: "2"}}
+	w.StepStarted(plan, &Session{})
+	defer w.StepEnded(plan, Outcome{State: StepOK})
+
+	got, err := w.Accept(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: "2", Kind: "check"}, Reason: "late"})
+
+	if err != nil || !got.Rejected || got.RejectReason != "phase-2/check is not open" {
+		t.Fatalf("accept %+v %v", got, err)
+	}
+	noSignal(t, w)
+}
+
+func TestAWarnForTheCheckOfAnotherPhaseDuringACheckIsRejectedWithoutAHalt(t *testing.T) {
+	store := &fakeStore{}
+	w := newWatch(store)
+	plan := StepRef{Key: StepKey{Run: "run-1", Phase: "1", Kind: "plan", Attempt: 1}, Phase: Phase{ID: "1"}}
+	w.StepStarted(plan, &Session{})
+	defer w.StepEnded(plan, Outcome{State: StepOK})
+	w.checking = "2"
+
+	got, err := w.Accept(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Run: "run-1", Phase: "1", Kind: "check"}, Reason: "late"})
+
+	if err != nil || !got.Rejected || got.RejectReason != "phase-2/check is the only step during the phase check" {
+		t.Fatalf("accept %+v %v", got, err)
+	}
+	noSignal(t, w)
+}

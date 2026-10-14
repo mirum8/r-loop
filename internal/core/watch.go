@@ -438,7 +438,7 @@ func (w *Watch) accept(sig Signal, check string) (Signal, error) {
 	if w.Face != nil {
 		w.Face.Emit(Event{At: sig.At, Kind: "signal-rejected", Phase: sig.Step.Phase, Step: sig.Step.Kind, Fields: map[string]string{"source": string(sig.Source), "kind": string(sig.Kind), "reason": sig.RejectReason}})
 	}
-	if sig.RejectReason == phaseCheckHalt {
+	if sig.RejectReason == phaseCheckHalt || sig.Step.Kind == "check" {
 		return sig, nil
 	}
 	fwd := Signal{Seq: sig.Seq, Kind: SignalWarn, Source: sig.Source, Step: sig.Step, Evidence: sig.Evidence, At: sig.At}
@@ -558,6 +558,9 @@ func (w *Watch) rejection(sig *Signal) string {
 			return phaseCheckHalt
 		}
 		return ""
+	}
+	if sig.Step.Kind == "check" {
+		return fmt.Sprintf("phase-%s/check is not open", sig.Step.Phase)
 	}
 	if g, ok := w.Store.(*RecordGuard); ok && g.Landed(sig.Step.Phase) {
 		return fmt.Sprintf("phase %s has landed", sig.Step.Phase)
