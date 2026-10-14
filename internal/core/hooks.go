@@ -143,7 +143,7 @@ func (m *SessionManager) hookChanged() <-chan struct{} {
 
 func sameText(sent, seen string, cut bool) bool {
 	norm := func(s string) string { return strings.Join(strings.Fields(s), " ") }
-	a, b := norm(sent), norm(seen)
+	a, b := norm(sent), norm(unwrapPaste(seen))
 	if b == "" {
 		return false
 	}
@@ -151,6 +151,18 @@ func sameText(sent, seen string, cut bool) bool {
 		return a == b
 	}
 	return strings.HasPrefix(a, b)
+}
+
+func unwrapPaste(s string) string {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(s), "<pasted_content ")
+	if !ok {
+		return s
+	}
+	attrs, body, ok := strings.Cut(rest, ">")
+	if !ok {
+		return s
+	}
+	return strings.TrimSuffix(strings.TrimSpace(body), "</pasted_content "+attrs+">")
 }
 
 func (m *SessionManager) expectPrompt(agent, text string, since time.Time) {

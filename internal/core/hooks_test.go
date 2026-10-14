@@ -406,6 +406,8 @@ func TestAPromptToAHookAgentIsDeliveredByAMatchingUserPromptSubmit(t *testing.T)
 		{"its first 512 bytes", strings.Repeat("ab ", 300), cutPromptSubmit(askingAgent, strings.Repeat("ab ", 300)[:512], t0)},
 		{"a rune the cap split", strings.Repeat("é", 300), cutPromptSubmit(askingAgent, strings.Repeat("é", 255), t0)},
 		{"line breaks collapsed and trailing space trimmed", "fix round 2\n\nfindings: a.json\n", promptSubmit(askingAgent, "fix round 2\nfindings: a.json", t0)},
+		{"a paste claude wraps in pasted_content", "# Plan phase 1\n\nYou are planning.\n", promptSubmit(askingAgent, "\n\n<pasted_content id=\"b5d9\">\n# Plan phase 1\n\nYou are planning.\n\n</pasted_content id=\"b5d9\">\n", t0)},
+		{"the first 512 bytes of a wrapped paste", "# Plan phase 1\n\n" + strings.Repeat("ab ", 300), cutPromptSubmit(askingAgent, "\n\n<pasted_content id=\"b5d9\">\n# Plan phase 1\n\nab ab ab", t0)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -440,6 +442,7 @@ func TestAPromptToAHookAgentIsNotDeliveredWithoutAMatchingUserPromptSubmit(t *te
 		{"another text", answer, []HookEvent{promptSubmit(askingAgent, "r-loop: answer to q2 (by watchdog): postgres", t0)}, false},
 		{"a shorter prompt the text starts with", answer, []HookEvent{promptSubmit(askingAgent, "r-loop: answer to q1", t0)}, false},
 		{"the same words run together", "go test ./...", []HookEvent{promptSubmit(askingAgent, "gotest./...", t0)}, false},
+		{"another text wrapped in pasted_content", answer, []HookEvent{promptSubmit(askingAgent, "\n\n<pasted_content id=\"b5d9\">\nr-loop: answer to q2 (by watchdog): postgres\n\n</pasted_content id=\"b5d9\">\n", t0)}, false},
 		{"a complete prompt near the cap the text starts with", strings.Repeat("x", 600), []HookEvent{promptSubmit(askingAgent, strings.Repeat("x", 508), t0)}, false},
 		{"from before the send", answer, []HookEvent{promptSubmit(askingAgent, answer, t0.Add(-time.Second))}, false},
 		{"another agent's", answer, []HookEvent{promptSubmit("rloop-p3-plan", answer, t0)}, false},
