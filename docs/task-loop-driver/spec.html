@@ -2357,7 +2357,7 @@ with its reason and the threshold is tuned from those rows.</p>
 
 <div class="adr">
 <h3 id="adr-36">ADR-36 — Two severities: warn and halt</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted · amended 2026-10-14 — a watchdog <code>warn</code> that <code>Watch</code> rejects, such as one naming a step that has already ended <code>ok</code>, is recorded and shown and never halts the run, after a rejected warn about a finished step was turned into a halt of the healthy live step; a rejected watchdog <code>halt</code>, a signal of another kind, or one whose step is not <code>phase-&lt;N&gt;/&lt;kind&gt;</code> still halts the run, exit <code>5</code></p>
 <p><span class="f">Context</span> If every observation stops the run it is unusable; if none does it
 is decoration.</p>
 <p><span class="f">Decision</span> A <strong>warning</strong> is report-only — a banner in the TUI
@@ -4475,7 +4475,8 @@ between phases on the maintainer's word (<a href="#adr-86">ADR-86</a>). A signal
 is rejected by <code>Watch</code> and the rejection is recorded — the tool surface is narrow by
 design, but the enforcement is not the surface. A <code>signal</code> whose step is not
 <code>phase-&lt;N&gt;/&lt;kind&gt;</code> goes through <code>Watch</code> too, is rejected, and
-halts the run.</p>
+halts the run. A rejected watchdog <code>warn</code> for a well-formed step is only recorded and
+shown (<a href="#adr-36">ADR-36</a>).</p>
 
 <p>Prompts are embedded in the binary — <code>plan</code>, <code>implement</code>,
 <code>review</code>, <code>review-plan</code>, <code>fix</code>, <code>milestone</code>, <code>gatefix</code> and

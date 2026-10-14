@@ -601,6 +601,47 @@ func TestARejectedWatchdogSignalBetweenStepsHaltsTheNextStep(t *testing.T) {
 	}
 }
 
+func TestARejectedWatchdogWarnForAnOkStepDoesNotHaltTheLiveStep(t *testing.T) {
+	store := &fakeStore{}
+	w := newWatch(store)
+	w.StepStarted(implementRef(2, 1), &Session{})
+	w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
+	next := StepRef{Key: StepKey{Run: "run-1", Phase: "3", Kind: "plan", Attempt: 1}}
+	w.StepStarted(next, &Session{})
+	defer w.StepEnded(next, Outcome{State: StepOK})
+
+	got, err := w.Accept(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Phase: "2", Kind: "implement"}, Reason: "the plan should gate the worklist"})
+
+	if err != nil || !got.Rejected || got.RejectReason != "phase-2/implement is ok" {
+		t.Fatalf("accept %+v, %v", got, err)
+	}
+	if recs := recordedSignals(store); len(recs) != 1 || !recs[0].Rejected {
+		t.Errorf("recorded %+v", recs)
+	}
+	if !w.Face.(*fakeFace).seen("signal-rejected") {
+		t.Error("no signal-rejected event")
+	}
+	if got := w.Drain(); len(got) != 0 {
+		t.Errorf("drained %+v", got)
+	}
+}
+
+func TestARejectedWatchdogWarnBetweenStepsDoesNotHaltTheNextStep(t *testing.T) {
+	store := &fakeStore{}
+	w := newWatch(store)
+	w.StepStarted(implementRef(2, 1), &Session{})
+	w.StepEnded(implementRef(2, 1), Outcome{State: StepOK})
+
+	w.Accept(Signal{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Phase: "2", Kind: "implement"}, Reason: "too late"})
+	next := StepRef{Key: StepKey{Run: "run-1", Phase: "3", Kind: "plan", Attempt: 1}}
+	w.StepStarted(next, &Session{})
+	defer w.StepEnded(next, Outcome{State: StepOK})
+
+	if got := w.Drain(); len(got) != 0 {
+		t.Errorf("drained %+v", got)
+	}
+}
+
 func TestASignalForAMalformedStepIsRejectedAndHaltsTheRun(t *testing.T) {
 	store := &fakeStore{}
 	w := newWatch(store)

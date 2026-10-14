@@ -711,7 +711,8 @@ so.
 - **Acceptance** — `Watch.Accept`: `warn` or `halt` naming the live step, or one that ended within
   the last poll tick, is accepted; anything else is recorded `Rejected` with its reason. A
   `signal` whose `step` is not `phase-<N>/<kind>` still goes through `Accept` and is rejected. A
-  rejected watchdog `signal` halts the run (exit `5`). **During a phase check** the only
+  rejected watchdog `halt` (or a signal of another kind, or one with a malformed `step`) halts the
+  run (exit `5`); a rejected watchdog `warn` is recorded and shown and never halts. **During a phase check** the only
   accepted step is `phase-<N>/check`: `warn` is accepted, `halt` is rejected with `phase check
   may only warn` and does **not** halt the run. A `phase-<N>/check` signal outside its open check
   is rejected (`phase-<N>/check is not open`, or the only-step reason during another phase's

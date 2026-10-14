@@ -438,7 +438,7 @@ func (w *Watch) accept(sig Signal, check string) (Signal, error) {
 	if w.Face != nil {
 		w.Face.Emit(Event{At: sig.At, Kind: "signal-rejected", Phase: sig.Step.Phase, Step: sig.Step.Kind, Fields: map[string]string{"source": string(sig.Source), "kind": string(sig.Kind), "reason": sig.RejectReason}})
 	}
-	if sig.RejectReason == phaseCheckHalt || sig.Step.Kind == "check" {
+	if sig.RejectReason == phaseCheckHalt || sig.Step.Kind == "check" || (sig.Source == SourceWatchdog && sig.Kind == SignalWarn && sig.Step.Phase != "") {
 		return sig, nil
 	}
 	fwd := Signal{Seq: sig.Seq, Kind: SignalWarn, Source: sig.Source, Step: sig.Step, Evidence: sig.Evidence, At: sig.At}
