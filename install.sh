@@ -15,6 +15,7 @@ go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$prefix/r-loop"
 "$prefix/r-loop" --version
 echo "installed to $prefix/r-loop"
 (cd / && "$prefix/r-loop" --migrate-config) || echo "note: finish ~/.config/r-loop/config.yaml by hand"
+(cd / && "$prefix/r-loop" --create-config) || echo "note: --create-config failed; check ~/.config/r-loop/config.yaml by hand"
 
 case ":$PATH:" in
   *":$prefix:"*) ;;

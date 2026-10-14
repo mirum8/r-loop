@@ -2371,7 +2371,7 @@ and it lives in the watchdog's prompt, which is the part of this that will need 
 
 <div class="adr">
 <h3 id="adr-37">ADR-37 — Consent for a remedy is an allow-list in config, empty by default</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-61">ADR-61</a> — <code>--unattended</code> adds the routine classes for one run; the configured list stays empty by default</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-61">ADR-61</a> — <code>--unattended</code> adds the routine classes for one run; the configured list stays empty by default · amended by <a href="#adr-94">ADR-94</a> (2026-10-14) — the list ships with <code>restart</code> and <code>retry</code></p>
 <p><span class="f">Context</span> If every dependency install needs a keystroke, an unattended run
 still stops for a person — which is the cost remedies exist to remove.</p>
 <p><span class="f">Decision</span> <code>watchdog.allow</code> pre-authorises classes of remedy;
@@ -3683,7 +3683,7 @@ or a plan review misses something a native pass would have caught.</p>
 
 <div class="adr">
 <h3 id="adr-82">ADR-82 — Anything off plan is a blocker the watchdog clears or asks about</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-35">ADR-35</a>, <a href="#adr-56">ADR-56</a>, <a href="#adr-61">ADR-61</a>, <a href="#adr-62">ADR-62</a>, <a href="#adr-64">ADR-64</a>, <a href="#adr-65">ADR-65</a> and <a href="#adr-80">ADR-80</a> · amended by <a href="#adr-91">ADR-91</a> — every source gains <code>fix</code>, which leaves the blocker open while a fixer session proposes a fix, and a fix the maintainer confirms through <code>apply_fix</code> settles it as <code>retry</code></p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-35">ADR-35</a>, <a href="#adr-56">ADR-56</a>, <a href="#adr-61">ADR-61</a>, <a href="#adr-62">ADR-62</a>, <a href="#adr-64">ADR-64</a>, <a href="#adr-65">ADR-65</a> and <a href="#adr-80">ADR-80</a> · amended by <a href="#adr-91">ADR-91</a> — every source gains <code>fix</code>, which leaves the blocker open while a fixer session proposes a fix, and a fix the maintainer confirms through <code>apply_fix</code> settles it as <code>retry</code> · amended by <a href="#adr-94">ADR-94</a> (2026-10-14) — a minor failure is retried without asking, within <code>watchdog.maxRestarts</code></p>
 <p><span class="f">Context</span> The maintainer's rule: "whenever anything in the flow goes off
 plan, the watchdog either fixes it or asks me what to do: stop, or fix it another way." The run did
 not follow it. A failed pipeline step waited a fixed ten-minute remedy window and was then blocked,
@@ -4195,6 +4195,32 @@ dialog's follow-up waits for <code>idle_prompt</code>, about a minute, since cla
 turn ends exactly.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-94">ADR-94 — The watchdog retries a minor failure without asking</h3>
+<p><span class="f">Status</span> accepted 2026-10-14 · amends <a href="#adr-37">ADR-37</a> and <a href="#adr-82">ADR-82</a></p>
+<p><span class="f">Context</span> With <code>watchdog.allow</code> empty, every <code>retry</code> of a
+failed step came back <code>ask</code>, so an attended run stopped for the maintainer on a red test,
+a missing sentinel or a stall that a fresh attempt clears on its own.</p>
+<p><span class="f">Decision</span> <code>watchdog.allow</code> ships with <code>restart</code> and
+<code>retry</code>. The watchdog retries a failure a fresh attempt can get past — a red test or build
+the agent can fix, a missing or unreadable sentinel, evidence left out, a timeout or a stall, a
+transient tool or network error — at once, with an addendum saying what to change, and asks no one.
+It asks only when the same failure repeats (after trying <code>fix</code>), the step has no retries
+left, the cause is out of the agent's reach, or the action needs consent: skip, another provider, a
+class off the allow-list. <code>watchdog.maxRestarts</code> still bounds every step's retries.</p>
+<p><span class="f">Alternatives</span> Retry in the driver, without the watchdog — rejected as in
+<a href="#adr-61">ADR-61</a>: the diagnosis is what makes a retry differ from the repeat. Keep the
+list empty and tell the maintainer to fill it — rejected, the default should not stop a run for a
+decision the maintainer always answers the same way.</p>
+<p><span class="f">Consequences</span> A wrong diagnosis spends up to <code>maxRestarts</code>
+attempts before anyone is asked; each retry and its addendum are recorded. A config that sets
+<code>watchdog.allow</code> to an empty list keeps the old behaviour;
+<code>--create-config</code> on an existing file adds <code>restart</code> and <code>retry</code> to a
+<code>watchdog.allow</code> that lacks them.</p>
+<p><span class="f">Revisit when</span> retries on their own repeat the same failure more often than
+they clear it.</p>
+</div>
+
 
 
 
@@ -4576,8 +4602,9 @@ accepted deliberately.</p>
           citable source, or escalate anything touching a contract.</td>
       <td>the first cited answer that turns out wrong</td></tr>
   <tr><td>A pre-authorised remedy does something you would have refused</td><td>medium</td><td>medium</td>
-      <td>Accepted in <a href="#adr-37">ADR-37</a>: the list starts empty and every remedy is
-          recorded verbatim whether it was asked about or not.</td>
+      <td>Accepted in <a href="#adr-37">ADR-37</a>: every remedy is recorded verbatim whether it
+          was asked about or not; the list ships with only <code>restart</code> and <code>retry</code>, bounded by
+          <code>watchdog.maxRestarts</code> (<a href="#adr-94">ADR-94</a>).</td>
       <td>a recorded remedy you would have refused</td></tr>
   <tr><td>The skill-pack changes the <code>todo.md</code> format and r-loop misreads it</td><td>medium</td><td>high</td>
       <td>Accepted in <a href="#adr-43">ADR-43</a>. <code>PlanReader</code> fails closed on anything

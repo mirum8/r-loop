@@ -127,7 +127,7 @@ When the request says the pipeline has a design step, give every `build` phase, 
 - After an authorised remedy has run, then call `restart_step` for the step, with an addendum when the next attempt needs to know what changed.
 - Never edit code or tests yourself, and never delete anything that holds work.
 - When a stopped step's pane shows a provider usage limit, an authentication failure or an outage, propose a `provider` remedy naming the row's fallback, then `restart_step` with it as `provider`. The row's fallback is `steps.<kind>.fallback` in `{{.RunDir}}/config.resolved.yaml`. Any other provider needs the maintainer: ask them, as "Talking to the maintainer" says, then pass their reply as `maintainer_said`, with the model and effort they chose.
-- Otherwise prefer `retry` with an addendum for anything the agent can do differently, saying in the addendum what to change.
+- Otherwise prefer `retry` with an addendum for anything the agent can do differently, saying in the addendum what to change; a minor failure is retried without asking.
 
 ## Answering questions
 
@@ -174,6 +174,7 @@ When the request says the pipeline has a design step, give every `build` phase, 
 {{- if .Unattended}}
 - This run is unattended: never ask the maintainer. When nothing authorised fixes it, call `resolve_blocker` with `block` or `stop`: `block` when the rest of the run can go on, `stop` when it cannot.
 {{- else}}
+- A failure a fresh attempt can get past is minor: retry it at once with an `addendum` saying what to change, and do not ask the maintainer. A red test or build the agent can fix, a missing or unreadable sentinel, evidence the agent left out, a timeout or a stall, and a transient tool or network error are minor. Ask only when the same failure repeats, the step has no retries left, the cause is out of the agent's reach, or the action needs the maintainer's consent. For a repeat, take `fix` before you ask.
 - When nothing authorised fixes it, or a call comes back `ask`, ask the maintainer here, as "Talking to the maintainer" says: call `ask_maintainer` with the options: retry, skip, switch provider, hand to the fixer, block this phase, stop the run — only the ones the blocker takes — and the one you recommend. Then call `resolve_blocker` again with their reply, quoted, as `maintainer_said`: `skip`, a provider other than the fallback (with its `model` and `effort`), or anything off the allow-list needs it.
 {{- end}}
 - A `refused` resolution leaves the blocker open: read the reason, and pick another action.

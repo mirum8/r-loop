@@ -78,6 +78,7 @@ func ResetModels(path string) ([]string, error) {
 			changes = append(changes, fmt.Sprintf("land.fix: %s → removed", roleText(fix)))
 		}
 	}
+	changes = append(changes, addAllow(child(root, "watchdog"))...)
 	changes = append(changes, addDesign(root)...)
 	pruneEmpty(root)
 	if len(changes) == 0 {
@@ -98,6 +99,31 @@ func ResetModels(path string) ([]string, error) {
 		return nil, err
 	}
 	return changes, os.WriteFile(path, out.Bytes(), 0o644)
+}
+
+func addAllow(watchdog *yaml.Node) []string {
+	allow := child(watchdog, "allow")
+	if allow == nil || (!isNull(allow) && allow.Kind != yaml.SequenceNode) {
+		return nil
+	}
+	before := "none"
+	if isNull(allow) {
+		*allow = yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq",
+			HeadComment: allow.HeadComment, LineComment: allow.LineComment, FootComment: allow.FootComment}
+	} else if len(allow.Content) > 0 {
+		before = roleText(allow)
+	}
+	added := false
+	for _, class := range []string{"restart", "retry"} {
+		if !slices.ContainsFunc(allow.Content, func(n *yaml.Node) bool { return n.Value == class }) {
+			allow.Content = append(allow.Content, scalar(class))
+			added = true
+		}
+	}
+	if !added {
+		return nil
+	}
+	return []string{fmt.Sprintf("watchdog.allow: %s → %s", before, roleText(allow))}
 }
 
 func roleText(n *yaml.Node) string {

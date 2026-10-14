@@ -200,7 +200,8 @@ Each key is taken from the first place that has it:
 starting point. When that file already exists, it resets the models instead: the provider, model
 and effort of each built-in step row, its `fallback` and `reviewers`, the `watchdog` and `intake`
 go back to the built-in defaults, `land.fix` is removed, a `pipeline` that has `plan` but no
-`design` gets `design` before `plan`, and every other key stays. It prints each
+`design` gets `design` before `plan`, a `watchdog.allow` gets `restart` and `retry` if it lacks
+them, and every other key stays. It prints each
 change; the original is kept as `config.yaml.bak`.
 
 Every agent session names its provider, model and effort; nothing runs on a provider's own

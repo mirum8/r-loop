@@ -95,7 +95,7 @@ func TestDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Unattended, wantUnattended) {
 		t.Errorf("Unattended = %+v", cfg.Unattended)
 	}
-	wantWatchdog := Watchdog{Provider: "claude", Model: "opus", Effort: "medium", Allow: []string{}, BlockerTimeout: 10 * time.Minute,
+	wantWatchdog := Watchdog{Provider: "claude", Model: "opus", Effort: "medium", Allow: []string{"restart", "retry"}, BlockerTimeout: 10 * time.Minute,
 		CheckTimeout: 10 * time.Minute, StallGrace: 2 * time.Minute, UnblockTimeout: 2 * time.Hour, TriageTimeout: 2 * time.Hour,
 		OvertimeFactor: 2, DiffFactor: 3, MaxRestarts: 2, Dialogs: []string{},
 		Fixer: Fixer{Provider: "claude", Model: "opus", Effort: "high", Timeout: 20 * time.Minute}}
@@ -1001,6 +1001,45 @@ func TestResetModelsAddsTheDesignStepToAPinnedPipeline(t *testing.T) {
 	}
 	if got := d.load(t).Pipeline; !reflect.DeepEqual(got, []string{"design", "plan", "implement"}) {
 		t.Errorf("pipeline = %q", got)
+	}
+}
+
+func TestResetModelsAddsRestartAndRetryToTheWatchdogAllowList(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "watchdog:\n  allow: # consent\n    - deps\n")
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	changes, err := ResetModels(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"watchdog.allow: deps → deps, restart, retry"}; !reflect.DeepEqual(changes, want) {
+		t.Errorf("changes = %q", changes)
+	}
+	if got := d.load(t).Watchdog.Allow; !reflect.DeepEqual(got, []string{"deps", "restart", "retry"}) {
+		t.Errorf("allow = %q", got)
+	}
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "# consent") {
+		t.Errorf("comment lost from:\n%s", data)
+	}
+}
+
+func TestResetModelsFillsAnEmptyWatchdogAllowList(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "watchdog:\n  maxRestarts: 2\n  allow:\n")
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	changes, err := ResetModels(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"watchdog.allow: none → restart, retry"}; !reflect.DeepEqual(changes, want) {
+		t.Errorf("changes = %q", changes)
+	}
+	if got := d.load(t).Watchdog.Allow; !reflect.DeepEqual(got, []string{"restart", "retry"}) {
+		t.Errorf("allow = %q", got)
 	}
 }
 

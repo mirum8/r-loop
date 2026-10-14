@@ -588,7 +588,7 @@ func TestDryRunPrintsBannerWithOverridesAndTheRunList(t *testing.T) {
 		"prompt implement: embedded\n",
 		"prompt review-ui: embedded\n",
 		"reviewer ui requires .claude/skills/test-app/SKILL.md: missing, reviewer skipped\n",
-		"watchdog: claude opus medium allow []  ← default\n",
+		"watchdog: claude opus medium allow [restart, retry]  ← default\n",
 		"intake: claude sonnet medium  ← default\n",
 		"phase 2  PlanReader: phases and milestones  design → plan (review ×2) → implement (review ×3) → land\n",
 		"phase 31  Unattended mode  design → plan (review ×2) → implement (review ×3) → land\n",

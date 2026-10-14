@@ -440,6 +440,20 @@ func TestWatchdogClearsBlockers(t *testing.T) {
 	}
 }
 
+func TestAnAttendedWatchdogRetriesAMinorFailureWithoutAsking(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"- A failure a fresh attempt can get past is minor: retry it at once with an `addendum` saying what to change, and do not ask the maintainer.",
+		"Ask only when the same failure repeats, the step has no retries left, the cause is out of the agent's reach, or the action needs the maintainer's consent.",
+		"- Otherwise prefer `retry` with an addendum for anything the agent can do differently, saying in the addendum what to change; a minor failure is retried without asking.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestWatchdogHandsABlockerToTheFixer(t *testing.T) {
 	text := render(t, New(t.TempDir()), "watchdog", fullVars())
 

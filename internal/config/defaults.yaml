@@ -86,6 +86,8 @@ watchdog:
   effort: medium
   maxRestarts: 2
   allow:
+    - restart
+    - retry
   dialogs:
   blockerTimeout: 10m
   checkTimeout: 10m
