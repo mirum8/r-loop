@@ -1864,7 +1864,7 @@ func TestAStalledStepsBlockerRoutesItsAgentAndTheEndOfItsPaneScreenToTheWatchdog
 
 	// then
 	assertEqual(t, "blockers", len(*seen), 1)
-	assertEqual(t, "routed text", role((*seen)[0].q.Text), "blocker b1 from phase-2/plan (step): stalled: no response to nudge\nactions: retry, switch, block, stop, continue; resolve it with resolve_blocker\n\nagent: rloop-p2-plan\n\n• Ran go test ./...\n  └ ok  r-loop/internal/core\n\n› Improve documentation")
+	assertEqual(t, "routed text", role((*seen)[0].q.Text), "blocker b1 from phase-2/plan (step): stalled: no response to nudge\nactions: nudge, retry, switch, block, stop, continue; resolve it with resolve_blocker\n\nagent: rloop-p2-plan\n\n• Ran go test ./...\n  └ ok  r-loop/internal/core\n\n› Improve documentation")
 }
 
 func TestAFailedStepsBlockerRoutesItsLastFiveToolCallsAndTheEndOfItsPaneScreenToTheWatchdog(t *testing.T) {
@@ -2046,4 +2046,397 @@ func TestAnAbortDuringARetriedStaticAnalysisFailsAsInterruptedAfterOnlyTheFirstB
 	last := recs[len(recs)-1]
 	assertEqual(t, "state", last.State, StepFailed)
 	assertEqual(t, "reason", last.Reason, "interrupted: context canceled")
+}
+
+type nudgeHost struct {
+	*eventsHost
+	onContinue  func(agent string)
+	onAnswer    func(agent string)
+	continueErr error
+}
+
+func (h *nudgeHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	switch {
+	case strings.HasPrefix(text, "r-loop: the watchdog continues"):
+		h.record("SessionHost.Continued %s %q", agent, text)
+		if h.continueErr != nil {
+			return h.continueErr
+		}
+		if h.onContinue != nil {
+			h.onContinue(agent)
+		}
+		return nil
+	case strings.HasPrefix(text, "r-loop: answer to "):
+		err := h.eventsHost.Prompt(agent, text, wait, timeout)
+		if h.onAnswer != nil {
+			h.onAnswer(agent)
+		}
+		return err
+	}
+	return h.eventsHost.Prompt(agent, text, wait, timeout)
+}
+
+func nudgeRig(t *testing.T, resolve func(Blocker) Resolution) (*eventsRig, *nudgeHost, *[]raised) {
+	r, seen := newSourceRig(t, resolve)
+	r.host.behaviour["rloop-p2-implement"] = "stall"
+	host := &nudgeHost{eventsHost: r.ehost}
+	r.loop.Sessions.Host = host
+	return r, host, seen
+}
+
+func resolveInTurn(actions ...string) func(Blocker) Resolution {
+	var n atomic.Int32
+	return func(Blocker) Resolution {
+		i := int(n.Add(1)) - 1
+		return Resolution{Action: actions[min(i, len(actions)-1)], Citation: "always"}
+	}
+}
+
+func writeA2(r *eventsRig, outcome string) {
+	r.repo.setChanges("code.go")
+	writeFile(filepath.Join(r.store.dir, "phase-2", "implement-a2.sentinel"), outcome)
+}
+
+const okWithCommit = `{"outcome":"ok","reason":"","commit":"feat(core): add the widget store"}`
+
+func storedEvents(store *loopStore, kind string) []Event {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var out []Event
+	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordEvent && rec.Event != nil && rec.Event.Kind == kind {
+			out = append(out, *rec.Event)
+		}
+	}
+	return out
+}
+
+func agentNamed(store *loopStore, kind, attempt string) map[string]string {
+	var out map[string]string
+	for _, ev := range storedEvents(store, "agent-named") {
+		if ev.Step == kind && ev.Fields["attempt"] == attempt {
+			out = ev.Fields
+		}
+	}
+	return out
+}
+
+func lastQuestionStep(store *loopStore, id string) StepKey {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var out StepKey
+	for _, rec := range store.Records["run-1"] {
+		if rec.Kind == RecordQuestion && rec.Question != nil && rec.Question.ID == id {
+			out = rec.Question.Step
+		}
+	}
+	return out
+}
+
+func nudgeable() Blocker {
+	return Blocker{Source: "step", Phase: "2", Step: "implement", Reason: "stalled: no response to nudge", Agent: "rloop-p2-implement", Actions: []string{"nudge", "retry", "switch", "block", "stop", "continue"}}
+}
+
+func TestAWorkHalfStallRaisesAStepBlockerThatOffersNudgeFirstWithItsAgent(t *testing.T) {
+	// given
+	r, seen := newSourceRig(t, resolveAs("block"))
+	r.host.behaviour["rloop-p2-implement"] = "stall"
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	actual := (*seen)[0].b
+	actual.Evidence = ""
+	actual.Agent = role(actual.Agent)
+	assertEqual(t, "blocker", actual, nudgeable())
+}
+
+func TestAReviewHalfStallRaisesAStepBlockerWithoutNudge(t *testing.T) {
+	// given
+	r, seen := newSourceRig(t, resolveAs("block"))
+	r.loop.Kinds[1].Row.Rounds = 1
+	r.loop.Runners["diff"] = singleRunner{sm: r.loop.Sessions, review: func(ctx context.Context, ref StepRef, worker *Session, obs Observer) Outcome {
+		return Outcome{State: StepFailed, Reason: "stalled: no response to nudge", Session: worker, Stalled: true}
+	}}
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	actual := (*seen)[0].b
+	assertEqual(t, "actions", actual.Actions, []string{"retry", "switch", "block", "stop", "continue"})
+	assertEqual(t, "agent", actual.Agent, "")
+}
+
+func TestANudgedStepTypesTheContinuationIntoTheStalledAgentsPane(t *testing.T) {
+	// given
+	r, host, _ := nudgeRig(t, func(Blocker) Resolution {
+		return Resolution{Action: "nudge", Citation: "always", Addendum: "finish the store tests"}
+	})
+	host.onContinue = func(string) { writeA2(r, okWithCommit) }
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	dir := r.store.dir
+	expected := fmt.Sprintf("rloop-p2-implement %q", "r-loop: the watchdog continues this step in this session as attempt 2. Finish the work you were doing; when it is done, write the sentinel to "+dir+"/phase-2/implement-a2.sentinel, not "+dir+"/phase-2/implement-a1.sentinel. If you are blocked, write a failed sentinel with the reason.\n\nNote from the watchdog: finish the store tests")
+	assertEqual(t, "continued", r.calls("SessionHost.Continued "), []string{expected})
+}
+
+func TestANudgedStepKeepsItsAgentWorkspaceAndStartingPoint(t *testing.T) {
+	// given
+	r, host, _ := nudgeRig(t, func(Blocker) Resolution {
+		return Resolution{Action: "nudge", Citation: "always", Addendum: "finish the store tests"}
+	})
+	host.onContinue = func(string) { writeA2(r, okWithCommit) }
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "agents", r.agents(), []string{"rloop-p2-plan", "rloop-p2-implement"})
+	assertEqual(t, "opened", len(r.host.Opened), 2)
+	assertEqual(t, "agent-named", agentNamed(r.store, "implement", "2"), map[string]string{"attempt": "2", "agent": r.host.Agents[1], "worktree": r.repo.RootDir + "/.r-loop/wt/phase-2", "base": "main", "start_sha": "sha"})
+}
+
+func TestASentinelWrittenAfterANudgeIsJudgedAsTheNewAttemptsOutcome(t *testing.T) {
+	// given
+	r, host, _ := nudgeRig(t, resolveAs("nudge"))
+	host.onContinue = func(string) { writeA2(r, okWithCommit) }
+
+	// when
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "exit", code, 0)
+	assertStepRecords(t, r.store, StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 2}, []StepState{StepQueued, StepSpawned, StepRunning, StepOK}, []string{"", "", "", ""})
+	assertStepRecords(t, r.store, StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}, []StepState{StepQueued, StepSpawned, StepRunning, StepStalled, StepFailed}, []string{"", "", "", "", "stalled: no response to nudge"})
+}
+
+func TestAFailedSentinelAfterANudgeFailsTheNewAttemptAndKeepsItsWorkspaceOpen(t *testing.T) {
+	// given
+	r, host, seen := nudgeRig(t, resolveInTurn("nudge", "block"))
+	host.onContinue = func(string) { writeA2(r, `{"outcome":"failed","reason":"gave up"}`) }
+
+	// when
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "exit", code, 1)
+	assertEqual(t, "reason", (*seen)[1].b.Reason, "gave up")
+	assertEqual(t, "actions", (*seen)[1].b.Actions, []string{"retry", "switch", "block", "stop", "continue"})
+	assertEqual(t, "workspace-closed", len(r.events("workspace-closed")), 0)
+	assertEqual(t, "closed", len(r.calls("SessionHost.Close ")), 0)
+}
+
+func TestANudgeAtTheRestartLimitIsRefusedAndBlocksTheStalledPhase(t *testing.T) {
+	// given
+	r, _, _ := nudgeRig(t, resolveAs("nudge"))
+	r.loop.MaxRestarts = 1
+
+	// when
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "exit", code, 3)
+	refused := r.events("restart-refused")
+	assertEqual(t, "refused", len(refused), 1)
+	assertEqual(t, "refused fields", refused[0].Fields, map[string]string{"step": "phase-2/implement", "reason": "restart limit 1 reached"})
+	assertEqual(t, "continued", len(r.calls("SessionHost.Continued ")), 1)
+	assertEqual(t, "agents", r.agents(), []string{"rloop-p2-plan", "rloop-p2-implement"})
+}
+
+func TestANudgedAgentsQuestionReachesTheWatchdogAndItsAnswerIsTypedBack(t *testing.T) {
+	// given
+	r, host, _ := nudgeRig(t, nil)
+	host.onContinue = func(string) {
+		r.host.mu.Lock()
+		r.host.idle["rloop-p2-implement"] = false
+		r.host.mu.Unlock()
+		r.ask.Asked <- Question{ID: "q1", Step: StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1}, Text: "which db?", Options: []string{"sqlite", "postgres"}}
+	}
+	host.onAnswer = func(string) { writeA2(r, okWithCommit) }
+	r.watcher.route = func(ctx context.Context, q Question) bool {
+		if q.Kind == QuestionBlocker {
+			if err := r.loop.SettleBlocker(Resolution{ID: q.ID, Action: "nudge", By: "watchdog", Citation: "always"}); err != nil {
+				t.Errorf("settle %s: %v", q.ID, err)
+			}
+			return true
+		}
+		r.host.mu.Lock()
+		r.host.idle["rloop-p2-implement"] = true
+		r.host.mu.Unlock()
+		go r.loop.Deliver(q.ID, "sqlite", "watchdog", "spec.html:1")
+		return true
+	}
+
+	// when
+	code := runWithin(t, r, RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "exit", code, 0)
+	assertEqual(t, "typed", r.calls("SessionHost.Typed "), []string{`rloop-p2-implement "r-loop: answer to q1 (by watchdog, citing spec.html:1): sqlite"`})
+	assertEqual(t, "question step", lastQuestionStep(r.store, "q1"), StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 2})
+}
+
+func TestAContinuationThatCannotBeTypedFailsTheNewAttemptAndRaisesANewBlocker(t *testing.T) {
+	// given
+	r, host, seen := nudgeRig(t, resolveInTurn("nudge", "block"))
+	host.continueErr = errors.New("herdr agent prompt: agent gone")
+
+	// when
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "exit", code, 1)
+	assertEqual(t, "reason", (*seen)[1].b.Reason, "nudge: herdr agent prompt: agent gone")
+	assertEqual(t, "actions", (*seen)[1].b.Actions, []string{"retry", "switch", "block", "stop", "continue"})
+	assertStepRecords(t, r.store, StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 2}, []StepState{StepQueued, StepSpawned, StepFailed}, []string{"", "", "nudge: herdr agent prompt: agent gone"})
+	assertEqual(t, "agents", r.agents(), []string{"rloop-p2-plan", "rloop-p2-implement"})
+	assertEqual(t, "opened", len(r.host.Opened), 2)
+	assertEqual(t, "commits", len(r.calls("Repo.CommitAll ")), 1)
+}
+
+func TestANudgedAttemptJudgesItsEvidenceFromTheStalledAttemptsBaseline(t *testing.T) {
+	// given
+	var r *eventsRig
+	r, host, _ := nudgeRig(t, func(Blocker) Resolution {
+		r.repo.Tree = "tree-after-stall"
+		return Resolution{Action: "nudge", Citation: "always"}
+	})
+	host.onContinue = func(string) { writeA2(r, okWithCommit) }
+
+	// when
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "exit", code, 0)
+	assertEqual(t, "diffed from the stall's baseline", slices.Contains(r.calls("Repo.TreeDiff "), "tree tree-after-stall"), true)
+	assertEqual(t, "diffed from a new baseline", slices.Contains(r.calls("Repo.TreeDiff "), "tree-after-stall tree-after-stall"), false)
+}
+
+func TestAHeadMovedBeforeANudgeFailsTheAdoptedAttemptAsCommittedBeforeReview(t *testing.T) {
+	// given
+	var r *eventsRig
+	next := resolveInTurn("nudge", "block")
+	r, host, seen := nudgeRig(t, func(b Blocker) Resolution {
+		r.repo.SHA = "moved"
+		return next(b)
+	})
+	host.onContinue = func(string) { writeA2(r, okWithCommit) }
+
+	// when
+	code := r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "exit", code, 1)
+	assertEqual(t, "reason", (*seen)[1].b.Reason, "step committed before review")
+	recs := recordsForStep(r.store, StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 2})
+	last := recs[len(recs)-1]
+	assertEqual(t, "last record", []string{string(last.State), last.Reason}, []string{"failed", "step committed before review"})
+}
+
+type stateErrHost struct{ *dialogHost }
+
+func (h stateErrHost) State(agent string) (AgentState, error) {
+	if agent == "rloop-p2-implement" {
+		return AgentUnknown, errors.New("herdr down")
+	}
+	return h.dialogHost.State(agent)
+}
+
+func TestNudgeIsAuthorisedOnTheWatchdogsWordWithItsAddendum(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		unattended bool
+	}{{"attended, restart not allow-listed", false}, {"unattended", true}} {
+		t.Run(c.name, func(t *testing.T) {
+			// given
+			r := newBlockerRig(t)
+			r.rem.Allow = nil
+			r.router.Dog.Unattended = c.unattended
+			r.dhost.set("rloop-p2-implement", AgentIdle, "")
+			ch := r.open(t, nudgeable())
+
+			// when
+			decision, reason := r.resolve("b1", "nudge", addendum("finish the store tests"))
+
+			// then
+			assertEqual(t, "decision", []string{decision, reason}, []string{decisionAuthorised, ""})
+			assertEqual(t, "resolution", resolved(t, ch), Resolution{ID: "b1", Action: "nudge", By: "watchdog", Citation: "always", Addendum: "finish the store tests"})
+			assertEqual(t, "waiting", r.waitingEvents(), 0)
+		})
+	}
+}
+
+func TestNudgeIsRefusedWhileTheStalledAgentIsGoneOrItsStateFails(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		setup    func(r *blockerRig)
+		expected string
+	}{
+		{"gone", func(r *blockerRig) { r.dhost.set("rloop-p2-implement", AgentGone, "") }, "agent rloop-p2-implement of blocker b1 is gone: take retry for a fresh session"},
+		{"state fails", func(r *blockerRig) { r.loop.Sessions.Host = stateErrHost{r.dhost} }, "blocker b1: state of rloop-p2-implement: herdr down"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// given
+			r := newBlockerRig(t)
+			c.setup(r)
+			ch := r.open(t, nudgeable())
+
+			// when
+			decision, reason := r.resolve("b1", "nudge")
+
+			// then
+			assertEqual(t, "decision", []string{decision, reason}, []string{decisionRefused, c.expected})
+			stillHeld(t, ch)
+			assertEqual(t, "resolved", len(r.events("blocker-resolved")), 0)
+		})
+	}
+}
+
+func TestNudgeSharesTheRetryBudget(t *testing.T) {
+	for _, c := range []struct{ before, now, expected string }{
+		{"nudge", "retry", "retry limit 1 reached for phase-2/implement"},
+		{"retry", "nudge", "nudge limit 1 reached for phase-2/implement"},
+		{"nudge", "continue", "continue limit 1 reached for phase-2/implement"},
+		{"continue", "nudge", "nudge limit 1 reached for phase-2/implement"},
+	} {
+		t.Run(c.before+" then "+c.now, func(t *testing.T) {
+			// given
+			r := newBlockerRig(t)
+			r.rem.MaxRestarts = 1
+			ev := Event{Kind: "blocker-resolved", Fields: map[string]string{"id": "b0", "action": c.before, "by": "watchdog", "source": "step", "step": "phase-2/implement"}}
+			r.store.Append("run-1", Record{Kind: RecordEvent, Event: &ev})
+			r.dhost.set("rloop-p2-implement", AgentIdle, "")
+			ch := r.open(t, nudgeable())
+
+			// when
+			decision, reason := r.resolve("b1", c.now)
+
+			// then
+			assertEqual(t, "decision", []string{decision, reason}, []string{decisionRefused, c.expected})
+			stillHeld(t, ch)
+			assertEqual(t, "resolved", len(r.events("blocker-resolved")), 0)
+		})
+	}
+}
+
+func TestTheReportShowsANudgeAsAContinuationInPlace(t *testing.T) {
+	// given
+	r, host, _ := nudgeRig(t, func(Blocker) Resolution {
+		return Resolution{Action: "nudge", Citation: "always", Addendum: "finish the store tests"}
+	})
+	host.onContinue = func(string) { writeA2(r, okWithCommit) }
+	r.run(RunOptions{Phases: []string{"2"}})
+	st, _ := r.store.Load("run-1")
+
+	// when
+	actualReport := Report(st, threePhasePlan())
+
+	// then
+	assertEqual(t, "continue line", strings.Contains(actualReport, "- phase 2 implement: continue in place as attempt 2 — finish the store tests\n"), true)
+	assertEqual(t, "restart line", strings.Contains(actualReport, "restart as attempt"), false)
 }

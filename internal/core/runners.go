@@ -19,6 +19,7 @@ func (r singleRunner) Run(ctx context.Context, ref StepRef, obs Observer) Outcom
 		out = Outcome{State: StepOK, Session: s}
 	} else {
 		out = r.sm.Wait(ctx, s, obs)
+		out.nudgeable = out.Stalled
 	}
 	if out.State == StepOK && row.Rounds > 0 && r.review != nil {
 		out = r.review(ctx, ref, s, obs)

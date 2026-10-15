@@ -73,6 +73,7 @@ type StepRef struct {
 	ReviewFrom                             int
 	PrevRoundTree, Subject                 string
 	KeepUncommitted                        bool
+	Adopt                                  *Session
 }
 
 type Session struct {
@@ -90,6 +91,7 @@ type Session struct {
 	startedAt                        time.Time
 	transcribed                      atomic.Bool
 	received                         atomic.Bool
+	askAttempt                       int
 
 	mu         sync.Mutex
 	ended      bool
@@ -115,6 +117,12 @@ func (s *Session) asker(kind string) string {
 		}
 	}
 	return ""
+}
+
+func (s *Session) asksAs(key StepKey) bool {
+	k := s.Ref.Key
+	adopted := key.Kind == k.Kind && s.askAttempt > 0 && key.Attempt == s.askAttempt
+	return k.Run == key.Run && k.Phase == key.Phase && (key.Attempt == k.Attempt || adopted) && (key.Kind == k.Kind || strings.HasPrefix(key.Kind, k.Kind+"-rv-"))
 }
 
 func (s *Session) live(fn func()) bool {
@@ -151,17 +159,21 @@ type Observer interface {
 }
 
 type Outcome struct {
-	State   StepState
-	Reason  string
-	Session *Session
-	Stalled bool
-	Halted  bool
-	Warning string
-	active  time.Duration
-	blocked bool
+	State     StepState
+	Reason    string
+	Session   *Session
+	Stalled   bool
+	Halted    bool
+	Warning   string
+	active    time.Duration
+	blocked   bool
+	nudgeable bool
 }
 
 func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, error) {
+	if ref.Adopt != nil {
+		return m.adopt(ref)
+	}
 	s := &Session{Ref: ref, Subject: ref.Subject}
 	if err := recordFailed(m.Store); err != nil {
 		return s, fmt.Errorf("record: %w", err)
@@ -216,6 +228,40 @@ func (m *SessionManager) Spawn(ctx context.Context, ref StepRef) (*Session, erro
 	}
 	if err := m.start(s, stepDir); err != nil {
 		return s, fmt.Errorf("spawn: %w", err)
+	}
+	return s, m.record(key, StepRunning, "")
+}
+
+func (m *SessionManager) adopt(ref StepRef) (*Session, error) {
+	prev := ref.Adopt
+	key := ref.Key
+	s := &Session{Ref: ref, Subject: ref.Subject, Dir: prev.Dir, StartSHA: prev.StartSHA, StartTree: prev.StartTree, Workspace: prev.Workspace, Pane: prev.Pane, Agent: prev.Agent, rollout: prev.rollout, startedAt: prev.startedAt}
+	s.askAttempt = prev.askAttempt
+	if s.askAttempt == 0 {
+		s.askAttempt = prev.Ref.Key.Attempt
+	}
+	s.Ref.AskURL = prev.Ref.AskURL
+	prev.mu.Lock()
+	s.transcript = prev.transcript
+	prev.mu.Unlock()
+	s.transcribed.Store(prev.transcribed.Load())
+	s.received.Store(true)
+	if err := recordFailed(m.Store); err != nil {
+		return s, fmt.Errorf("record: %w", err)
+	}
+	s.Sentinel = filepath.Join(ref.RunDir, "phase-"+key.Phase, fmt.Sprintf("%s-a%d.sentinel", key.Kind, key.Attempt))
+	if err := m.record(key, StepSpawned, ""); err != nil {
+		return s, err
+	}
+	at := m.now()
+	ev := Event{At: at, Kind: "agent-named", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"attempt": strconv.Itoa(key.Attempt), "agent": s.Agent, "worktree": s.Dir, "base": ref.Base, "start_sha": s.StartSHA}}
+	if err := m.Store.Append(key.Run, Record{Kind: RecordEvent, At: at, Event: &ev}); err != nil {
+		return s, err
+	}
+	m.track(s)
+	addendum, _ := ref.Vars["Addendum"].(string)
+	if err := m.prompt(s.Agent, continuation(key.Attempt, s.Sentinel, prev.Sentinel, addendum, s.Ref.AskURL != ""), nil); err != nil {
+		return s, fmt.Errorf("nudge: %w", err)
 	}
 	return s, m.record(key, StepRunning, "")
 }
@@ -703,12 +749,23 @@ func writeMCPConfig(path, url string) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-func nudge(cause string, ask bool) string {
-	blocked := "If you are blocked, write a failed sentinel with the reason."
+func blockedHint(ask bool) string {
 	if ask {
-		blocked = "If you are blocked, call ask_watchdog and end your turn to wait for its answer, or write a failed sentinel with the reason."
+		return "If you are blocked, call ask_watchdog and end your turn to wait for its answer, or write a failed sentinel with the reason."
 	}
-	return "r-loop: " + cause + ". If your work is done, write the sentinel now. " + blocked
+	return "If you are blocked, write a failed sentinel with the reason."
+}
+
+func nudge(cause string, ask bool) string {
+	return "r-loop: " + cause + ". If your work is done, write the sentinel now. " + blockedHint(ask)
+}
+
+func continuation(attempt int, sentinel, old, addendum string, ask bool) string {
+	text := fmt.Sprintf("r-loop: the watchdog continues this step in this session as attempt %d. Finish the work you were doing; when it is done, write the sentinel to %s, not %s. ", attempt, sentinel, old) + blockedHint(ask)
+	if addendum != "" {
+		text += "\n\nNote from the watchdog: " + addendum
+	}
+	return text
 }
 
 func (m *SessionManager) judge(s *Session, sentinel Sentinel, sErr error) Outcome {

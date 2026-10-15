@@ -1425,3 +1425,17 @@ func TestDesignPromptIsOverridable(t *testing.T) {
 		t.Errorf("text %q source %q err %v", text, source, err)
 	}
 }
+
+func TestWatchdogListsTheInPlaceNudgeFirstForAStalledLivePane(t *testing.T) {
+	// given
+	expected := "  - `nudge` is the first remedy for a stall whose pane is alive: the driver types a fixed continuation into the stalled agent's own session, naming the sentinel of a new attempt, with your `addendum` after it, and watches that session again, so the agent keeps its context, subagents and background jobs. Take it when the pane shows the agent was working toward its sentinel and went quiet; take `retry` when the session is wedged or on the wrong track. It is offered only for a stall before the review half, refused when the agent is gone, authorised on your word, and shares the step's retries with `retry`, `switch` and `continue`."
+
+	// when
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	// then
+	nudge, retry := strings.Index(text, expected), strings.Index(text, "  - `retry` runs it again")
+	if nudge < 0 || nudge > retry {
+		t.Errorf("nudge bullet at %d, retry bullet at %d:\n%s", nudge, retry, text)
+	}
+}
