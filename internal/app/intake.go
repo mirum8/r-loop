@@ -128,7 +128,7 @@ func (in *intake) run(ctx context.Context) (Options, error) {
 	case err != nil:
 		return Options{}, exit(4, "intake did not start: %v", err)
 	}
-	fmt.Fprintf(in.env.Stderr, "r-loop: resolved: r-loop %s\n", shellJoin(argv))
+	Stderrf(in.env.Stderr, "r-loop: resolved: r-loop %s", shellJoin(argv))
 	return ParseArgs(argv)
 }
 

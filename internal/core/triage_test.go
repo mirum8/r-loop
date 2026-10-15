@@ -506,7 +506,7 @@ Phase 5 · TUI
 
 Plan check: 1 note
 - Phase 4 — Face: no 'Implements' line
-Resolve first: Pick a DB → phases 7
+Resolve first: Pick a DB → phase 7
 2 phases: 6 step sessions (plan, implement, land), up to 6 review rounds
 Milestones completed by this run: M1 Core
 `
@@ -937,5 +937,20 @@ func TestApplyRunListDesignFlagsOnlyTheRecordedPhases(t *testing.T) {
 
 	if !got.Phases[2].Design || got.Phases[2].DesignNote != "the loop view" || got.Phases[1].Design || plan.Phases[2].Design {
 		t.Errorf("phases = %+v", got.Phases)
+	}
+}
+
+func TestRenderTriageNamesTwoDeferredPhasesInThePlural(t *testing.T) {
+	// given
+	plan := triagePlan()
+	view := triageView(plan, plan.Phases[1:])
+	view.Deferrals = []Deferral{{Entry: "Pick a DB", Phases: []string{"3", "4"}}}
+
+	// when
+	_, actualTable := RenderTriage(view, nil)
+
+	// then
+	if expected := "Resolve first: Pick a DB → phases 3, 4\n"; !strings.Contains(actualTable, expected) {
+		t.Fatalf("table lacks %q:\n%s", expected, actualTable)
 	}
 }

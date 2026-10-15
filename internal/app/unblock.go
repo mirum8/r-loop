@@ -68,7 +68,7 @@ func (w *Wiring) walk(ctx context.Context, blocking []core.Entry, list []core.Ph
 	if err != nil {
 		return exit(2, "%v", err)
 	}
-	todo := w.todoRel()
+	todo := w.todoRel
 	if others := slices.DeleteFunc(slices.Clone(dirty), func(p string) bool { return p == todo }); len(others) > 0 {
 		return exit(4, "the watchdog left changes outside the plan: %s", strings.Join(others, ", "))
 	}
@@ -132,25 +132,10 @@ func (w *Wiring) setPlan(pl core.Plan) {
 	w.Plan, w.Loop.Plan, w.Gate.Boundary.Plan, w.Watch.Plan, w.Probe.Plan = pl, pl, pl, pl, pl
 }
 
-func (w *Wiring) todoRel() string {
-	root, todo := w.Repo.Root(), w.Todo
-	if r, err := filepath.EvalSymlinks(root); err == nil {
-		root = r
-	}
-	if t, err := filepath.EvalSymlinks(todo); err == nil {
-		todo = t
-	}
-	rel, err := filepath.Rel(root, todo)
-	if err != nil {
-		return todo
-	}
-	return filepath.ToSlash(rel)
-}
-
 func (w *Wiring) record(ev core.Event) {
 	ev.At = time.Now()
 	if err := w.Store.Append(w.Loop.RunID, core.Record{Kind: core.RecordEvent, At: ev.At, Event: &ev}); err != nil {
-		fmt.Fprintf(w.Env.Stderr, "r-loop: store: %v\n", err)
+		Stderrf(w.Env.Stderr, "r-loop: store: %v", err)
 	}
 	w.Face.Emit(ev)
 }

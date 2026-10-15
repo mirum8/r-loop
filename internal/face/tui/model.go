@@ -309,11 +309,7 @@ func (m Model) Apply(ev core.Event) Model {
 		for _, id := range ids {
 			m.setPhase(id, core.PhaseBlocked)
 		}
-		noun := "phase "
-		if len(ids) > 1 {
-			noun = "phases "
-		}
-		m.log(ev, toneDim, "Resolve first open: "+ev.Fields["entry"]+" · skipped "+noun+ev.Fields["phases"])
+		m.log(ev, toneDim, "Resolve first open: "+ev.Fields["entry"]+" · skipped "+core.NamePhases(ids))
 	case core.TriageSkipped:
 		m.setPhase(ev.Phase, core.PhaseBlocked)
 		m.log(ev, toneDim, "skipped by triage: "+ev.Fields["reason"])

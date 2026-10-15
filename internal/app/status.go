@@ -24,13 +24,12 @@ func Status(args []string, env Env) int {
 	fs.Bool("plain", false, "")
 	positional, err := parsePositional(fs, args)
 	if err != nil || len(positional) > 1 {
-		fmt.Fprintln(env.Stderr, "usage: r-loop status [--plain] [<run-id>]")
+		Stderrf(env.Stderr, "usage: r-loop status [--plain] [<run-id>]")
 		return 2
 	}
 	repo, err := gitrepo.Open(env.Dir)
 	if err != nil {
-		fmt.Fprintf(env.Stderr, "r-loop: %v\n", err)
-		return 2
+		return fail(env, err)
 	}
 	st := store.New(repo.Root())
 	named := ""
@@ -47,13 +46,11 @@ func Status(args []string, env Env) int {
 	}
 	run, err := st.Load(id)
 	if err != nil {
-		fmt.Fprintf(env.Stderr, "r-loop: load run %s: %v\n", id, err)
-		return 2
+		return fail(env, fmt.Errorf("load run %s: %w", id, err))
 	}
 	pl, err := plan.Reader{}.Read(run.Todo)
 	if err != nil {
-		fmt.Fprintf(env.Stderr, "r-loop: %v\n", err)
-		return 2
+		return fail(env, err)
 	}
 	now := time.Now
 	if env.Now != nil {
@@ -116,7 +113,7 @@ func newestProgressed(st *store.Store, stderr io.Writer) (string, error) {
 	for _, name := range names {
 		run, err := st.Load(name)
 		if errors.Is(err, store.ErrMeta) {
-			fmt.Fprintf(stderr, "r-loop: skipped run %s: %v\n", name, err)
+			Stderrf(stderr, "r-loop: skipped run %s: %v", name, err)
 			continue
 		}
 		if err != nil || progressed(run) {

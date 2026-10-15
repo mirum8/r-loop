@@ -116,18 +116,11 @@ func reconcileLand(repo *gitrepo.Repo, st *store.Store, run core.RunState, todoA
 			ci = e
 		}
 	}
-	root := repo.Root()
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
-		root = resolved
-	}
-	if resolved, err := filepath.EvalSymlinks(todoAbs); err == nil {
-		todoAbs = resolved
-	}
-	todoRel, err := filepath.Rel(root, todoAbs)
+	todoRel, err := planRel(repo.Root(), todoAbs)
 	if err != nil {
-		return exit(2, "%v", err)
+		return err
 	}
-	todoRel = filepath.ToSlash(todoRel)
+	todoAbs = realPath(todoAbs)
 	tracked, err := repo.Tracked(todoRel)
 	if err != nil {
 		return exit(2, "%v", err)
@@ -742,7 +735,7 @@ func previousSession(run core.RunState, phase, label string) (string, string) {
 
 func Abort(args []string, env Env) int {
 	if len(args) > 0 {
-		fmt.Fprintln(env.Stderr, "usage: r-loop abort")
+		Stderrf(env.Stderr, "usage: r-loop abort")
 		return 2
 	}
 	repo, err := gitrepo.Open(env.Dir)

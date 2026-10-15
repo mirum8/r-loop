@@ -1378,3 +1378,108 @@ func TestResolveMarksOnlyAClaudeProviderGivenTheHookSettingsAsHooked(t *testing.
 		})
 	}
 }
+
+func outsidePlan(t *testing.T, content string) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "todo.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestAPlanOutsideTheRepositoryExits2NamingThePlanAndTheRoot(t *testing.T) {
+	// given
+	f := newFixture(t)
+	outside := outsidePlan(t, "# Plan\n\n### Phase 1 — One\n- [ ] a\n")
+
+	// when
+	actualCode := f.main(outside, "--dry-run", "--plain")
+
+	// then
+	if expected := "r-loop: plan " + outside + " is outside the repository " + f.root + ": move it into the repository, or run r-loop from the repository that holds it\n"; actualCode != 2 || f.err.String() != expected {
+		t.Fatalf("code=%d stderr=%q, expected 2 and %q", actualCode, f.err.String(), expected)
+	}
+}
+
+func TestASymlinkInTheRepositoryToAPlanOutsideItIsRejected(t *testing.T) {
+	// given
+	f := newFixture(t)
+	outside := outsidePlan(t, "# Plan\n\n### Phase 1 — One\n- [ ] a\n")
+	link := filepath.Join(f.root, "docs", "topic", "link.md")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+
+	// when
+	actualCode := f.main(link, "--dry-run", "--plain")
+
+	// then
+	if expected := "r-loop: plan " + link + " resolves to " + outside + ", outside the repository " + f.root + ": move it into the repository, or run r-loop from the repository that holds it\n"; actualCode != 2 || f.err.String() != expected {
+		t.Fatalf("code=%d stderr=%q, expected 2 and %q", actualCode, f.err.String(), expected)
+	}
+}
+
+func TestAPlanInsideTheRepositoryPassesDryRunTrackedOrIgnored(t *testing.T) {
+	for name, setup := range map[string]func(f *fixture){
+		"tracked":    func(f *fixture) {},
+		"gitignored": func(f *fixture) { f.untrackTodo() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			// given
+			f := newFixture(t)
+			f.write("docs/topic/todo.md", "# Plan\n\n### Phase 1 — One\n- [ ] a\n")
+			f.commit()
+			setup(f)
+
+			// when
+			actualCode := f.main(f.todo, "--dry-run", "--plain")
+
+			// then
+			if actualCode != 0 || f.err.String() != "" {
+				t.Fatalf("code=%d stderr=%q", actualCode, f.err.String())
+			}
+		})
+	}
+}
+
+func TestDryRunNamesAResolveFirstEntryThatBlocksTwoPhasesInThePlural(t *testing.T) {
+	// given
+	f := newFixture(t)
+	f.write("docs/topic/todo.md", "# Plan\n\n## Resolve first\n- [ ] **Measure it** — how fast?\n      Owner: me. Blocks: Phases 2, 3.\n\n### Phase 1 — One\n- [ ] a\n\n### Phase 2 — Two\n- [ ] b\n\n### Phase 3 — Three\n- [ ] c\n")
+	f.commit()
+
+	// when
+	actualCode := f.main(f.todo, "--dry-run", "--plain")
+
+	// then
+	if expected := `open ## Resolve first: "Measure it" (unclassified) blocks phases 2, 3 — the watchdog will walk it`; actualCode != 0 || !strings.Contains(f.out.String(), expected) {
+		t.Fatalf("code=%d stderr=%q out:\n%s", actualCode, f.err.String(), f.out.String())
+	}
+}
+
+func TestAMissingPlanUnderASymlinkedWorkingDirectoryIsReportedAsMissing(t *testing.T) {
+	// given
+	f := newFixture(t)
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(f.root, alias); err != nil {
+		t.Fatal(err)
+	}
+	f.env.Dir = alias
+
+	// when
+	actualCode := f.main("missing/todo.md", "--dry-run", "--plain")
+
+	// then
+	if expected := "r-loop: open " + alias + "/missing/todo.md: no such file or directory\n"; actualCode != 2 || f.err.String() != expected {
+		t.Fatalf("code=%d stderr=%q, expected 2 and %q", actualCode, f.err.String(), expected)
+	}
+}

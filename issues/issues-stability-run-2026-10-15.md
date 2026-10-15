@@ -38,7 +38,7 @@ or fix these before committing.
       - The transcript path, when known, is included so the watchdog can read the last assistant message
       - A test asserts that the stall blocker text routed to the watchdog contains the screen excerpt
 
-- [ ] [#15] Raw escape bytes on stderr
+- [x] [#15] Raw escape bytes on stderr  <!-- fixed: r-loop/phase-15 -->
       - `r-loop "$(printf 'x\033[2Jy\033]0;pwn\a.md')" --dry-run --plain` exits 2 and its stderr contains no 0x1b or 0x07 byte
       - A plan whose phase title carries ESC/OSC/BEL and no checklist items exits 2 with the title shown with control bytes removed
       - `r-loop status` errors (repo open, load run, plan read), the Getwd error and the usage line print no C0/C1 control bytes
@@ -66,7 +66,7 @@ or fix these before committing.
       - Errors from resume() or an absent handler ("no triage is open", "not available") are recorded as the call's result
       - The existing watchdog-call event is still recorded before the handler runs
 
-- [ ] [#17] Plan outside the repo is rejected with a raw git error
+- [x] [#17] Plan outside the repo is rejected with a raw git error  <!-- fixed: r-loop/phase-15 -->
       - A plan outside the repo exits 2 with one r-loop message naming the plan path and the repo root; stderr contains neither "ls-files" nor "fatal:"
       - A symlink inside the repo that resolves outside it is rejected the same way
       - A plan inside the repo, tracked or gitignored (ADR-84 local todo), still passes `--dry-run --plain`
@@ -95,7 +95,7 @@ or fix these before committing.
       - A relative TEST_APP_BIN (`bin/r-loop` from the repo root) works: BIN is made absolute against the caller's cwd before any cd
       - The refused dirty run still creates no run directory
 
-- [ ] [#18] Banner wording: "phases 3" uses the plural for one phase
+- [x] [#18] Banner wording: "phases 3" uses the plural for one phase  <!-- fixed: r-loop/phase-15 -->
       - A single blocked phase renders "Resolve first: <entry> → phase 3"; two render "→ phases 3, 4"
       - The amber preflight line says "blocks phases 3, 4" for two phases and "blocks phase 3" for one
       - triage_test.go expectations and the tech-design.md banner template match the new wording

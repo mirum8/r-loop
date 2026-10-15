@@ -15,17 +15,17 @@ import (
 var version = "dev"
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Getwd))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdout, stderr io.Writer, getwd func() (string, error)) int {
 	if len(args) == 1 && args[0] == "--version" {
 		fmt.Fprintf(stdout, "r-loop %s\n", version)
 		return 0
 	}
 	if len(args) > 0 && args[0] == "statusline-tap" {
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "r-loop: usage: r-loop statusline-tap <file>")
+			app.Stderrf(stderr, "r-loop: usage: r-loop statusline-tap <file>")
 			return 2
 		}
 		quota.Tap(os.Stdin, args[1], claudeSettings(), stdout)
@@ -33,15 +33,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(args) > 0 && args[0] == "hook-tap" {
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "r-loop: usage: r-loop hook-tap <file>")
+			app.Stderrf(stderr, "r-loop: usage: r-loop hook-tap <file>")
 			return 2
 		}
 		hooktap.Tap(os.Stdin, args[1], os.Getenv)
 		return 0
 	}
-	dir, err := os.Getwd()
+	dir, err := getwd()
 	if err != nil {
-		fmt.Fprintf(stderr, "r-loop: %v\n", err)
+		app.Stderrf(stderr, "r-loop: %v", err)
 		return 2
 	}
 	home, _ := os.UserHomeDir()

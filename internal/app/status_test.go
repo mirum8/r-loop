@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"r-loop/internal/core"
 	"r-loop/internal/notify"
@@ -395,5 +396,58 @@ func TestStatusDoesNotSkipARunWithACorruptRecordLine(t *testing.T) {
 	}
 	if code := f.main("status", "--plain"); code != 2 || !strings.Contains(f.err.String(), "events.jsonl line 1") {
 		t.Fatalf("code=%d err=%q", code, f.err)
+	}
+}
+
+func newHostileFixture(t *testing.T) *fixture {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(base, "r\x1b]0;pwn\x07")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return newFixtureIn(t, dir)
+}
+
+func TestStatusErrorsReachStderrWithoutControlBytes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		setup          func(f *fixture) []string
+		expectedSubstr string
+	}{
+		"repo open": {func(f *fixture) []string {
+			f.env.Dir = filepath.Join(f.root, "gone")
+			return []string{"status"}
+		}, "git rev-parse --show-toplevel"},
+		"load run": {func(f *fixture) []string {
+			if err := os.MkdirAll(store.New(f.root).Dir("20261015-120000"), 0o755); err != nil {
+				f.t.Fatal(err)
+			}
+			return []string{"status", "20261015-120000"}
+		}, "r]0;pwn"},
+		"plan read": {func(f *fixture) []string {
+			id, err := store.New(f.root).Create(core.RunMeta{Todo: filepath.Join(f.root, "gone.md"), Started: t0})
+			if err != nil {
+				f.t.Fatal(err)
+			}
+			return []string{"status", id}
+		}, "r]0;pwn"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// given
+			f := newHostileFixture(t)
+			args := tc.setup(f)
+
+			// when
+			actualCode := f.main(args...)
+
+			// then
+			actualStderr := f.err.String()
+			if actualCode != 2 || !strings.HasSuffix(actualStderr, "\n") || strings.IndexFunc(strings.TrimSuffix(actualStderr, "\n"), unicode.IsControl) != -1 || !strings.Contains(actualStderr, tc.expectedSubstr) {
+				t.Fatalf("code=%d stderr=%q", actualCode, actualStderr)
+			}
+		})
 	}
 }

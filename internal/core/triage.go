@@ -817,7 +817,7 @@ func renderPlan(v TriageView, t *Triage) (string, string) {
 		b.WriteString("Resolve first: none outstanding\n")
 	}
 	for _, d := range v.Deferrals {
-		writeWrapped(&b, "Resolve first: ", d.Entry+" → phases "+joinIDs(d.Phases))
+		writeWrapped(&b, "Resolve first: ", d.Entry+" → "+NamePhases(d.Phases))
 	}
 	fmt.Fprintf(&b, "%s: %s (%s), up to %s\n", Plural(len(kept), "phase"), Plural(stepSessions(kept, v.Kinds, t != nil), "step session"),
 		strings.Join(kindNames(v.Kinds), ", "), Plural(len(kept)*reviewRounds(v.Kinds), "review round"))
@@ -1005,6 +1005,11 @@ func Plural(n int, word string) string {
 		return "1 " + word
 	}
 	return fmt.Sprintf("%d %ss", n, word)
+}
+
+func NamePhases(ids []string) string {
+	_, noun, _ := strings.Cut(Plural(len(ids), "phase"), " ")
+	return noun + " " + joinIDs(ids)
 }
 
 func kindNames(kinds []StepKind) []string {

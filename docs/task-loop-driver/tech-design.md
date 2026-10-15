@@ -694,12 +694,13 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
 - **Dry run** — `--dry-run` always prints plain lines and starts no session. After the banner and
   `run list:` (one line per phase and its pipeline), a backlog item with no criteria gets
   `warning: phase N has no acceptance criteria…`, and each open `## Resolve first` entry that
-  blocks a phase in it is named: `open ## Resolve first: "<name>" (<kind>) blocks phase <n> — <then>`.
+  blocks a phase in it is named: `open ## Resolve first: "<name>" (<kind>) blocks phase <n> — <then>` (`blocks phases <n>, <n>` for more than
+  one, `blocks every phase` for an entry that blocks all).
   Then the Go-only triage table, `core.RenderTriage(view, nil)` over the list left after
   `DeferBlocked`: for a plan `Plan: <path> — <n> phases, <n> already done, running <ids>`, one
   block per phase — `Phase <id> · <title>`, `M<n> · wave <n> · risk` (milestone and risk only when
   set), `Files:` and `Done when:`, wrapped at 100 columns (no `Verified:` line in a dry run),
-  `Plan check: <n> notes` and the notes (or `no notes`), `Resolve first: <entry> → phases <ids>`
+  `Plan check: <n> notes` and the notes (or `no notes`), `Resolve first: <entry> → phase <id>` (`→ phases <id>, <id>` for more than one)
   (or `none outstanding`), the cost line `<n> phases: <n> step sessions (<kinds>), up to <n> review
   rounds` and `Milestones completed by this run: …`; for a backlog `Backlog: <path> (<n> items)`, an
   `Item | Title` table and `<n> items: up to <n> phases, up to <n> review rounds`. Both end

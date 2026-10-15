@@ -65,7 +65,7 @@ func (c *cleaner) report(format string, args ...any) {
 }
 
 func (c *cleaner) fail(format string, args ...any) {
-	fmt.Fprintf(c.env.Stderr, "r-loop: "+format+"\n", args...)
+	Stderrf(c.env.Stderr, "r-loop: "+format, args...)
 	c.failed = true
 }
 
@@ -175,7 +175,7 @@ func (c *cleaner) removeWorktrees() error {
 	}
 	for _, b := range branches {
 		if b == head {
-			fmt.Fprintf(c.env.Stderr, "r-loop: kept branch %s: it is checked out in %s\n", b, c.repo.Root())
+			Stderrf(c.env.Stderr, "r-loop: kept branch %s: it is checked out in %s", b, c.repo.Root())
 			continue
 		}
 		of(strings.TrimPrefix(b, "r-loop/phase-")).branch = b
