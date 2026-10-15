@@ -515,6 +515,32 @@ func TestVerdictCheckDropsTheUnchangedFilesOfAFixedEntryWhenAListedFileChanged(t
 	}
 }
 
+func TestVerdictCheckNotRealEvidence(t *testing.T) {
+	for name, tc := range map[string]struct {
+		evidence, missing string
+		repairs           []string
+	}{
+		"line range":                          {"b.go:70-73", "", nil},
+		"relative worktree prefix":            {".r-loop/wt/phase-2/b.go:75", "", []string{"verdict codex-r2-2: evidence .r-loop/wt/phase-2/b.go:75 read as b.go:75"}},
+		"absolute worktree prefix":            {"/repo/.r-loop/wt/phase-2/b.go:70-73", "", []string{"verdict codex-r2-2: evidence /repo/.r-loop/wt/phase-2/b.go:70-73 read as b.go:70-73"}},
+		"prefixed path that does not exist":   {".r-loop/wt/phase-2/gone.go:3", "evidence gone.go:3 of codex-r2-2 is not in the worktree", nil},
+		"range on a path that does not exist": {"gone.go:3-5", "evidence gone.go:3-5 of codex-r2-2 is not in the worktree", nil},
+		"range with no end":                   {"b.go:3-", "not-real finding codex-r2-2 has no path:line evidence", nil},
+		"another worktree's prefix":           {".r-loop/wt/phase-1/b.go:75", "evidence .r-loop/wt/phase-1/b.go:75 of codex-r2-2 is not in the worktree", nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newVerdictFixture(t, strings.Replace(goodVerdict, `"evidence":"b.go:12"`, `"evidence":"`+tc.evidence+`"`, 1))
+			f.ctx.Worktree = "/repo/.r-loop/wt/phase-2"
+
+			ok, missing, repairs := checkVerdict(f.ctx)
+
+			if ok != (tc.missing == "") || missing != tc.missing || !reflect.DeepEqual(repairs, tc.repairs) {
+				t.Fatalf("ok = %v, missing = %q, repairs = %q", ok, missing, repairs)
+			}
+		})
+	}
+}
+
 func TestAFixWhoseVerdictListsAnUnchangedFileBesideAChangedOneEndsOKWithAWarning(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "codex"})
 	ref := r.worker.Ref

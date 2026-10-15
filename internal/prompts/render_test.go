@@ -801,7 +801,8 @@ func TestFixAsksForVerdicts(t *testing.T) {
 		"Only a finding that is `real` at `P1` or `P2` may be fixed",
 		"Excess that adds a type, interface, config key, dependency or layer no obligation needs is `P2`",
 		"An excess finding is `real` only when its replacement still meets every obligation",
-		"a `path:line` you have read",
+		"a `path:line` or `path:line-line` you have read",
+		"Your current directory is the worktree root: write the path relative to it, such as `calc_test.go:75`",
 		"Do not commit",
 		"exactly once",
 	} {

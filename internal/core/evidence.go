@@ -471,7 +471,7 @@ func (e VerdictEntry) blocking() bool {
 var (
 	verdicts   = []string{"real", "not-real", "out-of-scope"}
 	severities = []string{"P1", "P2", "P3", "P4"}
-	pathLine   = regexp.MustCompile(`^[^\s:]+:\d+$`)
+	pathLine   = regexp.MustCompile(`^[^\s:]+:\d+(-\d+)?$`)
 )
 
 func ReadVerdict(path string) (Verdict, error) {
@@ -540,6 +540,10 @@ func checkVerdict(ctx EvidenceContext) (bool, string, []string) {
 	}
 	var changed, repairs []string
 	for _, e := range v.Findings {
+		if rel, ok := worktreeRel(ctx.Worktree, e.Evidence); ok {
+			repairs = append(repairs, "verdict "+e.ID+": evidence "+e.Evidence+" read as "+rel)
+			e.Evidence = rel
+		}
 		dropped, missing := checkEntry(ctx, e, &changed)
 		if missing != "" {
 			return false, missing, nil
@@ -549,6 +553,18 @@ func checkVerdict(ctx EvidenceContext) (bool, string, []string) {
 		}
 	}
 	return true, "", repairs
+}
+
+func worktreeRel(worktree, evidence string) (string, bool) {
+	if worktree == "" {
+		return "", false
+	}
+	for _, prefix := range []string{worktree + "/", ".r-loop/wt/" + filepath.Base(worktree) + "/"} {
+		if rel, ok := strings.CutPrefix(evidence, prefix); ok && rel != "" {
+			return rel, true
+		}
+	}
+	return "", false
 }
 
 func checkEntry(ctx EvidenceContext, e VerdictEntry, changed *[]string) ([]string, string) {

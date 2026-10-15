@@ -16,7 +16,7 @@ Check every finding against the code and give it:
 
 A finding that an obligation — an open item, a spec invariant, a reachable edge case or error path — is missing or untested is `P1` or `P2`. Excess that adds a type, interface, config key, dependency or layer no obligation needs is `P2`; excess inside one function is `P3`. A test that breaks a rule under `## Writing tests` is `P2` when it would still pass with the behaviour it names broken, and `P3` otherwise. An excess finding is `real` only when its replacement still meets every obligation; otherwise it is `not-real`, with the `path:line` of the obligation it would break as evidence.
 
-A `not-real` verdict is a dismissal and carries `evidence`: a `path:line` you have read in the worktree that shows the finding is wrong, with the path relative to `{{.Worktree}}`.
+A `not-real` verdict is a dismissal and carries `evidence`: a `path:line` or `path:line-line` you have read in the worktree that shows the finding is wrong. Your current directory is the worktree root: write the path relative to it, such as `calc_test.go:75`, never with the worktree's own path in front.
 
 Only a finding that is `real` at `P1` or `P2` may be fixed, and every such finding must be fixed: mark it `"fixed": true` and list in `files` every file you changed for it in this round. Every other finding stays `"fixed": false` and you leave its code as it is. A fix that adds or changes a test follows the rules under `## Writing tests` below.
 
