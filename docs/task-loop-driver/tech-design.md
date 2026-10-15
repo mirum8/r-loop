@@ -746,6 +746,11 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   `choose_gate(phase, commands) → {accepted, reason?}` (ADR-95: handled by `LandGate.ChooseGate`); `step` is `phase-<N>/<kind>`,
   resolved to the latest attempt. None of these is reachable from a step path, and this path
   serves no `ask_watchdog`. Every call is recorded as `watchdog-call` before its handler runs.
+  Every call but `run_status` and `step_info` also records `watchdog-result` after its handler
+  returns, with `tool`, `accepted` or `decision`, and `reason` when there is one: a refusal,
+  `no triage is open`, `not available` or a failed `Resume` is recorded as the call's result. A
+  result that cannot be recorded leaves the outcome as it is and adds `record <tool> result: <err>`
+  to the call's `reason`, and to the text of a `submit_triage` or `submit_gate` result.
 - **Waiting for the maintainer (ADR-73, amended 2026-09-23)** — `ask_maintainer` returns at once;
   an empty question is refused. It calls `Watchdog.AskMaintainer`, which records and emits
   `Event{Kind: "watchdog-waiting", Fields: {question, options?, recommended?}}` (`options` joined

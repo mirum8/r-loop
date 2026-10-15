@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,6 +128,15 @@ type acceptedOutput struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
+func (o acceptedOutput) outcome() (string, string, string) {
+	return "accepted", strconv.FormatBool(o.Accepted), o.Reason
+}
+
+func (o acceptedOutput) withReason(reason string) acceptedOutput {
+	o.Reason = reason
+	return o
+}
+
 type triageInput struct {
 	Phases []core.PhaseVerdict `json:"phases,omitempty"`
 	Items  []core.ItemVerdict  `json:"items,omitempty"`
@@ -137,6 +147,15 @@ type tableOutput struct {
 	Accepted bool   `json:"accepted"`
 	Reason   string `json:"reason,omitempty"`
 	Table    string `json:"table,omitempty"`
+}
+
+func (o tableOutput) outcome() (string, string, string) {
+	return "accepted", strconv.FormatBool(o.Accepted), o.Reason
+}
+
+func (o tableOutput) withReason(reason string) tableOutput {
+	o.Reason = reason
+	return o
 }
 
 func (s *Server) tableResult(out tableOutput) (*mcp.CallToolResult, tableOutput, error) {
@@ -205,6 +224,37 @@ type decisionOutput struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
+func (o decisionOutput) outcome() (string, string, string) {
+	return "decision", o.Decision, o.Reason
+}
+
+func (o decisionOutput) withReason(reason string) decisionOutput {
+	o.Reason = reason
+	return o
+}
+
+type toolOutput[Out any] interface {
+	outcome() (key, value, reason string)
+	withReason(reason string) Out
+}
+
+func watchdogTool[In any, Out toolOutput[Out]](s *Server, h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFor[In, Out] {
+	return trackTool(s, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+		res, out, err := h(ctx, req, in)
+		key, value, reason := out.outcome()
+		if rerr := s.recordResult(req.Params.Name, key, value, reason); rerr != nil {
+			if reason != "" {
+				reason += "; "
+			}
+			out = out.withReason(reason + rerr.Error())
+			if res != nil {
+				res.Content = append(res.Content, &mcp.TextContent{Text: rerr.Error()})
+			}
+		}
+		return res, out, err
+	})
+}
+
 var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true, "stop_run": true, "pause_run": true, "continue_run": true, "choose_gate": true, "set_config": true}
 
 func (s *Server) Handle(h WatchdogHandlers) {
@@ -224,7 +274,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "signal",
 		Description: "Report a step going the wrong way: kind warn or halt, step phase-<N>/<kind>, with the reason and the evidence.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in signalInput) (*mcp.CallToolResult, acceptedOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in signalInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("signal", in.Step, map[string]string{"kind": in.Kind, "step": in.Step, "reason": in.Reason, "evidence": in.Evidence}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -248,7 +298,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "choose_gate",
 		Description: "Choose a phase's gate after `choose gate phase <N>`: the candidates this tree can run as shell commands, verbatim, in any order; an empty list when none is.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in chooseGateInput) (*mcp.CallToolResult, acceptedOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in chooseGateInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("choose_gate", "", map[string]string{"phase": in.Phase, "commands": marshal(in.Commands)}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -265,7 +315,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "propose_remedy",
 		Description: "Propose the exact command that would unblock the step, with its class and why. Run it only when the decision is authorised. A class off the allow-list needs maintainer_said: the maintainer's reply, quoted, after you asked them in your own session.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in proposeInput) (*mcp.CallToolResult, decisionOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in proposeInput) (*mcp.CallToolResult, decisionOutput, error) {
 		if err := s.record("propose_remedy", "", map[string]string{"class": in.Class, "command": in.Command, "why": in.Why, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
 		}
@@ -282,7 +332,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "set_config",
 		Description: "Set one key in the project's .r-loop/config.yaml and load it at once: key is a dotted path such as steps.implement.model, with a list item by its index such as steps.implement.reviewers.0.model; value is a single scalar (a string, number, duration or boolean): a list or a whole section cannot be set; why says what the change fixes. The driver validates the whole config before writing, restores the file when the run cannot load it, and commits .r-loop/config.yaml alone. Keys under watchdog. and unattended. are refused, and so is an unknown key or a bad value. A config the run cannot use, such as a reviewer left on a provider with no review command, is refused. A held step takes the new value on resolve_blocker continue, which reads the config again, and retry keeps the row the step started on; a held reviewer takes it on retry, which reopens the reviewer from the current config.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in setConfigInput) (*mcp.CallToolResult, decisionOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in setConfigInput) (*mcp.CallToolResult, decisionOutput, error) {
 		if err := s.record("set_config", "", map[string]string{"key": in.Key, "value": in.Value, "why": in.Why}); err != nil {
 			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
 		}
@@ -299,7 +349,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "stop_run",
 		Description: "Stop the run on the maintainer's word: when after-phase lets the current phase finish and halts before the next one starts; when now aborts the live step at once. r-loop resume continues. Needs maintainer_said: the maintainer's reply, quoted.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in stopRunInput) (*mcp.CallToolResult, acceptedOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in stopRunInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("stop_run", "", map[string]string{"when": in.When, "reason": in.Reason, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -316,7 +366,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "pause_run",
 		Description: "Pause the run on the maintainer's word: the current phase finishes, then the driver waits before the next one until continue_run or stop_run. Needs maintainer_said: the maintainer's reply, quoted.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in pauseRunInput) (*mcp.CallToolResult, acceptedOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in pauseRunInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("pause_run", "", map[string]string{"reason": in.Reason, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -333,7 +383,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "continue_run",
 		Description: "Continue a paused run, or cancel a pause still waiting for its phase to finish. Needs maintainer_said: the maintainer's reply, quoted.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in continueRunInput) (*mcp.CallToolResult, acceptedOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in continueRunInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("continue_run", "", map[string]string{"maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -350,7 +400,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "restart_step",
 		Description: "Restart a failed or stalled step phase-<N>/<kind> as a new attempt, optionally with an addendum or another provider. A provider that is not the row's fallback needs model, effort and maintainer_said: the maintainer's reply, quoted, after you asked them in your own session.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in restartInput) (*mcp.CallToolResult, acceptedOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in restartInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("restart_step", in.Step, map[string]string{"step": in.Step, "addendum": in.Addendum, "provider": in.Provider, "model": in.Model, "effort": in.Effort, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -367,7 +417,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "answer_question",
 		Description: "Answer an open step question. Cite a path:line that holds the answer, or maintainer when the maintainer answered it in your own session. An empty or invalid citation is refused and the question stays open.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in answerInput) (*mcp.CallToolResult, acceptedOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in answerInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("answer_question", "", map[string]string{"id": in.ID, "answer": in.Answer, "citation": in.Citation}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -384,7 +434,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "answer_dialog",
 		Description: "Answer an open dialog in a step's pane with the herdr keys that select your choice, in order: enter, esc, up, down, tab, or a single digit or letter. Give rule: the text of one configured dialog rule, exactly; decline, with keys [\"esc\"] only; or no rule and maintainer_said: the maintainer's reply, quoted, after you asked them in your own session. The driver presses the keys only when the decision is authorised.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in answerDialogInput) (*mcp.CallToolResult, decisionOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in answerDialogInput) (*mcp.CallToolResult, decisionOutput, error) {
 		if err := s.record("answer_dialog", "", map[string]string{"id": in.ID, "keys": strings.Join(in.Keys, " "), "rule": in.Rule, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
 		}
@@ -401,7 +451,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "resolve_blocker",
 		Description: "Clear an open blocker the driver holds the run on, with one of its actions: retry, keys, switch, continue, block or stop. retry takes an addendum for the next attempt; continue re-enters the held step or land as r-loop resume would, in the same process and with no addendum: a step resumes from its failed attempt's recorded review round, a land reads its phase from the plan again; it is authorised on its own as retry is; keys takes the herdr keys to press in its pane and rule: the text of one configured dialog rule, exactly; switch takes provider, and model and effort for a provider that is not the row's fallback. Anything not authorised on its own comes back ask: ask the maintainer in your own session, then call again with maintainer_said: their reply, quoted. block and stop are refused while the target has retries left, unless maintainer_said is set: fix the cause and retry.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in resolveBlockerInput) (*mcp.CallToolResult, decisionOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in resolveBlockerInput) (*mcp.CallToolResult, decisionOutput, error) {
 		if err := s.record("resolve_blocker", "", map[string]string{"id": in.ID, "action": in.Action, "rule": in.Rule, "addendum": in.Addendum, "keys": strings.Join(in.Keys, " "), "provider": in.Provider, "model": in.Model, "effort": in.Effort, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return nil, decisionOutput{Decision: "refused", Reason: err.Error()}, nil
 		}
@@ -418,7 +468,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "ask_maintainer",
 		Description: "Call this first whenever you need the maintainer: it shows them that you are waiting for them, with the question, and returns at once. Then ask them in your own session and wait for the reply. Your next call of any other tool except run_status and step_info marks the wait over.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in askMaintainerInput) (*mcp.CallToolResult, acceptedOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in askMaintainerInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("ask_maintainer", "", map[string]string{"question": in.Question, "options": strings.Join(in.Options, "; "), "recommended": in.Recommended}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
 		}
@@ -437,7 +487,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "submit_triage",
 		Description: "Submit your triage before the run starts: one verdict per phase for a plan, or one per item plus the groups for a backlog; when the pipeline has a design step, every build phase or group also carries design and, when true, a design_note. A refusal carries the reason; fix it and submit again. An accepted call returns the table the driver built.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in triageInput) (*mcp.CallToolResult, tableOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in triageInput) (*mcp.CallToolResult, tableOutput, error) {
 		if err := s.record("submit_triage", "", map[string]string{"triage": marshal(in)}); err != nil {
 			return s.tableResult(tableOutput{Reason: err.Error()})
 		}
@@ -454,7 +504,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "submit_gate",
 		Description: "Submit the maintainer's decision on the table: go, revise (drop, split, merge, design_on, design_off; returns the new table) or abort, with maintainer_said quoted.",
-	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in core.GateDecision) (*mcp.CallToolResult, tableOutput, error) {
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in core.GateDecision) (*mcp.CallToolResult, tableOutput, error) {
 		if err := s.record("submit_gate", "", map[string]string{"gate": marshal(in), "decision": in.Decision, "maintainer_said": in.MaintainerSaid}); err != nil {
 			return s.tableResult(tableOutput{Reason: err.Error()})
 		}
@@ -546,16 +596,31 @@ func (s *Server) resume() error {
 }
 
 func (s *Server) record(tool, step string, fields map[string]string) error {
-	if s.Store == nil {
-		return nil
-	}
 	fields["tool"] = tool
-	now := time.Now()
-	ev := &core.Event{At: now, Kind: "watchdog-call", Step: step, Fields: fields}
-	if err := s.Store.Append(s.RunID, core.Record{Kind: core.RecordEvent, At: now, Event: ev}); err != nil {
+	if err := s.appendEvent("watchdog-call", step, fields); err != nil {
 		return fmt.Errorf("record %s: %w", tool, err)
 	}
 	return nil
+}
+
+func (s *Server) recordResult(tool, key, value, reason string) error {
+	fields := map[string]string{"tool": tool, key: value}
+	if reason != "" {
+		fields["reason"] = reason
+	}
+	if err := s.appendEvent("watchdog-result", "", fields); err != nil {
+		return fmt.Errorf("record %s result: %w", tool, err)
+	}
+	return nil
+}
+
+func (s *Server) appendEvent(kind, step string, fields map[string]string) error {
+	if s.Store == nil {
+		return nil
+	}
+	now := time.Now()
+	ev := &core.Event{At: now, Kind: kind, Step: step, Fields: fields}
+	return s.Store.Append(s.RunID, core.Record{Kind: core.RecordEvent, At: now, Event: ev})
 }
 
 func (s *Server) resolve(step string) (core.StepKey, error) {

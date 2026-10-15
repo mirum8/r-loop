@@ -21,16 +21,20 @@ import (
 )
 
 type memStore struct {
-	mu      sync.Mutex
-	recs    []core.Record
-	steps   map[core.StepKey]core.StepState
-	loadErr error
+	mu        sync.Mutex
+	recs      []core.Record
+	steps     map[core.StepKey]core.StepState
+	loadErr   error
+	failEvent string
 }
 
 func (m *memStore) Create(core.RunMeta) (string, error) { return "run-7", nil }
 func (m *memStore) Append(runID string, rec core.Record) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if rec.Event != nil && rec.Event.Kind == m.failEvent {
+		return errors.New("disk full")
+	}
 	m.recs = append(m.recs, rec)
 	return nil
 }
@@ -419,7 +423,7 @@ func TestEveryCallIsRecordedBeforeItsHandlerRuns(t *testing.T) {
 		t.Fatalf("record = %+v", seen[0])
 	}
 	all := st.records()
-	if len(all) != 2 || all[1].Event.Fields["tool"] != "signal" || all[1].Event.Fields["step"] != "phase-2/plan" || all[1].Event.Fields["kind"] != "warn" {
+	if len(all) != 4 || all[2].Event.Fields["tool"] != "signal" || all[2].Event.Fields["step"] != "phase-2/plan" || all[2].Event.Fields["kind"] != "warn" {
 		t.Fatalf("records = %+v", all)
 	}
 }
@@ -465,7 +469,7 @@ func TestMaintainerSaidReachesTheHandlersAndIsRecorded(t *testing.T) {
 		t.Fatalf("handlers got %q", said)
 	}
 	recs := st.records()
-	if len(recs) != 2 || recs[0].Event.Fields["maintainer_said"] != "yes, download it" || recs[1].Event.Fields["maintainer_said"] != "use gemini" {
+	if len(recs) != 4 || recs[0].Event.Fields["maintainer_said"] != "yes, download it" || recs[2].Event.Fields["maintainer_said"] != "use gemini" {
 		t.Fatalf("records = %+v", recs)
 	}
 }
@@ -724,7 +728,7 @@ func TestSubmitTriageHandsThePayloadToItsHandlerAndReturnsTheTable(t *testing.T)
 		t.Fatalf("handler got %+v", got)
 	}
 	recs := st.records()
-	if len(recs) != 2 || recs[0].Event.Fields["tool"] != "submit_triage" || !strings.Contains(recs[0].Event.Fields["triage"], `"group_id":"G1"`) {
+	if len(recs) != 4 || recs[0].Event.Fields["tool"] != "submit_triage" || !strings.Contains(recs[0].Event.Fields["triage"], `"group_id":"G1"`) {
 		t.Fatalf("records = %+v", recs)
 	}
 }
@@ -1018,7 +1022,7 @@ func TestRunControlToolsAreRecordedResumeAndReachTheirHandlers(t *testing.T) {
 		t.Fatalf("calls = %s", got)
 	}
 	recs := st.records()
-	if len(recs) != 3 || recs[0].Event.Fields["tool"] != "stop_run" || recs[0].Event.Fields["when"] != "after-phase" || recs[0].Event.Fields["maintainer_said"] != "stop after this phase" || recs[2].Event.Fields["tool"] != "continue_run" {
+	if len(recs) != 6 || recs[0].Event.Fields["tool"] != "stop_run" || recs[0].Event.Fields["when"] != "after-phase" || recs[0].Event.Fields["maintainer_said"] != "stop after this phase" || recs[4].Event.Fields["tool"] != "continue_run" {
 		t.Fatalf("records = %+v", recs)
 	}
 }
@@ -1052,5 +1056,232 @@ func TestSetConfigWithNoHandlerIsRefused(t *testing.T) {
 
 	if out["decision"] != "refused" || out["reason"] != notAvailable {
 		t.Fatalf("out = %+v", out)
+	}
+}
+
+func eventKinds(recs []core.Record) []string {
+	var kinds []string
+	for _, rec := range recs {
+		kinds = append(kinds, rec.Event.Kind)
+	}
+	return kinds
+}
+
+func TestARefusedSubmitTriageRecordsItsResultWithTheReason(t *testing.T) {
+	// given
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	s.Handle(WatchdogHandlers{SubmitTriage: func(core.Triage) (bool, string, string) {
+		return false, "item 4 has no verdict", ""
+	}})
+	cs := connect(t, s.WatchdogURL())
+
+	// when
+	call(t, cs, "submit_triage", map[string]any{"phases": []any{map[string]any{"phase": "3", "status": "build"}}})
+
+	// then
+	recs := st.records()
+	if len(recs) != 2 {
+		t.Fatalf("records = %+v", recs)
+	}
+	if actualTool := recs[0].Event.Fields["tool"]; recs[0].Event.Kind != "watchdog-call" || actualTool != "submit_triage" {
+		t.Errorf("call record = %+v", recs[0].Event)
+	}
+	expectedFields := map[string]string{"tool": "submit_triage", "accepted": "false", "reason": "item 4 has no verdict"}
+	if actual := recs[1].Event; actual.Kind != "watchdog-result" || actual.Step != "" || !reflect.DeepEqual(actual.Fields, expectedFields) {
+		t.Errorf("result record = %+v, want fields %v", actual, expectedFields)
+	}
+}
+
+func TestAnAcceptedWatchdogCallRecordsItsResult(t *testing.T) {
+	cases := []struct {
+		name           string
+		handlers       WatchdogHandlers
+		tool           string
+		args           map[string]any
+		expectedFields map[string]string
+	}{
+		{
+			name:           "signal",
+			handlers:       WatchdogHandlers{Signal: func(core.Signal) (bool, string) { return true, "" }},
+			tool:           "signal",
+			args:           map[string]any{"kind": "warn", "step": "phase-3/implement", "reason": "r", "evidence": "e"},
+			expectedFields: map[string]string{"tool": "signal", "accepted": "true"},
+		},
+		{
+			name:           "ask_maintainer",
+			handlers:       WatchdogHandlers{AskMaintainer: func(string, []string, string) error { return nil }},
+			tool:           "ask_maintainer",
+			args:           map[string]any{"question": "which store?"},
+			expectedFields: map[string]string{"tool": "ask_maintainer", "accepted": "true"},
+		},
+		{
+			name:           "submit_gate",
+			handlers:       WatchdogHandlers{SubmitGate: func(core.GateDecision) (bool, string, string) { return true, "", "| G |" }},
+			tool:           "submit_gate",
+			args:           map[string]any{"decision": "go", "maintainer_said": "go"},
+			expectedFields: map[string]string{"tool": "submit_gate", "accepted": "true"},
+		},
+		{
+			name: "propose_remedy",
+			handlers: WatchdogHandlers{Propose: func(string, string, string, string) (string, string) {
+				return "ask", "class shell needs the maintainer"
+			}},
+			tool:           "propose_remedy",
+			args:           map[string]any{"class": "shell", "command": "c", "why": "w"},
+			expectedFields: map[string]string{"tool": "propose_remedy", "decision": "ask", "reason": "class shell needs the maintainer"},
+		},
+		{
+			name: "resolve_blocker",
+			handlers: WatchdogHandlers{ResolveBlocker: func(string, string, string, string, []string, string, string, string, string) (string, string) {
+				return "authorised", ""
+			}},
+			tool:           "resolve_blocker",
+			args:           map[string]any{"id": "b1", "action": "retry"},
+			expectedFields: map[string]string{"tool": "resolve_blocker", "decision": "authorised"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// given
+			st := &memStore{}
+			s := serveWatchdog(t, st)
+			s.Handle(tc.handlers)
+			cs := connect(t, s.WatchdogURL())
+
+			// when
+			call(t, cs, tc.tool, tc.args)
+
+			// then
+			actual := st.records()[1].Event
+			if actual.Kind != "watchdog-result" || !reflect.DeepEqual(actual.Fields, tc.expectedFields) {
+				t.Errorf("result record = %+v, want fields %v", actual, tc.expectedFields)
+			}
+		})
+	}
+}
+
+func TestAnErrorBeforeTheHandlerIsRecordedAsTheCallsResult(t *testing.T) {
+	cases := []struct {
+		name           string
+		handlers       WatchdogHandlers
+		tool           string
+		args           map[string]any
+		expectedFields map[string]string
+	}{
+		{
+			name:           "resume error",
+			handlers:       WatchdogHandlers{Resume: func() error { return errors.New("record watchdog-resumed: disk full") }},
+			tool:           "answer_question",
+			args:           map[string]any{"id": "q1", "answer": "a", "citation": "maintainer"},
+			expectedFields: map[string]string{"tool": "answer_question", "accepted": "false", "reason": "record watchdog-resumed: disk full"},
+		},
+		{
+			name:           "no triage open",
+			tool:           "submit_triage",
+			args:           map[string]any{"phases": []any{map[string]any{"phase": "3", "status": "build"}}},
+			expectedFields: map[string]string{"tool": "submit_triage", "accepted": "false", "reason": "no triage is open"},
+		},
+		{
+			name:           "accepted tool, no handler",
+			tool:           "signal",
+			args:           map[string]any{"kind": "warn", "step": "phase-3/implement", "reason": "r", "evidence": "e"},
+			expectedFields: map[string]string{"tool": "signal", "accepted": "false", "reason": "not available"},
+		},
+		{
+			name:           "decision tool, no handler",
+			tool:           "set_config",
+			args:           map[string]any{"key": "steps.implement.model", "value": "x", "why": "w"},
+			expectedFields: map[string]string{"tool": "set_config", "decision": "refused", "reason": "not available"},
+		},
+		{
+			name:           "empty question",
+			tool:           "ask_maintainer",
+			args:           map[string]any{"question": "  "},
+			expectedFields: map[string]string{"tool": "ask_maintainer", "accepted": "false", "reason": "question is empty"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// given
+			st := &memStore{}
+			s := serveWatchdog(t, st)
+			s.Handle(tc.handlers)
+			cs := connect(t, s.WatchdogURL())
+
+			// when
+			call(t, cs, tc.tool, tc.args)
+
+			// then
+			actual := st.records()[1].Event
+			if actual.Kind != "watchdog-result" || !reflect.DeepEqual(actual.Fields, tc.expectedFields) {
+				t.Errorf("result record = %+v, want fields %v", actual, tc.expectedFields)
+			}
+		})
+	}
+}
+
+func TestTheCallIsRecordedBeforeItsHandlerAndItsResultAfter(t *testing.T) {
+	// given
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	var seen []core.Record
+	s.Handle(WatchdogHandlers{Restart: func(string, string, string, string, string, string) (bool, string) {
+		seen = st.records()
+		return false, "no authorised remedy"
+	}})
+	cs := connect(t, s.WatchdogURL())
+
+	// when
+	call(t, cs, "restart_step", map[string]any{"step": "phase-3/implement"})
+
+	// then
+	if actualKinds := eventKinds(seen); !slices.Equal(actualKinds, []string{"watchdog-call"}) {
+		t.Errorf("kinds seen by the handler = %v", actualKinds)
+	}
+	if actualKinds := eventKinds(st.records()); !slices.Equal(actualKinds, []string{"watchdog-call", "watchdog-result"}) {
+		t.Errorf("kinds after the call = %v", actualKinds)
+	}
+}
+
+func TestAResultThatCannotBeRecordedIsAddedToTheReason(t *testing.T) {
+	// given
+	st := &memStore{failEvent: "watchdog-result"}
+	s := serveWatchdog(t, st)
+	s.Handle(WatchdogHandlers{Restart: func(string, string, string, string, string, string) (bool, string) {
+		return true, ""
+	}})
+	cs := connect(t, s.WatchdogURL())
+
+	// when
+	actual := call(t, cs, "restart_step", map[string]any{"step": "phase-3/implement"})
+
+	// then
+	if actual["accepted"] != true || actual["reason"] != "record restart_step result: disk full" {
+		t.Errorf("output = %+v", actual)
+	}
+	if actualKinds := eventKinds(st.records()); !slices.Equal(actualKinds, []string{"watchdog-call"}) {
+		t.Errorf("recorded kinds = %v", actualKinds)
+	}
+}
+
+func TestATableResultThatCannotBeRecordedKeepsTheTableAndShowsTheError(t *testing.T) {
+	// given
+	s := serveWatchdog(t, &memStore{failEvent: "watchdog-result"})
+	s.Handle(WatchdogHandlers{SubmitTriage: func(core.Triage) (bool, string, string) {
+		return true, "", "| Group | Phase |"
+	}})
+	cs := connect(t, s.WatchdogURL())
+
+	// when
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "submit_triage", Arguments: map[string]any{"phases": []any{map[string]any{"phase": "3", "status": "build"}}}})
+
+	// then
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedContent := []mcp.Content{&mcp.TextContent{Text: "| Group | Phase |"}, &mcp.TextContent{Text: "record submit_triage result: disk full"}}
+	if !reflect.DeepEqual(res.Content, expectedContent) {
+		t.Errorf("content = %+v, want %+v", res.Content, expectedContent)
 	}
 }

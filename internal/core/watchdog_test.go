@@ -1344,65 +1344,100 @@ func TestALabelledWatchdogOpensALabelledWorkspace(t *testing.T) {
 type focusHost struct {
 	askingHost
 	focused []string
-	err     error
 }
 
 func (h *focusHost) Focus(agent string) error {
 	h.focused = append(h.focused, agent)
-	return h.err
+	return nil
 }
 
-func TestAWatchdogAskingTheMaintainerTakesFocusOncePerQuestion(t *testing.T) {
-	host := &focusHost{}
-	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
-	dog.Face = &fakeFace{}
+func TestEnteringWatchdogWaitingNeverFocusesTheWatchdogPane(t *testing.T) {
+	cases := []struct {
+		name          string
+		unattended    bool
+		blockedFor    int
+		states        map[string]AgentState
+		when          func(*Watchdog) error
+		expectedKinds []string
+	}{
+		{
+			name:          "asks the maintainer",
+			when:          func(dog *Watchdog) error { return dog.AskMaintainer("which store?", nil, "") },
+			expectedKinds: []string{"watchdog-waiting"},
+		},
+		{
+			name:          "asks the maintainer, unattended",
+			unattended:    true,
+			when:          func(dog *Watchdog) error { return dog.AskMaintainer("which store?", nil, "") },
+			expectedKinds: []string{"watchdog-waiting"},
+		},
+		{
+			name:          "herdr reports it blocked",
+			blockedFor:    1,
+			states:        map[string]AgentState{dogName: AgentBlocked},
+			when:          func(dog *Watchdog) error { return dog.Notify("step started phase-2/implement", false, 0) },
+			expectedKinds: []string{"watchdog-waiting", "watchdog-resumed"},
+		},
+		{
+			name:          "herdr reports it blocked, unattended",
+			unattended:    true,
+			blockedFor:    1,
+			states:        map[string]AgentState{dogName: AgentBlocked},
+			when:          func(dog *Watchdog) error { return dog.Notify("step started phase-2/implement", false, 0) },
+			expectedKinds: []string{"watchdog-waiting", "watchdog-resumed"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// given
+			host := &focusHost{askingHost: askingHost{blockedFor: tc.blockedFor}}
+			host.States = tc.states
+			store := &fakeStore{}
+			face := &fakeFace{}
+			dog := newWatchdog(host, store, ProviderArgs{Kind: "claude"})
+			dog.Face = face
+			dog.Unattended = tc.unattended
 
-	if err := dog.AskMaintainer("which store?", nil, ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := dog.AskMaintainer("again?", nil, ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := dog.Resume(); err != nil {
-		t.Fatal(err)
-	}
-	if err := dog.AskMaintainer("and now?", nil, ""); err != nil {
-		t.Fatal(err)
-	}
+			// when
+			err := tc.when(dog)
 
-	want := []string{dogName, dogName}
-	if !reflect.DeepEqual(host.focused, want) {
-		t.Fatalf("focused %v, want %v", host.focused, want)
+			// then
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if host.focused != nil {
+				t.Errorf("focused = %v, want none", host.focused)
+			}
+			if actualKinds := recordedKinds(store); !reflect.DeepEqual(actualKinds, tc.expectedKinds) {
+				t.Errorf("recorded %v, want %v", actualKinds, tc.expectedKinds)
+			}
+			if actualKinds := emittedKinds(face); !reflect.DeepEqual(actualKinds, tc.expectedKinds) {
+				t.Errorf("emitted %v, want %v", actualKinds, tc.expectedKinds)
+			}
+		})
 	}
 }
 
-func TestAWatchdogBlockedOnAPromptTakesFocus(t *testing.T) {
-	host := &focusHost{askingHost: askingHost{blockedFor: 1}}
-	host.States = map[string]AgentState{dogName: AgentBlocked}
-	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
-	dog.Face = &fakeFace{}
-
-	if err := dog.Notify("step started phase-2/implement", false, 0); err != nil {
-		t.Fatal(err)
-	}
-
-	if want := []string{dogName}; !reflect.DeepEqual(host.focused, want) {
-		t.Fatalf("focused %v, want %v", host.focused, want)
-	}
-}
-
-func TestAFailedFocusIsAWarningNotAnError(t *testing.T) {
-	host := &focusHost{err: errors.New("herdr: no such agent")}
+func TestWatchdogWaitingKeepsTheQuestionInTheStoreAndOnTheFace(t *testing.T) {
+	// given
+	store := &fakeStore{}
 	face := &fakeFace{}
-	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	dog := newWatchdog(&focusHost{}, store, ProviderArgs{Kind: "claude"})
 	dog.Face = face
 
-	if err := dog.AskMaintainer("which store?", nil, ""); err != nil {
-		t.Fatalf("AskMaintainer = %v", err)
-	}
+	// when
+	err := dog.AskMaintainer("retry phase-2/implement with the helper renamed?", []string{"yes", "no"}, "yes")
 
-	if want := []string{"watchdog-waiting", "warning"}; !reflect.DeepEqual(emittedKinds(face), want) {
-		t.Fatalf("emitted %v, want %v", emittedKinds(face), want)
+	// then
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	expectedFields := map[string]string{"question": "retry phase-2/implement with the helper renamed?", "options": "yes; no", "recommended": "yes"}
+	if actualFields := store.Records["run-1"][0].Event.Fields; !reflect.DeepEqual(actualFields, expectedFields) {
+		t.Errorf("recorded fields = %v, want %v", actualFields, expectedFields)
+	}
+	if actualFields := face.Events[0].Fields; !reflect.DeepEqual(actualFields, expectedFields) {
+		t.Errorf("emitted fields = %v, want %v", actualFields, expectedFields)
 	}
 }
 
