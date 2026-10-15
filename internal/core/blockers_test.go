@@ -816,7 +816,12 @@ func TestAFailedStepRaisesAStepBlockerAndRetryRerunsItWithTheAddendum(t *testing
 	if code != 0 {
 		t.Fatalf("exit %d, want 0", code)
 	}
-	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b, Blocker{Source: "step", Phase: "2", Step: "implement", Reason: "tests red", Actions: []string{"retry", "switch", "block", "stop", "continue"}}) {
+	if len(*seen) != 1 {
+		t.Fatalf("blockers %+v", *seen)
+	}
+	b := (*seen)[0].b
+	b.Evidence = ""
+	if !reflect.DeepEqual(b, Blocker{Source: "step", Phase: "2", Step: "implement", Reason: "tests red", Actions: []string{"retry", "switch", "block", "stop", "continue"}}) {
 		t.Fatalf("blockers %+v", *seen)
 	}
 	if got := r.agents(); !reflect.DeepEqual(got, []string{"rloop-p2-plan", "rloop-p2-implement", "rloop-p2-implement-a2"}) {
@@ -1792,4 +1797,198 @@ func TestALandBlockerResolvedContinueReadsTheConfigAgain(t *testing.T) {
 	if reloads != 1 {
 		t.Errorf("reloads %d, want 1", reloads)
 	}
+}
+
+type evidenceHost struct {
+	*eventsHost
+	feed               *fakeHookFeed
+	agent              string
+	hooks, screenHooks []HookEvent
+	screen             string
+	screenErr, paneErr error
+}
+
+func (h *evidenceHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	err := h.eventsHost.Prompt(agent, text, wait, timeout)
+	if role(agent) == h.agent && !strings.HasPrefix(text, "r-loop:") {
+		h.push(agent, h.hooks)
+	}
+	return err
+}
+
+func (h *evidenceHost) Screen(agent string) (string, error) {
+	h.record("SessionHost.Screen %s", agent)
+	h.push(agent, h.screenHooks)
+	return h.screen, h.screenErr
+}
+
+func (h *evidenceHost) AgentPane(agent string) (string, error) {
+	if h.paneErr != nil && role(agent) == h.agent {
+		return "", h.paneErr
+	}
+	return h.eventsHost.AgentPane(agent)
+}
+
+func (h *evidenceHost) push(agent string, evs []HookEvent) {
+	for _, ev := range evs {
+		ev.Agent = agent
+		h.feed.push(ev)
+	}
+}
+
+func evidenceRig(t *testing.T, agentRole, behaviour string) (*eventsRig, *evidenceHost, *[]raised) {
+	r, seen := newSourceRig(t, resolveAs("block"))
+	r.host.behaviour[agentRole] = behaviour
+	host := &evidenceHost{eventsHost: r.ehost, agent: agentRole}
+	r.loop.Sessions.Host = host
+	return r, host, seen
+}
+
+func withHookFeed(r *eventsRig, host *evidenceHost) {
+	host.feed = &fakeHookFeed{}
+	r.loop.Sessions.Hooks = host.feed
+}
+
+func preToolUse(tool, target string) HookEvent {
+	return HookEvent{At: t0, Event: "PreToolUse", Tool: tool, Target: target}
+}
+
+func TestAStalledStepsBlockerRoutesItsAgentAndTheEndOfItsPaneScreenToTheWatchdog(t *testing.T) {
+	// given
+	r, host, seen := evidenceRig(t, "rloop-p2-plan", "stall")
+	host.screen = "• Ran go test ./...   \n  └ ok  r-loop/internal/core\n\n› Improve documentation\n\n\n"
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "blockers", len(*seen), 1)
+	assertEqual(t, "routed text", role((*seen)[0].q.Text), "blocker b1 from phase-2/plan (step): stalled: no response to nudge\nactions: retry, switch, block, stop, continue; resolve it with resolve_blocker\n\nagent: rloop-p2-plan\n\n• Ran go test ./...\n  └ ok  r-loop/internal/core\n\n› Improve documentation")
+}
+
+func TestAFailedStepsBlockerRoutesItsLastFiveToolCallsAndTheEndOfItsPaneScreenToTheWatchdog(t *testing.T) {
+	// given
+	r, host, seen := evidenceRig(t, "rloop-p2-implement", "fail")
+	withHookFeed(r, host)
+	host.screen = "› Improve documentation\n"
+	wt := r.repo.RootDir + "/.r-loop/wt/phase-2/"
+	host.hooks = []HookEvent{
+		preToolUse("Read", "/etc/hosts"),
+		preToolUse("Edit", wt+"two  spaces.go"),
+		preToolUse("Bash", "go test ./internal/core/\necho done"),
+		preToolUse("Grep", wt+"a.go"),
+		preToolUse("Read", wt+"internal/core/blockers.go"),
+		preToolUse("mcp__r-loop__ask_watchdog", ""),
+		{At: t0, Event: "Stop"},
+	}
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "blockers", len(*seen), 1)
+	assertEqual(t, "routed text", role((*seen)[0].q.Text), "blocker b1 from phase-2/implement (step): tests red\nactions: retry, switch, block, stop, continue; resolve it with resolve_blocker\n\nagent: rloop-p2-implement\nlast tools: Edit two  spaces.go; Bash go test ./internal/core/; Grep "+r.repo.RootDir+"/.r-loop/wt/phase-2/a.go; Read internal/core/blockers.go; mcp__r-loop__ask_watchdog\n\n› Improve documentation")
+}
+
+func TestAFailedStepsBlockerGivesTheTranscriptPathItsHooksReported(t *testing.T) {
+	// given
+	r, host, seen := evidenceRig(t, "rloop-p2-implement", "fail")
+	withHookFeed(r, host)
+	host.hooks = []HookEvent{{At: t0, Event: "PreToolUse", Tool: "Read", Target: r.repo.RootDir + "/.r-loop/wt/phase-2/a.go", Session: "s-1", Transcript: "/home/.claude/projects/-repo/s-1.jsonl"}}
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "blockers", len(*seen), 1)
+	assertEqual(t, "routed text", role((*seen)[0].q.Text), "blocker b1 from phase-2/implement (step): tests red\nactions: retry, switch, block, stop, continue; resolve it with resolve_blocker\n\nagent: rloop-p2-implement\nlast tools: Read a.go\ntranscript: /home/.claude/projects/-repo/s-1.jsonl")
+}
+
+func TestAFailedStepsBlockerRoutesATranscriptPathFirstHeardAtBlockerTime(t *testing.T) {
+	// given
+	r, host, seen := evidenceRig(t, "rloop-p2-implement", "fail")
+	withHookFeed(r, host)
+	host.screenHooks = []HookEvent{{At: t0, Event: "PreToolUse", Tool: "Read", Target: r.repo.RootDir + "/.r-loop/wt/phase-2/a.go", Session: "s-1", Transcript: "/home/.claude/projects/-repo/s-1.jsonl"}}
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "blockers", len(*seen), 1)
+	assertEqual(t, "routed text", role((*seen)[0].q.Text), "blocker b1 from phase-2/implement (step): tests red\nactions: retry, switch, block, stop, continue; resolve it with resolve_blocker\n\nagent: rloop-p2-implement\nlast tools: Read a.go\ntranscript: /home/.claude/projects/-repo/s-1.jsonl")
+}
+
+func TestAFailedCodexStepsBlockerGivesItsRolloutPath(t *testing.T) {
+	// given
+	r, _, seen := evidenceRig(t, "rloop-p2-implement", "fail")
+	r.loop.Sessions.Resolve = func(provider, model, effort, askURL, mcp, dir string) (ProviderArgs, error) {
+		return ProviderArgs{Kind: provider, Rollout: true}, nil
+	}
+	r.loop.Sessions.Rollouts = &fakeRollouts{files: map[string]rolloutFile{
+		filepath.Join(r.store.dir, "phase-2", "plan-a1.sentinel"):      {codexRollout, "019a"},
+		filepath.Join(r.store.dir, "phase-2", "implement-a1.sentinel"): {codexRollout, "019a"},
+	}}
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "blockers", len(*seen), 1)
+	assertEqual(t, "routed text", role((*seen)[0].q.Text), "blocker b1 from phase-2/implement (step): tests red\nactions: retry, switch, block, stop, continue; resolve it with resolve_blocker\n\nagent: rloop-p2-implement\ntranscript: "+codexRollout)
+}
+
+func TestAFailedStepsBlockerWithNoHookFeedNamesOnlyItsAgent(t *testing.T) {
+	// given
+	r, _, seen := evidenceRig(t, "rloop-p2-implement", "fail")
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "blockers", len(*seen), 1)
+	assertEqual(t, "evidence", role((*seen)[0].b.Evidence), "agent: rloop-p2-implement")
+}
+
+func TestAFailedStepsBlockerWhoseScreenCannotBeReadCarriesNoExcerpt(t *testing.T) {
+	// given
+	r, host, seen := evidenceRig(t, "rloop-p2-implement", "fail")
+	host.screenErr = errors.New("pane gone")
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "blockers", len(*seen), 1)
+	assertEqual(t, "excerpt", (*seen)[0].b.Excerpt, "")
+	assertEqual(t, "evidence", role((*seen)[0].b.Evidence), "agent: rloop-p2-implement")
+}
+
+func TestAStepBlockerOfASpawnThatNamedNoAgentCarriesNoEvidenceOrScreen(t *testing.T) {
+	// given
+	r, host, seen := evidenceRig(t, "rloop-p2-implement", "fail")
+	host.paneErr = errors.New("herdr down")
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "blockers", len(*seen), 1)
+	assertEqual(t, "evidence", (*seen)[0].b.Evidence, "")
+	assertEqual(t, "excerpt", (*seen)[0].b.Excerpt, "")
+	assertEqual(t, "screen reads", r.calls("SessionHost.Screen "), []string(nil))
+}
+
+func TestAStepBlockerOfARunnerThatPanickedBeforeAnySessionCarriesNoEvidenceOrScreen(t *testing.T) {
+	// given
+	r, _, seen := evidenceRig(t, "rloop-p2-implement", "fail")
+	r.loop.Runners["diff"] = stepRunnerFunc(func(context.Context, StepRef, Observer) Outcome { panic("boom") })
+
+	// when
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	// then
+	assertEqual(t, "blockers", len(*seen), 1)
+	assertEqual(t, "evidence", (*seen)[0].b.Evidence, "")
+	assertEqual(t, "excerpt", (*seen)[0].b.Excerpt, "")
+	assertEqual(t, "screen reads", r.calls("SessionHost.Screen "), []string(nil))
 }

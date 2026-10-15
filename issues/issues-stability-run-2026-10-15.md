@@ -26,13 +26,13 @@ or fix these before committing.
       - A test where the agent answers every nudge with a tool call and no sentinel fails at the cap, well before the backstop
       - ADR-62 and tech-design.md (stall rule) describe the new nudge-and-cap rule
 
-- [ ] [#21] Re-type the first prompt only while the agent is idle
+- [x] [#21] Re-type the first prompt only while the agent is idle  <!-- fixed: r-loop/phase-10 -->
       - When the rollout never shows the marker but the host reports AgentWorking after the first Host.Prompt, the prompt is typed exactly once and the spawn or reviewer launch does not fail
       - A re-type happens only when Host.State reports idle or done; otherwise the prompt counts as received
       - When herdr saw the agent start but no rollout confirms the prompt, the step continues and one warning names the agent and the failed rollout lookup
       - When the agent never leaves idle and no rollout confirms it, the existing "prompt to <agent> not received" failure still happens
 
-- [ ] [#10] Stall blockers carry no evidence
+- [x] [#10] Stall blockers carry no evidence  <!-- fixed: r-loop/phase-10 -->
       - A step blocker for a failed or stalled step includes the normalised end of the agent's pane screen, as reviewer blockers already do (spec.html: "the reason and the end of the session's screen")
       - The blocker text names the step's agent and its last few tool calls (tool and target) seen by hooks
       - The transcript path, when known, is included so the watchdog can read the last assistant message

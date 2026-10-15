@@ -787,12 +787,14 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 	if reason == "" {
 		reason = string(out.State)
 	}
+	excerpt := l.Sessions.screen(out.Session)
+	evidence := l.Sessions.stepEvidence(out.Session)
 	var res Resolution
 	var answer func(string)
 	var prior RunState
 	for {
 		main := &blockerHold{key: key, out: out}
-		res = l.raise(ctx, Blocker{Source: sourceStep, Phase: key.Phase, Step: key.Kind, Reason: reason, Actions: stepActions}, main)
+		res = l.raise(ctx, Blocker{Source: sourceStep, Phase: key.Phase, Step: key.Kind, Reason: reason, Excerpt: excerpt, Evidence: evidence, Actions: stepActions}, main)
 		answer = func(reason string) {
 			if main.restart != nil {
 				main.restart.answer(reason)

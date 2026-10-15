@@ -89,10 +89,12 @@ type Session struct {
 	rollout                          bool
 	startedAt                        time.Time
 	transcribed                      atomic.Bool
+	received                         atomic.Bool
 
-	mu        sync.Mutex
-	ended     bool
-	reviewers []*Session
+	mu         sync.Mutex
+	ended      bool
+	reviewers  []*Session
+	transcript string
 }
 
 func (s *Session) setReviewers(reviewers []*Session) {
@@ -354,6 +356,17 @@ func (m *SessionManager) recordTranscripts() {
 	}
 }
 
+func (m *SessionManager) screen(s *Session) string {
+	if s == nil || s.Agent == "" || s.Pane == "" {
+		return ""
+	}
+	raw, err := m.Host.Screen(s.Agent)
+	if err != nil {
+		return ""
+	}
+	return normaliseScreen(raw)
+}
+
 func (m *SessionManager) recordTranscript(s *Session) {
 	if s.transcribed.Load() {
 		return
@@ -366,6 +379,9 @@ func (m *SessionManager) recordTranscript(s *Session) {
 	if path == "" || !s.transcribed.CompareAndSwap(false, true) {
 		return
 	}
+	s.mu.Lock()
+	s.transcript = path
+	s.mu.Unlock()
 	key := s.Ref.Key
 	fields := map[string]string{"agent": s.Agent, "attempt": strconv.Itoa(key.Attempt), "session_id": id, "transcript_path": path}
 	if s.Reviewer != "" {

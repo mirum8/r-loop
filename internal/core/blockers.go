@@ -271,6 +271,9 @@ func (l *RunLoop) blockerSession(b Blocker) (*Session, string) {
 
 func blockerText(id string, b Blocker, versions string) string {
 	text := fmt.Sprintf("blocker %s from phase-%s/%s (%s): %s\nactions: %s; resolve it with resolve_blocker", id, b.Phase, b.Step, b.Source, b.Reason, strings.Join(b.Actions, ", "))
+	if b.Evidence != "" {
+		text += "\n\n" + b.Evidence
+	}
 	excerpt := strings.TrimRight(b.Excerpt, " \t\r\n")
 	if len(excerpt) > screenBytes {
 		excerpt = excerpt[len(excerpt)-screenBytes:]

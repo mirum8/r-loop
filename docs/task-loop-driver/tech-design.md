@@ -1185,14 +1185,17 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
   records, `Text` the routed text, `Answer` the action, `Citation` what authorised it
   (`allow-list`, a `watchdog.dialogs` rule, `fallback`, `maintainer`, `always` for `block` and
   `stop`, `timeout`), `AnsweredBy ∈ {watchdog, maintainer, timeout, withdrawn}`. `core.Blocker{Source,
-  Phase, Step, Reason, Excerpt string; Actions []string}`; `Step` is the `phase-<N>/<step>` name
+  Phase, Step, Reason, Excerpt, Evidence string; Actions []string}`; `Step` is the `phase-<N>/<step>` name
   (`<kind>`, `<kind>-rv-<name>`, `land`, `gatefix`, `gate`, `milestone`); `Excerpt` is the pane's
   normalised screen (Milestone 16's rule) or the command's output, at most 4096 bytes.
+  `Evidence` is a step blocker's `agent: <name>`, `last tools: <tool target; …>` (the last five
+  `PreToolUse` calls, when a hook feed is wired) and `transcript: <path>` (when journalled), one per
+  line; a step blocker's `Excerpt` is its failed attempt's pane screen.
   `RunLoop.Raise(b Blocker) Resolution` — `Resolution{ID, Action, By, Citation, Addendum string;
   Keys []string; Provider, Model, Effort string}` — records the question, emits
   `blocked-on{id, source, phase, step, reason}`, moves a live step to `waiting-input` (a reviewer's
   blocker pauses its owner), routes `blocker <id> from phase-<N>/<step> (<source>): <reason>` with
-  `resolve_blocker`, a blank line and the excerpt through `Watch.Route` — so a gone watchdog halts
+  `resolve_blocker`, a blank line and the evidence, a blank line and the excerpt through `Watch.Route` — so a gone watchdog halts
   the run once — and waits. It is withdrawn (`Answer: step <state>` or `run stopped`) when a
   reviewer's owner step ends, on an abort, an interrupt or a halt, and by `r-loop resume` for one a
   dead driver left open; a withdrawn blocker returns `block` with `By: withdrawn`. An accepted halt
