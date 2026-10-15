@@ -1,7 +1,7 @@
 # Stability run — notes on the remaining-issues list of 15 Oct 2026
 
-Read against `r-loop` @ `main` `81998cd` plus the uncommitted working tree. The 17 buildable asks are
-in `issues-stability-run-2026-10-15.md`. This file covers the 7 that did not become work, plus the
+Read against `r-loop` @ `main` `81998cd` plus the uncommitted working tree; #28 and #29 were added
+later, against `e80b114`. The 18 buildable asks are in `issues-stability-run-2026-10-15.md`. This file covers the 7 that did not become work, plus the
 backlog items whose premise was off or that move architecture or the estimate.
 
 ## Questions — need an answer before they can become work
@@ -86,6 +86,24 @@ freezes quiet time (`internal/core/session.go:535, 556`). So an agent that start
 background process (a dev server) and ends its turn without a sentinel sits until the step backstop,
 which is **1h for plan and 4h for implement** (`defaults.yaml`), not 20m. This is a regression from
 the uncommitted fix.
+
+## Outside this repo
+
+**[#29] `sleep 7200` orphans from the test-app terminal driver — skill-pack, not r-loop**
+`tui-session.sh start` launches a TTL reaper as `nohup sh -c "sleep $ttl; tmux … kill-server; rm -rf …" &`
+and stores the `sh` pid (`~/.claude/skills/r/skills/test-app-create/scripts/tui-session.sh:181-184`).
+`stop` kills that pid (`:406`), but killing the `sh` does not kill its `sleep` child. The child is
+reparented to launchd and lives out the full TTL: 7200s for the live scripts that pass `--ttl 7200`
+(`live_run_control.sh`, `live_full_plan.sh`). It is harmless once the tmux socket is gone, but it
+piles up: five were alive after this session's live runs. The fix belongs in the skill-pack.
+Either kill the reaper's whole process group (start it with `set -m`, then `kill -- -$pgid`), or run
+`pkill -P <sh pid>` before killing the `sh`.
+
+**[#28] The Gradle writer loops** are in the backlog. They came from
+`internal/analyze/run_test.go:823`, whose stub detaches a `setpgrp` loop that pretends to be a Gradle
+daemon. All seven leaked loops were 1–2 days old, and the many `go test ./...` runs of this session
+left none behind, so the leak is intermittent. A likely cause is that Analyze lists the processes to
+kill just once, at cancel time, and under load misses the stub's detached child.
 
 ## Moves architecture or the estimate
 

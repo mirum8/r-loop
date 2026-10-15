@@ -6,6 +6,10 @@ below as 16 items (#4 and #5 are merged into one). The other 7 — three questio
 three already handled or specified — are in `issues-stability-run-2026-10-15-notes.md`. `[#n]` is
 the list's own numbering.
 
+Added 15 Oct 2026, after the commits: #28 (a test that leaks processes), verified against `main` `e80b114`.
+#29 (the TTL reaper's `sleep` outliving `tui-session.sh stop`) lives in the skill-pack, so it is in
+the notes only.
+
 Verified against `r-loop` @ `main` `81998cd` **plus the uncommitted working tree** (stall fix,
 codex first-prompt confirmation, reviewer close on abort, evidence ranges/prefix repair, fix-sentinel
 swap). #6, #12, #21 and #23 are defects in or next to those uncommitted fixes: commit them first,
@@ -101,3 +105,8 @@ or fix these before committing.
       - A live script whose override makes the agent end its first implement turn without a sentinel shows stalled → nudge → running → ok in events.jsonl, with no "no response to nudge"
       - A live script with a guaranteed finding and a fix.md override asking for `.r-loop/wt/phase-1/<file>:<line>` evidence records an "… read as …" warning and accepts the round
       - Each script prints NOT RUN without HERDR_PANE_ID, inside an r-loop run, or when the step provider is not claude, and reports when the agent ignored the steering rather than calling it a driver bug
+
+- [ ] [#28] Tests leak orphaned processes: Gradle writer loops from TestAnalyzeStopsADetachedGradleDaemonBeforeItWritesAfterTheTimeout
+      - After `go test -count=20 ./internal/analyze/ -run TestAnalyzeStopsADetachedGradleDaemon`, no `sh -c while :; do … late.html …` process is left running
+      - The test's detached stub is killed in t.Cleanup even when Analyze's cancel-time descendant walk misses it, e.g. by recording the stub's pid or process group in a file and killing it
+      - If the leak reproduces with the test's own cleanup removed, Analyze's cancel path (descendants() snapshot in internal/analyze/run.go) is fixed so a detached grandchild started before the timeout is always killed
