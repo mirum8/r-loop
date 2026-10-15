@@ -1480,3 +1480,40 @@ func TestAnAgentWithoutHookEventsThatWorksAfterEveryNudgeFailsAtTheNudgeCap(t *t
 	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Prompt"), []string{stepPrompt("do phase 3"), stepPrompt(graceNudgeText), stepPrompt(graceNudgeText), stepPrompt(graceNudgeText)})
 	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), nil)
 }
+
+func hostCallsSince(r *rig, n int) []string {
+	out := []string{}
+	for _, c := range r.shared.Calls()[n:] {
+		if strings.HasPrefix(c, "SessionHost.") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func TestAnAdoptionWhoseRecordFailsNeverTypesTheContinuation(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		failStore func(r *rig)
+	}{
+		{"spawned record", func(r *rig) { r.store.Err = errors.New("disk full") }},
+		{"agent-named event", func(r *rig) { r.sm.Store = failingEventStore{fakeStore: r.store, kind: "agent-named"} }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// given
+			r := newRig(t)
+			s := r.spawn(t, 1)
+			n := len(r.shared.Calls())
+			c.failStore(r)
+			ref := r.ref(2)
+			ref.Adopt = s
+
+			// when
+			_, err := r.sm.Spawn(context.Background(), ref)
+
+			// then
+			assertEqual(t, "error has disk full", err != nil && strings.Contains(err.Error(), "disk full"), true)
+			assertEqual(t, "host calls", hostCallsSince(r, n), []string{})
+		})
+	}
+}

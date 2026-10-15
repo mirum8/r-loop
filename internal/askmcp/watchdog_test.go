@@ -1285,3 +1285,40 @@ func TestATableResultThatCannotBeRecordedKeepsTheTableAndShowsTheError(t *testin
 		t.Errorf("content = %+v, want %+v", res.Content, expectedContent)
 	}
 }
+
+func TestResolveBlockerPassesNudgeThroughWithItsDescription(t *testing.T) {
+	// given
+	s := serveWatchdog(t, &memStore{})
+	var actual string
+	s.Handle(WatchdogHandlers{
+		ResolveBlocker: func(id, action, rule, addendum string, keys []string, provider, model, effort, maintainerSaid string) (string, string) {
+			actual = id + "|" + action + "|" + addendum
+			return "authorised", ""
+		},
+	})
+	cs := connect(t, s.WatchdogURL())
+
+	// when
+	out := call(t, cs, "resolve_blocker", map[string]any{"id": "b3", "action": "nudge", "addendum": "finish the tests"})
+
+	// then
+	if out["decision"] != "authorised" || actual != "b3|nudge|finish the tests" {
+		t.Fatalf("out = %+v, handler saw %q", out, actual)
+	}
+	tools, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := toolDescription(tools.Tools, "resolve_blocker"); !strings.Contains(d, "nudge types a continuation into the stalled step's own live session") {
+		t.Errorf("description %q", d)
+	}
+}
+
+func toolDescription(tools []*mcp.Tool, name string) string {
+	for _, tool := range tools {
+		if tool.Name == name {
+			return tool.Description
+		}
+	}
+	return ""
+}

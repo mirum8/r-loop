@@ -19,6 +19,7 @@ const (
 	actionStop   = "stop"
 
 	actionContinue = "continue"
+	actionNudge    = "nudge"
 
 	sourceStep      = "step"
 	sourceReviewer  = "reviewer"
@@ -347,6 +348,15 @@ func (l *RunLoop) SettleBlocker(res Resolution) error {
 	if res.Action == actionKeys && open.agent == "" {
 		return fmt.Errorf("blocker %s has no pane to press keys in", res.ID)
 	}
+	if res.Action == actionNudge {
+		state, err := l.Sessions.Host.State(open.b.Agent)
+		if err != nil {
+			return fmt.Errorf("blocker %s: state of %s: %w", res.ID, open.b.Agent, err)
+		}
+		if state == AgentGone {
+			return fmt.Errorf("agent %s of blocker %s is gone: take retry for a fresh session", open.b.Agent, res.ID)
+		}
+	}
 	run := func() {
 		if res.Action == actionKeys {
 			if reason := l.paneMoved(open); reason != "" {
@@ -505,6 +515,8 @@ func (r *QuestionRouter) ResolveBlocker(id, action, rule, addendum string, keys 
 	switch action {
 	case actionBlock, actionStop:
 		res.Citation, authorised = citationAlways, true
+	case actionNudge:
+		res.Addendum, res.Citation, authorised = addendum, citationAlways, true
 	case actionContinue:
 		if slices.Contains(rem.Allow, "restart") {
 			res.Citation, authorised = consentAllowList, true
@@ -593,7 +605,7 @@ func retriesUsed(events []Event, target string) int {
 }
 
 func restartAction(action string) bool {
-	return action == actionRetry || action == actionSwitch || action == actionContinue
+	return action == actionRetry || action == actionSwitch || action == actionContinue || action == actionNudge
 }
 
 func blockerChoices(actions []string) []string {

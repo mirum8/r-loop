@@ -789,12 +789,18 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 	}
 	excerpt := l.Sessions.screen(out.Session)
 	evidence := l.Sessions.stepEvidence(out.Session)
+	b := Blocker{Source: sourceStep, Phase: key.Phase, Step: key.Kind, Excerpt: excerpt, Evidence: evidence, Actions: stepActions}
+	if out.nudgeable && out.Session != nil && out.Session.Pane != "" {
+		b.Actions = append([]string{actionNudge}, stepActions...)
+		b.Agent = out.Session.Agent
+	}
 	var res Resolution
 	var answer func(string)
 	var prior RunState
 	for {
 		main := &blockerHold{key: key, out: out}
-		res = l.raise(ctx, Blocker{Source: sourceStep, Phase: key.Phase, Step: key.Kind, Reason: reason, Excerpt: excerpt, Evidence: evidence, Actions: stepActions}, main)
+		b.Reason = reason
+		res = l.raise(ctx, b, main)
 		answer = func(reason string) {
 			if main.restart != nil {
 				main.restart.answer(reason)
@@ -808,7 +814,7 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 			return StepRef{}, false, false
 		}
 		switch res.Action {
-		case actionRetry, actionSwitch, actionContinue:
+		case actionRetry, actionSwitch, actionContinue, actionNudge:
 		case actionStop:
 			out.State, out.Reason, out.Stalled, out.Halted = StepFailed, l.stopping().reason, false, true
 			return StepRef{}, false, false
@@ -855,6 +861,9 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 	}
 	next := l.ref(ref.Phase, kind, key.Attempt+1, ref.Base)
 	next.Vars["Addendum"] = res.Addendum
+	if res.Action == actionNudge {
+		next.Adopt = out.Session
+	}
 	if res.Action == actionContinue {
 		next.ReviewFrom, next.PrevRoundTree = recordedRound(prior, key.Phase, key.Kind, key.Attempt)
 		if next.ReviewFrom > 0 {
@@ -868,8 +877,8 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 	if res.Citation != "" {
 		f["citation"] = res.Citation
 	}
-	if res.Action == actionContinue {
-		f["citation"] = actionContinue
+	if res.Action == actionContinue || res.Action == actionNudge {
+		f["citation"] = res.Action
 	}
 	l.emit(Event{Kind: "restart", Phase: key.Phase, Step: key.Kind, Fields: f})
 	answer("")
@@ -1086,7 +1095,7 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 	}
 	l.setLive(nil)
 	key := ref.Key
-	if key.Attempt > 1 {
+	if key.Attempt > 1 && ref.Adopt == nil {
 		l.closeWorkspaces(key.Phase, func(kind string, attempt int) bool { return kind == key.Kind && attempt < key.Attempt })
 	}
 	if err := l.Store.Append(l.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepQueued}); err != nil {
@@ -1375,6 +1384,7 @@ func (l *RunLoop) question(ctx context.Context, q Question) {
 	if s == nil {
 		return
 	}
+	q.Step.Attempt = s.Ref.Key.Attempt
 	agent := s.asker(q.Step.Kind)
 	admitted := agent != "" && s.live(func() {
 		l.recordQuestion(q)
@@ -1407,8 +1417,7 @@ func (l *RunLoop) questionPanicked(q Question, v any) {
 	l.mu.Unlock()
 	if !tracked {
 		if s := l.liveSession(); s != nil {
-			key := s.Ref.Key
-			if key.Run == q.Step.Run && key.Phase == q.Step.Phase && key.Attempt == q.Step.Attempt && (q.Step.Kind == key.Kind || strings.HasPrefix(q.Step.Kind, key.Kind+"-rv-")) {
+			if s.asksAs(q.Step) {
 				var agent string
 				if quietly(func() { agent = s.asker(q.Step.Kind) }) == nil && agent != "" {
 					if s.live(func() {
@@ -1658,11 +1667,8 @@ func (l *RunLoop) askingSession(ctx context.Context, key StepKey) *Session {
 		poll = defaultPoll
 	}
 	for {
-		if s := l.liveSession(); s != nil {
-			k := s.Ref.Key
-			if k.Run == key.Run && k.Phase == key.Phase && k.Attempt == key.Attempt && (key.Kind == k.Kind || strings.HasPrefix(key.Kind, k.Kind+"-rv-")) {
-				return s
-			}
+		if s := l.liveSession(); s != nil && s.asksAs(key) {
+			return s
 		}
 		select {
 		case <-ctx.Done():

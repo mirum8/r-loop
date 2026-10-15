@@ -71,6 +71,10 @@ func decisions(st RunState) []string {
 		case "nudge":
 			out = append(out, where(ev.Phase, ev.Step)+": nudge")
 		case "restart":
+			if f["citation"] == actionNudge {
+				out = append(out, strings.TrimSuffix(where(ev.Phase, ev.Step)+": continue in place as attempt "+f["attempt"]+" — "+f["addendum"], " — "))
+				continue
+			}
 			line := where(ev.Phase, ev.Step) + ": restart as attempt " + f["attempt"]
 			if f["provider"] != "" {
 				line += fmt.Sprintf(" on %s model %s effort %s", f["provider"], orDefault(f["model"]), orDefault(f["effort"]))

@@ -72,7 +72,7 @@ or fix these before committing.
       - A plan inside the repo, tracked or gitignored (ADR-84 local todo), still passes `--dry-run --plain`
       - Resume of a run whose recorded plan is outside the repo gives the same message
 
-- [ ] [#4] Let the watchdog read the pane before raising a stall blocker / [#5] Make re-nudging the same session the first remedy for a stall, not retry
+- [x] [#4] Let the watchdog read the pane before raising a stall blocker / [#5] Make re-nudging the same session the first remedy for a stall, not retry  <!-- fixed: r-loop/phase-4 -->
       - The watchdog can resolve a stall blocker with an action that types a continuation into the same live session instead of starting Attempt+1
       - After that action the driver watches the same session again, and a sentinel written then is judged as that step's outcome
       - The action is refused when the agent is gone, and retry/continue keep counting against watchdog.maxRestarts

@@ -2113,3 +2113,44 @@ func TestARefusedPromptLeavesTheAgentNotBusy(t *testing.T) {
 	_, actualBusy, _ := sm.hookTurn(askingAgent)
 	assertEqual(t, "busy", actualBusy, false)
 }
+
+func TestAnAdoptedHookSessionTakesTheContinuationAsANewTurnAndEndsOk(t *testing.T) {
+	// given
+	r, feed, s := hookStallRig(t)
+	n := len(r.shared.Calls())
+	feed.push(stop(stepAgent))
+	r.host.onSubmit = func(agent, text string) { feed.push(promptSubmit(agent, text, t1)) }
+	ref := r.ref(2)
+	ref.Adopt = s
+	a2, err := r.sm.Spawn(waitCtx(t), ref)
+	r.host.script = func(poll int) AgentState {
+		if poll == 2 {
+			r.writeSentinel(t, a2, "ok", "")
+			feed.push(stop(stepAgent))
+		}
+		return AgentWorking
+	}
+
+	// when
+	out := r.sm.Wait(waitCtx(t), a2, &recObserver{})
+
+	// then
+	assertEqual(t, "spawn error", err, nil)
+	assertState(t, out, StepOK, "")
+	assertEqual(t, "nudges", len(r.events("nudge")), 0)
+	assertEqual(t, "starts", r.count("SessionHost.Start"), 1)
+	assertEqual(t, "opens", r.count("SessionHost.Open"), 1)
+	dir := r.runDir + "/phase-3/"
+	expected := "SessionHost.Submit " + stepAgent + " " + strconv.Quote("r-loop: the watchdog continues this step in this session as attempt 2. Finish the work you were doing; when it is done, write the sentinel to "+dir+"implement-a2.sentinel, not "+dir+"implement-a1.sentinel. If you are blocked, write a failed sentinel with the reason.")
+	assertEqual(t, "submitted", submitsSince(r, n), []string{expected})
+}
+
+func submitsSince(r *rig, n int) []string {
+	out := []string{}
+	for _, c := range hostCallsSince(r, n) {
+		if strings.HasPrefix(c, "SessionHost.Submit ") {
+			out = append(out, c)
+		}
+	}
+	return out
+}

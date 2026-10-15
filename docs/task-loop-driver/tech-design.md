@@ -64,7 +64,9 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   stalled | waiting-input; waiting-input→running; stalled→running | failed. `ok` and `failed` are
   terminal. **A re-run — by resume or by a watchdog restart — is a new attempt**:
   `StepKey.Attempt` increments and the new key starts at `queued`; the old attempt's record is
-  never reopened. Any other transition returns `ErrIllegalTransition`. A step's review rounds are
+  never reopened. A `nudge` is a re-run too: attempt N+1 adopts attempt N's live session (agent,
+  pane, workspace, worktree, `StartSHA`, `StartTree`, ask URL) instead of spawning one, and its
+  sentinel is `<kind>-a<N+1>.sentinel`. Any other transition returns `ErrIllegalTransition`. A step's review rounds are
   not states: a step stays `running` through them, and each round is recorded as events.
 - **Types** — `StepKey{Run string; Phase string; Kind string; Attempt int}` ·
   `Phase{ID string; Title string; Implements []string; DependsOn []string; Reworks []string; Files
@@ -348,7 +350,8 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   nudge would be typed, which keeps the step running; a `SessionEnd` with reason `exit`, `logout`,
   `prompt_input_exit` or `other` and no sentinel → `failed(agent exited: <reason>)`; elapsed > timeout →
   `failed(backstop)`. The driver never kills a session: a failed step's session is left
-  standing. For a step with a review
+  standing. A stall in a step's work half raises a step blocker that offers `nudge` first
+  (Milestone 21 sources table). For a step with a review
   half the same rule applies per half and per round.
 - **Turn end** — a half ends when its session's `ok` sentinel exists **and** its turn has ended:
   after reading an `ok` sentinel the driver keeps polling until herdr reports the agent
@@ -1212,7 +1215,7 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
 
   | source | raised when | `retry` means | actions |
   |---|---|---|---|
-  | `step` | a pipeline step ends `failed` or `stalled` (`loop.go` `ended`/`awaitRestart`) | a new attempt: the restart path, with the addendum and provider | retry, switch, block, stop, continue |
+  | `step` | a pipeline step ends `failed` or `stalled` (`loop.go` `ended`/`awaitRestart`) | a new attempt: the restart path, with the addendum and provider | nudge (a work-half stall whose pane is open), retry, switch, block, stop, continue |
   | `reviewer` | a reviewer fails: a failed `ReviewExec` command, a `failed` sentinel, evidence missing, stalled, gone | that reviewer reopened for this round | retry, keys, switch, block, stop |
   | `land` | a merge conflict, an unfinished merge, a wrong branch, a dirty or changed tree, a red gate with no fix round left, an item gate green at base or with no test file, a tick or commit failure | `Land` again, after a remedy or the maintainer's own fix | retry, block, stop, continue |
   | `gatefix` | a gatefix step that does not end `ok` | another gatefix round | retry, switch, block, stop, continue |
@@ -1234,6 +1237,16 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
   `DesignNote` and `Triage` of the run-time phase kept; a grouped backlog phase is not read again)
   and calls `Land` again, which asks the watchdog for the gate again; a phase no longer in the plan
   raises the `land` blocker again with `phase <N> is no longer in <todo>`.
+
+  `nudge` (`awaitRestart`) is a restart to attempt N+1 whose `StepRef.Adopt` is attempt N's
+  session; `Spawn` then opens and starts nothing, records `spawned`, `agent-named` (same agent) and
+  `running`, and types `continuation()` — `r-loop: the watchdog continues this step in this session
+  as attempt <N+1>. Finish the work you were doing; when it is done, write the sentinel to <new>,
+  not <old>.` plus the nudge's blocked sentence and `Note from the watchdog: <addendum>` — and the
+  step is watched and judged as any attempt. `runStep` closes no workspace for it. It is listed
+  only when `singleRunner`'s `Wait` returned a stall, and `SettleBlocker` refuses it when
+  `Host.State(Blocker.Agent)` is `gone` or fails. Its `restart` event carries `citation: nudge`,
+  and the report shows it as `continue in place as attempt <N+1>`.
 - **Authorisation** — `QuestionRouter.ResolveBlocker(id, action, rule, addendum, keys, provider,
   model, effort, maintainerSaid) (decision, reason)` decides, in order: not an open blocker →
   refused; an action the source does not list → refused; then
@@ -1244,6 +1257,7 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
   | `keys` | `rule` is exactly one of `watchdog.dialogs`, the rule the keys answer under (keys as in `answer_dialog`, pressed only while the reviewer's screen is unchanged) | `maintainer_said` → authorised; else `ask` |
   | `switch` | the provider is the row's fallback (`remedies.go`'s rule; model and effort default to the fallback's) and the target is within `retry`'s budget, which counts its switches too | `maintainer_said` with `model` and `effort` → authorised; else `ask`; at the budget → refused |
   | `continue` | as `retry`: `restart` is allow-listed and the target is within `retry`'s budget, which counts its continues too; attended or not (ADR-97) | `maintainer_said` → authorised; else `ask`; at the budget → refused |
+  | `nudge` | always, attended or not, while the target is within `retry`'s budget, which counts its nudges too (ADR-62, ADR-97 as amended 2026-10-15); refused when the agent is gone | at the budget → refused |
   | `block` | the target has no retries left under `watchdog.maxRestarts`, or the blocker lists none of `retry`, `switch`, `continue` (ADR-97) | `maintainer_said` → authorised; else refused: `<n> retries left for <target>: fix the cause and retry` |
   | `stop` | as `block` | as `block` |
 
