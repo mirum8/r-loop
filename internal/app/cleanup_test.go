@@ -11,6 +11,7 @@ import (
 )
 
 func TestCleanupRemovesTheWorktreesBranchesAndWorkspacesOfEveryEndedRun(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	halted := f.seedRun(
 		core.Record{Kind: core.RecordRun, Run: core.RunHalted},
@@ -58,6 +59,7 @@ func TestCleanupRemovesTheWorktreesBranchesAndWorkspacesOfEveryEndedRun(t *testi
 }
 
 func TestCleanupDoesNotCloseAWorkspaceTwice(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.seedRun(
 		core.Record{Kind: core.RecordRun, Run: core.RunHalted},
@@ -77,6 +79,7 @@ func TestCleanupDoesNotCloseAWorkspaceTwice(t *testing.T) {
 }
 
 func TestCleanupExits1WhenAWorkspaceCannotBeClosedAndCleansTheRest(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.seedRun(
 		core.Record{Kind: core.RecordRun, Run: core.RunHalted},
@@ -94,6 +97,7 @@ func TestCleanupExits1WhenAWorkspaceCannotBeClosedAndCleansTheRest(t *testing.T)
 }
 
 func TestCleanupRetriesAWorkspaceWhoseCloseFailed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	id := f.seedRun(
 		core.Record{Kind: core.RecordRun, Run: core.RunHalted},
@@ -115,6 +119,7 @@ func TestCleanupRetriesAWorkspaceWhoseCloseFailed(t *testing.T) {
 }
 
 func TestCleanupExits1WhenARunCannotBeRead(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	id := f.seedRun(ev(t0, "step", 2, "implement", map[string]string{"state": "running", "attempt": "1", "workspace": "w7"}))
 	if err := os.Remove(filepath.Join(f.root, ".r-loop/runs", id, "meta.json")); err != nil {
@@ -129,6 +134,7 @@ func TestCleanupExits1WhenARunCannotBeRead(t *testing.T) {
 }
 
 func TestCleanupIsRefusedWhileARunIsLive(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunRunning})
 	f.commit()
@@ -155,6 +161,7 @@ func TestCleanupIsRefusedWhileARunIsLive(t *testing.T) {
 }
 
 func TestCleanupKeepsTheCheckedOutBranch(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	git(t, f.root, "checkout", "-q", "-b", "r-loop/phase-2")
@@ -167,6 +174,7 @@ func TestCleanupKeepsTheCheckedOutBranch(t *testing.T) {
 }
 
 func TestCleanupOnAFreshRepositoryTakesTheLockAndLeavesTheTreeClean(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 

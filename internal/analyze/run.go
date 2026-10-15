@@ -27,10 +27,13 @@ var initScript string
 
 const tailBytes = 4096
 
-type Analyzer struct{ timeout time.Duration }
+type Analyzer struct {
+	timeout  time.Duration
+	lookPath func(string) (string, error)
+}
 
-func New(timeout time.Duration) *Analyzer {
-	return &Analyzer{timeout: timeout}
+func New(timeout time.Duration, lookPath func(string) (string, error)) *Analyzer {
+	return &Analyzer{timeout: timeout, lookPath: lookPath}
 }
 
 func (a *Analyzer) Analyze(parent context.Context, dir string) (core.Analysis, error) {
@@ -65,7 +68,7 @@ func (a *Analyzer) run(ctx, parent context.Context, dir string, ch Changes, touc
 		return core.Analysis{}, fmt.Errorf("analyze: %w", err)
 	}
 	defer os.RemoveAll(out)
-	p := &pass{ctx: ctx, parent: parent, timeout: a.timeout, dir: dir, out: out}
+	p := &pass{ctx: ctx, parent: parent, timeout: a.timeout, lookPath: a.lookPath, dir: dir, out: out}
 	if err := p.all(touches, files); err != nil {
 		return core.Analysis{}, err
 	}
@@ -108,6 +111,7 @@ func buildOutput(rel string) bool {
 type pass struct {
 	ctx, parent context.Context
 	timeout     time.Duration
+	lookPath    func(string) (string, error)
 	dir, out    string
 	tools       []string
 	hits        []Hit
@@ -139,7 +143,7 @@ func (p *pass) all(touches []Touch, files []string) error {
 			return err
 		}
 	}
-	if _, err := exec.LookPath("semgrep"); err == nil {
+	if _, err := p.lookPath("semgrep"); err == nil {
 		return p.semgrep(files)
 	}
 	return nil
@@ -154,7 +158,15 @@ func (p *pass) ran(names ...string) {
 }
 
 func (p *pass) command(tool, cwd string, env []string, stdout io.Writer, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(p.ctx, name, args...)
+	bin := name
+	if !strings.ContainsRune(name, filepath.Separator) {
+		found, err := p.lookPath(name)
+		if err != nil {
+			return nil, failure(tool, nil, p.cause(err))
+		}
+		bin = found
+	}
+	cmd := exec.CommandContext(p.ctx, bin, args...)
 	cmd.Dir = cwd
 	if env != nil {
 		cmd.Env = append(os.Environ(), env...)
@@ -162,7 +174,7 @@ func (p *pass) command(tool, cwd string, env []string, stdout io.Writer, name st
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var detached []int
 	cmd.Cancel = func() error {
-		detached = descendants(cmd.Process.Pid)
+		detached = stopTree(cmd.Process.Pid)
 		for _, pid := range detached {
 			_ = syscall.Kill(-pid, syscall.SIGKILL)
 			_ = syscall.Kill(pid, syscall.SIGKILL)
@@ -188,10 +200,42 @@ func (p *pass) command(tool, cwd string, env []string, stdout io.Writer, name st
 	return output, nil
 }
 
-func descendants(root int) []int {
-	out, err := exec.Command("ps", "-A", "-o", "pid=", "-o", "ppid=").Output()
+const (
+	psTimeout  = 500 * time.Millisecond
+	walkBudget = 2 * time.Second
+)
+
+func stopTree(root int) []int {
+	_ = syscall.Kill(-root, syscall.SIGSTOP)
+	deadline := time.Now().Add(walkBudget)
+	var stopped []int
+	for time.Now().Before(deadline) {
+		found, err := descendants(root)
+		if err != nil {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		fresh := slices.DeleteFunc(found, func(pid int) bool { return slices.Contains(stopped, pid) })
+		if len(fresh) == 0 {
+			return stopped
+		}
+		for _, pid := range fresh {
+			_ = syscall.Kill(-pid, syscall.SIGSTOP)
+			_ = syscall.Kill(pid, syscall.SIGSTOP)
+		}
+		stopped = append(stopped, fresh...)
+	}
+	return stopped
+}
+
+func descendants(root int) ([]int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), psTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=", "-o", "ppid=")
+	cmd.WaitDelay = psTimeout
+	out, err := cmd.Output()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	children := map[int][]int{}
 	for _, line := range strings.Split(string(out), "\n") {
@@ -209,7 +253,7 @@ func descendants(root int) []int {
 	for i := 0; i < len(found); i++ {
 		found = append(found, children[found[i]]...)
 	}
-	return found
+	return found, nil
 }
 
 func awaitGone(pids []int) {

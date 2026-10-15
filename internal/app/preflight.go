@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -168,7 +167,7 @@ func (w *Wiring) commitHint(dirty []string) string {
 func (w *Wiring) checks() ([]core.Phase, []string, error) {
 	opts, env := w.Opts, w.Env
 	if !opts.DryRun {
-		if _, err := exec.LookPath(env.Herdr); err != nil {
+		if _, err := env.lookPath(env.Herdr); err != nil {
 			return nil, nil, exit(127, "herdr binary %s not found", env.Herdr)
 		}
 	}
@@ -211,12 +210,12 @@ func (w *Wiring) static() (string, error) {
 	}
 	if !w.Opts.DryRun {
 		for _, m := range mods {
-			if err := toolchain(root, m); err != nil {
+			if err := toolchain(w.Env, root, m); err != nil {
 				return "", err
 			}
 		}
 	}
-	_, missing := exec.LookPath("semgrep")
+	_, missing := w.Env.lookPath("semgrep")
 	langs := strings.Join(kinds, ", ")
 	switch {
 	case missing == nil && langs != "":
@@ -229,16 +228,16 @@ func (w *Wiring) static() (string, error) {
 	return "static: none (semgrep not installed)", nil
 }
 
-func toolchain(root string, m analyze.Module) error {
+func toolchain(env Env, root string, m analyze.Module) error {
 	rel := slashRel(root, m.Dir)
-	if _, err := exec.LookPath(m.Runner); err != nil {
+	if _, err := env.lookPath(m.Runner); err != nil {
 		if !strings.ContainsRune(m.Runner, filepath.Separator) {
 			return exit(2, "analyze: %s module %s needs %s, not found on PATH; install it or set analyze.enabled: false", m.Kind, rel, m.Runner)
 		}
 		return exit(2, "analyze: %s module %s needs %s, which is not executable; chmod +x it or set analyze.enabled: false", m.Kind, rel, slashRel(root, m.Runner))
 	}
 	if m.Kind == analyze.Maven || m.Kind == analyze.Gradle {
-		if _, err := exec.LookPath("java"); err != nil {
+		if _, err := env.lookPath("java"); err != nil {
 			return exit(2, "analyze: %s module %s needs java, not found on PATH; install it or set analyze.enabled: false", m.Kind, rel)
 		}
 	}
@@ -351,12 +350,12 @@ func (w *Wiring) validateProviders() error {
 		return nil
 	}
 	for i, r := range roles {
-		if err := checkBinary(r, resolved[i].Kind); err != nil {
+		if err := checkBinary(w.Env, r, resolved[i].Kind); err != nil {
 			return err
 		}
 	}
 	for i, r := range roles {
-		if _, err := w.models.resolve(resolved[i], r.model); err != nil {
+		if _, err := w.models.resolve(w.Env, resolved[i], r.model); err != nil {
 			return exit(2, "%s: %v", r.field, err)
 		}
 	}
@@ -401,8 +400,8 @@ func checkRole(reg *providers.Registry, r role) (providers.Provider, error) {
 	return p, nil
 }
 
-func checkBinary(r role, kind string) error {
-	if _, err := exec.LookPath(kind); err != nil {
+func checkBinary(env Env, r role, kind string) error {
+	if _, err := env.lookPath(kind); err != nil {
 		return exit(127, "%s: provider %s binary %s not found on PATH", r.field, r.provider, kind)
 	}
 	return nil

@@ -90,6 +90,7 @@ func skippedPhases(run core.RunState) map[string]string {
 }
 
 func TestTriageStartsTheRunOnGoAndRecordsTheRunList(t *testing.T) {
+	t.Parallel()
 	var table string
 	k := startTriage(t, func(w *Wiring, text string) {
 		table = submit(t, w, allBuild(text))
@@ -140,6 +141,7 @@ func TestTriageStartsTheRunOnGoAndRecordsTheRunList(t *testing.T) {
 }
 
 func TestARunListThatCannotBeRecordedHaltsBeforeAnyStep(t *testing.T) {
+	t.Parallel()
 	k := startTriage(t, func(w *Wiring, text string) {
 		submit(t, w, allBuild(text))
 		gate(t, w, core.GateDecision{Decision: core.GateGo, MaintainerSaid: "go"})
@@ -157,6 +159,7 @@ func TestARunListThatCannotBeRecordedHaltsBeforeAnyStep(t *testing.T) {
 }
 
 func TestAnAlreadyDonePhaseIsDroppedNotTicked(t *testing.T) {
+	t.Parallel()
 	k := startTriage(t, func(w *Wiring, text string) {
 		submit(t, w, verdicts(map[string]core.PhaseVerdict{"2": {Phase: "2", Status: core.VerdictAlreadyDone, Note: "built at docs/topic/todo.md:9"}}))
 		gate(t, w, core.GateDecision{Decision: core.GateGo, MaintainerSaid: "go"})
@@ -184,6 +187,7 @@ func TestAnAlreadyDonePhaseIsDroppedNotTicked(t *testing.T) {
 }
 
 func TestAnAlreadyDoneVerdictWithoutAnExistingCitationIsRefused(t *testing.T) {
+	t.Parallel()
 	var reason string
 	k := startTriage(t, func(w *Wiring, text string) {
 		_, reason, _ = w.submitTriage(noDesign(w, verdicts(map[string]core.PhaseVerdict{"2": {Phase: "2", Status: core.VerdictAlreadyDone, Note: "built at nowhere.go:9"}})))
@@ -200,6 +204,7 @@ func TestAnAlreadyDoneVerdictWithoutAnExistingCitationIsRefused(t *testing.T) {
 }
 
 func TestABlockedPhaseAndItsDependentsAreDropped(t *testing.T) {
+	t.Parallel()
 	k := startTriage(t, func(w *Wiring, text string) {
 		submit(t, w, verdicts(map[string]core.PhaseVerdict{"1": {Phase: "1", Status: core.VerdictBlocked, Note: "needs an API key"}}))
 		gate(t, w, core.GateDecision{Decision: core.GateGo, MaintainerSaid: "go"})
@@ -216,6 +221,7 @@ func TestABlockedPhaseAndItsDependentsAreDropped(t *testing.T) {
 }
 
 func TestAMaintainerDropIsApplied(t *testing.T) {
+	t.Parallel()
 	k := startTriage(t, func(w *Wiring, text string) {
 		submit(t, w, allBuild(text))
 		gate(t, w, core.GateDecision{Decision: core.GateGo, Drop: []string{"2"}, MaintainerSaid: "go without 2"})
@@ -232,6 +238,7 @@ func TestAMaintainerDropIsApplied(t *testing.T) {
 }
 
 func TestReviseReturnsTheNewTableAndAsksAgain(t *testing.T) {
+	t.Parallel()
 	var revised string
 	var landedAtRevise int
 	var k *triaged
@@ -262,6 +269,7 @@ func TestReviseReturnsTheNewTableAndAsksAgain(t *testing.T) {
 }
 
 func TestAbortAtTheGateExits1AndResumeTriagesAgain(t *testing.T) {
+	t.Parallel()
 	k := startTriage(t, func(w *Wiring, text string) {
 		submit(t, w, allBuild(text))
 		gate(t, w, core.GateDecision{Decision: core.GateAbort, MaintainerSaid: "stop"})
@@ -291,8 +299,10 @@ func TestAbortAtTheGateExits1AndResumeTriagesAgain(t *testing.T) {
 }
 
 func TestUnattendedAndYesStartWithoutAGate(t *testing.T) {
+	t.Parallel()
 	for flag, by := range map[string]string{"--unattended": "unattended", "--yes": "yes"} {
 		t.Run(flag, func(t *testing.T) {
+			t.Parallel()
 			var refused string
 			var asked bool
 			k := startTriage(t, func(w *Wiring, text string) {
@@ -319,6 +329,7 @@ func TestUnattendedAndYesStartWithoutAGate(t *testing.T) {
 }
 
 func TestARefusedTriageCanBeResubmitted(t *testing.T) {
+	t.Parallel()
 	var reason string
 	k := startTriage(t, func(w *Wiring, text string) {
 		var ok bool
@@ -341,6 +352,7 @@ func TestARefusedTriageCanBeResubmitted(t *testing.T) {
 }
 
 func TestAGateWithoutTheMaintainersWordsIsRefused(t *testing.T) {
+	t.Parallel()
 	var reason string
 	k := startTriage(t, func(w *Wiring, text string) {
 		submit(t, w, allBuild(text))
@@ -357,6 +369,7 @@ func TestAGateWithoutTheMaintainersWordsIsRefused(t *testing.T) {
 }
 
 func TestTriageTimeoutHaltsWithExit4(t *testing.T) {
+	t.Parallel()
 	k := startTriage(t, func(w *Wiring, text string) {})
 	k.w.Config.Watchdog.TriageTimeout = 200 * time.Millisecond
 
@@ -374,6 +387,7 @@ func TestTriageTimeoutHaltsWithExit4(t *testing.T) {
 }
 
 func TestAGoneWatchdogDuringTriageExits5(t *testing.T) {
+	t.Parallel()
 	k := startTriage(t, func(w *Wiring, text string) {})
 	k.w.Dog.Host = &dogHost{blocked: "triage ", state: core.AgentGone}
 
@@ -428,6 +442,7 @@ func backlogRun(t *testing.T, sim *simHost) (*fixture, *Wiring, *tickingLander) 
 }
 
 func TestABacklogGroupRunsAsOnePhase(t *testing.T) {
+	t.Parallel()
 	f, w, lander := backlogRun(t, newSim())
 
 	code := w.Execute(core.RunOptions{})
@@ -457,6 +472,7 @@ func TestABacklogGroupRunsAsOnePhase(t *testing.T) {
 }
 
 func TestResumeRebuildsGroupsWithoutTriaging(t *testing.T) {
+	t.Parallel()
 	sim := newSim()
 	sim.fail["rloop-p1-implement"] = true
 	f, w, lander := backlogRun(t, sim)
@@ -490,6 +506,7 @@ func TestResumeRebuildsGroupsWithoutTriaging(t *testing.T) {
 }
 
 func TestStatusShowsAGroupAsOneRow(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.seedRun(
 		ev(t0, "run-list", 0, "", map[string]string{"phases": "1,3", "groups": `[{"group_id":"g1","items":["1","2"],"subsystem":"parser"}]`}),
@@ -506,6 +523,7 @@ func TestStatusShowsAGroupAsOneRow(t *testing.T) {
 }
 
 func TestTheDriverTypesEachTriageTableIntoTheWatchdogPaneBeforeTheGate(t *testing.T) {
+	t.Parallel()
 	var first, revised string
 	k := startTriage(t, func(w *Wiring, text string) {
 		first = submit(t, w, allBuild(text))
@@ -535,8 +553,10 @@ func TestTheDriverTypesEachTriageTableIntoTheWatchdogPaneBeforeTheGate(t *testin
 }
 
 func TestNoTriageTableIsTypedIntoTheWatchdogPaneWithoutAGate(t *testing.T) {
+	t.Parallel()
 	for _, flag := range []string{"--unattended", "--yes"} {
 		t.Run(flag, func(t *testing.T) {
+			t.Parallel()
 			k := startTriage(t, func(w *Wiring, text string) { submit(t, w, allBuild(text)) }, flag)
 
 			code := k.run()
@@ -552,6 +572,7 @@ func TestNoTriageTableIsTypedIntoTheWatchdogPaneWithoutAGate(t *testing.T) {
 }
 
 func TestATriageWithADesignStepNeedsAFlagPerPhaseAndTheGateCanTurnItOver(t *testing.T) {
+	t.Parallel()
 	var text, refused, first, revised string
 	k := startTriage(t, func(w *Wiring, sent string) {
 		text = sent
@@ -585,6 +606,7 @@ func TestATriageWithADesignStepNeedsAFlagPerPhaseAndTheGateCanTurnItOver(t *test
 }
 
 func TestTheRunListRecordsTheDesignFlagsAndResumeRestoresThem(t *testing.T) {
+	t.Parallel()
 	sim := newSim()
 	sim.fail["rloop-p2-implement"] = true
 	k := startTriage(t, func(w *Wiring, text string) {
@@ -620,6 +642,7 @@ func TestTheRunListRecordsTheDesignFlagsAndResumeRestoresThem(t *testing.T) {
 }
 
 func TestAWiredRunDesignsOnlyTheFlaggedPhaseAndHandsTheDesignToThePlanAndTheUIReviewer(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, reviewConfig)
 	f.write(".claude/skills/test-app/SKILL.md", "# test-app\n")
 	f.commit()

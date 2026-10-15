@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -948,4 +949,35 @@ func TestClearCurrentLeavesAPointerToAnotherRun(t *testing.T) {
 	if _, _, ok := s.Current(); ok {
 		t.Fatal("Current after matching clear")
 	}
+}
+
+func holdTheLockFileBriefly(t *testing.T, root string, hold time.Duration) {
+	t.Helper()
+	dir := filepath.Join(root, ".r-loop", "runs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	time.AfterFunc(hold, func() { f.Close() })
+}
+
+func TestLockWaitsOutAHolderThatLetsGoWithinTheWindow(t *testing.T) {
+	// given
+	s, root := newStore(t)
+	holdTheLockFileBriefly(t, root, 50*time.Millisecond)
+
+	// when
+	lock, actualErr := s.Lock()
+
+	// then
+	if actualErr != nil {
+		t.Fatalf("actual %v, expected nil", actualErr)
+	}
+	lock.Release("", 0)
 }

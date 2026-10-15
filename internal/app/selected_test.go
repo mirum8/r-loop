@@ -23,6 +23,7 @@ func ids(phases []core.Phase) []string {
 }
 
 func TestSelectedPhasesFollowTheLaunchSelection(t *testing.T) {
+	t.Parallel()
 	got := selectedPhases(selectionPlan(), "todo.md", Options{Phases: []string{"2", "4"}}, core.RunState{})
 
 	if !slices.Equal(ids(got), []string{"2", "4"}) {
@@ -31,6 +32,7 @@ func TestSelectedPhasesFollowTheLaunchSelection(t *testing.T) {
 }
 
 func TestSelectedPhasesFromLeaveOutTickedAndEarlierPhases(t *testing.T) {
+	t.Parallel()
 	got := selectedPhases(selectionPlan(), "todo.md", Options{From: "3"}, core.RunState{})
 
 	if !slices.Equal(ids(got), []string{"3", "4", "5"}) {
@@ -39,6 +41,7 @@ func TestSelectedPhasesFromLeaveOutTickedAndEarlierPhases(t *testing.T) {
 }
 
 func TestSelectedPhasesWithoutASelectionAreTheUntickedOnes(t *testing.T) {
+	t.Parallel()
 	got := selectedPhases(selectionPlan(), "todo.md", Options{}, core.RunState{})
 
 	if !slices.Equal(ids(got), []string{"2", "3", "4", "5"}) {
@@ -47,6 +50,7 @@ func TestSelectedPhasesWithoutASelectionAreTheUntickedOnes(t *testing.T) {
 }
 
 func TestSelectedItemsOfABacklog(t *testing.T) {
+	t.Parallel()
 	pl := selectionPlan()
 	pl.Backlog = true
 
@@ -58,6 +62,7 @@ func TestSelectedItemsOfABacklog(t *testing.T) {
 }
 
 func TestSelectedPhasesOnResumeAreTheRecordedRunListWithLandedAndTriageSkipped(t *testing.T) {
+	t.Parallel()
 	run := core.RunState{Events: []core.Event{
 		{Kind: "triage-start", Fields: map[string]string{"phases": "1, 2, 3, 4"}},
 		{Kind: core.TriageSkipped, Phase: "4"},
@@ -72,6 +77,7 @@ func TestSelectedPhasesOnResumeAreTheRecordedRunListWithLandedAndTriageSkipped(t
 }
 
 func TestSelectedPhasesOnResumeBeforeTheRunListUseTheTriagedList(t *testing.T) {
+	t.Parallel()
 	run := core.RunState{Events: []core.Event{{Kind: "triage-start", Fields: map[string]string{"phases": "2, 5"}}}}
 
 	got := selectedPhases(selectionPlan(), "todo.md", Options{}, run)

@@ -48,10 +48,10 @@ var (
 	designRe   = regexp.MustCompile(`\.task-plans/[a-z0-9-]+\.design\.md`)
 	findingsRe = regexp.MustCompile("into `([^`]+-findings-([a-z0-9]+)-r[0-9]+\\.json)`")
 	nativeRe   = regexp.MustCompile("`([^`]+/native-review\\.txt)`")
-	tokenRe    = regexp.MustCompile(`-[0-9a-z]{5}(-p[1-9])`)
+	tokenRe    = regexp.MustCompile(`(rloop-(?:[0-9a-z]+-)??)[0-9a-z]{5}-(p[1-9])`)
 )
 
-func agentRole(name string) string { return tokenRe.ReplaceAllString(name, "$1") }
+func agentRole(name string) string { return tokenRe.ReplaceAllString(name, "${1}${2}") }
 
 type simHost struct {
 	mu      sync.Mutex
@@ -274,6 +274,7 @@ func stepEvents(st core.RunState, kind string) []core.Event {
 }
 
 func TestResumeContinuesSignalSequenceFromTheHighestStoredSignal(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	w, err := f.preflight(f.todo, "--plain")
 	if err != nil {
@@ -301,6 +302,7 @@ func TestResumeContinuesSignalSequenceFromTheHighestStoredSignal(t *testing.T) {
 }
 
 func TestResumeAfterFailedImplementRerunsOnlyImplementAsAttempt2OverItsWork(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -341,6 +343,7 @@ func TestResumeAfterFailedImplementRerunsOnlyImplementAsAttempt2OverItsWork(t *t
 }
 
 func TestResumeClaimsATreeMatchingTheRecordedSnapshot(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -358,6 +361,7 @@ func TestResumeClaimsATreeMatchingTheRecordedSnapshot(t *testing.T) {
 }
 
 func TestResumeRefusesATreeEditedAfterTheSnapshotNamingTheFile(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -387,6 +391,7 @@ func TestResumeRefusesATreeEditedAfterTheSnapshotNamingTheFile(t *testing.T) {
 }
 
 func TestResumeRefusesUnrecordedChangesInAWorktreeWithNoSnapshot(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -409,6 +414,7 @@ func TestResumeRefusesUnrecordedChangesInAWorktreeWithNoSnapshot(t *testing.T) {
 }
 
 func TestResumeRunsBothHaltedPhasesInOrderThenTheSkippedDependent(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -475,6 +481,7 @@ const reviewConfig = `steps:
 `
 
 func TestResumeDuringAReviewContinuesAtTheRecordedRound(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, reviewConfig)
 	st := store.New(f.root)
 	id, err := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
@@ -559,6 +566,7 @@ func TestResumeDuringAReviewContinuesAtTheRecordedRound(t *testing.T) {
 }
 
 func TestReplanRerunsPlanWithTheAddendumThenImplement(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -592,6 +600,7 @@ func TestReplanRerunsPlanWithTheAddendumThenImplement(t *testing.T) {
 }
 
 func TestReplanOnAPhaseStoppedAtPlanIsAnOrdinaryResume(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-plan"] = true
@@ -612,6 +621,7 @@ func TestReplanOnAPhaseStoppedAtPlanIsAnOrdinaryResume(t *testing.T) {
 }
 
 func TestResumeRefusedOnAFinishedRun(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	_, code := f.firstRun(newSim(), "--phases", "1")
 	if code != 0 {
@@ -629,6 +639,7 @@ func TestResumeRefusedOnAFinishedRun(t *testing.T) {
 }
 
 func TestResumeRefusedWhileTheRunIsLive(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	st := store.New(f.root)
 	id, err := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
@@ -652,6 +663,7 @@ func TestResumeRefusedWhileTheRunIsLive(t *testing.T) {
 }
 
 func TestResumeANamedRunOverANewerOne(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -674,6 +686,7 @@ func TestResumeANamedRunOverANewerOne(t *testing.T) {
 }
 
 func TestResumeUnknownRunIDExits2NamingIt(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	_, _, err := f.resume(newSim(), "20990101-000000")
 	if code := exitCode(t, err); code != 2 || !strings.Contains(err.Error(), "no run 20990101-000000") {
@@ -682,6 +695,7 @@ func TestResumeUnknownRunIDExits2NamingIt(t *testing.T) {
 }
 
 func TestResumeSkipsANewerRunThatRecordedNoProgress(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -699,6 +713,7 @@ func TestResumeSkipsANewerRunThatRecordedNoProgress(t *testing.T) {
 }
 
 func TestResumeSkipsANewerCreatedRunWithOnlyWatchdogStart(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -721,6 +736,7 @@ func TestResumeSkipsANewerCreatedRunWithOnlyWatchdogStart(t *testing.T) {
 }
 
 func TestResumeSkipsARunWithUnreadableMetaWithAWarning(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -743,6 +759,7 @@ func TestResumeSkipsARunWithUnreadableMetaWithAWarning(t *testing.T) {
 }
 
 func TestResumeAndStatusOfARunWithATornLastLineExitNormally(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -773,6 +790,7 @@ func TestResumeAndStatusOfARunWithATornLastLineExitNormally(t *testing.T) {
 }
 
 func TestResumeReadsTheNewestRunWhenCurrentIsAbsent(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	if err := store.EnsureExcluded(f.root); err != nil {
 		t.Fatal(err)
@@ -798,6 +816,7 @@ func TestResumeReadsTheNewestRunWhenCurrentIsAbsent(t *testing.T) {
 }
 
 func TestAbortEndsALiveRunNamingTheSessionAndClearsCurrent(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-plan"] = true
@@ -846,6 +865,7 @@ func TestAbortEndsALiveRunNamingTheSessionAndClearsCurrent(t *testing.T) {
 }
 
 func TestAbortWithNoLiveRunExits2(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	st := store.New(f.root)
 	id, _ := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
@@ -860,6 +880,7 @@ func TestAbortWithNoLiveRunExits2(t *testing.T) {
 }
 
 func TestNewRunClearsACurrentWhosePidIsDeadWithANote(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	if err := store.EnsureExcluded(f.root); err != nil {
 		t.Fatal(err)
@@ -881,6 +902,7 @@ func TestNewRunClearsACurrentWhosePidIsDeadWithANote(t *testing.T) {
 }
 
 func TestResumeAfterAbortRunsTheStoppedStep(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-plan"] = true
@@ -916,6 +938,7 @@ func TestResumeAfterAbortRunsTheStoppedStep(t *testing.T) {
 }
 
 func TestClaimComparesAgainstTheStoppedStepsOwnTree(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	if err := store.EnsureExcluded(f.root); err != nil {
 		t.Fatal(err)
@@ -957,6 +980,7 @@ func TestClaimComparesAgainstTheStoppedStepsOwnTree(t *testing.T) {
 }
 
 func TestResumeUsageNamesEveryFlag(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 
 	code := f.main("resume", "--bogus")
@@ -1027,6 +1051,7 @@ func (f *fixture) seedStepCommitIntent(id, wt string) (string, string) {
 }
 
 func TestResumeAfterACrashBetweenTheStepCommitAndItsOkRecordDoesNotRerunIt(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, wt := f.seedKilledImplement()
 	f.seedStepCommitIntent(id, wt)
@@ -1044,6 +1069,7 @@ func TestResumeAfterACrashBetweenTheStepCommitAndItsOkRecordDoesNotRerunIt(t *te
 }
 
 func TestResumeCommitsAStepsWorkWhenTheCrashCameBeforeItsCommit(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, wt := f.seedKilledImplement()
 	head, _ := f.seedStepCommitIntent(id, wt)
@@ -1060,6 +1086,7 @@ func TestResumeCommitsAStepsWorkWhenTheCrashCameBeforeItsCommit(t *testing.T) {
 }
 
 func TestResumeRefusesAStepWhoseWorktreeChangedAfterTheCrash(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, wt := f.seedKilledImplement()
 	head, _ := f.seedStepCommitIntent(id, wt)
@@ -1072,6 +1099,7 @@ func TestResumeRefusesAStepWhoseWorktreeChangedAfterTheCrash(t *testing.T) {
 }
 
 func TestResumeRefusesAStepWhoseHeadMovedToAnUnrelatedCommit(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, wt := f.seedKilledImplement()
 	f.seedStepCommitIntent(id, wt)
@@ -1086,6 +1114,7 @@ func TestResumeRefusesAStepWhoseHeadMovedToAnUnrelatedCommit(t *testing.T) {
 }
 
 func TestResumeRefusesAStepWhoseWorkIsStillUncommittedUnderAnEmptyCommit(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, wt := f.seedKilledImplement()
 	f.seedStepCommitIntent(id, wt)
@@ -1174,6 +1203,7 @@ func (f *fixture) seedLandCommitIntent(id string) string {
 }
 
 func TestResumeAbortsAMergeTheCrashLeftDuringTheGate(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1191,6 +1221,7 @@ func TestResumeAbortsAMergeTheCrashLeftDuringTheGate(t *testing.T) {
 }
 
 func TestResumeCompletesAMergeWhoseCommitWasIntended(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1208,6 +1239,7 @@ func TestResumeCompletesAMergeWhoseCommitWasIntended(t *testing.T) {
 }
 
 func TestResumeRefusesAMergeWithAnUnrelatedStagedChange(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1230,6 +1262,7 @@ func TestResumeRefusesAMergeWithAnUnrelatedStagedChange(t *testing.T) {
 }
 
 func TestResumeRefusesAStagedMaintainerFileBeforeLandCommitIntent(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1249,6 +1282,7 @@ func TestResumeRefusesAStagedMaintainerFileBeforeLandCommitIntent(t *testing.T) 
 }
 
 func TestResumeRefusesAnUnstagedEditBeforeLandCommitIntentEvenAfterItIsStaged(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	f.write("calc.go", "original\n")
 	f.commit()
@@ -1274,6 +1308,7 @@ func TestResumeRefusesAnUnstagedEditBeforeLandCommitIntentEvenAfterItIsStaged(t 
 }
 
 func TestResumeNamesAConflictedDriverMerge(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, _ := f.seedKilledLand("1")
 	f.write("one.txt", "main\n")
@@ -1294,6 +1329,7 @@ func TestResumeNamesAConflictedDriverMerge(t *testing.T) {
 }
 
 func TestResumeRefusesAMergeWithAStagedOnlyChange(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	f.write("notes.txt", "original\n")
 	f.commit()
@@ -1315,6 +1351,7 @@ func TestResumeRefusesAMergeWithAStagedOnlyChange(t *testing.T) {
 }
 
 func TestResumeRefusesAForeignMergeInProgress(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1335,6 +1372,7 @@ func TestResumeRefusesAForeignMergeInProgress(t *testing.T) {
 }
 
 func TestResumeRefusesAnAbortedMergesUnprovenTodoChange(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1354,6 +1392,7 @@ func TestResumeRefusesAnAbortedMergesUnprovenTodoChange(t *testing.T) {
 }
 
 func TestResumeRestoresTheProvenTickBeforeAbortingTheMerge(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1374,6 +1413,7 @@ func TestResumeRestoresTheProvenTickBeforeAbortingTheMerge(t *testing.T) {
 }
 
 func TestResumeNamesThePhaseAndPathWhenAbortFails(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1397,6 +1437,7 @@ func TestResumeNamesThePhaseAndPathWhenAbortFails(t *testing.T) {
 }
 
 func TestResumeNamesAMissingPhaseBranchDuringMerge(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, wt, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1413,6 +1454,7 @@ func TestResumeNamesAMissingPhaseBranchDuringMerge(t *testing.T) {
 }
 
 func TestResumeNamesAMissingPhaseBranchAfterLandingCommit(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, wt, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1429,6 +1471,7 @@ func TestResumeNamesAMissingPhaseBranchAfterLandingCommit(t *testing.T) {
 }
 
 func TestResumeRefusesAStagedMaintainerEditToTheTodoBeforeLandCommitIntent(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1458,6 +1501,7 @@ func TestResumeRefusesAStagedMaintainerEditToTheTodoBeforeLandCommitIntent(t *te
 }
 
 func TestResumeAbortsAMergeWithOnlyTheStagedPhaseTick(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1471,6 +1515,7 @@ func TestResumeAbortsAMergeWithOnlyTheStagedPhaseTick(t *testing.T) {
 }
 
 func TestResumeRecordsTheLandingOfACommitMadeBeforeTheCrash(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1,2")
 	f.seedMergeIntent(id, base)
@@ -1494,6 +1539,7 @@ func TestResumeRecordsTheLandingOfACommitMadeBeforeTheCrash(t *testing.T) {
 }
 
 func TestResumeOfARunWhoseLastPhaseLandedBeforeTheCrashReportsItLanded(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1513,6 +1559,7 @@ func TestResumeOfARunWhoseLastPhaseLandedBeforeTheCrashReportsItLanded(t *testin
 }
 
 func TestResumeWithAMergeIntentButNoMergeLandsThePhaseAgain(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _, base := f.seedKilledLand("1")
 	f.seedMergeIntent(id, base)
@@ -1542,6 +1589,7 @@ func (f *fixture) herdrWorking(t *testing.T, agents ...string) {
 }
 
 func TestResumeInterruptsTheRecordedStepAgent(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _ := f.seedKilledImplement()
 	agent := "rloop-k3x9q-p1-implement"
@@ -1559,6 +1607,7 @@ func TestResumeInterruptsTheRecordedStepAgent(t *testing.T) {
 }
 
 func TestResumeFindsTheRecordedAgentOfTheLastAttempt(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _ := f.seedKilledImplement()
 	for _, pair := range [][2]string{{"1", "rloop-k3x9q-p1-implement"}, {"2", "rloop-k3x9q-p1-implement-a2"}} {
@@ -1577,6 +1626,7 @@ func TestResumeFindsTheRecordedAgentOfTheLastAttempt(t *testing.T) {
 }
 
 func TestResumeInterruptsARecordedReviewerStillWorking(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, reviewConfig)
 	id, _ := f.seedKilledImplement()
 	f.appendRunEvent(id, ev(t0, "review-round", 1, "implement", map[string]string{"round": "2", "tree": "tree", "attempt": "1"}))
@@ -1596,6 +1646,7 @@ func TestResumeInterruptsARecordedReviewerStillWorking(t *testing.T) {
 }
 
 func TestResumeOfARunStartedBeforeTheChangeInterruptsItsLegacyReviewer(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, reviewConfig)
 	id, _ := f.seedKilledImplement()
 	f.appendRunEvent(id, ev(t0, "review-round", 1, "implement", map[string]string{"round": "2", "tree": "tree", "attempt": "1"}))
@@ -1614,6 +1665,7 @@ func TestResumeOfARunStartedBeforeTheChangeInterruptsItsLegacyReviewer(t *testin
 }
 
 func TestResumeCrashedRightAfterStartFindsTheRecordedAgent(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _ := f.seedKilledImplement()
 	agent := "rloop-k3x9q-p1-implement"
@@ -1630,6 +1682,7 @@ func TestResumeCrashedRightAfterStartFindsTheRecordedAgent(t *testing.T) {
 }
 
 func TestAResumedRunFindsTheStepAgentItNamedItself(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -1661,6 +1714,7 @@ func TestAResumedRunFindsTheStepAgentItNamedItself(t *testing.T) {
 }
 
 func TestResumeClaimsTheLeftoversOfAStepKilledInItsWorkHalfAndBuildsOnThem(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _ := f.seedKilledImplement()
 	sim := newSim()
@@ -1686,6 +1740,7 @@ func TestResumeClaimsTheLeftoversOfAStepKilledInItsWorkHalfAndBuildsOnThem(t *te
 }
 
 func TestResumeRefusesChangesUnderARunningStepWithNoBaseline(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	if err := store.EnsureExcluded(f.root); err != nil {
 		t.Fatal(err)
@@ -1720,6 +1775,7 @@ func TestResumeRefusesChangesUnderARunningStepWithNoBaseline(t *testing.T) {
 }
 
 func TestResumeInterruptsTheKilledDriversStillWorkingStepAgentBeforeItClaims(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _ := f.seedKilledImplement()
 	script := "#!/bin/sh\necho \"$@\" >> \"$0.calls\"\n" +
@@ -1748,6 +1804,7 @@ func TestResumeInterruptsTheKilledDriversStillWorkingStepAgentBeforeItClaims(t *
 }
 
 func TestResumeOfALabelledRunInterruptsTheLabelledStepAgent(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, "label: test\n"+noReviewConfig)
 	id, _ := f.seedKilledImplement()
 	script := "#!/bin/sh\necho \"$@\" >> \"$0.calls\"\n" +
@@ -1776,6 +1833,7 @@ func TestResumeOfALabelledRunInterruptsTheLabelledStepAgent(t *testing.T) {
 }
 
 func TestResumeLeavesAPreviousSessionThatIsNoLongerWorkingAlone(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _ := f.seedKilledImplement()
 
@@ -1794,6 +1852,7 @@ func TestResumeLeavesAPreviousSessionThatIsNoLongerWorkingAlone(t *testing.T) {
 }
 
 func TestResumeAfterAKilledDriverClosesItsStaleWatchdogAndStartsItsOwn(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _ := f.seedKilledImplement()
 
@@ -1825,6 +1884,7 @@ func TestResumeAfterAKilledDriverClosesItsStaleWatchdogAndStartsItsOwn(t *testin
 }
 
 func TestResumeClosesTheAttemptTheKilledDriverLeftRunningBeforeTheRerun(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _ := f.seedKilledImplement()
 
@@ -1859,6 +1919,7 @@ func TestResumeClosesTheAttemptTheKilledDriverLeftRunningBeforeTheRerun(t *testi
 }
 
 func TestResumeWithdrawsAQuestionTheKilledDriverLeftOpen(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	id, _ := f.seedKilledImplement()
 	impl := core.StepKey{Run: id, Phase: "1", Kind: "implement", Attempt: 1}
@@ -1902,6 +1963,7 @@ func (f *fixture) seedLocalLandCommitIntent(id string) {
 }
 
 func TestResumeCompletesALocalTodoMergeAndTicksThePhaseOnDisk(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	f.untrackTodo()
 	id, _, base := f.seedKilledLand("1,2")
@@ -1927,6 +1989,7 @@ func TestResumeCompletesALocalTodoMergeAndTicksThePhaseOnDisk(t *testing.T) {
 }
 
 func TestResumeTicksALocalTodoForAPhaseThatLandedBeforeTheCrash(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	f.untrackTodo()
 	id, _, base := f.seedKilledLand("1,2")
@@ -1950,6 +2013,7 @@ func TestResumeTicksALocalTodoForAPhaseThatLandedBeforeTheCrash(t *testing.T) {
 }
 
 func TestResumeAbortsALocalTodoMergeTheCrashLeftDuringTheGate(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	f.untrackTodo()
 	id, _, base := f.seedKilledLand("1")
@@ -1969,6 +2033,7 @@ func TestResumeAbortsALocalTodoMergeTheCrashLeftDuringTheGate(t *testing.T) {
 func (h *simHost) Submit(agent, text string) error { return h.Prompt(agent, text, false, 0) }
 
 func TestResumeOfARunWhosePlanIsOutsideTheRepositoryNamesIt(t *testing.T) {
+	t.Parallel()
 	for name, setup := range map[string]func(f *fixture, id string){
 		"no merge in flight": func(f *fixture, id string) {},
 		"merge intent recorded": func(f *fixture, id string) {
@@ -1997,6 +2062,7 @@ func TestResumeOfARunWhosePlanIsOutsideTheRepositoryNamesIt(t *testing.T) {
 }
 
 func TestResumeTicksTheTargetOfALocalTodoSymlinkAndKeepsTheLink(t *testing.T) {
+	t.Parallel()
 	// given
 	f := newResumeFixture(t, noReviewConfig)
 	f.untrackTodo()

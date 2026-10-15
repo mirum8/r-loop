@@ -213,7 +213,7 @@ func (m *SessionManager) awaitSubmit(agent string, wait time.Duration) bool {
 		if !time.Now().Before(deadline) {
 			return false
 		}
-		time.Sleep(hookPoll)
+		time.Sleep(min(hookPoll, time.Until(deadline)))
 	}
 }
 
@@ -292,7 +292,7 @@ func (m *SessionManager) awaitRollout(s *Session) bool {
 		if !time.Now().Before(deadline) {
 			return false
 		}
-		time.Sleep(hookPoll)
+		time.Sleep(min(hookPoll, time.Until(deadline)))
 	}
 }
 
@@ -457,7 +457,7 @@ func (m *SessionManager) hookStart(s *Session, hooks bool) {
 		if !time.Now().Before(deadline) {
 			break
 		}
-		time.Sleep(hookPoll)
+		time.Sleep(min(hookPoll, time.Until(deadline)))
 	}
 	m.hooks.mu.Lock()
 	m.hooks.agent(s.Agent).pinned = true

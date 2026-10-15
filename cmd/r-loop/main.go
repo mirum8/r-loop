@@ -45,7 +45,7 @@ func run(args []string, stdout, stderr io.Writer, getwd func() (string, error)) 
 		return 2
 	}
 	home, _ := os.UserHomeDir()
-	return app.Main(args, app.Env{Dir: dir, Home: home, Herdr: "herdr", Git: "git", Pane: os.Getenv("HERDR_PANE_ID"), PID: os.Getpid(), Stdin: os.Stdin, Stdout: stdout, Stderr: stderr, Now: time.Now})
+	return app.Main(args, app.Env{Dir: dir, Home: home, Herdr: "herdr", Git: "git", Path: os.Getenv("PATH"), Pane: os.Getenv("HERDR_PANE_ID"), PID: os.Getpid(), Stdin: os.Stdin, Stdout: stdout, Stderr: stderr, Now: time.Now})
 }
 
 func claudeSettings() string {

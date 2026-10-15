@@ -82,6 +82,7 @@ func (f panicEventFace) Emit(ev core.Event) {
 }
 
 func TestAPanicInTheDriverStopsTheDisplayAndHaltsTheRun(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.fail["rloop-p1-plan"] = true
@@ -99,7 +100,7 @@ func TestAPanicInTheDriverStopsTheDisplayAndHaltsTheRun(t *testing.T) {
 	w.Env.Stderr = &stderr
 	done := make(chan int, 1)
 	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
-	if code := resultOfSignalTest(t, done, 10*time.Second); code != 2 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 2 {
 		t.Fatalf("exit = %d", code)
 	}
 	if state := f.load(w.Loop.RunID); state.Status != core.RunHalted {
@@ -128,7 +129,7 @@ func TestAPanicInExecuteCleanupStillRestoresTheTerminal(t *testing.T) {
 	w.Env.Stderr = &stderr
 	done := make(chan int, 1)
 	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
-	if code := resultOfSignalTest(t, done, 10*time.Second); code != 2 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 2 {
 		t.Fatalf("exit = %d", code)
 	}
 	if !strings.Contains(stderr.String(), "r-loop: panic: boom") {
@@ -146,6 +147,7 @@ func TestAPanicInExecuteCleanupStillRestoresTheTerminal(t *testing.T) {
 }
 
 func TestAPanicInTheFaceStillRestoresTheTerminal(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.fail["rloop-p1-plan"] = true
@@ -163,7 +165,7 @@ func TestAPanicInTheFaceStillRestoresTheTerminal(t *testing.T) {
 	w.Env.Stderr = &stderr
 	done := make(chan int, 1)
 	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
-	if code := resultOfSignalTest(t, done, 10*time.Second); code != 2 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 2 {
 		t.Fatalf("exit = %d", code)
 	}
 	if !strings.Contains(stderr.String(), "r-loop: panic: boom") {
@@ -197,11 +199,11 @@ func TestEachSignalHaltsALiveStepAsInterrupted(t *testing.T) {
 			f.sim(w, sim)
 			done := make(chan int, 1)
 			go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
-			waitForSignalTest(t, 5*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
+			waitForSignalTest(t, 60*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
 			if err := syscall.Kill(os.Getpid(), tc.sig); err != nil {
 				t.Fatal(err)
 			}
-			if code := resultOfSignalTest(t, done, 10*time.Second); code != 4 {
+			if code := resultOfSignalTest(t, done, 60*time.Second); code != 4 {
 				t.Fatalf("exit = %d", code)
 			}
 			assertInterruptedSignalTest(t, f, w.Loop.RunID, "interrupted: "+tc.name)
@@ -224,7 +226,7 @@ func TestSIGTERMDuringALongGateKillsTheGateAbortsTheMergeAndHaltsTheRun(t *testi
 	done := make(chan int, 1)
 	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
 	var pid int
-	waitForSignalTest(t, 20*time.Second, func() bool {
+	waitForSignalTest(t, 60*time.Second, func() bool {
 		b, err := os.ReadFile(pidPath)
 		if err != nil {
 			return false
@@ -235,10 +237,10 @@ func TestSIGTERMDuringALongGateKillsTheGateAbortsTheMergeAndHaltsTheRun(t *testi
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	if code := resultOfSignalTest(t, done, 30*time.Second); code != 4 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 4 {
 		t.Fatalf("exit = %d", code)
 	}
-	waitForSignalTest(t, 5*time.Second, func() bool { return syscall.Kill(-pid, 0) == syscall.ESRCH })
+	waitForSignalTest(t, 60*time.Second, func() bool { return syscall.Kill(-pid, 0) == syscall.ESRCH })
 	if got := git(t, f.root, "status", "--porcelain"); got != "" {
 		t.Fatalf("primary tree dirty: %s", got)
 	}
@@ -252,6 +254,7 @@ func TestSIGTERMDuringALongGateKillsTheGateAbortsTheMergeAndHaltsTheRun(t *testi
 }
 
 func TestAClosedDisplayHaltsTheRunAsInterrupted(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-plan"] = true
@@ -264,15 +267,16 @@ func TestAClosedDisplayHaltsTheRunAsInterrupted(t *testing.T) {
 	defer writer.Close()
 	done := make(chan int, 1)
 	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
-	waitForSignalTest(t, 5*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
+	waitForSignalTest(t, 60*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
 	w.TUI.Stop()
-	if code := resultOfSignalTest(t, done, 5*time.Second); code != 4 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 4 {
 		t.Fatalf("exit = %d", code)
 	}
 	assertInterruptedSignalTest(t, f, w.Loop.RunID, "interrupted: display closed")
 }
 
 func TestADisplayErrorHaltsTheRunNamingIt(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-plan"] = true
@@ -284,9 +288,9 @@ func TestADisplayErrorHaltsTheRunNamingIt(t *testing.T) {
 	writer, _ := installSignalTestDisplay(w)
 	done := make(chan int, 1)
 	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
-	waitForSignalTest(t, 5*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
+	waitForSignalTest(t, 60*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
 	writer.CloseWithError(errors.New("tty gone"))
-	if code := resultOfSignalTest(t, done, 5*time.Second); code != 4 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 4 {
 		t.Fatalf("exit = %d", code)
 	}
 	halts := stepEvents(f.load(w.Loop.RunID), "halt")
@@ -308,19 +312,20 @@ func TestASignalWhileTheDisplayWaitsForQuitEndsExecute(t *testing.T) {
 	defer writer.Close()
 	done := make(chan int, 1)
 	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
-	waitForSignalTest(t, 10*time.Second, func() bool {
+	waitForSignalTest(t, 60*time.Second, func() bool {
 		state, err := w.Store.Load(w.Loop.RunID)
 		return err == nil && state.Status == core.RunHalted
 	})
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	if code := resultOfSignalTest(t, done, 30*time.Second); code != 1 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 1 {
 		t.Fatalf("exit = %d", code)
 	}
 }
 
 func TestAForceQuitFromTheDisplayRecordsTheRunAborted(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-plan"] = true
@@ -334,11 +339,11 @@ func TestAForceQuitFromTheDisplayRecordsTheRunAborted(t *testing.T) {
 	w.TUI.Abort = func() error { return w.Store.MarkAbort(w.Loop.RunID) }
 	done := make(chan int, 1)
 	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
-	waitForSignalTest(t, 5*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
+	waitForSignalTest(t, 60*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
 	if _, err := writer.Write([]byte("\x03\x03")); err != nil {
 		t.Fatal(err)
 	}
-	if code := resultOfSignalTest(t, done, 5*time.Second); code != 1 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 1 {
 		t.Fatalf("exit = %d", code)
 	}
 	state := f.load(w.Loop.RunID)
@@ -360,11 +365,11 @@ func TestSignalAfterTUIStartsPrintsHaltReasonAndResume(t *testing.T) {
 	defer writer.Close()
 	done := make(chan int, 1)
 	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
-	waitForSignalTest(t, 5*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
+	waitForSignalTest(t, 60*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	if code := resultOfSignalTest(t, done, 5*time.Second); code != 4 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 4 {
 		t.Fatalf("exit = %d", code)
 	}
 	for _, want := range []string{"halted: interrupted: SIGTERM", "r-loop resume", "report:"} {
@@ -375,6 +380,7 @@ func TestSignalAfterTUIStartsPrintsHaltReasonAndResume(t *testing.T) {
 }
 
 func TestForceQuitPrintsAbortedAndResume(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-plan"] = true
@@ -388,11 +394,11 @@ func TestForceQuitPrintsAbortedAndResume(t *testing.T) {
 	w.TUI.Abort = func() error { return w.Store.MarkAbort(w.Loop.RunID) }
 	done := make(chan int, 1)
 	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
-	waitForSignalTest(t, 5*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
+	waitForSignalTest(t, 60*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
 	if _, err := writer.Write([]byte("\x03\x03")); err != nil {
 		t.Fatal(err)
 	}
-	if code := resultOfSignalTest(t, done, 5*time.Second); code != 1 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 1 {
 		t.Fatalf("exit = %d", code)
 	}
 	for _, want := range []string{"aborted", "r-loop resume", "report:"} {

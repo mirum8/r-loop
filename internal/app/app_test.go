@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,6 +33,7 @@ func (s failingStore) Append(id string, rec core.Record) error {
 }
 
 func TestRunNamesAFailedRunRecordOnStderrAndInTheFace(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	w, err := f.preflight(f.todo, "--plain")
 	if err != nil {
@@ -78,12 +80,11 @@ func newFixtureIn(t *testing.T, root string) *fixture {
 	f.write("docs/topic/todo.md", string(data))
 	f.herdr = filepath.Join(t.TempDir(), "herdr")
 	f.fakeHerdr(0)
-	f.env = Env{Dir: root, Home: t.TempDir(), Herdr: f.herdr, Git: "git", PID: 4242, Stdout: f.out, Stderr: f.err}
-	fakeProviders(t)
+	f.env = Env{Dir: root, Home: t.TempDir(), Herdr: f.herdr, Git: "git", PID: 4242, Stdout: f.out, Stderr: f.err, Path: fakeProviders(t)}
 	return f
 }
 
-func fakeProviders(t *testing.T) {
+func fakeProviders(t *testing.T) string {
 	t.Helper()
 	bin := t.TempDir()
 	scripts := map[string]string{
@@ -103,10 +104,11 @@ func fakeProviders(t *testing.T) {
 		t.Fatal(err)
 	}
 	sep := string(os.PathListSeparator)
-	t.Setenv("PATH", bin+sep+tools+sep+os.Getenv("PATH"))
+	return bin + sep + tools + sep + os.Getenv("PATH")
 }
 
 func TestAMissingProviderBinaryExits127NamingTheProviderBinaryAndField(t *testing.T) {
+	t.Parallel()
 	provider := "providers:\n  ghost:\n    kind: rloop-no-such-binary\n    doneSignal: sentinel\n    ask: mcp\n    review: ghost review\n"
 	for field, cfg := range map[string]string{
 		"watchdog.provider":    "watchdog:\n  provider: ghost\n",
@@ -129,6 +131,7 @@ func TestAMissingProviderBinaryExits127NamingTheProviderBinaryAndField(t *testin
 }
 
 func TestAMissingProviderBinaryIsNotCheckedInDryRun(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  ghost:\n    kind: rloop-no-such-binary\n    doneSignal: sentinel\n    ask: mcp\nwatchdog:\n  provider: ghost\n")
 	f.commit()
@@ -139,11 +142,12 @@ func TestAMissingProviderBinaryIsNotCheckedInDryRun(t *testing.T) {
 }
 
 func TestARunWithEveryProviderBinaryOnPathPassesPreflight(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
-	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+	bin := filepath.SplitList(f.env.Path)[0]
 	for _, name := range []string{"claude", "codex"} {
-		path, err := exec.LookPath(name)
+		path, err := f.env.lookPath(name)
 		if err != nil || filepath.Dir(path) != bin {
 			t.Fatalf("%s path=%q err=%v, want directory %q", name, path, err, bin)
 		}
@@ -229,6 +233,7 @@ func exitCode(t *testing.T, err error) int {
 }
 
 func TestHerdrUnreachableIsRefusedWithExit4(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	f.fakeHerdr(1)
@@ -241,6 +246,7 @@ func TestHerdrUnreachableIsRefusedWithExit4(t *testing.T) {
 }
 
 func TestDirtyPrimaryTreeIsRefusedWithExit4ListingPaths(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	f.write("notes.txt", "scratch")
@@ -259,6 +265,7 @@ func TestDirtyPrimaryTreeIsRefusedWithExit4ListingPaths(t *testing.T) {
 }
 
 func TestLiveRunIsRefusedWithExit4(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	if err := store.EnsureExcluded(f.root); err != nil {
@@ -284,6 +291,7 @@ func TestLiveRunIsRefusedWithExit4(t *testing.T) {
 }
 
 func TestResolveFirstEntryOutsideTheRunListDoesNotRefuse(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	data, _ := os.ReadFile(f.todo)
 	f.write("docs/topic/todo.md", strings.Replace(string(data), "## Waves",
@@ -298,6 +306,7 @@ func TestResolveFirstEntryOutsideTheRunListDoesNotRefuse(t *testing.T) {
 }
 
 func TestMissingHerdrBinaryExits127(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	f.env.Herdr = filepath.Join(t.TempDir(), "no-herdr")
@@ -310,6 +319,7 @@ func TestMissingHerdrBinaryExits127(t *testing.T) {
 }
 
 func TestMissingGitBinaryExits127(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	f.env.Git = "no-such-git-binary"
@@ -322,6 +332,7 @@ func TestMissingGitBinaryExits127(t *testing.T) {
 }
 
 func TestConfigErrorExits2WithTheReadersMessage(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "pipeline: [plan, implement]\n")
 	f.commit()
@@ -334,6 +345,7 @@ func TestConfigErrorExits2WithTheReadersMessage(t *testing.T) {
 }
 
 func TestProviderBlockMissingKindIsRefusedInPreflight(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  claude:\n    modelFlag: --model {model}\n    doneSignal: sentinel\n")
 	f.commit()
@@ -354,6 +366,7 @@ func TestProviderBlockMissingKindIsRefusedInPreflight(t *testing.T) {
 }
 
 func TestImplementReviewerWithoutReviewCommandIsRefusedWithExit2(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\nsteps:\n  implement:\n    reviewers:\n      - provider: codex\n        model: gpt-5.6-sol\n        effort: medium\n")
 	f.commit()
@@ -366,6 +379,7 @@ func TestImplementReviewerWithoutReviewCommandIsRefusedWithExit2(t *testing.T) {
 }
 
 func TestPreflightPassesAReviewerWhoseProviderHasOnlyAReviewExec(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  bare:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n    models: debug models\n    reviewExec: codex review --uncommitted\nsteps:\n  implement:\n    reviewers:\n      - provider: bare\n        model: gpt-6-sol\n        effort: e\n")
 	f.commit()
@@ -374,7 +388,7 @@ func TestPreflightPassesAReviewerWhoseProviderHasOnlyAReviewExec(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f.env.Path = bin + string(os.PathListSeparator) + f.env.Path
 
 	if _, err := f.preflight(f.todo, "--plain"); err != nil {
 		t.Fatal(err)
@@ -382,6 +396,7 @@ func TestPreflightPassesAReviewerWhoseProviderHasOnlyAReviewExec(t *testing.T) {
 }
 
 func TestPreflightPassesASecurityReviewerOnAnyProviderAndInstallsNothing(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  bare:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\n    models: debug models\nsteps:\n  implement:\n    reviewers:\n      - name: security\n        provider: bare\n        model: gpt-6-sol\n        effort: e\n        prompt: review-security\n")
 	f.commit()
@@ -390,7 +405,7 @@ func TestPreflightPassesASecurityReviewerOnAnyProviderAndInstallsNothing(t *test
 	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f.env.Path = bin + string(os.PathListSeparator) + f.env.Path
 
 	if _, err := f.preflight(f.todo, "--plain"); err != nil {
 		t.Fatal(err)
@@ -403,6 +418,7 @@ func TestPreflightPassesASecurityReviewerOnAnyProviderAndInstallsNothing(t *test
 }
 
 func TestPlanReviewerNeedsNoReviewCommand(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  codex:\n    kind: codex\n    doneSignal: sentinel\n    ask: mcp\nsteps:\n  implement:\n    reviewers:\n      - provider: claude\n        model: opus\n        effort: medium\n")
 	f.commit()
@@ -419,6 +435,7 @@ func TestPlanReviewerNeedsNoReviewCommand(t *testing.T) {
 }
 
 func TestUIReviewerNeedsNoReviewCommandAndReportsItsSkill(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  bare:\n    kind: bare\n    doneSignal: sentinel\n    ask: mcp\nsteps:\n  implement:\n    reviewers:\n      - provider: claude\n        model: opus\n        effort: medium\n      - name: ui\n        provider: bare\n        model: m\n        effort: e\n        prompt: review-ui\n        requires: .claude/skills/test-app/SKILL.md\n")
 	f.write(".claude/skills/test-app/SKILL.md", "# test-app\n")
@@ -436,6 +453,7 @@ func TestUIReviewerNeedsNoReviewCommandAndReportsItsSkill(t *testing.T) {
 }
 
 func TestUIReviewerOnCodexIsWarnedAboutButStillRuns(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "steps:\n  implement:\n    reviewers:\n      - name: ui\n        provider: codex\n        model: sol\n        effort: high\n        prompt: review-ui\n")
 	f.commit()
@@ -452,6 +470,7 @@ func TestUIReviewerOnCodexIsWarnedAboutButStillRuns(t *testing.T) {
 }
 
 func TestDefaultUIReviewerIsNotWarnedAbout(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	f.fakeHerdr(1)
@@ -467,6 +486,7 @@ func TestDefaultUIReviewerIsNotWarnedAbout(t *testing.T) {
 }
 
 func TestWatchdogProviderIsValidatedUnlessTheWatchdogIsOff(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "watchdog:\n  provider: nosuch\n")
 	f.commit()
@@ -478,6 +498,7 @@ func TestWatchdogProviderIsValidatedUnlessTheWatchdogIsOff(t *testing.T) {
 }
 
 func TestPreflightCreatesTheRunAndPrintsTheBanner(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 
@@ -505,6 +526,7 @@ func TestPreflightCreatesTheRunAndPrintsTheBanner(t *testing.T) {
 }
 
 func TestWireBuildsTheGateFixKindAndTheMilestoneBoundary(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "land:\n  gateTimeout: 12m\n")
 	f.commit()
@@ -535,6 +557,7 @@ func TestWireBuildsTheGateFixKindAndTheMilestoneBoundary(t *testing.T) {
 }
 
 func TestACodexModelAliasResolvesToTheNewestCatalogVersionOncePerRun(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 
@@ -550,7 +573,7 @@ func TestACodexModelAliasResolvesToTheNewestCatalogVersionOncePerRun(t *testing.
 	if out := f.out.String(); !strings.Contains(out, "model: codex sol → gpt-6.1-sol") {
 		t.Errorf("banner does not name the resolution:\n%s", out)
 	}
-	codex, _ := exec.LookPath("codex")
+	codex, _ := f.env.lookPath("codex")
 	calls, err := os.ReadFile(codex + ".catalog-calls")
 	if err != nil || strings.Count(string(calls), "x") != 1 {
 		t.Errorf("catalog calls %q, err %v; want one per run", calls, err)
@@ -558,6 +581,7 @@ func TestACodexModelAliasResolvesToTheNewestCatalogVersionOncePerRun(t *testing.
 }
 
 func TestACodexModelAliasWithoutACatalogMatchExitsTwoNamingTheField(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "watchdog:\n  provider: codex\n  model: nosuch\n  effort: medium\n")
 	f.commit()
@@ -570,6 +594,7 @@ func TestACodexModelAliasWithoutACatalogMatchExitsTwoNamingTheField(t *testing.T
 }
 
 func TestZeroGateTimeoutExitsTwoNamingTheFileLineAndKey(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "land:\n  gateTimeout: 0s\n")
 	f.commit()
@@ -581,6 +606,7 @@ func TestZeroGateTimeoutExitsTwoNamingTheFileLineAndKey(t *testing.T) {
 }
 
 func TestNullGateTimeoutWiresTheDefaultIntoTheGate(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "land:\n  gateTimeout:\n")
 	f.commit()
@@ -598,6 +624,7 @@ func TestNullGateTimeoutWiresTheDefaultIntoTheGate(t *testing.T) {
 }
 
 func TestDryRunPrintsBannerWithOverridesAndTheRunList(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "steps:\n  implement:\n    fallback:\n")
 	f.commit()
@@ -652,6 +679,7 @@ func runList(out string) []string {
 }
 
 func TestDryRunListUnderFrom(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 
@@ -663,6 +691,7 @@ func TestDryRunListUnderFrom(t *testing.T) {
 }
 
 func TestDryRunListUnderPhases(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 
@@ -674,6 +703,7 @@ func TestDryRunListUnderPhases(t *testing.T) {
 }
 
 func TestTickedPhaseInPhasesExits2(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 
@@ -685,6 +715,7 @@ func TestTickedPhaseInPhasesExits2(t *testing.T) {
 }
 
 func TestUsageErrorsExit2WithOneLine(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{
 		{"--bogus"},
 		{},
@@ -705,6 +736,7 @@ func TestUsageErrorsExit2WithOneLine(t *testing.T) {
 }
 
 func TestParseArgsTakesPhaseLabels(t *testing.T) {
+	t.Parallel()
 	opts, err := ParseArgs([]string{"todo.md", "--from", "10A", "--phases", "10c, 2"})
 	if err != nil {
 		t.Fatal(err)
@@ -716,6 +748,7 @@ func TestParseArgsTakesPhaseLabels(t *testing.T) {
 }
 
 func TestParseArgsRejectsANonLabelPhase(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{{"todo.md", "--from", "x"}, {"todo.md", "--phases", "1,10ab"}, {"todo.md", "--from", "0"}} {
 		if _, err := ParseArgs(args); err == nil {
 			t.Errorf("%v: want an error", args)
@@ -724,6 +757,7 @@ func TestParseArgsRejectsANonLabelPhase(t *testing.T) {
 }
 
 func TestParseArgsReadsEveryFlag(t *testing.T) {
+	t.Parallel()
 	opts, err := ParseArgs([]string{"--from", "3", "todo.md", "--phases", "4,5", "--provider", "plan=codex", "--provider", "implement=claude",
 		"--model", "plan=o3", "--effort", "plan=low", "--unattended", "--plain", "--dry-run"})
 	if err != nil {
@@ -740,6 +774,7 @@ func TestParseArgsReadsEveryFlag(t *testing.T) {
 }
 
 func TestBannerNamesTheReviewAndFixPromptSources(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/prompts/review.md", "{{.Round}} review {{template \"sentinel\" .}}")
 	f.commit()
@@ -754,6 +789,7 @@ func TestBannerNamesTheReviewAndFixPromptSources(t *testing.T) {
 }
 
 func TestMalformedReviewPromptIsRefusedWithExit2(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/prompts/review.md", "{{.Round")
 	f.commit()
@@ -766,6 +802,7 @@ func TestMalformedReviewPromptIsRefusedWithExit2(t *testing.T) {
 }
 
 func TestGateFixReviewersAreValidatedWhenImplementIsNotInThePipeline(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "pipeline:\n  - plan\nproviders:\n  bare:\n    kind: bare\n    doneSignal: sentinel\nsteps:\n  implement:\n    reviewers:\n      - provider: bare\n        model: m\n        effort: e\n")
 	f.commit()
@@ -778,6 +815,7 @@ func TestGateFixReviewersAreValidatedWhenImplementIsNotInThePipeline(t *testing.
 }
 
 func TestWithoutATerminalOnStdoutTheFaceIsPlainEvenWithoutPlainFlag(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
@@ -794,6 +832,7 @@ func TestWithoutATerminalOnStdoutTheFaceIsPlainEvenWithoutPlainFlag(t *testing.T
 }
 
 func TestTheBannerNamesTheTUIFace(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	w, err := Wire(Options{Todo: f.todo, Plain: true}, f.env)
 	if err != nil {
@@ -810,6 +849,7 @@ func TestTheBannerNamesTheTUIFace(t *testing.T) {
 }
 
 func TestTheTUIIsChosenOnlyWithATerminalOnStdinAndStdoutAndNoPlainFlag(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		plain, stdin, stdout, want bool
 	}{
@@ -825,6 +865,7 @@ func TestTheTUIIsChosenOnlyWithATerminalOnStdinAndStdoutAndNoPlainFlag(t *testin
 }
 
 func TestAnUncommittedIssuesFileIsRefusedWithACommitHint(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	f.fakeHerdr(0)
@@ -839,6 +880,7 @@ func TestAnUncommittedIssuesFileIsRefusedWithACommitHint(t *testing.T) {
 }
 
 func TestADirtyTreeBeyondThePlanGetsNoCommitHint(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	f.fakeHerdr(0)
@@ -853,6 +895,7 @@ func TestADirtyTreeBeyondThePlanGetsNoCommitHint(t *testing.T) {
 }
 
 func TestDryRunOfAnIssuesFileWarnsAboutItemsWithoutCriteria(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write("issues.md", "- [ ] [#1] with criteria\n      - it works\n\n- [ ] [#2] bare title\n")
 	f.commit()
@@ -872,6 +915,7 @@ func TestDryRunOfAnIssuesFileWarnsAboutItemsWithoutCriteria(t *testing.T) {
 }
 
 func TestDryRunPrintsNoControlBytesFromTitles(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write("issues.md", "- [ ] [#1] a | b \x1b[2J\x1b]0;pwned\x07 c\n      - it works\n")
 	f.commit()
@@ -891,6 +935,7 @@ func TestDryRunPrintsNoControlBytesFromTitles(t *testing.T) {
 }
 
 func TestDryRunNamesAnOpenResolveFirstEntryThatBlocksTheRunList(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write("docs/topic/todo.md", "# Plan\n\n## Resolve first\n- [ ] **Measure it** — how fast?\n      Owner: me. Blocks: Phase 2.\n\n### Phase 1 — One\n- [ ] a\n\n### Phase 2 — Two\n- [ ] b\n")
 	f.commit()
@@ -912,6 +957,7 @@ func TestDryRunNamesAnOpenResolveFirstEntryThatBlocksTheRunList(t *testing.T) {
 }
 
 func TestAPhaseWithNoChecklistExits2(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write("docs/topic/todo.md", "# Plan\n\n### Phase 1 — One\n- [ ] a\n\n### Phase 2 — Two\n**Done when:** `go test ./...`\n")
 	f.commit()
@@ -924,6 +970,7 @@ func TestAPhaseWithNoChecklistExits2(t *testing.T) {
 }
 
 func TestDryRunPrintsThePlanCheckNotes(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write("docs/topic/todo.md", "# Plan\n\n### Phase 1 — One\n**Implements:** Story\n**Depends on:** —\n- [ ] a\n**Done when:** `go test ./...`\n\n### Phase 2 — Two\n**Implements:** Story\n**Depends on:** Phase 1\n- [ ] b\n")
 	f.commit()
@@ -943,12 +990,14 @@ func TestDryRunPrintsThePlanCheckNotes(t *testing.T) {
 }
 
 func TestNoWatchdogIsAUsageError(t *testing.T) {
+	t.Parallel()
 	if _, err := ParseArgs([]string{"todo.md", "--no-watchdog"}); err == nil {
 		t.Fatal("--no-watchdog accepted")
 	}
 }
 
 func TestCreateConfigWritesTheDefaultsToTheMachineFile(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 
 	code := f.main("--create-config")
@@ -963,6 +1012,7 @@ func TestCreateConfigWritesTheDefaultsToTheMachineFile(t *testing.T) {
 }
 
 func TestCreateConfigOverAnExistingFileResetsItsModels(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	path := filepath.Join(f.env.Home, ".config", "r-loop", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -984,6 +1034,7 @@ func TestCreateConfigOverAnExistingFileResetsItsModels(t *testing.T) {
 }
 
 func TestCreateConfigOverAFileAtTheDefaultsSaysSo(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	path := filepath.Join(f.env.Home, ".config", "r-loop", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1001,6 +1052,7 @@ func TestCreateConfigOverAFileAtTheDefaultsSaysSo(t *testing.T) {
 }
 
 func TestMigrateConfigRewritesTheMachineAndProjectFiles(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	home := filepath.Join(f.env.Home, ".config", "r-loop", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(home), 0o755); err != nil {
@@ -1026,6 +1078,7 @@ func TestMigrateConfigRewritesTheMachineAndProjectFiles(t *testing.T) {
 }
 
 func TestMigrateConfigExits1OnAProviderItCannotFill(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "steps:\n  plan:\n    fallback: gemini\n")
 
@@ -1037,6 +1090,7 @@ func TestMigrateConfigExits1OnAProviderItCannotFill(t *testing.T) {
 }
 
 func TestMigrateConfigWithNoFiles(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 
 	if code := f.main("--migrate-config"); code != 0 || f.out.String() != "no config file to migrate\n" {
@@ -1044,7 +1098,8 @@ func TestMigrateConfigWithNoFiles(t *testing.T) {
 	}
 }
 
-func toolchainPath(t *testing.T, tools ...string) {
+func (f *fixture) toolchainPath(tools ...string) {
+	t := f.t
 	t.Helper()
 	realGit, err := exec.LookPath("git")
 	if err != nil {
@@ -1060,8 +1115,7 @@ func toolchainPath(t *testing.T, tools ...string) {
 			t.Fatal(err)
 		}
 	}
-	providers := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+providers)
+	f.env.Path = bin + string(os.PathListSeparator) + filepath.SplitList(f.env.Path)[0]
 }
 
 func (f *fixture) markers(rels ...string) {
@@ -1073,6 +1127,7 @@ func (f *fixture) markers(rels ...string) {
 }
 
 func TestPreflightPrintsTheStaticLine(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		markers  []string
@@ -1089,7 +1144,7 @@ func TestPreflightPrintsTheStaticLine(t *testing.T) {
 			// given
 			f := newFixture(t)
 			f.markers(tc.markers...)
-			toolchainPath(t, tc.tools...)
+			f.toolchainPath(tc.tools...)
 
 			// when
 			_, err := f.preflight(f.todo, "--plain")
@@ -1103,6 +1158,7 @@ func TestPreflightPrintsTheStaticLine(t *testing.T) {
 }
 
 func TestPreflightExitsTwoNamingAMissingToolchain(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		markers  []string
@@ -1120,7 +1176,7 @@ func TestPreflightExitsTwoNamingAMissingToolchain(t *testing.T) {
 			// given
 			f := newFixture(t)
 			f.markers(tc.markers...)
-			toolchainPath(t, tc.tools...)
+			f.toolchainPath(tc.tools...)
 
 			// when
 			_, err := f.preflight(f.todo, "--plain")
@@ -1134,11 +1190,12 @@ func TestPreflightExitsTwoNamingAMissingToolchain(t *testing.T) {
 }
 
 func TestPreflightChecksNoToolchainWhenAnalyzeIsOff(t *testing.T) {
+	t.Parallel()
 	// given
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "analyze:\n  enabled: false\n")
 	f.markers("go.mod")
-	toolchainPath(t)
+	f.toolchainPath()
 
 	// when
 	_, err := f.preflight(f.todo, "--plain")
@@ -1150,10 +1207,11 @@ func TestPreflightChecksNoToolchainWhenAnalyzeIsOff(t *testing.T) {
 }
 
 func TestAMissingToolchainIsNotCheckedInDryRun(t *testing.T) {
+	t.Parallel()
 	// given
 	f := newFixture(t)
 	f.markers("go.mod")
-	toolchainPath(t)
+	f.toolchainPath()
 	f.fakeHerdr(1)
 
 	// when
@@ -1176,6 +1234,7 @@ func reviewFinds(st core.RunState, reviewer string) []map[string]string {
 }
 
 func TestAWiredRunReviewsWithTheAnalyzerWhenAnalyzeIsEnabled(t *testing.T) {
+	t.Parallel()
 	// given
 	f := newResumeFixture(t, reviewConfig)
 
@@ -1193,6 +1252,7 @@ func TestAWiredRunReviewsWithTheAnalyzerWhenAnalyzeIsEnabled(t *testing.T) {
 }
 
 func TestAWiredRunReviewsWithoutTheAnalyzerWhenAnalyzeIsOff(t *testing.T) {
+	t.Parallel()
 	// given
 	f := newResumeFixture(t, reviewConfig+"analyze:\n  enabled: false\n")
 
@@ -1213,6 +1273,7 @@ func TestAWiredRunReviewsWithoutTheAnalyzerWhenAnalyzeIsOff(t *testing.T) {
 }
 
 func TestRunStartRecordsEveryNamedProvidersVersion(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  bare:\n    kind: claude\n    doneSignal: sentinel\n    ask: mcp\nintake:\n  provider: bare\n")
 	f.commit()
@@ -1227,7 +1288,7 @@ func TestRunStartRecordsEveryNamedProvidersVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f.env.Path = bin + string(os.PathListSeparator) + f.env.Path
 	w, err := f.preflight(f.todo, "--plain")
 	if err != nil {
 		t.Fatal(err)
@@ -1255,14 +1316,16 @@ func TestRunStartRecordsEveryNamedProvidersVersion(t *testing.T) {
 }
 
 func TestAProviderWhoseVersionCommandIsMissingRecordsAQuestionMark(t *testing.T) {
+	t.Parallel()
 	p := providers.Provider{Name: "ghost", Kind: "rloop-no-such-binary", Version: "--version"}
 
-	if got := providerVersion(p); got != "?" {
+	if got := providerVersion(Env{Path: t.TempDir()}, p); got != "?" {
 		t.Errorf("version %q", got)
 	}
 }
 
 func TestCheckConfigLoadsTheCandidateInPlaceOfItsFileAndKeepsTheOther(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	w, err := Wire(Options{Todo: f.todo, Plain: true}, f.env)
@@ -1300,6 +1363,7 @@ func TestCheckConfigLoadsTheCandidateInPlaceOfItsFileAndKeepsTheOther(t *testing
 }
 
 func TestADesignStepAfterThePlanStepIsRefusedWithExit2(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "pipeline:\n  - plan\n  - design\n  - implement\n")
 	f.commit()
@@ -1321,6 +1385,7 @@ func registryDirWithPdev(t *testing.T) string {
 }
 
 func TestResolveMarksOnlyACodexProviderAsWritingARollout(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		provider        string
 		expectedRollout bool
@@ -1349,6 +1414,7 @@ func TestResolveMarksOnlyACodexProviderAsWritingARollout(t *testing.T) {
 }
 
 func TestResolveMarksOnlyAClaudeProviderGivenTheHookSettingsAsHooked(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		provider      string
@@ -1393,6 +1459,7 @@ func outsidePlan(t *testing.T, content string) string {
 }
 
 func TestAPlanOutsideTheRepositoryExits2NamingThePlanAndTheRoot(t *testing.T) {
+	t.Parallel()
 	// given
 	f := newFixture(t)
 	outside := outsidePlan(t, "# Plan\n\n### Phase 1 — One\n- [ ] a\n")
@@ -1407,6 +1474,7 @@ func TestAPlanOutsideTheRepositoryExits2NamingThePlanAndTheRoot(t *testing.T) {
 }
 
 func TestASymlinkInTheRepositoryToAPlanOutsideItIsRejected(t *testing.T) {
+	t.Parallel()
 	// given
 	f := newFixture(t)
 	outside := outsidePlan(t, "# Plan\n\n### Phase 1 — One\n- [ ] a\n")
@@ -1425,6 +1493,7 @@ func TestASymlinkInTheRepositoryToAPlanOutsideItIsRejected(t *testing.T) {
 }
 
 func TestAPlanInsideTheRepositoryPassesDryRunTrackedOrIgnored(t *testing.T) {
+	t.Parallel()
 	for name, setup := range map[string]func(f *fixture){
 		"tracked":    func(f *fixture) {},
 		"gitignored": func(f *fixture) { f.untrackTodo() },
@@ -1448,6 +1517,7 @@ func TestAPlanInsideTheRepositoryPassesDryRunTrackedOrIgnored(t *testing.T) {
 }
 
 func TestDryRunNamesAResolveFirstEntryThatBlocksTwoPhasesInThePlural(t *testing.T) {
+	t.Parallel()
 	// given
 	f := newFixture(t)
 	f.write("docs/topic/todo.md", "# Plan\n\n## Resolve first\n- [ ] **Measure it** — how fast?\n      Owner: me. Blocks: Phases 2, 3.\n\n### Phase 1 — One\n- [ ] a\n\n### Phase 2 — Two\n- [ ] b\n\n### Phase 3 — Three\n- [ ] c\n")
@@ -1463,6 +1533,7 @@ func TestDryRunNamesAResolveFirstEntryThatBlocksTwoPhasesInThePlural(t *testing.
 }
 
 func TestAMissingPlanUnderASymlinkedWorkingDirectoryIsReportedAsMissing(t *testing.T) {
+	t.Parallel()
 	// given
 	f := newFixture(t)
 	base, err := filepath.EvalSymlinks(t.TempDir())
@@ -1481,5 +1552,122 @@ func TestAMissingPlanUnderASymlinkedWorkingDirectoryIsReportedAsMissing(t *testi
 	// then
 	if expected := "r-loop: open " + alias + "/missing/todo.md: no such file or directory\n"; actualCode != 2 || f.err.String() != expected {
 		t.Fatalf("code=%d stderr=%q, expected 2 and %q", actualCode, f.err.String(), expected)
+	}
+}
+
+func writeTool(t *testing.T, dir string, mode os.FileMode) string {
+	t.Helper()
+	path := filepath.Join(dir, "tool")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func relativeToWd(t *testing.T, dir string) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(wd, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rel
+}
+
+func TestTheEnvPathLookupFollowsTheProcessLookupRules(t *testing.T) {
+	t.Parallel()
+	sep := string(os.PathListSeparator)
+	tests := []struct {
+		name  string
+		given func(t *testing.T) (path, name, expectedPath, expectedErr string)
+	}{
+		{"an executable in a later directory after a non-executable one", func(t *testing.T) (string, string, string, string) {
+			a, b := t.TempDir(), t.TempDir()
+			writeTool(t, a, 0o644)
+			return a + sep + b, "tool", writeTool(t, b, 0o755), "<nil>"
+		}},
+		{"an executable in a later directory after one only its group may run", func(t *testing.T) (string, string, string, string) {
+			a, b := t.TempDir(), t.TempDir()
+			writeTool(t, a, 0o010)
+			return a + sep + b, "tool", writeTool(t, b, 0o755), "<nil>"
+		}},
+		{"a relative directory ahead of an absolute one stops the lookup", func(t *testing.T) (string, string, string, string) {
+			rel, abs := t.TempDir(), t.TempDir()
+			writeTool(t, rel, 0o755)
+			writeTool(t, abs, 0o755)
+			relPath := relativeToWd(t, rel)
+			return relPath + sep + abs, "tool", filepath.Join(relPath, "tool"), `exec: "tool": cannot run executable found relative to current directory`
+		}},
+		{"a tool on no directory", func(t *testing.T) (string, string, string, string) {
+			return t.TempDir(), "tool", "", `exec: "tool": executable file not found in $PATH`
+		}},
+		{"a name with a separator is tried as given", func(t *testing.T) (string, string, string, string) {
+			tool := writeTool(t, t.TempDir(), 0o755)
+			return "", tool, tool, "<nil>"
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// given
+			path, name, expectedPath, expectedErr := tt.given(t)
+
+			// when
+			actualPath, actualErr := Env{Path: path}.lookPath(name)
+
+			// then
+			if actualPath != expectedPath || fmt.Sprint(actualErr) != expectedErr {
+				t.Fatalf("actual %q, %v, expected %q, %s", actualPath, actualErr, expectedPath, expectedErr)
+			}
+		})
+	}
+}
+
+func TestPreflightFindsAProviderBinaryOnTheEnvPathAlone(t *testing.T) {
+	t.Parallel()
+
+	// given
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "providers:\n  solo:\n    kind: rloop-env-path-only\n    doneSignal: sentinel\n    ask: mcp\nwatchdog:\n  provider: solo\n")
+	f.commit()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "rloop-env-path-only"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.env.Path = bin + string(os.PathListSeparator) + f.env.Path
+
+	// when
+	_, actualErr := f.preflight(f.todo, "--plain")
+
+	// then
+	if actualErr != nil {
+		t.Fatalf("actual %v, expected nil", actualErr)
+	}
+}
+
+func TestAWiredRunRunsTheSemgrepOnTheEnvPath(t *testing.T) {
+	t.Parallel()
+
+	// given
+	f := newResumeFixture(t, reviewConfig)
+	bin := t.TempDir()
+	semgrep := "#!/bin/sh\necho \"$1\" >> \"$0.calls\"\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --output ]; then printf '{\"runs\":[]}' > \"$2\"; fi\n  shift\ndone\n"
+	if err := os.WriteFile(filepath.Join(bin, "semgrep"), []byte(semgrep), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.env.Path = bin + string(os.PathListSeparator) + f.env.Path
+
+	// when
+	_, actualCode := f.firstRun(newSim(), "--phases", "1")
+
+	// then
+	actualCalls, err := os.ReadFile(filepath.Join(bin, "semgrep.calls"))
+	if actualCode != 0 || err != nil || string(actualCalls) != "scan\n" {
+		t.Fatalf("actual code %d calls %q err %v, expected 0 and %q\n%s", actualCode, actualCalls, err, "scan\n", f.out)
 	}
 }

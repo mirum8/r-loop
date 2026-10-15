@@ -50,12 +50,36 @@ type Options struct {
 }
 
 type Env struct {
-	Dir, Home, Herdr, Git string
-	Pane                  string
-	PID                   int
-	Stdin                 io.Reader
-	Stdout, Stderr        io.Writer
-	Now                   func() time.Time
+	Dir, Home, Herdr, Git, Path string
+	Pane                        string
+	PID                         int
+	Stdin                       io.Reader
+	Stdout, Stderr              io.Writer
+	Now                         func() time.Time
+}
+
+func (e Env) lookPath(name string) (string, error) {
+	if strings.ContainsRune(name, filepath.Separator) {
+		return exec.LookPath(name)
+	}
+	for _, dir := range filepath.SplitList(e.Path) {
+		if dir == "" {
+			dir = "."
+		}
+		path := filepath.Join(dir, name)
+		probe := path
+		if !strings.ContainsRune(probe, filepath.Separator) {
+			probe = "." + string(filepath.Separator) + probe
+		}
+		if _, err := exec.LookPath(probe); err != nil {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			return path, &exec.Error{Name: name, Err: exec.ErrDot}
+		}
+		return path, nil
+	}
+	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
 }
 
 type ExitError struct {
@@ -471,7 +495,7 @@ func (w *Wiring) run(ctx context.Context, opts core.RunOptions) int {
 }
 
 func Wire(opts Options, env Env) (*Wiring, error) {
-	if _, err := exec.LookPath(env.Git); err != nil {
+	if _, err := env.lookPath(env.Git); err != nil {
 		return nil, exit(127, "git binary %s not found", env.Git)
 	}
 	repo, err := gitrepo.Open(env.Dir)
@@ -531,7 +555,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	kinds := k.pipeline
 	var analyzer core.Analyzer
 	if cfg.Analyze.Enabled {
-		analyzer = analyze.New(cfg.Analyze.Timeout)
+		analyzer = analyze.New(cfg.Analyze.Timeout, env.lookPath)
 	}
 	sm := &core.SessionManager{
 		Host:         w.Host,
@@ -1017,7 +1041,7 @@ func (w *Wiring) versions() map[string]string {
 		wg.Go(func() {
 			v := "?"
 			if p, err := w.registry().Resolve(name); err == nil {
-				v = providerVersion(p)
+				v = providerVersion(w.Env, p)
 			}
 			mu.Lock()
 			out[name] = v
@@ -1126,7 +1150,7 @@ func (w *Wiring) resolve(provider, model, effort, askURL, mcpConfigPath, dir str
 		return core.ProviderArgs{}, err
 	}
 	p.Settings = w.settings
-	model, err = w.models.resolve(p, model)
+	model, err = w.models.resolve(w.Env, p, model)
 	if err != nil {
 		return core.ProviderArgs{}, err
 	}

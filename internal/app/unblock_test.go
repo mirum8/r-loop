@@ -89,6 +89,7 @@ func (k *walk) edit(old, new string) {
 }
 
 func TestTheWatchdogWalksABlockerAndTheDriverCommitsOnlyThePlan(t *testing.T) {
+	t.Parallel()
 	var k *walk
 	k = startWalk(t, func(w *Wiring) {
 		k.edit("- [ ] **Pick the database** — which one backs the store?\n      Owner: me. Blocks: Phase 1. Timebox: an hour. Output: a line in the spec.\n",
@@ -133,6 +134,7 @@ func TestTheWatchdogWalksABlockerAndTheDriverCommitsOnlyThePlan(t *testing.T) {
 }
 
 func TestAWalkOverALocalTodoResolvesTheEntryWithoutACommit(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	f.write("docs/topic/todo.md", blockedTodo)
 	f.untrackTodo()
@@ -160,6 +162,7 @@ func TestAWalkOverALocalTodoResolvesTheEntryWithoutACommit(t *testing.T) {
 }
 
 func TestAnEntryLeftOpenSkipsItsPhasesAndTheirDependents(t *testing.T) {
+	t.Parallel()
 	k := startWalk(t, nil)
 
 	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2", "3"}})
@@ -186,6 +189,7 @@ func TestAnEntryLeftOpenSkipsItsPhasesAndTheirDependents(t *testing.T) {
 }
 
 func TestAnEditOutsideResolveFirstIsUndoneAndStopsTheRun(t *testing.T) {
+	t.Parallel()
 	var k *walk
 	k = startWalk(t, func(w *Wiring) { k.edit("- [ ] b", "- [x] b") })
 	head := git(t, k.f.root, "rev-parse", "HEAD")
@@ -207,6 +211,7 @@ func TestAnEditOutsideResolveFirstIsUndoneAndStopsTheRun(t *testing.T) {
 }
 
 func TestAChangeOutsideThePlanStopsTheRun(t *testing.T) {
+	t.Parallel()
 	var k *walk
 	k = startWalk(t, func(w *Wiring) { k.f.write("docs/topic/spec.md", "a measurement") })
 
@@ -218,6 +223,7 @@ func TestAChangeOutsideThePlanStopsTheRun(t *testing.T) {
 }
 
 func TestAStopDuringTheWalkHaltsTheRun(t *testing.T) {
+	t.Parallel()
 	k := startWalk(t, func(w *Wiring) { w.Store.MarkAbort(w.Loop.RunID) })
 
 	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2"}})
@@ -228,6 +234,7 @@ func TestAStopDuringTheWalkHaltsTheRun(t *testing.T) {
 }
 
 func TestAHaltWhoseRunRecordFailsExitsTwoAndKeepsTheHaltReason(t *testing.T) {
+	t.Parallel()
 	k := startWalk(t, func(w *Wiring) { w.Store.MarkAbort(w.Loop.RunID) })
 	k.w.records.Store = failingStore{Store: k.w.Store, fail: func(rec core.Record) bool {
 		return rec.Kind == core.RecordRun && rec.Run == core.RunHalted
@@ -239,6 +246,7 @@ func TestAHaltWhoseRunRecordFailsExitsTwoAndKeepsTheHaltReason(t *testing.T) {
 }
 
 func TestUnattendedSkipsTheBlockedPhasesWithoutAWalk(t *testing.T) {
+	t.Parallel()
 	k := startWalk(t, nil, "--unattended")
 
 	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "2", "3"}})
@@ -252,6 +260,7 @@ func TestUnattendedSkipsTheBlockedPhasesWithoutAWalk(t *testing.T) {
 }
 
 func TestARunWhoseEveryPhaseIsBlockedFinishesWithNothingToRun(t *testing.T) {
+	t.Parallel()
 	k := startWalk(t, nil)
 
 	code := k.w.Execute(core.RunOptions{Phases: []string{"1", "3"}})
@@ -265,6 +274,7 @@ func TestARunWhoseEveryPhaseIsBlockedFinishesWithNothingToRun(t *testing.T) {
 }
 
 func TestARunFinishedBeforeTheLoopStillGetsItsReport(t *testing.T) {
+	t.Parallel()
 	k := startWalk(t, nil)
 	if code := k.w.Execute(core.RunOptions{Phases: []string{"1", "3"}}); code != 0 {
 		t.Fatalf("exit %d, want 0", code)
@@ -279,6 +289,7 @@ func TestARunFinishedBeforeTheLoopStillGetsItsReport(t *testing.T) {
 }
 
 func TestAFinishedRunRecordThatFailsBeforeTheLoopIsNamedOnStderrAndInTheFace(t *testing.T) {
+	t.Parallel()
 	k := startWalk(t, nil)
 	k.w.records.Store = failingStore{Store: k.w.Store, fail: func(rec core.Record) bool {
 		return rec.Kind == core.RecordRun && rec.Run == core.RunFinished
@@ -290,6 +301,7 @@ func TestAFinishedRunRecordThatFailsBeforeTheLoopIsNamedOnStderrAndInTheFace(t *
 }
 
 func TestAWatchdogThatFailsToStartBlocksTheRunWithoutTryingAnotherProvider(t *testing.T) {
+	t.Parallel()
 	k := startWalk(t, nil)
 	k.dog.startErr = errors.New("usage limit")
 
@@ -313,6 +325,7 @@ func TestAWatchdogThatFailsToStartBlocksTheRunWithoutTryingAnotherProvider(t *te
 }
 
 func TestTheDriverWaitsForTheWalkToFinishNotForThePromptToReturn(t *testing.T) {
+	t.Parallel()
 	var k *walk
 	k = startWalk(t, func(w *Wiring) {
 		go func() {
@@ -340,6 +353,7 @@ func TestTheDriverWaitsForTheWalkToFinishNotForThePromptToReturn(t *testing.T) {
 }
 
 func TestAWalkThatNeverFinishesTimesOutAndSkipsTheBlockedPhases(t *testing.T) {
+	t.Parallel()
 	k := startWalk(t, nil)
 	k.hang = true
 	k.w.Config.Watchdog.UnblockTimeout = 200 * time.Millisecond
@@ -355,6 +369,7 @@ func TestAWalkThatNeverFinishesTimesOutAndSkipsTheBlockedPhases(t *testing.T) {
 }
 
 func TestUnblockMessageNamesTheSettledEntries(t *testing.T) {
+	t.Parallel()
 	long := strings.TrimSpace(strings.Repeat("Decide the storage engine ", 4))
 	cases := []struct {
 		name     string
@@ -384,6 +399,7 @@ func TestUnblockMessageNamesTheSettledEntries(t *testing.T) {
 }
 
 func TestAResumeThatWalksResolveFirstKeepsTheRecordedDesignFlags(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	w, err := f.preflight(f.todo, "--plain")
 	if err != nil {
