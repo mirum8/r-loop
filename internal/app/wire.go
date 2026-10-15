@@ -97,6 +97,7 @@ type Wiring struct {
 	ConfigSet *core.ConfigSetter
 	Triaged   bool
 	LocalTodo bool
+	todoRel   string
 
 	groups   []core.Group
 	triageMu sync.Mutex
@@ -245,7 +246,7 @@ func Main(args []string, env Env) int {
 		opts, err = ParseArgs(args)
 	}
 	if err != nil {
-		fmt.Fprintf(env.Stderr, "usage: r-loop <todo.md> [flags]: %v\n", err)
+		Stderrf(env.Stderr, "usage: r-loop <todo.md> [flags]: %v", err)
 		return 2
 	}
 	w, err := Wire(opts, env)
@@ -302,7 +303,7 @@ func MigrateConfig(env Env) int {
 			fmt.Fprintf(env.Stdout, "%s: %s\n", path, c)
 		}
 		for _, u := range m.Unresolved {
-			fmt.Fprintf(env.Stderr, "r-loop: %s: %s\n", path, u)
+			Stderrf(env.Stderr, "r-loop: %s: %s", path, u)
 			code = 1
 		}
 		if len(m.Changes) == 0 && len(m.Unresolved) == 0 {
@@ -321,8 +322,12 @@ func fail(env Env, err error) int {
 	if errors.As(err, &e) {
 		code = e.Code
 	}
-	fmt.Fprintf(env.Stderr, "r-loop: %s\n", strings.ReplaceAll(err.Error(), "\n", " "))
+	Stderrf(env.Stderr, "r-loop: %s", err)
 	return code
+}
+
+func Stderrf(out io.Writer, format string, args ...any) {
+	fmt.Fprintln(out, core.Printable(fmt.Sprintf(format, args...)))
 }
 
 func (w *Wiring) Execute(opts core.RunOptions) (code int) {
@@ -366,7 +371,7 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 	}
 	defer func() {
 		if err := os.RemoveAll(w.dogDir); err != nil {
-			fmt.Fprintf(w.Env.Stderr, "r-loop: remove watchdog config: %v\n", err)
+			Stderrf(w.Env.Stderr, "r-loop: remove watchdog config: %v", err)
 		}
 	}()
 	defer func() {
@@ -374,7 +379,7 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 			w.TUI.Stop()
 		}
 		if err := w.Dog.Stop(); err != nil {
-			fmt.Fprintf(w.Env.Stderr, "r-loop: close watchdog: %v\n", err)
+			Stderrf(w.Env.Stderr, "r-loop: close watchdog: %v", err)
 		}
 		cancel(nil)
 		w.Ask.Wait()
@@ -382,13 +387,13 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 		w.release()
 		w.Face.Close()
 		if err := w.records.Failed(); err != nil {
-			fmt.Fprintf(w.Env.Stderr, "r-loop: record: %v\n", err)
+			Stderrf(w.Env.Stderr, "r-loop: record: %v", err)
 		}
 	}()
 	defer onPanic()
 	code = 2
 	if _, err := w.Ask.Serve(ctx); err != nil {
-		fmt.Fprintf(w.Env.Stderr, "r-loop: ask server: %v\n", err)
+		Stderrf(w.Env.Stderr, "r-loop: ask server: %v", err)
 	} else if err := w.writeStatusSettings(); err != nil {
 		code = fail(w.Env, err)
 	} else if err := w.startWatchdog(ctx); err != nil {
@@ -418,13 +423,14 @@ func (w *Wiring) panicked(v any) int {
 	quietly(func() {
 		w.Face.Emit(core.Event{At: time.Now(), Kind: "halt", Fields: map[string]string{"reason": reason, "resume": "r-loop resume"}})
 	})
-	fmt.Fprintf(w.Env.Stderr, "r-loop: %s\n%s", reason, stack)
+	Stderrf(w.Env.Stderr, "r-loop: %s", reason)
+	fmt.Fprint(w.Env.Stderr, string(stack))
 	return 2
 }
 
 func (w *Wiring) release() {
 	if err := w.lock.Release(w.Loop.RunID, w.Env.PID); err != nil {
-		fmt.Fprintf(w.Env.Stderr, "r-loop: release run lock: %v\n", err)
+		Stderrf(w.Env.Stderr, "r-loop: release run lock: %v", err)
 	}
 	w.lock = nil
 }
@@ -477,6 +483,10 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	if !filepath.IsAbs(todo) {
 		todo = filepath.Join(env.Dir, todo)
 	}
+	rel, err := planRel(root, todo)
+	if err != nil {
+		return nil, err
+	}
 	pl, err := plan.Reader{}.Read(todo)
 	if err != nil {
 		return nil, exit(2, "%v", err)
@@ -489,6 +499,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Opts:     opts,
 		Env:      env,
 		Todo:     todo,
+		todoRel:  rel,
 		Plan:     pl,
 		Config:   cfg,
 		Registry: newRegistry(cfg, env.Home),
@@ -498,7 +509,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Repo:     repo,
 		Plain:    &plain.Face{Out: env.Stdout},
 	}
-	tracked, err := repo.Tracked(w.todoRel())
+	tracked, err := repo.Tracked(w.todoRel)
 	if err != nil {
 		return nil, exit(2, "%v", err)
 	}
@@ -613,6 +624,30 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	w.Loop.BlockerTimeout = cfg.Watchdog.BlockerTimeout
 	w.Loop.Versions = w.versions
 	return w, nil
+}
+
+func planRel(root, todo string) (string, error) {
+	realRoot, realTodo := realPath(root), realPath(todo)
+	rel, err := filepath.Rel(realRoot, realTodo)
+	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return filepath.ToSlash(rel), nil
+	}
+	const fix = "move it into the repository, or run r-loop from the repository that holds it"
+	if realTodo != filepath.Clean(todo) {
+		return "", exit(2, "plan %s resolves to %s, outside the repository %s: %s", todo, realTodo, root, fix)
+	}
+	return "", exit(2, "plan %s is outside the repository %s: %s", todo, root, fix)
+}
+
+func realPath(path string) string {
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		return r
+	}
+	dir := filepath.Dir(path)
+	if dir == path {
+		return path
+	}
+	return filepath.Join(realPath(dir), filepath.Base(path))
 }
 
 type stepKinds struct {

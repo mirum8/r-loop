@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,7 +111,7 @@ func (w *Wiring) closeTriage() {
 func (w *Wiring) abortTriage(msg string) error {
 	w.closeTriage()
 	if err := w.Store.MarkAbort(w.Loop.RunID); err != nil {
-		fmt.Fprintf(w.Env.Stderr, "r-loop: store: %v\n", err)
+		Stderrf(w.Env.Stderr, "r-loop: store: %v", err)
 	}
 	if err := w.recordFatal(core.Record{Kind: core.RecordRun, At: time.Now(), Run: core.RunHalted, Reason: core.ReasonAborted}); err != nil {
 		return err

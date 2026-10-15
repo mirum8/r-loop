@@ -39,7 +39,7 @@ if [ "$rc" = 0 ] && grep -q '^Plan: .* — 3 phases' "$T/out" \
   && block_ok 1 0 calc.go && block_ok 2 0 multiply.go \
   && ! grep -q '^Phase 3 · ' "$T/out" \
   && grep -q '^Plan check: no notes' "$T/out" \
-  && grep -q '^Resolve first: Custom delimiter syntax → phases 3' "$T/out" \
+  && grep -q '^Resolve first: Custom delimiter syntax → phase 3' "$T/out" \
   && grep -q '^2 phases: 4 step sessions' "$T/out" \
   && grep -qx 'verification: not run (--dry-run starts no sessions)' "$T/out"; then
   ok "dry-run todo.md: triage blocks, waves, plan check, Resolve first, cost"

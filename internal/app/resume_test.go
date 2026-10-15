@@ -1967,3 +1967,56 @@ func TestResumeAbortsALocalTodoMergeTheCrashLeftDuringTheGate(t *testing.T) {
 }
 
 func (h *simHost) Submit(agent, text string) error { return h.Prompt(agent, text, false, 0) }
+
+func TestResumeOfARunWhosePlanIsOutsideTheRepositoryNamesIt(t *testing.T) {
+	for name, setup := range map[string]func(f *fixture, id string){
+		"no merge in flight": func(f *fixture, id string) {},
+		"merge intent recorded": func(f *fixture, id string) {
+			f.appendRunEvent(id, ev(t0, "merge-intent", 1, "land", map[string]string{"phase": "1", "branch": "r-loop/phase-1", "base": "x", "message": "phase 1: one"}))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// given
+			f := newResumeFixture(t, noReviewConfig)
+			outside := outsidePlan(t, resumeTodo)
+			id, err := store.New(f.root).Create(core.RunMeta{Todo: outside, Branch: "main", Started: t0})
+			if err != nil {
+				t.Fatal(err)
+			}
+			setup(f, id)
+
+			// when
+			actualCode := f.main("resume", id)
+
+			// then
+			if expected := "r-loop: plan " + outside + " is outside the repository " + f.root + ": move it into the repository, or run r-loop from the repository that holds it\n"; actualCode != 2 || f.err.String() != expected {
+				t.Fatalf("code=%d stderr=%q, expected 2 and %q", actualCode, f.err.String(), expected)
+			}
+		})
+	}
+}
+
+func TestResumeTicksTheTargetOfALocalTodoSymlinkAndKeepsTheLink(t *testing.T) {
+	// given
+	f := newResumeFixture(t, noReviewConfig)
+	f.untrackTodo()
+	if err := os.Symlink("todo.md", filepath.Join(f.root, "docs/topic/alias.md")); err != nil {
+		t.Fatal(err)
+	}
+	f.todo = filepath.Join(f.root, "docs/topic/alias.md")
+	id, _, base := f.seedKilledLand("1")
+	f.seedMergeIntent(id, base)
+	f.beginLandMerge()
+	f.seedLocalLandCommitIntent(id)
+	git(t, f.root, "commit", "-q", "-m", "phase 1: one")
+
+	// when
+	f.resume(newSim())
+
+	// then
+	actualTarget, _ := os.ReadFile(filepath.Join(f.root, "docs/topic/todo.md"))
+	actualLink, _ := os.Readlink(filepath.Join(f.root, "docs/topic/alias.md"))
+	if !strings.Contains(string(actualTarget), "- [x] a") || actualLink != "todo.md" {
+		t.Fatalf("target:\n%s\nlink=%q", actualTarget, actualLink)
+	}
+}

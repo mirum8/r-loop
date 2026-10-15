@@ -119,7 +119,7 @@ func (w *Wiring) blockingEntries(out io.Writer, list []core.Phase) {
 					hit = append(hit, n)
 				}
 			}
-			scope = "phase " + strings.Join(hit, ", ")
+			scope = core.NamePhases(hit)
 		}
 		fmt.Fprintln(out, amber(out).Render(fmt.Sprintf("open ## Resolve first: %q (%s) blocks %s — %s", e.Name, e.Kind, scope, then)))
 	}
@@ -155,18 +155,7 @@ func (w *Wiring) uiReviewerWarnings(out io.Writer) {
 }
 
 func (w *Wiring) commitHint(dirty []string) string {
-	root, todo := w.Repo.Root(), w.Todo
-	if r, err := filepath.EvalSymlinks(root); err == nil {
-		root = r
-	}
-	if t, err := filepath.EvalSymlinks(todo); err == nil {
-		todo = t
-	}
-	rel, err := filepath.Rel(root, todo)
-	if err != nil {
-		return ""
-	}
-	rel = filepath.ToSlash(rel)
+	rel := w.todoRel
 	notes := strings.TrimSuffix(rel, ".md") + "-notes.md"
 	for _, p := range dirty {
 		if p != rel && p != notes {
