@@ -2905,7 +2905,7 @@ maintainer would have refused, or unattended runs still need a person more than 
 <p><span class="f">Status</span> accepted · amends <a href="#adr-14">ADR-14</a> ·
 amended 2026-09-19 — the nudge offers the ask tool only to a session that has
 an ask channel · amended by <a href="#adr-73">ADR-73</a> — the tool it names is
-<code>ask_watchdog</code> · amended by <a href="#adr-80">ADR-80</a> — a step or reviewer agent blocked on a dialog of its own CLI is not nudged: the dialog goes to the watchdog, and the driver presses the keys an authorised answer names, the one input into a session the watchdog chooses · amended by <a href="#adr-82">ADR-82</a> — a step failed by a stall raises a blocker, as any failed step does · amended by <a href="#adr-93">ADR-93</a> (2026-10-13) — a session that reports hooks gets its nudge at the tick after a turn end with no sentinel, with the text <code>your turn ended with no sentinel</code>, and fails at its next such turn end or after a grace of quiet</p>
+<code>ask_watchdog</code> · amended by <a href="#adr-80">ADR-80</a> — a step or reviewer agent blocked on a dialog of its own CLI is not nudged: the dialog goes to the watchdog, and the driver presses the keys an authorised answer names, the one input into a session the watchdog chooses · amended by <a href="#adr-82">ADR-82</a> — a step failed by a stall raises a blocker, as any failed step does · amended by <a href="#adr-93">ADR-93</a> (2026-10-13) — a session that reports hooks gets its nudge at the tick after a turn end with no sentinel, with the text <code>your turn ended with no sentinel</code>, and fails at its next such turn end or after a grace of quiet · amended 2026-10-15 — a nudge the agent answers (it works again, a hook session's next turn uses a tool, or any turn once the session has started background work) lets a later stall be nudged again, at most three nudges per half and round, and the stall after the third fails <code>stalled: no sentinel after 3 nudges</code>, unless it is a turn end and a tool starts before the nudge would be typed; a session that has started a tool with <code>run_in_background</code> is not nudged at a turn end and is nudged after three grace periods of quiet instead of one</p>
 <p><span class="f">Context</span> <a href="#adr-14">ADR-14</a> left a stalled step standing and the
 run paused until a person came. Since questions became explicit (<a href="#adr-29">ADR-29</a>), a
 stall is an agent that went quiet without asking — most often one that finished and never wrote its
@@ -2919,8 +2919,7 @@ session is never closed. The nudge is text in the driver's code, never a model's
 stall then costs a person. Let the watchdog write to the session — rejected: the watchdog reads
 sessions and never writes one, and a fixed sentence needs no judgement. Kill and re-run — rejected
 as before: the session is the evidence.</p>
-<p><span class="f">Consequences</span> A stall costs at most two grace periods before the loop moves
-on. A run's exit code is <code>3</code> when its first block began as a stall.</p>
+<p><span class="f">Consequences</span> An unanswered stall costs at most two grace periods before the loop moves on (two of three grace periods each once the session has started background work), and an agent that answers every nudge without writing its sentinel fails at the stall after its third. A run's exit code is <code>3</code> when its first block began as a stall.</p>
 <p><span class="f">Revisit when</span> a nudged agent does something other than write its sentinel,
 ask or fail.</p>
 </div>

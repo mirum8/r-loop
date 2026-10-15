@@ -1001,6 +1001,7 @@ const (
 	codexReviewer  = "rloop-2kuxv-p3-implemen-8lgad-r1"
 	hookNudgeText  = "r-loop: your turn ended with no sentinel. If your work is done, write the sentinel now. If you are blocked, write a failed sentinel with the reason."
 	graceNudgeText = "r-loop: no sentinel and no activity for 2m0s. If your work is done, write the sentinel now. If you are blocked, write a failed sentinel with the reason."
+	bgNudgeText    = "r-loop: no sentinel and no activity for 6m0s. If your work is done, write the sentinel now. If you are blocked, write a failed sentinel with the reason."
 )
 
 type startingHost struct {
@@ -1490,6 +1491,67 @@ func recordNudgePoll(r *rig, feed *fakeHookFeed, poll *int) {
 	}
 }
 
+type pollStep struct {
+	state  AgentState
+	events []HookEvent
+}
+
+func scheduleHost(r *rig, feed *fakeHookFeed, steps ...pollStep) {
+	r.host.script = func(n int) AgentState {
+		if n > len(steps) {
+			return AgentIdle
+		}
+		feed.push(steps[n-1].events...)
+		return steps[n-1].state
+	}
+}
+
+func replyToEveryNudge(r *rig, feed *fakeHookFeed, reply ...HookEvent) *[]int {
+	polls := &[]int{}
+	r.host.onSubmit = func(agent, text string) {
+		*polls = append(*polls, r.host.polls)
+		feed.push(promptSubmit(agent, text, t1))
+		feed.push(reply...)
+	}
+	return polls
+}
+
+func afterNthNudge(r *rig, n int, steps ...func() AgentState) {
+	submitted, nudgePoll := 0, 0
+	onSubmit, script := r.host.onSubmit, r.host.script
+	r.host.onSubmit = func(agent, text string) {
+		onSubmit(agent, text)
+		submitted++
+		if submitted == n {
+			nudgePoll = r.host.polls
+		}
+	}
+	r.host.script = func(poll int) AgentState {
+		if nudgePoll == 0 {
+			return script(poll)
+		}
+		k := poll - nudgePoll
+		if k > len(steps) {
+			return AgentIdle
+		}
+		return steps[k-1]()
+	}
+}
+
+func toolUse(tool, target string) []HookEvent {
+	return []HookEvent{
+		{At: t0, Agent: stepAgent, Event: "PreToolUse", Tool: tool, Target: target},
+		{At: t0, Agent: stepAgent, Event: "PostToolUse", Tool: tool, Target: target},
+	}
+}
+
+func backgroundToolUse(target string) []HookEvent {
+	return []HookEvent{
+		{At: t0, Agent: stepAgent, Event: "PreToolUse", Tool: "Bash", Target: target, Background: true},
+		{At: t0, Agent: stepAgent, Event: "PostToolUse", Tool: "Bash", Target: target},
+	}
+}
+
 func TestAHookAgentWhoseTurnEndsWithoutASentinelIsNudgedAtTheNextTick(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1597,7 +1659,7 @@ func TestAHookAgentQuietPastTheGraceWhileItsBackgroundTaskRunsIsNotStalled(t *te
 				HookEvent{At: t0, Agent: stepAgent, Event: "PostToolUse", Tool: "Bash", Target: "mvn test"},
 				stop(stepAgent),
 			)
-		case replied > 0 && n == replied+8:
+		case replied > 0 && n == replied+4:
 			feed.push(HookEvent{At: t0, Agent: stepAgent, Event: "PreToolUse", Tool: "Write", Target: s.Sentinel})
 			r.writeSentinel(t, s, "ok", "")
 			feed.push(stop(stepAgent))
@@ -1614,6 +1676,116 @@ func TestAHookAgentQuietPastTheGraceWhileItsBackgroundTaskRunsIsNotStalled(t *te
 	// then
 	assertState(t, out, StepOK, "")
 	assertEqual(t, "nudges", len(r.events("nudge")), 1)
+}
+
+func TestAHookAgentThatAnswersEveryNudgeWithAToolCallFailsAtTheNudgeCap(t *testing.T) {
+	// given
+	r, feed, s := hookStallRig(t)
+	r.sm.Now = (&stepClock{t: t0, step: time.Minute}).Now
+	scheduleHost(r, feed, pollStep{AgentIdle, []HookEvent{stop(stepAgent)}})
+	actualNudgePolls := replyToEveryNudge(r, feed, append(toolUse("Bash", "go test ./..."), stop(stepAgent))...)
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertState(t, out, StepFailed, "stalled: no sentinel after 3 nudges")
+	assertEqual(t, "stalled", out.Stalled, true)
+	assertEqual(t, "nudge polls", *actualNudgePolls, []int{3, 4, 5})
+	assertEqual(t, "polls", r.host.polls, 6)
+	assertEqual(t, "nudges", len(r.events("nudge")), 3)
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), []string{submitCall(stepAgent, "do phase 3"), submitCall(stepAgent, hookNudgeText), submitCall(stepAgent, graceNudgeText), submitCall(stepAgent, graceNudgeText)})
+}
+
+func TestANudgeNotTypedBecauseAToolStartedDoesNotCountTowardTheNudgeCap(t *testing.T) {
+	// given
+	r, feed, s := hookStallRig(t)
+	r.sm.Now = (&stepClock{t: t0, step: time.Minute}).Now
+	scheduleHost(r, feed,
+		pollStep{AgentWorking, []HookEvent{stop(stepAgent)}},
+		pollStep{AgentWorking, []HookEvent{{At: t0, Agent: stepAgent, Event: "PreToolUse", Tool: "Bash", Target: "go test ./..."}}},
+		pollStep{AgentWorking, []HookEvent{{At: t0, Agent: stepAgent, Event: "PostToolUse", Tool: "Bash", Target: "go test ./..."}, stop(stepAgent)}},
+	)
+	actualNudgePolls := replyToEveryNudge(r, feed, append(toolUse("Bash", "go test ./..."), stop(stepAgent))...)
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertState(t, out, StepFailed, "stalled: no sentinel after 3 nudges")
+	assertEqual(t, "nudge polls", *actualNudgePolls, []int{5, 6, 7})
+	assertEqual(t, "polls", r.host.polls, 8)
+	assertEqual(t, "nudges", len(r.events("nudge")), 3)
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), []string{submitCall(stepAgent, "do phase 3"), submitCall(stepAgent, hookNudgeText), submitCall(stepAgent, graceNudgeText), submitCall(stepAgent, graceNudgeText)})
+}
+
+func TestAToolThatStartsBeforeTheCapStallIsTypedKeepsTheStepRunning(t *testing.T) {
+	// given
+	r, feed, s := hookStallRig(t)
+	r.sm.Now = (&stepClock{t: t0, step: time.Minute}).Now
+	scheduleHost(r, feed, pollStep{AgentIdle, []HookEvent{stop(stepAgent)}})
+	replyToEveryNudge(r, feed, append(toolUse("Bash", "go test ./..."), stop(stepAgent))...)
+	afterNthNudge(r, 3,
+		func() AgentState {
+			feed.push(append(toolUse("Bash", "go vet ./..."), stop(stepAgent))...)
+			return AgentWorking
+		},
+		func() AgentState {
+			feed.push(HookEvent{At: t0, Agent: stepAgent, Event: "PreToolUse", Tool: "Bash", Target: "go build ./..."})
+			return AgentWorking
+		},
+		func() AgentState {
+			r.writeSentinel(t, s, "ok", "")
+			feed.push(HookEvent{At: t0, Agent: stepAgent, Event: "PostToolUse", Tool: "Bash", Target: "go build ./..."}, stop(stepAgent))
+			return AgentWorking
+		},
+	)
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertState(t, out, StepOK, "")
+	assertEqual(t, "polls", r.host.polls, 9)
+	assertEqual(t, "nudges", len(r.events("nudge")), 3)
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), []string{submitCall(stepAgent, "do phase 3"), submitCall(stepAgent, hookNudgeText), submitCall(stepAgent, graceNudgeText), submitCall(stepAgent, graceNudgeText)})
+}
+
+func TestAHookAgentIdleAfterANeverFinishingBackgroundCommandIsNudgedAfterTheBackgroundBound(t *testing.T) {
+	// given
+	r, feed, s := hookStallRig(t)
+	r.sm.Now = (&stepClock{t: t0, step: time.Minute}).Now
+	scheduleHost(r, feed, pollStep{AgentIdle, append(backgroundToolUse("npm run dev"), stop(stepAgent))})
+	actualNudgePolls := replyToEveryNudge(r, feed)
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertEqual(t, "nudge polls", *actualNudgePolls, []int{6})
+	assertEqual(t, "polls", r.host.polls, 11)
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), []string{submitCall(stepAgent, "do phase 3"), submitCall(stepAgent, bgNudgeText)})
+	assertEqual(t, "nudges", len(r.events("nudge")), 1)
+	assertState(t, out, StepFailed, "stalled: no response to nudge")
+	assertEqual(t, "stalled", out.Stalled, true)
+}
+
+func TestATextOnlyReplyToANudgeWhileBackgroundWorkIsPendingCountsAsAnAnswerUntilTheNudgeCap(t *testing.T) {
+	// given
+	r, feed, s := hookStallRig(t)
+	r.sm.Now = (&stepClock{t: t0, step: time.Minute}).Now
+	scheduleHost(r, feed, pollStep{AgentIdle, append(backgroundToolUse("npm run dev"), stop(stepAgent))})
+	actualNudgePolls := replyToEveryNudge(r, feed, stop(stepAgent))
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertState(t, out, StepFailed, "stalled: no sentinel after 3 nudges")
+	assertEqual(t, "nudge polls", *actualNudgePolls, []int{6, 11, 16})
+	assertEqual(t, "polls", r.host.polls, 21)
+	assertEqual(t, "nudges", len(r.events("nudge")), 3)
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), []string{submitCall(stepAgent, "do phase 3"), submitCall(stepAgent, bgNudgeText), submitCall(stepAgent, bgNudgeText), submitCall(stepAgent, bgNudgeText)})
 }
 
 func TestAHookAgentQuietForAGraceAfterItsTurnEndNudgeFailsWithoutASecondNudge(t *testing.T) {

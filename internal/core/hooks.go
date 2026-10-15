@@ -80,7 +80,7 @@ func (h *hookLog) apply(ev HookEvent) {
 	defer func() {
 		if a.busy && (!wasBusy || ev.Event == "UserPromptSubmit") {
 			a.turn++
-			a.acted, a.background = false, false
+			a.acted = false
 		}
 		switch ev.Event {
 		case "PreToolUse":
