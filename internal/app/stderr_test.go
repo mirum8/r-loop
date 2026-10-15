@@ -6,6 +6,7 @@ import (
 )
 
 func TestFailWritesTheErrorWithoutControlBytesAndKeepsItsExitCode(t *testing.T) {
+	t.Parallel()
 	// given
 	var actualStderr bytes.Buffer
 
@@ -19,6 +20,7 @@ func TestFailWritesTheErrorWithoutControlBytesAndKeepsItsExitCode(t *testing.T) 
 }
 
 func TestAPlanPathWithControlBytesExits2WithACleanStderrLine(t *testing.T) {
+	t.Parallel()
 	// given
 	f := newFixture(t)
 
@@ -32,6 +34,7 @@ func TestAPlanPathWithControlBytesExits2WithACleanStderrLine(t *testing.T) {
 }
 
 func TestAPhaseTitleWithControlBytesAndNoChecklistExits2WithTheTitleCleaned(t *testing.T) {
+	t.Parallel()
 	// given
 	f := newFixture(t)
 	f.write("docs/topic/todo.md", "# Plan\n\n### Phase 1 — One\n- [ ] a\n\n### Phase 2 — x\x1b[2Jy\x1b]0;pwn\x07z\n**Done when:** `go test ./...`\n")
@@ -47,6 +50,7 @@ func TestAPhaseTitleWithControlBytesAndNoChecklistExits2WithTheTitleCleaned(t *t
 }
 
 func TestAFlagWithControlBytesPrintsACleanUsageLine(t *testing.T) {
+	t.Parallel()
 	// given
 	f := newFixture(t)
 
@@ -60,6 +64,7 @@ func TestAFlagWithControlBytesPrintsACleanUsageLine(t *testing.T) {
 }
 
 func TestFailWritesTheErrorWithoutC1ControlCharacters(t *testing.T) {
+	t.Parallel()
 	// given
 	var actualStderr bytes.Buffer
 

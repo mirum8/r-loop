@@ -161,6 +161,7 @@ func TestAWatchdogAndAStepSessionWriteTheirMCPConfigUnderARepoRootWithASpace(t *
 }
 
 func TestNoFileUnderTheRepoHoldsTheWatchdogTokenWhileTheRunIsLive(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
 	if err != nil {
@@ -408,6 +409,7 @@ func (h *dogHost) prompted(prefix string) bool {
 }
 
 func TestWireHandsTheLoopAWatchWithTheShippedChecksAndTheBlockerTimeout(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 
 	w, err := f.preflight(f.todo, "--plain")
@@ -424,6 +426,7 @@ func TestWireHandsTheLoopAWatchWithTheShippedChecksAndTheBlockerTimeout(t *testi
 }
 
 func TestExecuteStartsTheWatchdogAndAHaltThroughItsMCPSurfaceExits5(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-implement"] = true
@@ -492,6 +495,7 @@ func TestExecuteStartsTheWatchdogAndAHaltThroughItsMCPSurfaceExits5(t *testing.T
 }
 
 func TestTheFinalReportHoldsARecordAppendedWhileTheWatchdogCloses(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-implement"] = true
@@ -543,6 +547,7 @@ func TestTheFinalReportHoldsARecordAppendedWhileTheWatchdogCloses(t *testing.T) 
 }
 
 func TestASignalCallIsHandledWhileAWarnHookRuns(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	hook := filepath.Join(dir, "hook.sh")
 	entered := filepath.Join(dir, "entered")
@@ -634,6 +639,7 @@ func TestASignalCallIsHandledWhileAWarnHookRuns(t *testing.T) {
 }
 
 func TestExecuteRegistersProposeRemedyAndRestartStepOnTheWatchdogSurface(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-implement"] = true
@@ -692,6 +698,7 @@ func TestExecuteRegistersProposeRemedyAndRestartStepOnTheWatchdogSurface(t *test
 }
 
 func TestExecuteSendsThePhaseCheckToTheWatchdogBeforeThePlanStep(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
@@ -725,6 +732,7 @@ func TestExecuteSendsThePhaseCheckToTheWatchdogBeforeThePlanStep(t *testing.T) {
 }
 
 func TestABacklogRunWiresThePhaseCheckForBacklogItems(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	path := filepath.Join(f.root, "issues-x-2026-09-23.md")
 	if err := os.WriteFile(path, []byte("# X\n\n- [ ] [#1] first\n      - crit\n"), 0o644); err != nil {
@@ -746,6 +754,7 @@ func TestABacklogRunWiresThePhaseCheckForBacklogItems(t *testing.T) {
 }
 
 func TestAWatchdogThatFailsToStartExits4NamingTheHerdrCode(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
@@ -773,6 +782,7 @@ func TestAWatchdogThatFailsToStartExits4NamingTheHerdrCode(t *testing.T) {
 }
 
 func TestAWatchdogAskFlagWithTheConfigPathEmbeddedStillGetsItsConfig(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig+"providers:\n  claude:\n    kind: claude\n    modelFlag: --model {model}\n    askFlag: --cfg={mcpConfig}\n    doneSignal: sentinel\n    ask: mcp\n    review: /code-review\n")
 	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
 	if err != nil {
@@ -796,6 +806,7 @@ func TestAWatchdogAskFlagWithTheConfigPathEmbeddedStillGetsItsConfig(t *testing.
 }
 
 func TestAWatchdogProviderWithoutMCPIsRefusedInPreflight(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  plainbot:\n    kind: codex\n    doneSignal: sentinel\n    ask: none\nwatchdog:\n  provider: plainbot\n")
 	f.commit()
@@ -808,6 +819,7 @@ func TestAWatchdogProviderWithoutMCPIsRefusedInPreflight(t *testing.T) {
 }
 
 func TestAStepSessionProviderWithoutMCPIsRefusedInPreflight(t *testing.T) {
+	t.Parallel()
 	provider := "providers:\n  plainbot:\n    kind: codex\n    doneSignal: sentinel\n    review: plainbot review\n    ask: none\n"
 	for field, cfg := range map[string]string{
 		"steps.plan.provider":  "steps:\n  plan:\n    provider: plainbot\n",
@@ -916,6 +928,7 @@ func answeringDog(w *Wiring, answer, citation string) *dogHost {
 }
 
 func TestAWatchdogFoundGoneHaltsTheRunWithoutWaitingForAQuestion(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-implement"] = true
@@ -989,6 +1002,7 @@ func (h *dialogSim) SendKeys(agent string, keys ...string) error {
 }
 
 func TestADialogGoesThroughTheWatchdogWhichAnswersItUnderARuleAndTheDriverPressesTheKeys(t *testing.T) {
+	t.Parallel()
 	rule := "approve writes inside the run folder"
 	f := newResumeFixture(t, noReviewConfig+"watchdog:\n  dialogs:\n    - "+rule+"\n")
 	sim := &dialogSim{simHost: newSim()}
@@ -1073,6 +1087,7 @@ func (conflictLander) Land(context.Context, core.Phase) (core.Landing, error) {
 }
 
 func TestAWiredRunSendsALandBlockerToTheWatchdogWhichBlocksThePhase(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
 	if err != nil {
@@ -1111,6 +1126,7 @@ func TestAWiredRunSendsALandBlockerToTheWatchdogWhichBlocksThePhase(t *testing.T
 }
 
 func TestAWiredRunPostsRunHaltingToTheWatchdogBeforeARecordHalt(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	w, err := f.preflight(f.todo, "--plain")
 	if err != nil {
@@ -1135,6 +1151,7 @@ func TestAWiredRunPostsRunHaltingToTheWatchdogBeforeARecordHalt(t *testing.T) {
 }
 
 func TestTheWatchdogReadsTheRunAndTheLiveStepThroughRunStatusAndStepInfo(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-implement"] = true
@@ -1239,6 +1256,7 @@ const fixedClaude = `providers:
 func (h *dogHost) Submit(agent, text string) error { return h.Prompt(agent, text, false, 0) }
 
 func TestAHaltedRunHasTheWatchdogWriteAFailureReportBeforeItCloses(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-implement"] = true

@@ -83,7 +83,7 @@ or fix these before committing.
       - The wording still allows review.md's wait for a forked slash command's task notification
       - render_test.go asserts the guard appears in the plan, implement, fix and gatefix renders
 
-- [ ] [#16] internal/app tests are slow: with -race one pass takes about 350s, so `-race -count=3` hits Go's default 10m timeout
+- [x] [#16] internal/app tests are slow: with -race one pass takes about 350s, so `-race -count=3` hits Go's default 10m timeout  <!-- fixed: r-loop/phase-16 -->
       - A session start with HookStartWait=5ms and no SessionStart hook returns within about 10ms, not after a full 200ms hookPoll
       - TestNoTriageTableIsTypedIntoTheWatchdogPaneWithoutAGate and TestUnattendedAndYesStartWithoutAGate each run in under half their current time without -race
       - Fake binaries reach the code under test without process-wide t.Setenv("PATH"), so fixture tests can run with t.Parallel and `go test -race -count=3 ./internal/app/` finishes inside the default 10m
@@ -106,7 +106,7 @@ or fix these before committing.
       - A live script with a guaranteed finding and a fix.md override asking for `.r-loop/wt/phase-1/<file>:<line>` evidence records an "… read as …" warning and accepts the round
       - Each script prints NOT RUN without HERDR_PANE_ID, inside an r-loop run, or when the step provider is not claude, and reports when the agent ignored the steering rather than calling it a driver bug
 
-- [ ] [#28] Tests leak orphaned processes: Gradle writer loops from TestAnalyzeStopsADetachedGradleDaemonBeforeItWritesAfterTheTimeout
+- [x] [#28] Tests leak orphaned processes: Gradle writer loops from TestAnalyzeStopsADetachedGradleDaemonBeforeItWritesAfterTheTimeout  <!-- fixed: r-loop/phase-16 -->
       - After `go test -count=20 ./internal/analyze/ -run TestAnalyzeStopsADetachedGradleDaemon`, no `sh -c while :; do … late.html …` process is left running
       - The test's detached stub is killed in t.Cleanup even when Analyze's cancel-time descendant walk misses it, e.g. by recording the stub's pid or process group in a file and killing it
       - If the leak reproduces with the test's own cleanup removed, Analyze's cancel path (descendants() snapshot in internal/analyze/run.go) is fixed so a detached grandchild started before the timeout is always killed

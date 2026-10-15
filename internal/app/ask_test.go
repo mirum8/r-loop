@@ -217,6 +217,7 @@ func implementStates(st core.RunState) []string {
 }
 
 func TestAStepQuestionReachesTheWatchdogNotTheFaceAndWaitsPastTheBackstop(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	var dog *dogHost
 	r := startAskRun(t, func(w *Wiring) *dogHost {
@@ -267,6 +268,7 @@ func TestAStepQuestionReachesTheWatchdogNotTheFaceAndWaitsPastTheBackstop(t *tes
 }
 
 func TestAWatchdogAnswerCitingTheRepositoryReachesTheAgent(t *testing.T) {
+	t.Parallel()
 	r := startAskRun(t, func(w *Wiring) *dogHost { return answeringDog(w, "sqlite", "docs/topic/todo.md:1") })
 
 	st := r.finish(t)
@@ -286,6 +288,7 @@ func TestAWatchdogAnswerCitingTheRepositoryReachesTheAgent(t *testing.T) {
 }
 
 func TestAGoneWatchdogHaltsTheRunAndTheQuestionIsNeverAnswered(t *testing.T) {
+	t.Parallel()
 	r := startAskRun(t, func(w *Wiring) *dogHost {
 		w.Dog.Sleep = func(time.Duration) {}
 		return &dogHost{blocked: "question ", state: core.AgentGone}
@@ -314,6 +317,7 @@ func TestAGoneWatchdogHaltsTheRunAndTheQuestionIsNeverAnswered(t *testing.T) {
 }
 
 func TestExecuteServesTheAskChannelToTheLoopAndTheSessions(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
 	if err != nil {
@@ -334,6 +338,7 @@ func TestExecuteServesTheAskChannelToTheLoopAndTheSessions(t *testing.T) {
 }
 
 func TestDryRunStartsNoAskServer(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 
 	if code := f.main(f.todo, "--dry-run", "--plain"); code != 0 {

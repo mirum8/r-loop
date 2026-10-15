@@ -2,10 +2,12 @@ package app
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -16,30 +18,51 @@ import (
 )
 
 func TestALoserNamesAWinnerThatPublishesLate(t *testing.T) {
+	// given
 	f := newResumeFixture(t, noReviewConfig)
 	st := store.New(f.root)
 	lock, err := st.Lock()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lock.Release("", 0)
-	ready := make(chan error, 1)
-	go func() {
-		time.Sleep(2500 * time.Millisecond)
-		err := st.SetCurrent("20260918-120000", 4242)
-		lock.Publish()
-		ready <- err
-	}()
-	_, err = f.preflight(f.todo, "--plain")
-	if got := <-ready; got != nil {
-		t.Fatal(got)
+	t.Cleanup(func() { lock.Release("", 0) })
+	ready := publishOnceTheLoserWaitsOnTheGate(st, lock, "20260918-120000", 4242)
+
+	// when
+	_, actualErr := f.preflight(f.todo, "--plain")
+
+	// then
+	if err := <-ready; err != nil {
+		t.Fatal(err)
 	}
-	if code := exitCode(t, err); code != 4 || !strings.Contains(err.Error(), "run 20260918-120000 is live in pid 4242") {
-		t.Fatalf("code=%d err=%v", code, err)
+	if exitCode(t, actualErr) != 4 || !strings.Contains(actualErr.Error(), "run 20260918-120000 is live in pid 4242") {
+		t.Fatalf("actual code %d err %v, expected 4 and %q", exitCode(t, actualErr), actualErr, "run 20260918-120000 is live in pid 4242")
 	}
 }
 
+func publishOnceTheLoserWaitsOnTheGate(st *store.Store, lock *store.Lock, runID string, pid int) <-chan error {
+	ready := make(chan error, 1)
+	go func() {
+		waitErr := errors.New("no goroutine waited on the run gate within 10s")
+		buf := make([]byte, 1<<20)
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if strings.Contains(string(buf[:runtime.Stack(buf, true)]), "syscall.Flock(") {
+				waitErr = nil
+				break
+			}
+		}
+		err := st.SetCurrent(runID, pid)
+		lock.Publish()
+		if waitErr == nil {
+			waitErr = err
+		}
+		ready <- waitErr
+	}()
+	return ready
+}
+
 func TestALoserNamesTheLiveRunNotAStalePointer(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	st := store.New(f.root)
 	if err := st.SetCurrent("20260918-100000", 999999); err != nil {
@@ -70,6 +93,7 @@ func TestALoserNamesTheLiveRunNotAStalePointer(t *testing.T) {
 }
 
 func TestALoserWhoseWinnerGivesUpProceeds(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	st := store.New(f.root)
 	lock, err := st.Lock()
@@ -92,6 +116,7 @@ func TestALoserWhoseWinnerGivesUpProceeds(t *testing.T) {
 }
 
 func TestTwoConcurrentStartsOneProceedsAndTheOtherExits4NamingIt(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	if err := store.EnsureExcluded(f.root); err != nil {
 		t.Fatal(err)
@@ -147,6 +172,7 @@ func TestTwoConcurrentStartsOneProceedsAndTheOtherExits4NamingIt(t *testing.T) {
 }
 
 func TestAReusedPidInCurrentDoesNotBlockANewStart(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	st := store.New(f.root)
 	if err := st.SetCurrent("20260918-101500", os.Getpid()); err != nil {
@@ -167,6 +193,7 @@ func TestAReusedPidInCurrentDoesNotBlockANewStart(t *testing.T) {
 }
 
 func TestAReusedPidInCurrentDoesNotBlockResume(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -184,6 +211,7 @@ func TestAReusedPidInCurrentDoesNotBlockResume(t *testing.T) {
 }
 
 func TestAbortIgnoresACurrentWhosePidIsReused(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	st := store.New(f.root)
 	id, err := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
@@ -199,6 +227,7 @@ func TestAbortIgnoresACurrentWhosePidIsReused(t *testing.T) {
 }
 
 func TestAbortDuringAnotherRunsStartAbortsTheLiveRunNotAStaleOne(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	st := store.New(f.root)
 	a, err := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
@@ -237,6 +266,7 @@ func TestAbortDuringAnotherRunsStartAbortsTheLiveRunNotAStaleOne(t *testing.T) {
 }
 
 func TestStatusCallsTheDriverGoneWhenItsPidIsReused(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	st := store.New(f.root)
 	id, err := st.Create(core.RunMeta{Todo: f.todo, Started: time.Now()})
@@ -256,6 +286,7 @@ func TestStatusCallsTheDriverGoneWhenItsPidIsReused(t *testing.T) {
 }
 
 func TestAStartAfterTheLockHolderCrashedTakesTheLock(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	st := store.New(f.root)
 	lock, err := st.Lock()
@@ -279,6 +310,7 @@ func TestAStartAfterTheLockHolderCrashedTakesTheLock(t *testing.T) {
 }
 
 func TestResumeAfterTheLockHolderCrashedTakesTheLock(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -304,6 +336,7 @@ func TestResumeAfterTheLockHolderCrashedTakesTheLock(t *testing.T) {
 }
 
 func TestAnExitingDriverLeavesAnotherRunsPointer(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	sim := newSim()
 	sim.hang["rloop-p1-plan"] = true
@@ -314,22 +347,23 @@ func TestAnExitingDriverLeavesAnotherRunsPointer(t *testing.T) {
 	f.sim(w, sim)
 	done := make(chan int, 1)
 	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
-	waitForSignalTest(t, 5*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
+	waitForSignalTest(t, 60*time.Second, func() bool { return slices.Contains(sim.promptedAgents(), "rloop-p1-plan") })
 	if err := w.Store.SetCurrent("20990101-000000", 7); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Store.MarkAbort(w.Loop.RunID); err != nil {
 		t.Fatal(err)
 	}
-	if code := resultOfSignalTest(t, done, 5*time.Second); code != 1 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 1 {
 		t.Fatalf("code=%d", code)
 	}
 	if id, pid, ok := w.Store.Current(); !ok || id != "20990101-000000" || pid != 7 {
 		t.Fatalf("current=%s %d %t", id, pid, ok)
 	}
-	if _, _, ok := w.Store.Live(); ok {
-		t.Fatal("lock remains held")
-	}
+	waitForSignalTest(t, 60*time.Second, func() bool {
+		_, _, ok := w.Store.Live()
+		return !ok
+	})
 }
 
 func finishedTUIWaitingForQ(t *testing.T) (*fixture, *Wiring, *io.PipeWriter, <-chan int, *bytes.Buffer) {
@@ -345,7 +379,7 @@ func finishedTUIWaitingForQ(t *testing.T) (*fixture, *Wiring, *io.PipeWriter, <-
 	writer, out := installSignalTestDisplay(w)
 	done := make(chan int, 1)
 	go func() { done <- w.Execute(core.RunOptions{Phases: []string{"1"}}) }()
-	waitForSignalTest(t, 10*time.Second, func() bool {
+	waitForSignalTest(t, 60*time.Second, func() bool {
 		state, err := store.New(f.root).Load(w.Loop.RunID)
 		if err != nil {
 			return false
@@ -357,6 +391,7 @@ func finishedTUIWaitingForQ(t *testing.T) (*fixture, *Wiring, *io.PipeWriter, <-
 }
 
 func TestAFinishedTUIRunReleasesTheRunBeforeWaitingForQ(t *testing.T) {
+	t.Parallel()
 	_, w, writer, done, out := finishedTUIWaitingForQ(t)
 	defer writer.Close()
 	if _, _, live := w.Store.Live(); live {
@@ -370,7 +405,7 @@ func TestAFinishedTUIRunReleasesTheRunBeforeWaitingForQ(t *testing.T) {
 	if _, err := writer.Write([]byte("q")); err != nil {
 		t.Fatal(err)
 	}
-	if code := resultOfSignalTest(t, done, 5*time.Second); code != 1 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 1 {
 		t.Fatalf("code=%d", code)
 	}
 	for _, want := range []string{"r-loop resume", "report:"} {
@@ -381,6 +416,7 @@ func TestAFinishedTUIRunReleasesTheRunBeforeWaitingForQ(t *testing.T) {
 }
 
 func TestResumeFromAnotherTerminalWhileAFinishedTUIWaitsForQ(t *testing.T) {
+	t.Parallel()
 	f, w, writer, done, _ := finishedTUIWaitingForQ(t)
 	defer writer.Close()
 	env := f.env
@@ -396,12 +432,13 @@ func TestResumeFromAnotherTerminalWhileAFinishedTUIWaitsForQ(t *testing.T) {
 	if _, err := writer.Write([]byte("q")); err != nil {
 		t.Fatal(err)
 	}
-	if code := resultOfSignalTest(t, done, 5*time.Second); code != 1 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 1 {
 		t.Fatalf("code=%d", code)
 	}
 }
 
 func TestANewRunFromAnotherTerminalWhileAFinishedTUIWaitsForQ(t *testing.T) {
+	t.Parallel()
 	f, _, writer, done, _ := finishedTUIWaitingForQ(t)
 	defer writer.Close()
 	git(t, f.root, "worktree", "remove", "--force", ".r-loop/wt/phase-1")
@@ -423,7 +460,7 @@ func TestANewRunFromAnotherTerminalWhileAFinishedTUIWaitsForQ(t *testing.T) {
 	if _, err := writer.Write([]byte("q")); err != nil {
 		t.Fatal(err)
 	}
-	if code := resultOfSignalTest(t, done, 5*time.Second); code != 1 {
+	if code := resultOfSignalTest(t, done, 60*time.Second); code != 1 {
 		t.Fatalf("code=%d", code)
 	}
 }

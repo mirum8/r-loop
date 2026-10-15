@@ -40,6 +40,7 @@ func configEvents(t *testing.T, w *Wiring, kind string) []core.Event {
 }
 
 func TestSetConfigWritesLoadsAndCommitsTheProjectConfigAlone(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "# mine\nlabel: x\n")
 	f.commit()
@@ -77,6 +78,7 @@ func TestSetConfigWritesLoadsAndCommitsTheProjectConfigAlone(t *testing.T) {
 }
 
 func TestSetConfigCreatesAMissingProjectConfig(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	w := f.setConfigRun()
@@ -95,6 +97,7 @@ func TestSetConfigCreatesAMissingProjectConfig(t *testing.T) {
 }
 
 func TestSetConfigRefusesAValueOrKeyTheConfigRejectsAndLeavesTheFile(t *testing.T) {
+	t.Parallel()
 	for name, kv := range map[string][2]string{
 		"bad duration": {"land.gateTimeout", "soon"},
 		"unknown key":  {"steps.implement.modle", "opus"},
@@ -124,6 +127,7 @@ func TestSetConfigRefusesAValueOrKeyTheConfigRejectsAndLeavesTheFile(t *testing.
 }
 
 func TestSetConfigRestoresTheFileWhenTheRunCannotLoadIt(t *testing.T) {
+	t.Parallel()
 	for name, existing := range map[string]string{"existing file": "label: x\n", "no file": ""} {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
@@ -154,6 +158,7 @@ func TestSetConfigRestoresTheFileWhenTheRunCannotLoadIt(t *testing.T) {
 }
 
 func TestSetConfigEditsAReviewerTheProjectInheritsFromHome(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	home := filepath.Join(f.env.Home, ".config", "r-loop", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(home), 0o755); err != nil {
@@ -178,6 +183,7 @@ func TestSetConfigEditsAReviewerTheProjectInheritsFromHome(t *testing.T) {
 }
 
 func TestSetConfigRefusesAProviderChangeAConfiguredReviewerCannotRunOn(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	cfg := "providers:\n  codex:\n    kind: codex\n    ask: mcp\n    doneSignal: sentinel\n    reviewExec: codex review --uncommitted\n"
 	f.write(".r-loop/config.yaml", cfg)
@@ -199,6 +205,7 @@ func TestSetConfigRefusesAProviderChangeAConfiguredReviewerCannotRunOn(t *testin
 }
 
 func TestSetConfigReachesTheReviewersAReopenReadsFor(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "label: x\n")
 	f.commit()

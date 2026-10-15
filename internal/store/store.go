@@ -327,11 +327,24 @@ func (s *Store) flockFile(name string, how int) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), how); err != nil {
+	if err := flock(f, how); err != nil {
 		f.Close()
 		return nil, err
 	}
 	return f, nil
+}
+
+const lockRetry = 250 * time.Millisecond
+
+func flock(f *os.File, how int) error {
+	deadline := time.Now().Add(lockRetry)
+	for {
+		err := syscall.Flock(int(f.Fd()), how)
+		if how&syscall.LOCK_NB == 0 || !errors.Is(err, syscall.EWOULDBLOCK) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func (s *Store) Lock() (*Lock, error) {

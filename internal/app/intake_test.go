@@ -82,6 +82,7 @@ func TestIntakeWritesItsMCPConfigWhenTheRepoRootAndTempDirHaveASpace(t *testing.
 }
 
 func TestAFreeFormRunWithAMissingIntakeBinaryExits127BeforeStarting(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  ghost:\n    kind: rloop-no-such-binary\n    doneSignal: sentinel\n    ask: mcp\nintake:\n  provider: ghost\n")
 	f.commit()
@@ -188,6 +189,7 @@ func (f *fixture) intake(host *intakeHost, args ...string) (Options, error) {
 }
 
 func TestFreeFormIsAnythingButOneMarkdownPath(t *testing.T) {
+	t.Parallel()
 	for positional, want := range map[string]bool{
 		"":                                false,
 		"docs/topic/todo.md":              false,
@@ -208,6 +210,7 @@ func TestFreeFormIsAnythingButOneMarkdownPath(t *testing.T) {
 }
 
 func TestFreeTextGoesToTheIntakeWhichNeedsHerdr(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	f.fakeHerdr(1)
@@ -220,6 +223,7 @@ func TestFreeTextGoesToTheIntakeWhichNeedsHerdr(t *testing.T) {
 }
 
 func TestIntakeRefusesAnInvalidArgvThenReturnsTheConfirmedOne(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	host := &intakeHost{done: make(chan struct{}), submit: [][]string{
@@ -260,6 +264,7 @@ func TestIntakeRefusesAnInvalidArgvThenReturnsTheConfirmedOne(t *testing.T) {
 }
 
 func TestIntakeStartsClaudeWithItsOwnMCPToolsAllowed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	host := &intakeHost{done: make(chan struct{}), submit: [][]string{{"docs/topic/todo.md", "--phases", "2"}}}
@@ -276,6 +281,7 @@ func TestIntakeStartsClaudeWithItsOwnMCPToolsAllowed(t *testing.T) {
 }
 
 func TestIntakeRunsTheIntakeRowsProviderModelAndEffort(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	given, _, _ := parseFlags([]string{"phase 2", "--provider", "intake=codex", "--model", "intake=gpt-5.6-mini"})
@@ -291,6 +297,7 @@ func TestIntakeRunsTheIntakeRowsProviderModelAndEffort(t *testing.T) {
 }
 
 func TestAnIntakeProviderWithoutMCPExits2BeforeStarting(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  plainbot:\n    kind: codex\n    doneSignal: sentinel\n    ask: none\nintake:\n  provider: plainbot\n")
 	f.commit()
@@ -303,6 +310,7 @@ func TestAnIntakeProviderWithoutMCPExits2BeforeStarting(t *testing.T) {
 }
 
 func TestAnIntakeProviderWithoutMCPIsRefusedInPreflight(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "providers:\n  plainbot:\n    kind: codex\n    doneSignal: sentinel\n    ask: none\nintake:\n  provider: plainbot\n")
 	f.commit()
@@ -315,6 +323,7 @@ func TestAnIntakeProviderWithoutMCPIsRefusedInPreflight(t *testing.T) {
 }
 
 func TestShellJoinQuotesOnlyWhatNeedsIt(t *testing.T) {
+	t.Parallel()
 	got := shellJoin([]string{"docs/my plan/todo.md", "--phases", "3,4", "--model", "plan=it's", ""})
 
 	if want := `'docs/my plan/todo.md' --phases 3,4 --model 'plan=it'\''s' ''`; got != want {
@@ -323,6 +332,7 @@ func TestShellJoinQuotesOnlyWhatNeedsIt(t *testing.T) {
 }
 
 func TestASecondSubmitIsRefusedEvenAfterTheFirstWasTaken(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	in, err := newIntake([]string{"phase 2"}, Options{}, f.env)

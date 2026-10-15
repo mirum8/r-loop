@@ -17,14 +17,14 @@ type modelCache struct {
 	lines []string
 }
 
-func (c *modelCache) resolve(p providers.Provider, model string) (string, error) {
+func (c *modelCache) resolve(env Env, p providers.Provider, model string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := p.Name + "\x00" + model
 	if got, ok := c.seen[key]; ok {
 		return got, nil
 	}
-	got, err := providers.ResolveModel(p, model, runCatalog)
+	got, err := providers.ResolveModel(p, model, env.runCatalog)
 	if err != nil {
 		return "", err
 	}
@@ -44,19 +44,27 @@ func (c *modelCache) reset() {
 	c.seen = nil
 }
 
-func runCatalog(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).Output()
+func (e Env) runCatalog(name string, args ...string) ([]byte, error) {
+	bin, err := e.lookPath(name)
+	if err != nil {
+		return nil, err
+	}
+	return exec.Command(bin, args...).Output()
 }
 
 const versionTimeout = 10 * time.Second
 
-func providerVersion(p providers.Provider) string {
+func providerVersion(env Env, p providers.Provider) string {
 	if p.Version == "" {
 		return "-"
 	}
+	bin, err := env.lookPath(p.Kind)
+	if err != nil {
+		return "?"
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, p.Kind, strings.Fields(p.Version)...)
+	cmd := exec.CommandContext(ctx, bin, strings.Fields(p.Version)...)
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil {

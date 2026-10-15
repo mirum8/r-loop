@@ -40,6 +40,7 @@ const statusTodo = `# t
 var t0 = time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
 
 func TestStatusAndAbortLeaveAFreshRepositoryUntouched(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	for _, args := range [][]string{{"status", "--plain"}, {"abort"}} {
 		f.out.Reset()
@@ -58,6 +59,7 @@ func TestStatusAndAbortLeaveAFreshRepositoryUntouched(t *testing.T) {
 }
 
 func TestStatusSelectsANewerCreatedRunWithRecordedEvents(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	older := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
 	newer := f.seedRun(core.Record{Kind: core.RecordEvent, Event: &core.Event{Kind: "triage-start"}})
@@ -70,6 +72,7 @@ func TestStatusSelectsANewerCreatedRunWithRecordedEvents(t *testing.T) {
 }
 
 func TestStatusSkipsANewerCreatedRunWithOnlyWatchdogStart(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	older := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
 	newer := f.seedRun(
@@ -109,6 +112,7 @@ func stepRec(phase int, kind string, attempt int, state core.StepState) core.Rec
 }
 
 func TestStatusPlainPrintsRunPhasesLiveStepQuestionAndWarning(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.env.Now = func() time.Time { return t0.Add(12*time.Minute + 5*time.Second) }
 	id := f.seedRun(
@@ -147,6 +151,7 @@ func TestStatusPlainPrintsRunPhasesLiveStepQuestionAndWarning(t *testing.T) {
 }
 
 func TestStatusPrintsOneLinePerBlocker(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.seedRun(
 		core.Record{Kind: core.RecordRun, Run: core.RunRunning},
@@ -168,6 +173,7 @@ func TestStatusPrintsOneLinePerBlocker(t *testing.T) {
 }
 
 func TestStatusPrintsOneLinePerDialog(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	key := core.StepKey{Phase: "4", Kind: "implement"}
 	f.seedRun(
@@ -191,6 +197,7 @@ func TestStatusPrintsOneLinePerDialog(t *testing.T) {
 }
 
 func TestStatusReadsTheCurrentRunOverTheNewest(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	older := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
 	newer := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunFinished})
@@ -221,6 +228,7 @@ func TestStatusReadsTheCurrentRunOverTheNewest(t *testing.T) {
 }
 
 func TestStatusShowsNoLiveLineOnceTheStepEnded(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.seedRun(
 		core.Record{Kind: core.RecordRun, Run: core.RunRunning},
@@ -237,6 +245,7 @@ func TestStatusShowsNoLiveLineOnceTheStepEnded(t *testing.T) {
 }
 
 func TestStatusOfARunWhoseDriverDiedSaysSoAndClaimsNoLiveStep(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	id := f.seedRun(
 		core.Record{Kind: core.RecordRun, Run: core.RunRunning},
@@ -259,6 +268,7 @@ func TestStatusOfARunWhoseDriverDiedSaysSoAndClaimsNoLiveStep(t *testing.T) {
 }
 
 func TestStatusOfAPausedRunWhoseDriverDiedSaysSo(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	id := f.seedRun(
 		core.Record{Kind: core.RecordRun, Run: core.RunRunning},
@@ -276,6 +286,7 @@ func TestStatusOfAPausedRunWhoseDriverDiedSaysSo(t *testing.T) {
 }
 
 func TestStatusNamesWhyTheRunHaltedOrPaused(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		status core.RunStatus
 		reason string
@@ -298,6 +309,7 @@ func TestStatusNamesWhyTheRunHaltedOrPaused(t *testing.T) {
 }
 
 func TestStatusMarksPhasesOutsideTheRunList(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.seedRun(
 		ev(t0, "run-list", 0, "", map[string]string{"phases": "2,4"}),
@@ -314,6 +326,7 @@ func TestStatusMarksPhasesOutsideTheRunList(t *testing.T) {
 }
 
 func TestStatusWithNoRunPrintsNoRun(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 
 	code := f.main("status", "--plain")
@@ -324,6 +337,7 @@ func TestStatusWithNoRunPrintsNoRun(t *testing.T) {
 }
 
 func TestWirePassesTheShellNotifierAndTheConfiguredHooks(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "notify:\n  onHalt: say halted\n  onWarn: say warn\n  onDone: say done\n")
 	f.commit()
@@ -343,6 +357,7 @@ func TestWirePassesTheShellNotifierAndTheConfiguredHooks(t *testing.T) {
 }
 
 func TestStatusShowsANamedRunOverANewerOne(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	older := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
 	newer := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunFinished})
@@ -355,6 +370,7 @@ func TestStatusShowsANamedRunOverANewerOne(t *testing.T) {
 }
 
 func TestStatusUnknownRunIDExits2NamingIt(t *testing.T) {
+	t.Parallel()
 	for _, id := range []string{"20990101-000000", "../x"} {
 		t.Run(id, func(t *testing.T) {
 			f := newFixture(t)
@@ -366,6 +382,7 @@ func TestStatusUnknownRunIDExits2NamingIt(t *testing.T) {
 }
 
 func TestStatusSkipsANewerRunThatRecordedNoProgress(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	older := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
 	f.seedRun()
@@ -375,6 +392,7 @@ func TestStatusSkipsANewerRunThatRecordedNoProgress(t *testing.T) {
 }
 
 func TestStatusSkipsARunWithUnreadableMetaWithAWarning(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	older := f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
 	newer := f.seedRun()
@@ -387,6 +405,7 @@ func TestStatusSkipsARunWithUnreadableMetaWithAWarning(t *testing.T) {
 }
 
 func TestStatusDoesNotSkipARunWithACorruptRecordLine(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.seedRun(core.Record{Kind: core.RecordRun, Run: core.RunHalted})
 	newer := f.seedRun()
@@ -413,6 +432,7 @@ func newHostileFixture(t *testing.T) *fixture {
 }
 
 func TestStatusErrorsReachStderrWithoutControlBytes(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		setup          func(f *fixture) []string
 		expectedSubstr string

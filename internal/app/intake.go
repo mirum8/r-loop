@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -55,7 +54,7 @@ func Intake(args []string, given Options, env Env) (Options, error) {
 }
 
 func newIntake(args []string, given Options, env Env) (*intake, error) {
-	if _, err := exec.LookPath(env.Git); err != nil {
+	if _, err := env.lookPath(env.Git); err != nil {
 		return nil, exit(127, "git binary %s not found", env.Git)
 	}
 	repo, err := gitrepo.Open(env.Dir)
@@ -73,13 +72,13 @@ func newIntake(args []string, given Options, env Env) (*intake, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkBinary(r, p.Kind); err != nil {
+	if err := checkBinary(env, r, p.Kind); err != nil {
 		return nil, err
 	}
-	if cfg.Intake.Model, err = providers.ResolveModel(p, cfg.Intake.Model, runCatalog); err != nil {
+	if cfg.Intake.Model, err = providers.ResolveModel(p, cfg.Intake.Model, env.runCatalog); err != nil {
 		return nil, exit(2, "%s: %v", r.field, err)
 	}
-	if _, err := exec.LookPath(env.Herdr); err != nil {
+	if _, err := env.lookPath(env.Herdr); err != nil {
 		return nil, exit(127, "herdr binary %s not found", env.Herdr)
 	}
 	return &intake{

@@ -16,6 +16,7 @@ import (
 )
 
 func TestUnattendedAddsItsAllowListAndTellsTheWatchdogAndSaysSoInTheBanner(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, "watchdog:\n  allow:\n    - locks\n")
 
 	w, err := f.preflight(f.todo, "--plain", "--unattended")
@@ -39,6 +40,7 @@ func TestUnattendedAddsItsAllowListAndTellsTheWatchdogAndSaysSoInTheBanner(t *te
 }
 
 func TestWithoutTheFlagTheRunIsAttendedAndNothingChanges(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, "watchdog:\n  allow:\n    - locks\n")
 
 	w, err := f.preflight(f.todo, "--plain")
@@ -55,6 +57,7 @@ func TestWithoutTheFlagTheRunIsAttendedAndNothingChanges(t *testing.T) {
 }
 
 func TestResumeUnattendedAppliesTheModeToTheResumedRun(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true

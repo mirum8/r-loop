@@ -8,8 +8,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -272,7 +274,7 @@ func TestAnalyzeRunsGolangciLintWithGosecInEachTouchedGoModule(t *testing.T) {
 	writeText(t, dir, "tools/t.go", "package t\n")
 
 	// when
-	analyzed(t, New(time.Minute), dir)
+	analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	actual := stubLog(t)
@@ -292,7 +294,7 @@ func TestAnalyzeLiftsGolangciLintsIssueCaps(t *testing.T) {
 	dir := goRepo(t)
 
 	// when
-	analyzed(t, New(time.Minute), dir)
+	analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	actual := stubLog(t)
@@ -312,9 +314,9 @@ func TestAnalyzeGivesGolangciLintACachePerModuleDirectory(t *testing.T) {
 	first, second := goRepo(t), goRepo(t)
 
 	// when
-	analyzed(t, New(time.Minute), first)
-	analyzed(t, New(time.Minute), second)
-	analyzed(t, New(time.Minute), first)
+	analyzed(t, New(time.Minute, exec.LookPath), first)
+	analyzed(t, New(time.Minute, exec.LookPath), second)
+	analyzed(t, New(time.Minute, exec.LookPath), first)
 
 	// then
 	data, err := os.ReadFile(os.Getenv("STUB_LOG") + ".cache")
@@ -341,7 +343,7 @@ func TestAnalyzeLeavesGosecToTheRepositorysGolangciConfig(t *testing.T) {
 			writeText(t, dir, "tools/t.go", "package t\n")
 
 			// when
-			analyzed(t, New(time.Minute), dir)
+			analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 			// then
 			actual := stubLog(t)
@@ -363,7 +365,7 @@ func TestAnalyzeRunsGovulncheckWhenGoModOrGoSumChanges(t *testing.T) {
 			writeText(t, dir, file, "module x\n\nnew\n")
 
 			// when
-			analyzed(t, New(time.Minute), dir)
+			analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 			// then
 			actual := stubLog(t)
@@ -385,7 +387,7 @@ func TestAnalyzeReadsTheGolangciAndGovulncheckReports(t *testing.T) {
 	dir := goModChangedRepo(t)
 
 	// when
-	actual := analyzed(t, New(time.Minute), dir)
+	actual := analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	expectedSummaries := []string{"govulncheck/GO-2026-0001: GO-2026-0001 hit go.mod", "golangci-lint/errcheck: errcheck hit main.go"}
@@ -405,7 +407,7 @@ func TestAnalyzeReadsReportsUnderTheRealPathOfASymlinkedDirectory(t *testing.T) 
 	}
 
 	// when
-	actual := analyzed(t, New(time.Minute), link)
+	actual := analyzed(t, New(time.Minute, exec.LookPath), link)
 
 	// then
 	expected := []string{"golangci-lint/errcheck: errcheck hit main.go"}
@@ -421,7 +423,7 @@ func TestAnalyzeRunsMavenOnceAtTheBuildRootForTheTouchedModules(t *testing.T) {
 	dir := mavenModulesRepo(t)
 
 	// when
-	analyzed(t, New(time.Minute), dir)
+	analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	actual := stubLog(t)
@@ -440,7 +442,7 @@ func TestAnalyzeRunsTheMavenWrapperWithTheRootModuleAsDot(t *testing.T) {
 	writeText(t, dir, "src/main/java/A.java", "class A {}\n")
 
 	// when
-	analyzed(t, New(time.Minute), dir)
+	analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	actual := stubLog(t)
@@ -457,8 +459,8 @@ func TestAnalyzeFetchesTheFindSecBugsJarOnceIntoTheUserCache(t *testing.T) {
 	dir := mavenModulesRepo(t)
 
 	// when
-	analyzed(t, New(time.Minute), dir)
-	analyzed(t, New(time.Minute), dir)
+	analyzed(t, New(time.Minute, exec.LookPath), dir)
+	analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	analysisLine := "mvn|<root>|-q -B -DskipTests -pl api,core -am " + mavenGoals
@@ -481,7 +483,7 @@ func TestAnalyzeReadsPmdAndSpotbugsReportsFromEachTouchedMavenModule(t *testing.
 	writeText(t, dir, "core/src/main/java/X.java", "class X {}\n")
 
 	// when
-	actual := analyzed(t, New(time.Minute), dir)
+	actual := analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	expectedSummaries := []string{
@@ -504,7 +506,7 @@ func TestAnalyzeResolvesMavenSpotbugsPathsAgainstTheMainSourceRoot(t *testing.T)
 	writeText(t, dir, "src/main/java/demo/App.java", "package demo;\n")
 
 	// when
-	actual := analyzed(t, New(time.Minute), dir)
+	actual := analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	expected := []string{"spotbugs/PREDICTABLE_RANDOM: This random generator (java.util.Random) is predictable src/main/java/demo/App.java"}
@@ -522,7 +524,7 @@ func TestAnalyzeRunsGradleOnceAtTheBuildRootWithTheInitScript(t *testing.T) {
 	writeText(t, dir, "libs/core/src/main/java/C.java", "class C {}\n")
 
 	// when
-	analyzed(t, New(time.Minute), dir)
+	analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	actual := stubLog(t)
@@ -546,7 +548,7 @@ func TestAnalyzeNamesTheRootGradleProjectsTasksWithoutAPrefix(t *testing.T) {
 	dir := loneGradleRepo(t)
 
 	// when
-	analyzed(t, New(time.Minute), dir)
+	analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	actual := stubLog(t)
@@ -563,7 +565,7 @@ func TestAnalyzeHandsGradleTheEmbeddedInitScriptWithThePinnedVersions(t *testing
 	dir := loneGradleRepo(t)
 
 	// when
-	analyzed(t, New(time.Minute), dir)
+	analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	actual, err := os.ReadFile(os.Getenv("STUB_LOG") + ".init")
@@ -626,7 +628,7 @@ func TestAnalyzeReadsPmdAndSpotbugsReportsFromEachTouchedGradleModule(t *testing
 	writeText(t, dir, "libs/core/src/main/java/X.java", "class X {}\n")
 
 	// when
-	actual := analyzed(t, New(time.Minute), dir)
+	actual := analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	expectedSummaries := []string{
@@ -660,7 +662,7 @@ func TestAnalyzeRequiresNoReportFromAModuleWithoutMainClasses(t *testing.T) {
 			writeText(t, dir, "it/src/test/java/T.java", "class T {}\n")
 
 			// when
-			actual := analyzed(t, New(time.Minute), dir)
+			actual := analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 			// then
 			expected := core.Analysis{Findings: []core.Finding{}, Command: "pmd, spotbugs"}
@@ -694,7 +696,7 @@ func TestAnalyzeIgnoresAStaleReportLeftByAnEarlierRun(t *testing.T) {
 			writeText(t, dir, c.stale, pmdReport(pmdViolation("src/main/java/A.java", 1, 3, "UnusedLocalVariable")))
 
 			// when
-			actual := analyzeErr(t, New(time.Minute), dir)
+			actual := analyzeErr(t, New(time.Minute, exec.LookPath), dir)
 
 			// then
 			if actual != c.expected {
@@ -725,7 +727,7 @@ func TestAnalyzeWritesNoFileIntoTheTreeButBuildOutput(t *testing.T) {
 			dir := c.repo(t)
 
 			// when
-			analyzed(t, New(time.Minute), dir)
+			analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 			// then
 			if actual := gitStatus(t, dir); actual != c.expected {
@@ -766,7 +768,7 @@ func TestAnalyzeLeavesTheUntrackedFilesOfARepoWithoutIgnoresAsItFoundThem(t *tes
 			expected := gitStatus(t, dir)
 
 			// when
-			_, err := New(c.timeout).Analyze(context.Background(), dir)
+			_, err := New(c.timeout, exec.LookPath).Analyze(context.Background(), dir)
 
 			// then
 			if (err != nil) != c.failed {
@@ -791,7 +793,7 @@ func TestAnalyzeKeepsAnUntrackedSourceFileWrittenDuringTheAnalysis(t *testing.T)
 	writeText(t, dir, "core/src/main/java/A.java", "class A {}\n")
 
 	// when
-	analyzed(t, New(time.Minute), dir)
+	analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	if actual, expected := gitStatus(t, dir), "?? core/src/main/java/A.java\n?? core/src/main/java/B.java"; actual != expected {
@@ -806,7 +808,7 @@ func TestAnalyzeRunsGradleWithoutADaemon(t *testing.T) {
 	dir := loneGradleRepo(t)
 
 	// when
-	analyzed(t, New(time.Minute), dir)
+	analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	actual := stubLog(t)
@@ -820,14 +822,15 @@ func TestAnalyzeStopsADetachedGradleDaemonBeforeItWritesAfterTheTimeout(t *testi
 	// given
 	bin := stubPath(t)
 	javaEnv(t, ".", pmdReport(""), `{"runs":[]}`)
-	stub(t, bin, "gradle", `perl -e 'setpgrp(0, 0); exec @ARGV' sh -c 'while :; do mkdir -p .gradle/9.8.0 build/reports && : > .gradle/9.8.0/gc.properties && : > build/reports/late.html; sleep 0.05; done' < /dev/null > /dev/null 2>&1 &
+	recordDetached(t)
+	stub(t, bin, "gradle", `perl -e 'setpgrp(0, 0); exec @ARGV' sh -c 'echo $$ >> "$STUB_DETACHED"; while :; do mkdir -p .gradle/9.8.0 build/reports && : > .gradle/9.8.0/gc.properties && : > build/reports/late.html; sleep 0.05; done' < /dev/null > /dev/null 2>&1 &
 sleep 30`)
 	dir := stubbedRepo(t, map[string]string{"build.gradle": ""})
 	writeText(t, dir, "src/main/java/A.java", "class A {}\n")
 	expected := gitStatus(t, dir)
 
 	// when
-	_, err := New(500*time.Millisecond).Analyze(context.Background(), dir)
+	_, err := New(500*time.Millisecond, exec.LookPath).Analyze(context.Background(), dir)
 	time.Sleep(time.Second)
 
 	// then
@@ -859,7 +862,7 @@ func TestAnalyzeRunsSemgrepOverTheChangedFiles(t *testing.T) {
 			writeText(t, dir, "docs/new.md", "c\n")
 
 			// when
-			analyzed(t, New(time.Minute), dir)
+			analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 			// then
 			actual := stubLog(t)
@@ -879,7 +882,7 @@ func TestAnalyzeReadsTheSemgrepReport(t *testing.T) {
 	writeText(t, dir, "app.py", "eval(x)\n")
 
 	// when
-	actual := analyzed(t, New(time.Minute), dir)
+	actual := analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	expected := []string{"semgrep/python.lang.security.audit.eval: python.lang.security.audit.eval hit app.py"}
@@ -895,7 +898,7 @@ func TestAnalyzeSkipsSemgrepWhenItIsNotOnPath(t *testing.T) {
 	dir := goRepo(t)
 
 	// when
-	actual := analyzed(t, New(time.Minute), dir)
+	actual := analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	actualLog := stubLog(t)
@@ -913,7 +916,7 @@ func TestAnalyzeRunsNothingWhenNothingChanged(t *testing.T) {
 	dir := stubbedRepo(t, map[string]string{"go.mod": "module x\n", "main.go": "package main\n"})
 
 	// when
-	actual := analyzed(t, New(time.Minute), dir)
+	actual := analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	expected := core.Analysis{Findings: []core.Finding{}, Command: ""}
@@ -930,7 +933,7 @@ func TestAnalyzeRunsNoToolchainForAChangeWithoutSourceFiles(t *testing.T) {
 	writeText(t, dir, "README.md", "b\n")
 
 	// when
-	actual := analyzed(t, New(time.Minute), dir)
+	actual := analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	if actualLog := stubLog(t); len(actualLog) != 0 || actual.Command != "" {
@@ -950,7 +953,7 @@ func TestAnalyzeNamesEveryToolThatRanInCommand(t *testing.T) {
 	writeText(t, dir, "svc/src/main/java/A.java", "class A {}\n")
 
 	// when
-	actual := analyzed(t, New(time.Minute), dir)
+	actual := analyzed(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	if expected := "golangci-lint, govulncheck, pmd, spotbugs, semgrep"; actual.Command != expected {
@@ -986,7 +989,7 @@ case "$2" in *govulncheck*) echo partial; echo 'loading packages' >&2; exit 1 ;;
 			dir := c.repo(t)
 
 			// when
-			actual := analyzeErr(t, New(time.Minute), dir)
+			actual := analyzeErr(t, New(time.Minute, exec.LookPath), dir)
 
 			// then
 			if actual != c.expected {
@@ -1004,7 +1007,7 @@ func TestAnalyzeFailsWhenTheFetchWritesNoJar(t *testing.T) {
 	dir := mavenCoreRepo(t)
 
 	// when
-	actual := analyzeErr(t, New(time.Minute), dir)
+	actual := analyzeErr(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	if expected := "find-sec-bugs: dependency:copy wrote no findsecbugs-plugin-1.14.0.jar"; actual != expected {
@@ -1038,7 +1041,7 @@ func TestAnalyzeFailsOnAMissingReport(t *testing.T) {
 			dir := c.repo(t)
 
 			// when
-			actual := analyzeErr(t, New(time.Minute), dir)
+			actual := analyzeErr(t, New(time.Minute, exec.LookPath), dir)
 
 			// then
 			if actual != c.expected {
@@ -1074,7 +1077,7 @@ func TestAnalyzeFailsOnAReportThatDoesNotParse(t *testing.T) {
 			dir := c.repo(t)
 
 			// when
-			actual := analyzeErr(t, New(time.Minute), dir)
+			actual := analyzeErr(t, New(time.Minute, exec.LookPath), dir)
 
 			// then
 			if actual != c.expected {
@@ -1091,7 +1094,7 @@ func TestAnalyzeKeepsTheLast4096BytesOfAFailingToolsOutput(t *testing.T) {
 	dir := goRepo(t)
 
 	// when
-	actual := analyzeErr(t, New(time.Minute), dir)
+	actual := analyzeErr(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	if expected := "golangci-lint: exit status 1\n" + strings.Repeat("b", 4096); actual != expected {
@@ -1106,7 +1109,7 @@ func TestAnalyzeKeepsTrailingWhitespaceInTheOutputTail(t *testing.T) {
 	dir := goRepo(t)
 
 	// when
-	actual := analyzeErr(t, New(time.Minute), dir)
+	actual := analyzeErr(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	if expected := "golangci-lint: exit status 1\nfailed  \n\n"; actual != expected {
@@ -1121,7 +1124,7 @@ func TestAnalyzeFailsWhenTheAnalysisOutlivesTheTimeout(t *testing.T) {
 	dir := goRepo(t)
 
 	// when
-	actual := analyzeErr(t, New(3*time.Second), dir)
+	actual := analyzeErr(t, New(3*time.Second, exec.LookPath), dir)
 
 	// then
 	if expected := "golangci-lint: timed out after 3s: context deadline exceeded\nstarted\n"; actual != expected {
@@ -1142,7 +1145,7 @@ func TestAnalyzeFailsAsInterruptedWhenTheCallerCancels(t *testing.T) {
 	}()
 
 	// when
-	_, err := New(time.Minute).Analyze(ctx, dir)
+	_, err := New(time.Minute, exec.LookPath).Analyze(ctx, dir)
 
 	// then
 	if expected := "golangci-lint: interrupted: context canceled\nstarted\n"; err == nil || err.Error() != expected {
@@ -1176,7 +1179,7 @@ func TestAnalyzeFailsWhenInterruptedAfterTheLastCommand(t *testing.T) {
 	}()
 
 	// when
-	_, err := New(time.Minute).Analyze(ctx, dir)
+	_, err := New(time.Minute, exec.LookPath).Analyze(ctx, dir)
 
 	// then
 	if expected := "analyze: interrupted: context canceled"; err == nil || err.Error() != expected {
@@ -1192,7 +1195,7 @@ func TestAnalyzeFailsWhenAStaleReportCannotBeRemoved(t *testing.T) {
 	writeText(t, dir, "core/target/pmd.xml/x", "")
 
 	// when
-	actual := analyzeErr(t, New(time.Minute), dir)
+	actual := analyzeErr(t, New(time.Minute, exec.LookPath), dir)
 
 	// then
 	expected := "maven: remove " + dir + "/core/target/pmd.xml: directory not empty"
@@ -1209,7 +1212,7 @@ func TestAnalyzeFailsWhenTheClassesDirectoryCannotBeRead(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "core/target/classes/sub"), 0o755) })
 
 	// when
-	_, err := New(time.Minute).Analyze(context.Background(), dir)
+	_, err := New(time.Minute, exec.LookPath).Analyze(context.Background(), dir)
 
 	// then
 	if err == nil || !strings.HasPrefix(err.Error(), "maven: open ") || !errors.Is(err, fs.ErrPermission) {
@@ -1226,7 +1229,7 @@ func TestAnalyzeFailsWithoutAUserCacheDirectory(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", "")
 
 	// when
-	_, err := New(time.Minute).Analyze(context.Background(), dir)
+	_, err := New(time.Minute, exec.LookPath).Analyze(context.Background(), dir)
 
 	// then
 	if actualLog := stubLog(t); err == nil || !strings.HasPrefix(err.Error(), "find-sec-bugs: ") || len(actualLog) != 0 {
@@ -1242,7 +1245,7 @@ func TestAnalyzeFailsWithoutATempDirectory(t *testing.T) {
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
 
 	// when
-	_, err := New(time.Minute).Analyze(context.Background(), dir)
+	_, err := New(time.Minute, exec.LookPath).Analyze(context.Background(), dir)
 
 	// then
 	if actualLog := stubLog(t); err == nil || !strings.HasPrefix(err.Error(), "analyze: ") || !errors.Is(err, fs.ErrNotExist) || len(actualLog) != 0 {
@@ -1255,10 +1258,191 @@ func TestAnalyzeFailsForAMissingDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "missing")
 
 	// when
-	_, err := New(time.Minute).Analyze(context.Background(), dir)
+	_, err := New(time.Minute, exec.LookPath).Analyze(context.Background(), dir)
 
 	// then
 	if err == nil || !strings.HasPrefix(err.Error(), "analyze: ") || !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("actual %v, expected a missing directory error", err)
 	}
+}
+
+func killRecordedOnCleanup(t *testing.T, path string) {
+	t.Cleanup(func() {
+		for _, pid := range recordedPids(path) {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+}
+
+func recordedPids(path string) []int {
+	data, _ := os.ReadFile(path)
+	var pids []int
+	for _, line := range strings.Fields(string(data)) {
+		if pid, err := strconv.Atoi(line); err == nil {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+func recordDetached(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "detached")
+	t.Setenv("STUB_DETACHED", path)
+	killRecordedOnCleanup(t, path)
+	return path
+}
+
+func assertDetachedGone(t *testing.T, path string, expectedRecorded int) {
+	t.Helper()
+	pids := recordedPids(path)
+	if len(pids) != expectedRecorded {
+		t.Fatalf("actual %d recorded, expected %d", len(pids), expectedRecorded)
+	}
+	alive := func() []int {
+		return slices.DeleteFunc(slices.Clone(pids), func(pid int) bool { return syscall.Kill(pid, 0) != nil })
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(alive()) > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if actual := alive(); len(actual) > 0 {
+		t.Fatalf("actual alive %v, expected none", actual)
+	}
+}
+
+func startDetached(t *testing.T) {
+	t.Helper()
+	script := `perl -e 'setpgrp(0, 0); exec @ARGV' sh -c 'echo $$ >> "$STUB_DETACHED"; exec sleep 30' < /dev/null > /dev/null 2>&1 &`
+	if err := exec.Command("sh", "-c", script).Run(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(recordedPids(os.Getenv("STUB_DETACHED"))) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(recordedPids(os.Getenv("STUB_DETACHED"))) == 0 {
+		t.Fatal("the detached stub recorded no pid within 5s")
+	}
+}
+
+func assertMarked(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("actual no %s, expected it to exist", path)
+	}
+}
+
+func forkingPsStub(t *testing.T, bin string, lines int) {
+	t.Helper()
+	stub(t, bin, "ps", `out=$(PATH=/usr/bin:/bin ps "$@")
+if [ ! -e "$STUB_LOG.fork" ]; then
+  : > "$STUB_LOG.fork"
+  n=0
+  while [ "$(cat "$STUB_DETACHED" 2>/dev/null | wc -l | tr -d ' ')" -lt `+strconv.Itoa(lines)+` ] && [ $n -lt 200 ]; do sleep 0.01; n=$((n+1)); done
+fi
+printf '%s\n' "$out"`)
+}
+
+const detachingGradle = `perl -e 'setpgrp(0, 0); exec @ARGV' sh -c 'echo $$ >> "$STUB_DETACHED"; while :; do sleep 0.05; done' < /dev/null > /dev/null 2>&1 &
+sleep 30`
+
+func gradleRepo(t *testing.T) string {
+	t.Helper()
+	dir := stubbedRepo(t, map[string]string{"build.gradle": ""})
+	writeText(t, dir, "src/main/java/A.java", "class A {}\n")
+	return dir
+}
+
+func TestTheDetachedStubCleanupKillsAChildAnalyzeNeverReached(t *testing.T) {
+	// given
+	path := recordDetached(t)
+
+	// when
+	t.Run("a stub Analyze never reached", func(t *testing.T) {
+		killRecordedOnCleanup(t, path)
+		startDetached(t)
+	})
+
+	// then
+	assertDetachedGone(t, path, 1)
+}
+
+func TestAnalyzeKillsADetachedGradleDaemonWhenTheFirstProcessListingsFail(t *testing.T) {
+	// given
+	bin := stubPath(t)
+	javaEnv(t, ".", pmdReport(""), `{"runs":[]}`)
+	path := recordDetached(t)
+	stub(t, bin, "ps", `echo x >> "$STUB_LOG.ps-calls"
+if [ "$(wc -l < "$STUB_LOG.ps-calls" | tr -d ' ')" -le 5 ]; then exit 1; fi
+PATH=/usr/bin:/bin exec ps "$@"`)
+	stub(t, bin, "gradle", detachingGradle)
+	dir := gradleRepo(t)
+
+	// when
+	_, _ = New(time.Second, exec.LookPath).Analyze(context.Background(), dir)
+
+	// then
+	assertDetachedGone(t, path, 1)
+}
+
+func TestAnalyzeKillsADetachedGradleDaemonWhenTheFirstProcessListingHangs(t *testing.T) {
+	// given
+	bin := stubPath(t)
+	javaEnv(t, ".", pmdReport(""), `{"runs":[]}`)
+	path := recordDetached(t)
+	stub(t, bin, "ps", `if [ ! -e "$STUB_LOG.ps-hung" ]; then : > "$STUB_LOG.ps-hung"; exec sleep 30; fi
+PATH=/usr/bin:/bin exec ps "$@"`)
+	stub(t, bin, "gradle", detachingGradle)
+	dir := gradleRepo(t)
+
+	// when
+	_, _ = New(time.Second, exec.LookPath).Analyze(context.Background(), dir)
+
+	// then
+	assertDetachedGone(t, path, 1)
+}
+
+func TestAnalyzeStopsAGradleBeforeItDetachesAChildAfterTheFirstListing(t *testing.T) {
+	// given
+	bin := stubPath(t)
+	javaEnv(t, ".", pmdReport(""), `{"runs":[]}`)
+	path := recordDetached(t)
+	forkingPsStub(t, bin, 1)
+	stub(t, bin, "gradle", `while [ ! -e "$STUB_LOG.fork" ]; do sleep 0.01; done
+perl -e 'setpgrp(0, 0); exec @ARGV' sh -c 'echo $$ >> "$STUB_DETACHED"; exec sleep 30' < /dev/null > /dev/null 2>&1 &
+sleep 30`)
+	dir := gradleRepo(t)
+
+	// when
+	actualErr := analyzeErr(t, New(time.Second, exec.LookPath), dir)
+
+	// then
+	if expected := "gradle: timed out after 1s: context deadline exceeded"; actualErr != expected {
+		t.Fatalf("actual %q, expected %q", actualErr, expected)
+	}
+	assertMarked(t, os.Getenv("STUB_LOG")+".fork")
+	assertDetachedGone(t, path, 0)
+}
+
+func TestAnalyzeKillsTheChildADetachedDaemonForksAfterTheFirstListing(t *testing.T) {
+	// given
+	bin := stubPath(t)
+	javaEnv(t, ".", pmdReport(""), `{"runs":[]}`)
+	path := recordDetached(t)
+	forkingPsStub(t, bin, 2)
+	stub(t, bin, "daemon", `echo $$ >> "$STUB_DETACHED"
+while [ ! -e "$STUB_LOG.fork" ]; do sleep 0.01; done
+perl -e 'setpgrp(0, 0); exec @ARGV' sh -c 'echo $$ >> "$STUB_DETACHED"; exec sleep 30' < /dev/null > /dev/null 2>&1 &
+sleep 30`)
+	stub(t, bin, "gradle", `perl -e 'setpgrp(0, 0); exec @ARGV' daemon < /dev/null > /dev/null 2>&1 &
+sleep 30`)
+	dir := gradleRepo(t)
+
+	// when
+	_, _ = New(time.Second, exec.LookPath).Analyze(context.Background(), dir)
+
+	// then
+	assertDetachedGone(t, path, 2)
 }

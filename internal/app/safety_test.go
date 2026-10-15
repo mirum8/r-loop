@@ -11,6 +11,7 @@ import (
 )
 
 func TestPreflightRecordsTheStartBranch(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	w, err := f.preflight(f.todo, "--plain")
@@ -24,6 +25,7 @@ func TestPreflightRecordsTheStartBranch(t *testing.T) {
 }
 
 func TestALeftoverPhaseWorktreeIsRefusedWithExit4(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	f.write(".git/info/exclude", ".r-loop/\n")
@@ -51,6 +53,7 @@ func TestALeftoverPhaseWorktreeIsRefusedWithExit4(t *testing.T) {
 }
 
 func TestALeftoverWorktreeWithoutExcludeIsNamed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	git(t, f.root, "worktree", "add", "-q", "-b", "r-loop/phase-2", ".r-loop/wt/phase-2")
@@ -68,6 +71,7 @@ func TestALeftoverWorktreeWithoutExcludeIsNamed(t *testing.T) {
 }
 
 func TestALeftoverPlainDirectoryHasAnApplicableRemedy(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	f.write(".git/info/exclude", ".r-loop/\n")
@@ -85,6 +89,7 @@ func TestALeftoverPlainDirectoryHasAnApplicableRemedy(t *testing.T) {
 }
 
 func TestAStaleWorktreeRegistrationNamesPruneBeforeBranchDeletion(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	f.write(".git/info/exclude", ".r-loop/\n")
@@ -105,6 +110,7 @@ func TestAStaleWorktreeRegistrationNamesPruneBeforeBranchDeletion(t *testing.T) 
 }
 
 func TestALeftoverSuggestsResumeWhenAnUnfinishedRunExists(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	f.write(".git/info/exclude", ".r-loop/\n")
@@ -123,6 +129,7 @@ func TestALeftoverSuggestsResumeWhenAnUnfinishedRunExists(t *testing.T) {
 }
 
 func TestALeftoverPhaseBranchOnAnOlderBaseIsRefusedWithExit4(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	git(t, f.root, "branch", "r-loop/phase-2")
@@ -135,6 +142,7 @@ func TestALeftoverPhaseBranchOnAnOlderBaseIsRefusedWithExit4(t *testing.T) {
 }
 
 func TestAnUnfinishedMergeIsNamedInPreflight(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.commit()
 	git(t, f.root, "checkout", "-q", "-b", "side")
@@ -149,6 +157,7 @@ func TestAnUnfinishedMergeIsNamedInPreflight(t *testing.T) {
 }
 
 func TestResumeNamesAnUnfinishedMerge(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true
@@ -167,6 +176,7 @@ func TestResumeNamesAnUnfinishedMerge(t *testing.T) {
 }
 
 func TestResumeRefusesWhenThePrimaryTreeLeftTheStartBranch(t *testing.T) {
+	t.Parallel()
 	f := newResumeFixture(t, noReviewConfig)
 	first := newSim()
 	first.fail["rloop-p1-implement"] = true

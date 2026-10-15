@@ -2154,3 +2154,38 @@ func submitsSince(r *rig, n int) []string {
 	}
 	return out
 }
+
+func TestAHookWaitGivesUpAtItsDeadlineNotAfterAFullHookPoll(t *testing.T) {
+	tests := []struct {
+		name string
+		wait func(t *testing.T, sm *SessionManager)
+	}{
+		{"a session start without a SessionStart", func(t *testing.T, sm *SessionManager) {
+			sm.HookStartWait = 5 * time.Millisecond
+			sm.hookStart(&Session{Agent: askingAgent}, true)
+		}},
+		{"a prompt never submitted", func(t *testing.T, sm *SessionManager) {
+			sm.awaitSubmit(askingAgent, 5*time.Millisecond)
+		}},
+		{"a rollout never shown", func(t *testing.T, sm *SessionManager) {
+			shortSubmitWait(t)
+			sm.Rollouts = &fakeRollouts{files: map[string]rolloutFile{}}
+			sm.awaitRollout(&Session{Agent: askingAgent, rollout: true})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// given
+			sm := hookPromptManager(&fakeSessionHost{}, &fakeHookFeed{}, t0)
+			start := time.Now()
+
+			// when
+			tt.wait(t, sm)
+
+			// then
+			if actualElapsed := time.Since(start); actualElapsed >= 30*time.Millisecond {
+				t.Fatalf("actual elapsed %s, expected under 30ms", actualElapsed)
+			}
+		})
+	}
+}
