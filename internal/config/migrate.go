@@ -85,6 +85,8 @@ func Migrate(path string) (Migration, error) {
 	}
 	forEachRole(doc.Content[0], fill)
 	m.Changes = append(m.Changes, addDesign(doc.Content[0])...)
+	m.Changes = append(m.Changes, dropFixer(doc.Content[0])...)
+	pruneEmpty(doc.Content[0])
 	if len(m.Changes) == 0 {
 		return m, nil
 	}

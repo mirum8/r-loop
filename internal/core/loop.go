@@ -77,6 +77,7 @@ type RunLoop struct {
 	PlanSource PlanSource
 	Reload     func() error
 	TodoPath   string
+	LocalTodo  bool
 	Kinds      []StepKind
 	Sessions   *SessionManager
 	Store      Store
@@ -92,7 +93,6 @@ type RunLoop struct {
 	BlockerTimeout time.Duration
 	MaxRestarts    int
 	Versions       func() map[string]string
-	Fixer          BlockerFixer
 
 	mu          sync.Mutex
 	signalsMu   sync.Mutex
@@ -126,7 +126,7 @@ type RunLoop struct {
 }
 
 var reportEvery = time.Second
-var writeReportFile = writeFileAtomic
+var writeReportFile = WriteFileAtomic
 
 type openAsk struct {
 	q        Question
@@ -181,7 +181,7 @@ func (l *RunLoop) Run(ctx context.Context, opts RunOptions) int {
 	l.pending = map[string]bool{}
 	l.restarts = map[string]int{}
 	for _, ev := range prior.Events {
-		if ev.Kind == "restart" && !fixCitation(ev.Fields["citation"]) {
+		if ev.Kind == "restart" {
 			l.restarts[ev.Fields["step"]]++
 		}
 	}
@@ -396,6 +396,7 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 			}
 		}
 		ref, out, aborted := l.runAttempts(ctx, ref)
+		ph = ref.Phase
 		if out.Session != nil {
 			last = out.Session
 		}
@@ -451,7 +452,7 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 		var resolved *resolvedError
 		switch {
 		case errors.Is(err, ErrContinued):
-			if ph, err = l.reread(ph); err != nil {
+			if ph, err = l.reread(ctx, ph); err != nil {
 				continue
 			}
 		case errors.As(err, &resolved):
@@ -482,7 +483,7 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 				return "land", out, aborted
 			}
 			if action == actionContinue {
-				if ph, err = l.reread(ph); err != nil {
+				if ph, err = l.reread(ctx, ph); err != nil {
 					continue
 				}
 			}
@@ -508,7 +509,10 @@ func (l *RunLoop) reloadConfig() error {
 	return nil
 }
 
-func (l *RunLoop) reread(ph Phase) (Phase, error) {
+func (l *RunLoop) reread(ctx context.Context, ph Phase) (Phase, error) {
+	if err := l.commitPlanEdit(ctx, ph.ID); err != nil {
+		return ph, err
+	}
 	if err := l.reloadConfig(); err != nil {
 		return ph, err
 	}
@@ -526,6 +530,30 @@ func (l *RunLoop) reread(ph Phase) (Phase, error) {
 		}
 	}
 	return ph, fmt.Errorf("phase %s is no longer in %s", ph.ID, l.TodoPath)
+}
+
+func (l *RunLoop) commitPlanEdit(ctx context.Context, phase string) error {
+	if l.Sessions == nil || l.Sessions.Repo == nil || l.TodoPath == "" {
+		return nil
+	}
+	repo := l.Sessions.Repo
+	dirty, err := repo.Dirty("")
+	if err != nil {
+		return fmt.Errorf("list the primary tree's changes: %w", err)
+	}
+	todo := repoRel(repo.Root(), l.TodoPath)
+	others := slices.DeleteFunc(slices.Clone(dirty), func(p string) bool { return p == todo })
+	if len(others) > 0 {
+		return fmt.Errorf("primary tree has changes other than the plan: %s", strings.Join(others, ", "))
+	}
+	if l.LocalTodo || len(dirty) == 0 {
+		return nil
+	}
+	l.emit(Event{Kind: EventPlanCorrected, Phase: phase, Fields: map[string]string{"phase": phase, "path": todo}})
+	if _, err := repo.Commit(ctx, Subject("docs(plan): correct phase ", phase), todo); err != nil {
+		return fmt.Errorf("commit the plan edit: %w", err)
+	}
+	return nil
 }
 
 func (l *RunLoop) land(ctx context.Context, lander Lander, ph Phase) (Landing, bool, error) {
@@ -562,10 +590,10 @@ func (e *probeError) Error() string { return e.err.Error() }
 func (e *probeError) Unwrap() error { return e.err }
 
 var (
-	stepActions      = []string{actionRetry, actionSwitch, actionFix, actionBlock, actionStop, actionContinue}
-	landActions      = []string{actionRetry, actionFix, actionBlock, actionStop, actionContinue}
-	reviewerActions  = []string{actionRetry, actionKeys, actionSwitch, actionSkip, actionFix, actionBlock, actionStop}
-	milestoneActions = []string{actionRetry, actionSkip, actionFix, actionStop}
+	stepActions      = []string{actionRetry, actionSwitch, actionBlock, actionStop, actionContinue}
+	landActions      = []string{actionRetry, actionBlock, actionStop, actionContinue}
+	reviewerActions  = []string{actionRetry, actionKeys, actionSwitch, actionBlock, actionStop}
+	milestoneActions = []string{actionRetry, actionBlock, actionStop}
 )
 
 func (l *RunLoop) landBlocker(ctx context.Context, n string, err error, last *Session) (Outcome, string, bool) {
@@ -759,62 +787,64 @@ func (l *RunLoop) awaitRestart(ctx context.Context, ref StepRef, kind StepKind, 
 	if reason == "" {
 		reason = string(out.State)
 	}
-	main := &blockerHold{key: key, out: out}
-	res := l.raise(ctx, Blocker{Source: sourceStep, Phase: key.Phase, Step: key.Kind, Reason: reason, Actions: stepActions}, main)
-	answer := func(reason string) {
-		if main.restart != nil {
-			main.restart.answer(reason)
-		}
-	}
-	if res.By == byWithdrawn && (ctx.Err() != nil || l.Store.Aborted(l.RunID)) {
-		l.stop(ctx, key.Phase, key.Kind)
-		return StepRef{}, false, true
-	}
-	if out.Halted {
-		return StepRef{}, false, false
-	}
-	switch res.Action {
-	case actionRetry, actionSwitch, actionContinue:
-	case actionStop:
-		out.State, out.Reason, out.Stalled, out.Halted = StepFailed, l.stopping().reason, false, true
-		return StepRef{}, false, false
-	default:
-		if res.By == byWithdrawn {
-			l.drainHalts(key, out)
-		}
-		return StepRef{}, false, false
-	}
-	byFix := fixCitation(res.Citation)
-	if !byFix && l.restarts[step] >= l.MaxRestarts {
-		reason := fmt.Sprintf("restart limit %d reached", l.MaxRestarts)
-		l.emit(Event{Kind: "restart-refused", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "reason": reason}})
-		answer(reason)
-		return StepRef{}, false, false
-	}
+	var res Resolution
+	var answer func(string)
 	var prior RunState
-	if res.Action == actionContinue {
-		var err error
-		if prior, err = l.Store.Load(l.RunID); err != nil {
-			out.State, out.Reason = StepFailed, "load run: "+err.Error()
-			answer(out.Reason)
+	for {
+		main := &blockerHold{key: key, out: out}
+		res = l.raise(ctx, Blocker{Source: sourceStep, Phase: key.Phase, Step: key.Kind, Reason: reason, Actions: stepActions}, main)
+		answer = func(reason string) {
+			if main.restart != nil {
+				main.restart.answer(reason)
+			}
+		}
+		if res.By == byWithdrawn && (ctx.Err() != nil || l.Store.Aborted(l.RunID)) {
+			l.stop(ctx, key.Phase, key.Kind)
+			return StepRef{}, false, true
+		}
+		if out.Halted {
 			return StepRef{}, false, false
 		}
-		if err := l.reloadConfig(); err != nil {
-			out.State, out.Reason = StepFailed, err.Error()
-			answer(out.Reason)
+		switch res.Action {
+		case actionRetry, actionSwitch, actionContinue:
+		case actionStop:
+			out.State, out.Reason, out.Stalled, out.Halted = StepFailed, l.stopping().reason, false, true
+			return StepRef{}, false, false
+		default:
+			if res.By == byWithdrawn {
+				l.drainHalts(key, out)
+			}
 			return StepRef{}, false, false
 		}
-		if k, ok := l.kind(kind.Name); ok {
-			kind = k
+		if l.restarts[step] >= l.MaxRestarts {
+			reason := fmt.Sprintf("restart limit %d reached", l.MaxRestarts)
+			l.emit(Event{Kind: "restart-refused", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"step": step, "reason": reason}})
+			answer(reason)
+			return StepRef{}, false, false
 		}
-	}
-	if byFix {
-		if k, ok := l.kind(kind.Name); ok {
-			kind = k
+		if res.Action == actionContinue {
+			var err error
+			if prior, err = l.Store.Load(l.RunID); err != nil {
+				out.State, out.Reason = StepFailed, "load run: "+err.Error()
+				answer(out.Reason)
+				return StepRef{}, false, false
+			}
+			fresh, err := l.reread(ctx, ref.Phase)
+			if err != nil {
+				out.State, out.Reason = StepFailed, err.Error()
+				answer(out.Reason)
+				l.restarts[step]++
+				reason = err.Error()
+				continue
+			}
+			ref.Phase = fresh
+			if k, ok := l.kind(kind.Name); ok {
+				kind = k
+			}
 		}
-	} else {
-		l.restarts[step]++
+		break
 	}
+	l.restarts[step]++
 	if res.Provider != "" {
 		kind.Row.Provider, kind.Row.Model, kind.Row.Effort = res.Provider, res.Model, res.Effort
 		if fb := kind.Row.Fallback; fb.Provider == res.Provider && res.Model == "" {
@@ -1620,9 +1650,6 @@ func (l *RunLoop) askingSession(ctx context.Context, key StepKey) *Session {
 
 func (l *RunLoop) stepState(s *Session, state StepState) {
 	key := s.Ref.Key
-	if isFixKind(key.Kind) {
-		return
-	}
 	if err := l.Store.Append(l.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: state}); err != nil {
 		l.emit(Event{Kind: "warning", Fields: map[string]string{"reason": "store: " + err.Error()}})
 	}
@@ -1997,7 +2024,7 @@ func (l *RunLoop) renderReport(st RunState) {
 	}
 }
 
-func writeFileAtomic(path string, data []byte) error {
+func WriteFileAtomic(path string, data []byte) error {
 	tmp := path + "." + rand.Text() + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {

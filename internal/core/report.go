@@ -99,6 +99,14 @@ func decisions(st RunState) []string {
 			out = append(out, where(ev.Phase, "")+" blocked: "+f["reason"])
 		case "phase-skipped":
 			out = append(out, skippedLine(ev))
+		case EventConfigSet:
+			out = append(out, fmt.Sprintf("set %s = %s — %s", f["key"], f["value"], f["why"]))
+		case EventConfigSetFailed:
+			if n := len(out) - 1; n >= 0 {
+				out[n] += " (failed: " + f["reason"] + ")"
+			}
+		case EventPlanCorrected:
+			out = append(out, where(ev.Phase, "")+": plan corrected in "+f["path"])
 		}
 	}
 	return out
@@ -295,7 +303,7 @@ func questionLines(st RunState) []string {
 		}
 		out = append(out, line)
 	}
-	return append(out, FixLines(st.Events)...)
+	return out
 }
 
 func signalLines(st RunState) []string {

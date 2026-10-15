@@ -15,10 +15,8 @@ const (
 	actionRetry  = "retry"
 	actionKeys   = "keys"
 	actionSwitch = "switch"
-	actionSkip   = "skip"
 	actionBlock  = "block"
 	actionStop   = "stop"
-	actionFix    = "fix"
 
 	actionContinue = "continue"
 
@@ -41,7 +39,7 @@ const (
 )
 
 var blockerOptions = []struct{ action, option string }{
-	{actionRetry, "retry"}, {actionSkip, "skip"}, {actionSwitch, "switch provider"}, {actionFix, "hand to the fixer"}, {actionContinue, "continue as resume would"}, {actionBlock, "block this phase"}, {actionStop, "stop the run"},
+	{actionRetry, "retry"}, {actionSwitch, "switch provider"}, {actionContinue, "continue as resume would"}, {actionBlock, "block this phase"}, {actionStop, "stop the run"},
 }
 
 var blockerID = regexp.MustCompile(`^b\d+$`)
@@ -206,7 +204,7 @@ func (l *RunLoop) wait(ctx context.Context, open openAsk, routed <-chan bool, ma
 				l.withdrawBlocker(id, runStopped)
 				return <-open.done
 			}
-			if !l.dogWaiting() && !l.fixOpen(id) {
+			if !l.dogWaiting() {
 				left -= now.Sub(last)
 			}
 			last = now
@@ -248,37 +246,6 @@ func (l *RunLoop) restartBlocker(open openAsk, main *blockerHold, rs Restart) (R
 	}
 	main.restart = &rs
 	return <-open.done, true
-}
-
-func (l *RunLoop) FixOpen(id string) bool {
-	return l.fixOpen(id)
-}
-
-func (l *RunLoop) fixOpen(id string) bool {
-	return l.Fixer != nil && l.Fixer.Open(id)
-}
-
-func (l *RunLoop) StartFix(id, addendum string) error {
-	open, ok := l.openBlocker(id)
-	if !ok {
-		return fmt.Errorf("blocker %s is not open", id)
-	}
-	if l.Fixer == nil {
-		return errors.New("no fixer is wired")
-	}
-	l.mu.Lock()
-	ctx := l.askCtx
-	l.mu.Unlock()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := l.Fixer.Start(ctx, open.b, open.q, addendum); err != nil {
-		return err
-	}
-	if _, ok := l.openBlocker(id); !ok {
-		l.Fixer.Withdraw(id)
-	}
-	return nil
 }
 
 func (l *RunLoop) dogWaiting() bool {
@@ -436,11 +403,26 @@ func (l *RunLoop) expire(id string) {
 	if !ok {
 		return
 	}
-	action := actionBlock
-	if !slices.Contains(open.b.Actions, actionBlock) && slices.Contains(open.b.Actions, actionSkip) {
-		action = actionSkip
+	action := actionStop
+	switch {
+	case slices.Contains(open.b.Actions, actionRetry) && l.retriesLeft(open.b) > 0:
+		action = actionRetry
+	case slices.Contains(open.b.Actions, actionBlock):
+		action = actionBlock
 	}
 	l.closeBlocker(open, Resolution{ID: id, Action: action, By: byTimeout, Citation: byTimeout}, action)
+}
+
+func (l *RunLoop) retriesLeft(b Blocker) int {
+	st, err := l.Store.Load(l.RunID)
+	if err != nil {
+		return 0
+	}
+	return l.MaxRestarts - retriesUsed(st.Events, blockerTarget(b))
+}
+
+func blockerTarget(b Blocker) string {
+	return fmt.Sprintf("phase-%s/%s", b.Phase, b.Step)
 }
 
 func (l *RunLoop) withdrawBlocker(id, reason string) {
@@ -469,14 +451,8 @@ func (l *RunLoop) finish(open openAsk, res Resolution, answer string, release bo
 	if w, ok := l.watcher().(interface{ Withdraw(id string) }); ok {
 		w.Withdraw(q.ID)
 	}
-	if l.Fixer != nil {
-		l.Fixer.Withdraw(q.ID)
-	}
 	b := open.b
-	fields := map[string]string{"id": q.ID, "action": res.Action, "by": res.By, "source": b.Source, "step": fmt.Sprintf("phase-%s/%s", b.Phase, b.Step)}
-	if fixCitation(res.Citation) {
-		fields["fix"] = res.Citation
-	}
+	fields := map[string]string{"id": q.ID, "action": res.Action, "by": res.By, "source": b.Source, "step": blockerTarget(b)}
 	l.emit(Event{Kind: "blocker-resolved", Phase: b.Phase, Step: b.Step, Fields: fields})
 	if res.By == maintainerCitation {
 		l.emit(Event{Kind: "human", Phase: b.Phase, Step: b.Step, Fields: map[string]string{"what": "blocker", "id": q.ID}})
@@ -502,34 +478,34 @@ func (r *QuestionRouter) ResolveBlocker(id, action, rule, addendum string, keys 
 	if !slices.Contains(b.Actions, action) {
 		return decisionRefused, fmt.Sprintf("%s is not an action for blocker %s (%s): %s", action, id, b.Source, orList(b.Actions))
 	}
-	if action == actionFix {
-		return r.fix(id, addendum)
-	}
-	if action != actionBlock && action != actionStop && r.FixOpen != nil && r.FixOpen(id) {
-		return decisionRefused, fmt.Sprintf("fix %s is open: wait for the fixer's proposal, or block or stop", id)
-	}
 	rem := r.Remedies
 	if rem == nil {
 		rem = &Remedies{}
 	}
-	if restartAction(action) {
-		target := fmt.Sprintf("phase-%s/%s", b.Phase, b.Step)
+	maintainer := strings.TrimSpace(maintainerSaid) != ""
+	lastResort := (action == actionBlock || action == actionStop) && !maintainer && slices.ContainsFunc(b.Actions, restartAction)
+	if restartAction(action) || lastResort {
+		target := blockerTarget(b)
 		n, err := r.retries(target)
 		if err != nil {
 			return decisionRefused, err.Error()
 		}
-		if n >= rem.MaxRestarts {
+		if restartAction(action) && n >= rem.MaxRestarts {
 			return decisionRefused, fmt.Sprintf("%s limit %d reached for %s", action, rem.MaxRestarts, target)
+		}
+		if lastResort && n < rem.MaxRestarts {
+			return decisionRefused, fmt.Sprintf("%d retries left for %s: fix the cause and retry", rem.MaxRestarts-n, target)
 		}
 	}
 	res := Resolution{ID: id, Action: action, By: answeredByWatchdog}
 	authorised := false
-	maintainer := strings.TrimSpace(maintainerSaid) != ""
 	switch action {
 	case actionBlock, actionStop:
 		res.Citation, authorised = citationAlways, true
 	case actionContinue:
-		if r.Dog != nil && r.Dog.Unattended {
+		if slices.Contains(rem.Allow, "restart") {
+			res.Citation, authorised = consentAllowList, true
+		} else if r.Dog != nil && r.Dog.Unattended {
 			res.Citation, authorised = citationUnattended, true
 		}
 	case actionRetry:
@@ -588,19 +564,6 @@ func (r *QuestionRouter) ResolveBlocker(id, action, rule, addendum string, keys 
 	return decisionAuthorised, ""
 }
 
-func (r *QuestionRouter) fix(id, addendum string) (string, string) {
-	if r.Dog != nil && r.Dog.Unattended {
-		return decisionRefused, unattendedBlockOrStop
-	}
-	if r.Fix == nil {
-		return decisionRefused, "no fixer is wired"
-	}
-	if err := r.Fix(id, addendum); err != nil {
-		return decisionRefused, err.Error()
-	}
-	return decisionAuthorised, ""
-}
-
 func (r *QuestionRouter) retries(target string) (int, error) {
 	if r.Remedies == nil || r.Remedies.Store == nil || r.Dog == nil {
 		return 0, nil
@@ -617,7 +580,7 @@ func retriesUsed(events []Event, target string) int {
 	for _, ev := range events {
 		f := ev.Fields
 		switch {
-		case ev.Kind == "blocker-resolved" && restartAction(f["action"]) && f["step"] == target && f["fix"] == "":
+		case ev.Kind == "blocker-resolved" && restartAction(f["action"]) && f["step"] == target:
 			n++
 		case ev.Kind == "restart" && f["step"] == target && !blockerID.MatchString(f["remedy"]):
 			n++

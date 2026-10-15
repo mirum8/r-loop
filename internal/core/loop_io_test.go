@@ -267,7 +267,7 @@ func TestASlowReportWriteDoesNotHoldBackEmits(t *testing.T) {
 	withReportWriter(t, func(path string, data []byte) error {
 		once.Do(func() { close(entered) })
 		<-gate
-		return writeFileAtomic(path, data)
+		return WriteFileAtomic(path, data)
 	})
 	l := &RunLoop{Plan: threePhasePlan(), Store: &RecordGuard{Store: store}, Face: &fakeFace{}, RunID: "run-1", runDir: store.dir}
 	l.startReport()
@@ -361,7 +361,7 @@ func TestAReportWriteKeepsTheUmaskAndAnExistingMode(t *testing.T) {
 	old := syscall.Umask(0o077)
 	t.Cleanup(func() { syscall.Umask(old) })
 	p := filepath.Join(t.TempDir(), "report.md")
-	if err := writeFileAtomic(p, []byte("a")); err != nil {
+	if err := WriteFileAtomic(p, []byte("a")); err != nil {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(p)
@@ -371,7 +371,7 @@ func TestAReportWriteKeepsTheUmaskAndAnExistingMode(t *testing.T) {
 	if err := os.Chmod(p, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileAtomic(p, []byte("b")); err != nil {
+	if err := WriteFileAtomic(p, []byte("b")); err != nil {
 		t.Fatal(err)
 	}
 	st, err = os.Stat(p)

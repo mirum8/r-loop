@@ -92,8 +92,6 @@ func fullVars() map[string]any {
 		"DesignNote":      "",
 		"Design":          "",
 		"DesignIntent":    "",
-		"IncidentPath":    "/runs/r1/fix-b3/incident.md",
-		"ProposalPath":    "/runs/r1/fix-b3/proposal.json",
 		"Root":            "/repo",
 	}
 }
@@ -289,7 +287,7 @@ func TestGatefixReviewAndFixPromptsDoNotOfferAskWatchdog(t *testing.T) {
 
 func TestAllTemplatesRenderWithFullVariableSet(t *testing.T) {
 	r := New(t.TempDir())
-	for _, name := range append(stepTemplates, "watchdog", "fixer") {
+	for _, name := range append(stepTemplates, "watchdog") {
 		text, source, err := r.Render(name, fullVars())
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
@@ -428,8 +426,9 @@ func TestWatchdogClearsBlockers(t *testing.T) {
 		"`propose_remedy`, then `retry`",
 		"`keys` with `rule`",
 		"`switch` to the row's fallback",
-		"`ask_maintainer` with the options: retry, skip, switch provider, hand to the fixer, continue as resume would, block this phase, stop the run",
+		"`ask_maintainer` with the options: retry, switch provider, continue as resume would, block this phase, stop the run",
 		"Then call `resolve_blocker` again with their reply, quoted, as `maintainer_said`",
+		"- `block` and `stop` are refused while the target has retries left: fix the cause and retry. Nothing in the run is skipped.",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q:\n%s", want, text)
@@ -438,14 +437,17 @@ func TestWatchdogClearsBlockers(t *testing.T) {
 	if strings.Contains(text, "nothing authorised fixes it, call `resolve_blocker` with `continue` when it fits, else `block` or `stop`") {
 		t.Errorf("attended watchdog told to block without asking:\n%s", text)
 	}
+	if strings.Contains(text, "retry, skip,") || strings.Contains(text, "`skip`, a provider") {
+		t.Errorf("watchdog offered skip on a blocker:\n%s", text)
+	}
 }
 
 func TestAnAttendedWatchdogRetriesAMinorFailureWithoutAsking(t *testing.T) {
 	text := render(t, New(t.TempDir()), "watchdog", fullVars())
 
 	for _, want := range []string{
-		"- A failure a fresh attempt can get past is minor: retry it at once with an `addendum` saying what to change, and do not ask the maintainer.",
-		"Ask only when the same failure repeats, the step has no retries left, the cause is out of the agent's reach, or the action needs the maintainer's consent.",
+		"- A failure is minor when fixing its cause lets a fresh attempt pass: fix the cause, as \"Fixing it yourself\" says, then `retry` with an `addendum` saying what changed, and do not ask the maintainer.",
+		"Ask the maintainer only for consent the allow-list lacks, or when the step has no retries left.",
 		"- Otherwise prefer `retry` with an addendum for anything the agent can do differently, saying in the addendum what to change; a minor failure is retried without asking.",
 	} {
 		if !strings.Contains(text, want) {
@@ -454,33 +456,37 @@ func TestAnAttendedWatchdogRetriesAMinorFailureWithoutAsking(t *testing.T) {
 	}
 }
 
-func TestWatchdogHandsABlockerToTheFixer(t *testing.T) {
+func TestWatchdogFixesTheCauseItself(t *testing.T) {
 	text := render(t, New(t.TempDir()), "watchdog", fullVars())
 
 	for _, want := range []string{
-		"- `apply_fix(id, decision, maintainer_said?)` — decide a fix the fixer proposed for blocker `id`: `apply` or `reject`.",
-		"  - `fix` hands the blocker to the fixer, with your diagnosis as `addendum`",
-		"## Handing a blocker to the fixer\n\n- Take `fix` when a retry will not clear the blocker: the same failure repeats, a provider's version moved since the run started",
-		"or a provider does not know a flag or shows a screen the driver does not expect.",
-		"On `fix b<n> proposed` for an `env` or `config` fix, show the proposal to the maintainer",
-		"call `ask_maintainer` with the options apply and reject",
-		"Then call `apply_fix(id, decision)` with their decision and their reply, quoted, as `maintainer_said`; `apply` needs it.",
-		"An `r-loop` or `project` fix is never applied",
+		"- `set_config(key, value, why)`",
+		"## Fixing it yourself",
+		"run it yourself once it comes back `authorised`, then `retry` with an `addendum`",
+		"`set_config(key, value, why)` with one scalar key in `.r-loop/config.yaml`",
+		"Then, for a held step, `continue`, which reads the config again; `retry` keeps the row the step started on. A held reviewer takes the new value on `retry`, which reopens it from the current config.",
+		"Keys under `watchdog.` are the maintainer's: ask them to edit the file.",
+		"edit the plan, `docs/todo.md`, in the primary tree, change nothing else there, then `continue`",
+		"`docs(plan): correct phase <N>`",
+		"A fault in the step's own code: `retry` with an `addendum`",
+		"whose reason starts `r-loop bug: ` and names the file and line",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q:\n%s", want, text)
 		}
 	}
+	for _, gone := range []string{"fixer", "apply_fix", "`fix` hands"} {
+		if strings.Contains(text, gone) {
+			t.Errorf("watchdog still names %q:\n%s", gone, text)
+		}
+	}
 }
 
-func TestAnUnattendedWatchdogIsToldTheFixerIsRefused(t *testing.T) {
+func TestAnUnattendedWatchdogLeavesItsOwnConfigKeysAlone(t *testing.T) {
 	text := render(t, New(t.TempDir()), "watchdog", with("Unattended", true))
 
-	if !strings.Contains(text, "## Handing a blocker to the fixer\n\n- This run is unattended: `fix` is refused.") {
-		t.Errorf("unattended watchdog not told fix is refused:\n%s", text)
-	}
-	if strings.Contains(text, "Then call `apply_fix(id, decision)`") {
-		t.Errorf("unattended watchdog told to apply fixes:\n%s", text)
+	if !strings.Contains(text, "Keys under `watchdog.` and `unattended.` are the maintainer's: leave them.") || strings.Contains(text, "ask them to edit the file") {
+		t.Errorf("unattended watchdog config keys:\n%s", text)
 	}
 }
 
@@ -559,8 +565,8 @@ func TestWatchdogCarriesTheBlockerContinue(t *testing.T) {
 		unattended bool
 		want       string
 	}{
-		{false, "Ask the maintainer before you take `continue`"},
-		{true, "take `continue` on your own"},
+		{false, "Take `continue` on your own when it fits: it is authorised as `retry` is"},
+		{true, "Take `continue` on your own when it fits: it is authorised as `retry` is"},
 	} {
 		vars := fullVars()
 		vars["Unattended"] = c.unattended
@@ -1284,50 +1290,6 @@ func TestFixWithoutAStaticFileLeavesTheAnalyzerNoteOut(t *testing.T) {
 	// then
 	if strings.Contains(actual, "A rule hit is not a defect by itself") {
 		t.Errorf("fix prompt names the analyzers:\n%s", actual)
-	}
-}
-
-func TestFixerProposesAndChangesNothing(t *testing.T) {
-	text := render(t, New(t.TempDir()), "fixer", fullVars())
-
-	for _, want := range []string{
-		"Read `/runs/r1/fix-b3/incident.md` first.",
-		"Use read-only commands only: provider versions, `--help` output, release notes",
-		"Change no file, in the repository, its worktrees or anywhere else on the machine, and install, upgrade, downgrade or log in to nothing.",
-		"Write `/runs/r1/fix-b3/proposal.json` as one JSON object",
-		"Put the exact shell commands in `commands`",
-		"`content` is that file's complete new text",
-		"`.r-loop/config.yaml` or `~/.config/r-loop/config.yaml`",
-		"`manual` lists what the maintainer must do by hand, such as a login or anything else interactive.",
-		"`r-loop` — a bug in r-loop itself. Name the file and the line",
-		"`project` — a fault in the project being built",
-		"An r-loop run in `/repo` is held by a blocker",
-		`{"outcome":"ok","reason":""}`,
-		"/runs/r1/phase-7/plan-a1.sentinel",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("fixer prompt missing %q", want)
-		}
-	}
-	if strings.Contains(text, "ask_watchdog") {
-		t.Error("the fixer prompt offers ask_watchdog")
-	}
-}
-
-func TestFixerPromptIsOverridable(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, ".r-loop", "prompts", "fixer.md")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("read {{.IncidentPath}}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	text, source, err := New(dir).Render("fixer", fullVars())
-
-	if err != nil || text != "read /runs/r1/fix-b3/incident.md" || source != path {
-		t.Errorf("text %q source %q err %v", text, source, err)
 	}
 }
 

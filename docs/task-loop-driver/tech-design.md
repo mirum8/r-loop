@@ -40,6 +40,11 @@ or asks the maintainer about, held by `watchdog.blockerTimeout` (which replaces
 `watchdog.remedyWindow`). Milestone 17 holds both contracts; the bullets below that they change say
 so.
 
+ADR-97 (2026-10-14) removes the fixer of ADR-91 and the `skip` action of every blocker: the
+watchdog fixes what it finds itself — a remedy, a config key through `set_config`, a corrected plan
+line followed by `continue` — and `block` and `stop` wait until the target's retries are spent.
+Milestone 21 holds the contract; Milestone 17's tables already carry its actions.
+
 ## Milestone 1 — Core, plan file, config and state
 
 - **Layout** — `cmd/r-loop` (main) · `internal/core` (loop, state machines, step kinds, evidence
@@ -140,7 +145,8 @@ so.
     `RemoveWorktree(dir) error` · `DeleteBranch(branch) error` · `Dirty(dir) ([]string, error)` · `CommitAll(dir, message)
     (string, error)` · `DiffNonEmpty(dir, ref) (bool, error)` · `ChangedFiles(dir, ref)
     ([]string, error)` · `DiffStat(dir, ref) (added, deleted int, err error)` — **all three
-    compare the working tree, untracked files included, against `ref`** · `Snapshot(dir)
+    compare the working tree, untracked files included, against its merge base with `ref`**
+    (`git diff --merge-base`, so commits `ref` gained after the worktree forked are not counted) · `Snapshot(dir)
     (tree string, err error)` — a tree object of the working tree, untracked files included,
     written through a throwaway index so no branch, commit or real index changes ·
     `TreeDiff(from, to string) ([]string, error)` — the paths that differ between two trees ·
@@ -234,12 +240,12 @@ so.
   milestone `claude/opus/medium/1h/report`, no review; `land.fixRounds 1`, `land.gateTimeout 30m`, `land.gateIdle 10m`, no `land.fix`;
   `unattended.allow [deps, ports, locks, restart, retry, provider]`, applied only with
   `--unattended`;
-  `watchdog.maxRestarts 2`; `watchdog.provider claude`, `watchdog.model opus`,
-  `watchdog.effort high`, `watchdog.unblockTimeout 2h`, `watchdog.triageTimeout 2h`, `watchdog.allow []`, `watchdog.blockerTimeout 10m` (Milestone 17;
+  `watchdog.maxRestarts 3` (ADR-97); `watchdog.provider claude`, `watchdog.model opus`,
+  `watchdog.effort high`, `watchdog.unblockTimeout 2h`, `watchdog.triageTimeout 2h`, `watchdog.allow [deps, ports, containers, locks, restart, retry, provider]` (ADR-97), `watchdog.blockerTimeout 10m` (Milestone 17;
   `watchdog.remedyWindow` is read as its alias),
   `watchdog.checkTimeout 10m`, `watchdog.stallGrace 2m`,
-  `watchdog.overtimeFactor 2`, `watchdog.diffFactor 3`, `watchdog.dialogs []` (a block list of
-  non-empty strings, ADR-80); `notify.onHalt/onWarn/onDone ""`. A
+  `watchdog.overtimeFactor 2`, `watchdog.diffFactor 3`, `watchdog.dialogs` (a block list of
+  non-empty strings, ADR-80; two shipped rules, Milestone 21); `notify.onHalt/onWarn/onDone ""`. A
   flow-style YAML node is rejected naming the line; an unknown key is rejected naming the key and
   file; a negative `rounds` is rejected. A written duration that is empty, zero or negative is
   rejected naming the file, line and key. A row whose `timeout` no layer sets is rejected, and so
@@ -255,6 +261,11 @@ so.
   placeholder, passed first on every start), `modelFlag` (`{model}`),
   `effortFlag` (`{effort}`, may be empty → banner `effort n/a`), `models` (a `kind` subcommand printing the model catalog JSON; a bare lowercase model (`^[a-z]+$`) is an alias resolved to the newest `visibility: list` slug `gpt-<version>-<alias>`, once per process (memoised in the wiring, checked in preflight, applied on every `Resolve`; a resume resolves again and may pick up a newer release); no match or a failing catalog exits 2), `askFlag` (`{url}` or
   `{mcpConfig}`), `dirFlag` (`{dir}` or empty, ADR-79), `doneSignal ∈ {sentinel}`, `ask ∈ {mcp, none}`, `review` (may be empty; `{args}` is replaced with `Args(p, model, effort, "", "", "")`, and `{output}` with the shell-quoted `<ArtifactsDir>/native-review.txt`), `reviewExec` (a shell command the driver runs in the step worktree, its stdout the native report; exclusive with `review`, never starting with `/`, never carrying `{output}`, else refused on `Resolve` naming the key and the source; `{args}` as in `review`; ADR-81 as amended 2026-10-07).
+  `version` (a `kind` subcommand, like `models`, run as `<kind> <version>` with a 10 s timeout; the
+  first non-empty line of stdout is the version; shipped: claude and codex `version: "--version"`;
+  `providers.Provider.Version`; a block without it has no version (`-`); `app` runs every provider the
+  config names once at run start and records `provider-versions{<name>: <version>, …}`; a failure
+  records `<name>: ?` and never fails the run; ADR-6 as amended 2026-10-08).
   `flags` may carry none of `{model}`, `{effort}`, `{url}`, `{mcpConfig}`, `{dir}`.
   **Precedence is whole-block**: the project config's block, else
   `~/.config/r-loop/providers/<name>.yaml`, else the shipped block. `Args(p, model, effort, askURL,
@@ -428,7 +439,8 @@ so.
   landed`.
 - **Outcomes** — `failed` → raise a blocker and hold it (Milestone 17: `retry` is a `Restart`, at
   most `watchdog.maxRestarts` per step; the hold is `watchdog.blockerTimeout`, formerly the remedy
-  window); on `block` or expiry the phase is **blocked**:
+  window, whose expiry resolves `retry` while the step has retries left, Milestone 21); on `block`
+  the phase is **blocked**:
   `Event{Kind: "phase-blocked", Fields{phase, reason}}` and `notify.onWarn` with
   `R_LOOP_STATUS=blocked`; every phase that depends on it, directly or through others, is
   `blocked` with `Event{Kind: "phase-skipped", Fields{phase, because}}`; the loop continues with
@@ -519,8 +531,8 @@ so.
   the report is `report-skipped` and discarded. On `ok`, the commit is staged by the report path
   and must touch exactly that path. Any failure resets the primary tree to the HEAD recorded before
   the step, unless the step left its starting branch; then the other branch is left alone.
-  Anything else raises a milestone blocker (Milestone 17); its `skip` is `report-skipped`, as
-  before, and it never blocks a phase.
+  Anything else raises a milestone blocker (Milestone 17); its `block` is `report-skipped`, as
+  before: the report is left out, the run goes on, and it never blocks a phase (Milestone 21).
 - **Report** — `report.md` opens with `human touches: <n>` (every answer a person gave, every
   consent, every resume, every Resolve-first answer) and an **Automatic decisions** section: restarts with their remedy,
   fallback restarts with the provider, model and effort used, gate-fix rounds,
@@ -718,6 +730,7 @@ so.
   (Milestone 16) ·
   `resolve_blocker(id, action, rule?, addendum?, keys?, provider?, model?, effort?, maintainer_said?)
   → {decision: authorised|refused|ask, reason?}` (Milestone 17) ·
+  `set_config(key, value, why) → {decision: authorised|refused, reason?}` (Milestone 21) ·
   `ask_maintainer(question, options?, recommended?) → {accepted, reason?}` ·
   `stop_run(when: after-phase|now, reason, maintainer_said) → {accepted, reason?}` ·
   `pause_run(reason, maintainer_said) → {accepted, reason?}` ·
@@ -1118,7 +1131,8 @@ ADR-80.
 - **Events** — `dialog{id, agent}` (with `text`), `dialog-answered{id, keys, by, rule}`,
   `dialog-closed{id, reason}`. The report and `r-loop status` list one line per dialog:
   `<id> phase-<N>/<kind>: dialog → <keys> (<by>, <rule>)`.
-- **Config** — `watchdog.dialogs`, a block list of non-empty strings, default `[]`; flow style is
+- **Config** — `watchdog.dialogs`, a block list of non-empty strings, two rules by default
+  (Milestone 21); flow style is
   rejected like every key. The watchdog prompt gets `Dialogs` and an "Answering dialogs" section:
   the rules, herdr key names (`enter`, `esc`, `down`, digits), `decline`, ask the maintainer
   off-rule, decline when unattended.
@@ -1183,18 +1197,20 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
 
   | source | raised when | `retry` means | actions |
   |---|---|---|---|
-  | `step` | a pipeline step ends `failed` or `stalled` (`loop.go` `ended`/`awaitRestart`) | a new attempt: the restart path, with the addendum and provider | retry, switch, fix, block, stop, continue |
-  | `reviewer` | a reviewer fails: a failed `ReviewExec` command, a `failed` sentinel, evidence missing, stalled, gone | that reviewer reopened for this round | retry, keys, switch, skip, block, stop |
-  | `land` | a merge conflict, an unfinished merge, a wrong branch, a dirty or changed tree, a red gate with no fix round left, an item gate green at base or with no test file, a tick or commit failure | `Land` again, after a remedy or the maintainer's own fix | retry, fix, block, stop, continue |
-  | `gatefix` | a gatefix step that does not end `ok` | another gatefix round | retry, switch, fix, block, stop, continue |
-  | `gate-probe` | an error of `GateProbe` itself, not of its step | the probe again | retry, fix, block, stop, continue |
-  | `milestone` | a milestone report that fails | the report again | retry, skip, stop |
+  | `step` | a pipeline step ends `failed` or `stalled` (`loop.go` `ended`/`awaitRestart`) | a new attempt: the restart path, with the addendum and provider | retry, switch, block, stop, continue |
+  | `reviewer` | a reviewer fails: a failed `ReviewExec` command, a `failed` sentinel, evidence missing, stalled, gone | that reviewer reopened for this round | retry, keys, switch, block, stop |
+  | `land` | a merge conflict, an unfinished merge, a wrong branch, a dirty or changed tree, a red gate with no fix round left, an item gate green at base or with no test file, a tick or commit failure | `Land` again, after a remedy or the maintainer's own fix | retry, block, stop, continue |
+  | `gatefix` | a gatefix step that does not end `ok` | another gatefix round | retry, switch, block, stop, continue |
+  | `gate-probe` | an error of `GateProbe` itself, not of its step | the probe again | retry, block, stop, continue |
+  | `milestone` | a milestone report that fails | the report again | retry, block, stop |
 
-  `skip` on a reviewer appends `reviewer-skipped{step, reviewer, reason}` and leaves it out of
-  this round only; on a milestone it is `report-skipped`, as before.
+  No source takes `skip` (ADR-97). `block` on a milestone is `report-skipped`, as before: the
+  report is left out and the run goes on. The only `reviewer-skipped` is a reviewer whose
+  `requires` is missing (Milestone 8).
 
   `continue` (ADR-96) re-enters the held work in the same process, as `r-loop resume` would, with
-  no addendum. On `step` (`awaitRestart`) it is a restart to attempt N+1 whose `StepRef` takes
+  no addendum. On `step` (`awaitRestart`) it reads the phase again as a land does (Milestone 21)
+  and is a restart to attempt N+1 whose `StepRef` takes
   `ReviewFrom`/`PrevRoundTree` from `recordedRound(Store.Load(RunID), phase, kind, N)` and, when
   `ReviewFrom > 0`, `Subject` from `recordedSubject`; with no recorded round it is a fresh attempt.
   Its `restart` event carries `citation: continue`. On `land` and `gate-probe` (`landBlocker`) and
@@ -1212,22 +1228,22 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
   | `retry` | `restart` is allow-listed and the target has had fewer than `watchdog.maxRestarts` retries | `maintainer_said` → authorised; else `ask`; at the budget → refused |
   | `keys` | `rule` is exactly one of `watchdog.dialogs`, the rule the keys answer under (keys as in `answer_dialog`, pressed only while the reviewer's screen is unchanged) | `maintainer_said` → authorised; else `ask` |
   | `switch` | the provider is the row's fallback (`remedies.go`'s rule; model and effort default to the fallback's) and the target is within `retry`'s budget, which counts its switches too | `maintainer_said` with `model` and `effort` → authorised; else `ask`; at the budget → refused |
-  | `skip` | `maintainer_said` | `ask`; unattended → refused |
-  | `continue` | `--unattended` (`Citation: unattended`), within `retry`'s budget, which counts its continues too; never by the allow-list | `maintainer_said` → authorised; else `ask`; at the budget → refused |
-  | `block` | always | |
-  | `stop` | always | |
+  | `continue` | as `retry`: `restart` is allow-listed and the target is within `retry`'s budget, which counts its continues too; attended or not (ADR-97) | `maintainer_said` → authorised; else `ask`; at the budget → refused |
+  | `block` | the target has no retries left under `watchdog.maxRestarts`, or the blocker lists none of `retry`, `switch`, `continue` (ADR-97) | `maintainer_said` → authorised; else refused: `<n> retries left for <target>: fix the cause and retry` |
+  | `stop` | as `block` | as `block` |
 
   With `--unattended` nothing returns `ask`: an action that would is refused (`unattended:
   continue, block or stop`). `ask` calls `Dog.AskMaintainer` with the blocker and its options
-  (`retry, skip, switch provider, hand to the fixer, continue as resume would, block this phase,
+  (`retry, switch provider, continue as resume would, block this phase,
   stop the run`, cut to the source's actions) and records nothing
   else. `propose_remedy` stays the way to run a fix before a `retry`; `restart_step` on a step's
   open blocker resolves it as `retry`.
 - **The hold** — `watchdog.blockerTimeout` (duration, default `10m`); `watchdog.remedyWindow` is
   read as its alias, and a file setting both is rejected (exit 2). The timer counts only while the
   watchdog is not in its `watchdog-waiting` state: it stops on `watchdog-waiting` and runs again
-  from where it stood on `watchdog-resumed`. On expiry the blocker resolves `block`, `By:
-  timeout` — for `milestone`, which has no `block`, `skip` — today's outcome for each source.
+  from where it stood on `watchdog-resumed`. On expiry the blocker resolves, `By: timeout`, to
+  `retry` while it lists `retry` and the target has retries left, else to `block`, else to `stop`
+  (ADR-97).
 - **Outcomes** — a final `block` blocks the phase as before and exits with today's codes (`1`, `3`
   for a block that began as a stall, `5` for one that began as a watchdog halt). `stop` records the
   run `halted` with `stopped by the watchdog at <id>: <reason>`, runs `notify.onHalt` and exits `5`.
@@ -1243,9 +1259,10 @@ and anything off plan becomes a blocker the watchdog clears or asks the maintain
   authorised resolution is recorded, emitted as `blocker-resolved{id, action, by}` (and a `human`
   event when `by` is `maintainer`), and only then acted on.
 - **Prompt** — `watchdog.md` gains "Clearing blockers": read the pane or the output and diagnose;
-  fix what is authorised (`propose_remedy`, then `retry`, `keys` or `switch`); otherwise call
-  `ask_maintainer` with the options and act with `maintainer_said`; unattended, `block` or `stop`
-  when nothing authorised fixes it.
+  fix what is authorised (`propose_remedy`, then `retry`, `keys` or `switch`; `set_config` or a plan
+  correction, Milestone 21); otherwise call `ask_maintainer` with the options and act with
+  `maintainer_said`; `block` and `stop` only once the retries are spent; unattended, `block` or
+  `stop` when nothing authorised fixes it.
 - **Faces** — the TUI shows `watchdog · b<n>` on the phase's row from `blocked-on` until
   `blocker-resolved`, with a feed line for each; amber stays only on `watchdog-waiting`. The plain
   face prints both events as lines. The run report and `r-loop status` list one line per blocker:
@@ -1293,96 +1310,25 @@ nothing installed beyond the project's own toolchain.
 - **In the round** — written to `<kind>-findings-static-r<N>.json`, `reviewer: static`; event
   `review-find{round, reviewer: static, state, findings, command: analyze <Command>}`. It joins
   the fix half's `FindingsFiles`, the prior findings of the next round and resume's rebuilt paths.
-  An error raises a `reviewer` blocker on `<kind>-rv-static`, actions `retry, skip, block, stop`.
+  An error raises a `reviewer` blocker on `<kind>-rv-static`, actions `retry, block, stop`
+  (ADR-97: no `skip`).
 - **Config** — `analyze.enabled` (`true`) and `analyze.timeout` (`15m`), nothing else. Preflight,
   when enabled, exits 2 naming a detected language's missing toolchain (`go`; the runner and
   `java`), and prints `static: <languages>[, semgrep]` or `… (semgrep not installed)`.
 
-## Milestone 19 — The fixer
+## Milestone 19 — Provider versions
 
-ADR-91. A blocker a retry will not clear goes to a fixer session that proposes a fix; the driver
-applies it on the maintainer's quoted confirmation and settles the blocker as `retry`, in the same run.
+ADR-91's fixer is superseded by ADR-97: the fixer is gone, and the watchdog fixes what it finds
+itself. What stays from this milestone is the provider `version` key (Milestone 2's provider block)
+and the versions line on a blocker.
 
-- **Provider key `version` (ADR-6 as amended by ADR-91)** — a kind subcommand, like `models`, run as
-  `<kind> <version>` with a 10 s timeout; the first non-empty line of stdout is the version. Shipped:
-  claude and codex `version: "--version"`. `providers.Provider.Version`; a block without it has no
-  version (`-`). `app` runs every provider the config names once at run start and records
-  `provider-versions{<name>: <version>, …}`; a failure records `<name>: ?` and never fails the run.
 - **Versions on a blocker** — `RunLoop.Versions func() map[string]string` (nil = none); `blockerText`
   appends a line `versions: codex 0.47.0 → 0.48.1, claude 2.1.220` (`a → b` only where it moved since
   `provider-versions`).
-- **Config** — `watchdog.fixer` with `provider`, `model`, `effort` (`roleSchema`) and `timeout`
-  (duration); defaults `claude`, `opus`, `high`, `20m`; required by `requireRoles`; banner line
-  `fixer: <provider> <model> <effort>`. Preflight checks its binary and model like any role but does
-  not require `ask: mcp` (the fixer has no ask channel).
-- **Action `fix`** — `actionFix = "fix"`, added to every source's action list (`stepActions`,
-  `landActions`, `reviewerActions`, `staticActions`, `milestoneActions`, gatefix's) and to
-  `blockerOptions` as `hand to the fixer`. `ResolveBlocker` rows:
-
-  | action | authorised when | otherwise |
-  |---|---|---|
-  | `fix` | the blocker has no fix yet, and the run is not `--unattended` | refused: `already fixed: fix-b<n> <state>` or `unattended: block or stop` |
-
-  An authorised `fix` calls `Fixer.Start(ctx, blocker, question, addendum)` and returns
-  `authorised` without settling the blocker. `wait` stops the hold's clock while
-  `Fixer.Open(id)` is true, as it does while the watchdog is waiting.
-- **Paths** — `<runDir>/fix-b<n>/`: `incident.md`, `proposal.json`, `fixer.sentinel`,
-  `config.bak` (the file a config fix replaced), `command-<i>.log` (each command's output).
-- **Incident** — `incident.md` sections: `## Blocker` (`BlockerLine`, the routed text), `## Diagnosis`
-  (the addendum), `## Excerpt`, `## Versions` (run start and now), `## Recent records` (the run's last
-  50 records, one JSON per line), `## Config` (`config.resolved.yaml` with provenance), `## Paths` (the
-  primary root, the step's worktree if any, the run folder).
-- **The fixer session** — `core.Fixer{Host, Prompts, Store, Repo, Resolve, Dialogs, Face, Root, RunDir,
-  Pane, Label, Timeout, Poll}`. One open fix at a time per run; a second `fix` while one is open is
-  refused `fixer busy on b<n>`. Agent name `rloop-fix-b<n>-<runID suffix>`, at most 32 characters;
-  placed with `openBeside` (label `◆ fixer b<n>`), cwd the primary root, args from
-  `Resolve(provider, model, effort, "", "", "")` — no ask URL, no `dirFlag`. Held as a `*Session` with
-  `Key{Run, Phase, Kind: "fix-b<n>", Attempt: 1}` so `Dialogs.Blocked/Unblocked` route a dialog in its
-  pane to the watchdog (ADR-80). Before start: `Repo.Snapshot` of the primary tree and of the step's
-  worktree when the blocker has one. Prompt `fixer` with `IncidentPath`, `ProposalPath`, `Sentinel`,
-  `RunDir`, `Root`. Poll every `Poll`: `ReadSentinel`; `AgentGone` fails; `Timeout` fails. On `ok`:
-  read and validate the proposal, `TreeDiff` both snapshots and compare both r-loop config files with
-  their contents at start (any change fails the fix), close the pane,
-  record `fix-proposed`, and `Watch.Post` `fix b<n> proposed (<kind>): <cause>` with the rendered
-  proposal and `apply it with apply_fix after the maintainer confirms`. On failure: close the pane,
-  record `fix-failed`, post `fix b<n> failed: <reason>`. A blocker withdrawn or settled while its fix is
-  open closes the pane and records `fix-failed{reason: withdrawn}`.
-- **Proposal** — `core.Proposal{Kind, Cause, Evidence string; Commands []string; Config *ConfigChange;
-  Manual []string; Risk string}`, `ConfigChange{File, Content string}`, JSON keys `kind, cause,
-  evidence, commands, config{file, content}, manual, risk`. Valid when: `Kind ∈ {env, config, r-loop,
-  project}`; `Cause` non-empty; `Commands` and `Config` only for `env` or `config`; `Config.File` is
-  `.r-loop/config.yaml` (relative to the root) or `~/.config/r-loop/config.yaml`; `Config.Content`
-  passes `Fixer.CheckConfig(file, content)` — `app` wires it to `config.Load` with the candidate in
-  place of that file. An invalid proposal fails the fix with the reason.
-- **`apply_fix(id, decision: apply|reject, maintainer_said?) → {decision: authorised|refused,
-  reason?}`** — on the watchdog surface only, in `watchdogTools`, recorded as `watchdog-call` before
-  its handler, which first calls `Resume`; nil handler → refused. Refused: an id with no proposed fix,
-  a blocker no longer open, `apply` without `maintainer_said`, `apply` on kind `r-loop` or `project`.
-  `reject` records `fix-rejected{id}`. `apply`: record `fix-applied{id, commands, config}` first; run
-  each command with `Repo.Run(<fix dir>, command, Timeout)`, output to `command-<i>.log`, stopping at the
-  first non-zero exit (`fix-failed{id, reason: command <i> exited <n>}`); `TreeDiff` the snapshots again;
-  copy the current config file to `config.bak` and write the new content; call `Fixer.Reload()`; then
-  `SettleBlocker(Resolution{ID, Action: retry, By: maintainer, Citation: "fix-b<n>"})`. A blocker
-  settled by a fix does not count in `retriesUsed` and the step's `restarts` counter.
 - **Reload** — `app.reloadConfig()`: `config.Load` with the run's overrides, a new `providers.Registry`
   into `w.Registry`, `w.models` emptied, `RunLoop.SetKinds(core.Pipeline(...))` under `l.mu`, and the
   `Gate.FixKind`, `Probe.Kind` and `Boundary.Kind` rows refreshed. A failed reload leaves everything as
-  it was and fails the fix.
-- **Events** — `fix-started{id, provider, model}`, `fix-proposed{id, kind, cause}`, `fix-applied{id,
-  commands, config}`, `fix-rejected{id}`, `fix-failed{id, reason}`, each with the blocker's `phase` and
-  `step`.
-- **Prompt** — `fixer.md`: read the incident; investigate with read-only commands (versions, `--help`,
-  release notes, config, logs, the panes' screens named in the incident); change no file and install
-  nothing; write `proposal.json` with the exact commands and the whole new config file, `manual` for
-  anything interactive (a login), `r-loop` with the file and line for a bug in r-loop, `project` for a
-  fault in the project; then the sentinel (`outcome` partial). `watchdog.md` gains "Handing a blocker
-  to the fixer": take `fix` when the same failure repeats, a version moved, or a flag or screen is
-  unknown to the provider; on `fix b<n> proposed`, show the proposal to the maintainer with
-  `ask_maintainer` (options apply, reject) and call `apply_fix` with their reply quoted.
-- **Faces** — TUI `fixer · b<n>` on the phase's row from `fix-started` until `fix-proposed` or
-  `fix-failed`, with a feed line for each fix event; plain prints each as a line. The run report and
-  `r-loop status` list `fix-b<n> <kind>: <cause> → applied|rejected|failed (<reason>)`, `open` while
-  the fixer runs and `proposed` while it waits.
+  it was.
 
 ## Milestone 20 — The design step
 
@@ -1462,3 +1408,65 @@ judges the rendered result against its intent. The watchdog's triage decides whi
   out of the row and adds no feed line; `design-skipped` and `design` add a feed line
   (`design skipped: <reason>`, `design: <intent>`). Plain prints `step-skipped`, `design-skipped` and
   `design` as lines.
+
+## Milestone 21 — The watchdog fixes what it finds
+
+ADR-97. The fixer of ADR-91 is gone; the watchdog fixes the environment, the project's config and
+the plan itself, nothing is skipped, and `block` and `stop` wait until the retries are spent.
+
+- **Environment** — unchanged path: `propose_remedy`, the watchdog runs the command, then `retry`.
+  `watchdog.allow` ships every class; `restart` and `retry` stay the ones `retry` needs.
+- **`set_config(key, value, why) → {decision: authorised|refused, reason?}`** — on the watchdog
+  surface only, in `watchdogTools`, recorded as `watchdog-call` before its handler, which first
+  calls `Resume`. The handler, in order: refuses an empty `key` or `why`, and a key under
+  `watchdog.` or `unattended.`, each with the reason; parses
+  `value` as one YAML block node and sets it at the dotted `key` in a copy of
+  `.r-loop/config.yaml` (created when absent), validating the result as a project layer (unknown
+  key, flow style, a bad duration or a provider without a model: refused with the reader's
+  reason, the file untouched); appends `Event{Kind: "config-set", Fields{key, value, why}}`;
+  writes the file; reloads with `app.reloadConfig()` (Milestone 19), and on a failed reload
+  writes the previous bytes back (removing a file it created) and refuses with the reason; then
+  commits `.r-loop/config.yaml` alone in the primary tree as `chore(r-loop): set <key>`. A failed
+  commit is a warning; the reloaded value stays. The candidate config must also pass preflight's
+  provider checks for the configured steps (a reviewer that needs a native review on a provider
+  with neither `review` nor `reviewExec` is refused). A held step takes the new value on `continue`,
+  which reads the config again; a held reviewer takes it on `retry` or `switch`, which reopen the
+  reviewer from its current row, `switch`'s provider kept over it. Authorised on the watchdog's
+  word, attended or not.
+- **Plan correction** — the watchdog edits the plan file in the primary tree, then calls
+  `resolve_blocker(id, "continue")`, authorised on its own word as `retry` is. Before it acts on an authorised `continue` the driver reads
+  `git status --porcelain` in the primary tree: the plan file the only dirty path → commit it as
+  `docs(plan): correct phase <N>` and go on; other dirty paths → refused,
+  naming them; a clean tree → go on. A
+  gitignored, driver-local todo (ADR-84) is not committed.
+- **Step `continue`** — `awaitRestart` reads the phase from `RunLoop.PlanSource.Read(TodoPath)`
+  as `runPhase` does for a land (the run-time `Design`, `DesignNote` and `Triage` kept; a grouped
+  backlog phase not read again), so the new attempt's `StepVars` carry the corrected block; a phase
+  no longer in the plan raises the step blocker again with `phase <N> is no longer in <todo>`.
+- **r-loop bugs** — no tool: the watchdog works around the fault and sends `signal(warn, step,
+  "r-loop bug: <what>", evidence)`; the report lists it with the other warnings.
+- **Actions** — `skip` is removed from `blockerOptions` and every source (Milestone 17's table).
+  `continue` is authorised as `retry` is (`restart` allow-listed, within the shared budget), in an
+  attended run too; ADR-96's maintainer-only rule is gone.
+  `block`/`stop` refused while `retriesUsed(target) < watchdog.maxRestarts` and the source lists
+  `retry`, `switch` or `continue`, unless `maintainer_said` is set. Expiry: `retry` while the
+  source lists it and retries are left, else `block`, else `stop`.
+- **Verdict repair** — in the `verdict` check, a `fixed: true` entry whose `files` include paths
+  absent from `TreeDiff(RoundTree, Snapshot(worktree))` beside at least one present has the absent
+  ones dropped and the check passes, with a driver warning `verdict <id>: dropped unchanged
+  <paths>`; none present still fails `fixed finding <id>: <path> did not change in this round`.
+- **Defaults and upgrade** — `defaults.yaml`: `watchdog.maxRestarts 3`; `watchdog.allow [deps,
+  ports, containers, locks, restart, retry, provider]`; `watchdog.dialogs` "approve a sandbox
+  escalation for the project's build, test, container or browser tooling (mvn, gradle, go, npm,
+  docker, agent-browser) that writes only inside the worktree, the run folder, the temp dir or
+  that tool's own state folder" and "decline an escalation that reaches credentials or keys, or
+  deletes outside the worktree"; the implement row's `ui` reviewer `claude/opus/high`.
+  `config.ResetModels` (`--create-config` on an existing file) adds the missing `allow` classes,
+  fills a null or empty `dialogs` with the defaults, raises `maxRestarts` below 3 to 3, and moves
+  every `prompt: review-ui` reviewer on `provider: codex` to the default `ui` reviewer's provider,
+  model and effort, in rows that are not built-in too; each change is printed.
+- **Preflight** — for each `review-ui` reviewer whose provider resolves to `kind: codex`, an
+  amber `warning: reviewer <name> runs review-ui on codex, whose sandbox cannot start a browser;
+  use claude`, on the dry run and the real start; never an exit.
+- **Events** — `config-set{key, value, why}`, appended before the write; the plan commit and the
+  config commit are driver commits like any other (ADR-87's subjects).

@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -65,6 +66,8 @@ func ResetModels(path string) ([]string, error) {
 			name := steps.Content[i].Value
 			if defRow := child(defSteps, name); defRow != nil {
 				resetRow("steps."+name, steps.Content[i+1], defRow)
+			} else {
+				changes = append(changes, moveUIReviewers("steps."+name, steps.Content[i+1], child(defSteps, "implement"))...)
 			}
 		}
 		pruneEmpty(steps)
@@ -78,7 +81,10 @@ func ResetModels(path string) ([]string, error) {
 			changes = append(changes, fmt.Sprintf("land.fix: %s → removed", roleText(fix)))
 		}
 	}
+	changes = append(changes, dropFixer(root)...)
 	changes = append(changes, addAllow(child(root, "watchdog"))...)
+	changes = append(changes, fillDialogs(child(root, "watchdog"), child(def, "watchdog"))...)
+	changes = append(changes, raiseRestarts(child(root, "watchdog"), child(def, "watchdog"))...)
 	changes = append(changes, addDesign(root)...)
 	pruneEmpty(root)
 	if len(changes) == 0 {
@@ -101,6 +107,16 @@ func ResetModels(path string) ([]string, error) {
 	return changes, os.WriteFile(path, out.Bytes(), 0o644)
 }
 
+func dropFixer(root *yaml.Node) []string {
+	watchdog := child(root, "watchdog")
+	fixer := child(watchdog, "fixer")
+	if fixer == nil {
+		return nil
+	}
+	deleteKey(watchdog, "fixer")
+	return []string{fmt.Sprintf("watchdog.fixer: %s → removed", roleText(fixer))}
+}
+
 func addAllow(watchdog *yaml.Node) []string {
 	allow := child(watchdog, "allow")
 	if allow == nil || (!isNull(allow) && allow.Kind != yaml.SequenceNode) {
@@ -114,7 +130,7 @@ func addAllow(watchdog *yaml.Node) []string {
 		before = roleText(allow)
 	}
 	added := false
-	for _, class := range []string{"restart", "retry"} {
+	for _, class := range remedyClasses {
 		if !slices.ContainsFunc(allow.Content, func(n *yaml.Node) bool { return n.Value == class }) {
 			allow.Content = append(allow.Content, scalar(class))
 			added = true
@@ -124,6 +140,65 @@ func addAllow(watchdog *yaml.Node) []string {
 		return nil
 	}
 	return []string{fmt.Sprintf("watchdog.allow: %s → %s", before, roleText(allow))}
+}
+
+func fillDialogs(watchdog, def *yaml.Node) []string {
+	dialogs := child(watchdog, "dialogs")
+	if dialogs == nil || !(isNull(dialogs) || (dialogs.Kind == yaml.SequenceNode && len(dialogs.Content) == 0)) {
+		return nil
+	}
+	want := child(def, "dialogs")
+	*dialogs = yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: want.Content,
+		HeadComment: dialogs.HeadComment, LineComment: dialogs.LineComment, FootComment: dialogs.FootComment}
+	return []string{fmt.Sprintf("watchdog.dialogs: none → %d default rules", len(want.Content))}
+}
+
+func raiseRestarts(watchdog, def *yaml.Node) []string {
+	got := child(watchdog, "maxRestarts")
+	if got == nil || got.Kind != yaml.ScalarNode {
+		return nil
+	}
+	want := child(def, "maxRestarts")
+	n, err := strconv.Atoi(got.Value)
+	floor, _ := strconv.Atoi(want.Value)
+	if err != nil || n >= floor {
+		return nil
+	}
+	before := got.Value
+	got.Value = want.Value
+	return []string{fmt.Sprintf("watchdog.maxRestarts: %s → %s", before, want.Value)}
+}
+
+func moveUIReviewers(where string, row, defImplement *yaml.Node) []string {
+	reviewers := child(row, "reviewers")
+	if reviewers == nil || reviewers.Kind != yaml.SequenceNode {
+		return nil
+	}
+	var ui *yaml.Node
+	for _, rv := range child(defImplement, "reviewers").Content {
+		if p := child(rv, "prompt"); p != nil && p.Value == "review-ui" {
+			ui = rv
+		}
+	}
+	before := roleText(reviewers)
+	moved := false
+	for _, rv := range reviewers.Content {
+		if rv.Kind != yaml.MappingNode {
+			continue
+		}
+		prompt, provider := child(rv, "prompt"), child(rv, "provider")
+		if prompt == nil || prompt.Value != "review-ui" || provider == nil || provider.Value != "codex" {
+			continue
+		}
+		for _, k := range roleKeys {
+			setKey(rv, k, scalar(child(ui, k).Value))
+		}
+		moved = true
+	}
+	if !moved {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s.reviewers: %s → %s", where, before, roleText(reviewers))}
 }
 
 func roleText(n *yaml.Node) string {

@@ -36,6 +36,7 @@ func Preflight(w *Wiring) (err error) {
 			fmt.Fprintf(env.Stdout, "phase %s  %s  %s\n", ph.ID, core.Printable(ph.Title), pipeline(w.Loop.Kinds, w.Plan.Backlog))
 		}
 		w.criteriaWarnings(env.Stdout, list)
+		w.uiReviewerWarnings(env.Stdout)
 		w.blockingEntries(env.Stdout, list)
 		kept, deferrals := core.DeferBlocked(w.Plan, list)
 		_, table := core.RenderTriage(core.TriageView{Plan: w.Plan, List: kept, Checks: w.Findings, Deferrals: deferrals, Kinds: w.Loop.Kinds}, nil)
@@ -91,6 +92,7 @@ func Preflight(w *Wiring) (err error) {
 	w.bind(id)
 	w.banner(env.Stdout, prompts)
 	w.criteriaWarnings(env.Stdout, list)
+	w.uiReviewerWarnings(env.Stdout)
 	return nil
 }
 
@@ -130,6 +132,24 @@ func (w *Wiring) criteriaWarnings(out io.Writer, list []core.Phase) {
 	for _, ph := range list {
 		if len(ph.Items) == 1 && ph.Items[0].Text == ph.Title {
 			fmt.Fprintln(out, amber(out).Render(fmt.Sprintf("warning: phase %s has no acceptance criteria; the plan tests only its title — /r:issues-draft writes them", ph.ID)))
+		}
+	}
+}
+
+func (w *Wiring) uiReviewerWarnings(out io.Writer) {
+	for _, name := range w.sessionSteps() {
+		for _, rv := range w.Config.Steps[name].Reviewers {
+			if rv.Prompt != "review-ui" {
+				continue
+			}
+			if p, err := w.registry().Resolve(rv.Provider); err != nil || p.Kind != "codex" {
+				continue
+			}
+			id := rv.Name
+			if id == "" {
+				id = rv.Provider
+			}
+			fmt.Fprintln(out, amber(out).Render(fmt.Sprintf("warning: reviewer %s runs review-ui on codex, whose sandbox cannot start a browser; use claude", id)))
 		}
 	}
 }
@@ -325,32 +345,11 @@ func (w *Wiring) leftovers(list []core.Phase) error {
 
 type role struct {
 	field, provider, model string
-	review, noAsk          bool
+	review                 bool
 }
 
 func (w *Wiring) validateProviders() error {
-	cfg := w.Config
-	var roles []role
-	for _, name := range w.sessionSteps() {
-		row := cfg.Steps[name]
-		p := "steps." + name + "."
-		roles = append(roles, role{field: p + "provider", provider: row.Provider, model: row.Model})
-		if row.Fallback.Provider != "" {
-			roles = append(roles, role{field: p + "fallback", provider: row.Fallback.Provider, model: row.Fallback.Model})
-		}
-		for _, rv := range row.Reviewers {
-			t := reviewTemplate(name, rv)
-			roles = append(roles, role{field: p + "reviewers", provider: rv.Provider, model: rv.Model, review: t == "review"})
-		}
-	}
-	roles = append(roles, role{field: "land.fix.provider", provider: cfg.Land.Fix.Provider, model: cfg.Land.Fix.Model})
-	for _, rv := range cfg.Steps["implement"].Reviewers {
-		t := reviewTemplate("gatefix", rv)
-		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, model: rv.Model, review: t == "review"})
-	}
-	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider, model: cfg.Watchdog.Model})
-	roles = append(roles, role{field: "intake.provider", provider: cfg.Intake.Provider, model: cfg.Intake.Model})
-	roles = append(roles, role{field: "watchdog.fixer.provider", provider: cfg.Watchdog.Fixer.Provider, model: cfg.Watchdog.Fixer.Model, noAsk: true})
+	roles := w.roles(w.Config)
 	resolved := make([]providers.Provider, len(roles))
 	for i, r := range roles {
 		p, err := checkRole(w.registry(), r)
@@ -375,6 +374,30 @@ func (w *Wiring) validateProviders() error {
 	return nil
 }
 
+func (w *Wiring) roles(cfg config.LoopConfig) []role {
+	var roles []role
+	for _, name := range w.sessionStepsOf(cfg) {
+		row := cfg.Steps[name]
+		p := "steps." + name + "."
+		roles = append(roles, role{field: p + "provider", provider: row.Provider, model: row.Model})
+		if row.Fallback.Provider != "" {
+			roles = append(roles, role{field: p + "fallback", provider: row.Fallback.Provider, model: row.Fallback.Model})
+		}
+		for _, rv := range row.Reviewers {
+			t := reviewTemplate(name, rv)
+			roles = append(roles, role{field: p + "reviewers", provider: rv.Provider, model: rv.Model, review: t == "review"})
+		}
+	}
+	roles = append(roles, role{field: "land.fix.provider", provider: cfg.Land.Fix.Provider, model: cfg.Land.Fix.Model})
+	for _, rv := range cfg.Steps["implement"].Reviewers {
+		t := reviewTemplate("gatefix", rv)
+		roles = append(roles, role{field: "steps.implement.reviewers", provider: rv.Provider, model: rv.Model, review: t == "review"})
+	}
+	roles = append(roles, role{field: "watchdog.provider", provider: cfg.Watchdog.Provider, model: cfg.Watchdog.Model})
+	roles = append(roles, role{field: "intake.provider", provider: cfg.Intake.Provider, model: cfg.Intake.Model})
+	return roles
+}
+
 func checkRole(reg *providers.Registry, r role) (providers.Provider, error) {
 	p, err := reg.Resolve(r.provider)
 	if err != nil {
@@ -383,7 +406,7 @@ func checkRole(reg *providers.Registry, r role) (providers.Provider, error) {
 	if r.review && p.Review == "" && p.ReviewExec == "" {
 		return providers.Provider{}, exit(2, "%s: provider %s has no review command", r.field, r.provider)
 	}
-	if !r.noAsk && p.Ask != "mcp" {
+	if p.Ask != "mcp" {
 		return providers.Provider{}, exit(2, "%s: provider %s has no MCP ask channel", r.field, r.provider)
 	}
 	return p, nil
@@ -403,7 +426,7 @@ func reviewTemplate(reviewed string, rv config.Reviewer) string {
 func (w *Wiring) promptSources() ([]string, error) {
 	vars := core.StepVars(core.StepRef{}, w.Plan, w.Todo, "")
 	vars["GateCommand"], vars["GateOutput"] = "", ""
-	vars["IncidentPath"], vars["ProposalPath"], vars["Root"] = "", "", ""
+	vars["Root"] = ""
 	var lines []string
 	for _, name := range w.sessionSteps() {
 		_, source, err := w.Prompts.Render(w.Config.Steps[name].Prompt, vars)
@@ -412,7 +435,7 @@ func (w *Wiring) promptSources() ([]string, error) {
 		}
 		lines = append(lines, fmt.Sprintf("prompt %s: %s", name, source))
 	}
-	for _, name := range []string{"review", "fix", "gatefix", "fixer"} {
+	for _, name := range []string{"review", "fix", "gatefix"} {
 		_, source, err := w.Prompts.Render(name, vars)
 		if err != nil {
 			return nil, err
@@ -470,7 +493,11 @@ func (w *Wiring) extraSteps() []string {
 }
 
 func (w *Wiring) sessionSteps() []string {
-	return append(append(append([]string{}, w.Config.Pipeline...), "milestone"), w.extraSteps()...)
+	return w.sessionStepsOf(w.Config)
+}
+
+func (w *Wiring) sessionStepsOf(cfg config.LoopConfig) []string {
+	return append(append(append([]string{}, cfg.Pipeline...), "milestone"), w.extraSteps()...)
 }
 
 func pipeline(kinds []core.StepKind, backlog bool) string {

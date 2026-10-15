@@ -394,17 +394,16 @@ package was never fetched, <em>then</em> the fix runs without a prompt and is re
 the run report; <em>and</em> a remedy outside that list still asks me first.</p>
 
 <h3>Get a stuck step fixed without stopping the run</h3>
-<p>As the <strong>maintainer</strong>, I want a blocker that a retry will not clear — a provider
-that updated itself, a flag it no longer takes, a login that expired — investigated by a separate
-session while the run waits on it, so that I only have to read a proposed fix and confirm it, and
-never stop and resume the run.</p>
-<p><em>Given</em> a step that failed twice the same way after codex updated from 0.47 to 0.48,
-<em>when</em> the watchdog hands the blocker to the fixer, <em>then</em> a fixer session reads the
-incident without changing anything and proposes the cause and the exact commands and config change;
-the watchdog shows me the proposal in its own session, and on my confirm the driver runs the
-commands, writes the config, and retries the step in the same run, with no halt and no
-<code>r-loop resume</code>; <em>and</em> when I reject it, or the cause is a bug in r-loop itself, the
-blocker stays with the watchdog and its usual options (<a href="#adr-91">ADR-91</a>).</p>
+<p>As the <strong>maintainer</strong>, I want a blocker that a plain retry will not clear — a
+sandbox that refuses a tool, a config value that no longer fits, a plan line no agent can satisfy —
+fixed by the watchdog itself while the run waits on it, so that I am not asked to stop, edit and
+resume the run, and a phase is not blocked while it still has retries left.</p>
+<p><em>Given</em> a <code>ui</code> reviewer whose provider's sandbox cannot start a browser,
+<em>when</em> it fails, <em>then</em> the watchdog does not skip it or block the phase: it runs a
+remedy, sets the config key that moves the reviewer with <code>set_config</code>, which the driver
+validates, writes, reloads and commits, or corrects the plan line and continues, and retries in the
+same run, with no halt and no <code>r-loop resume</code>; <em>and</em> it blocks only once the
+step's retries are spent, or when I say so (<a href="#adr-97">ADR-97</a>).</p>
 
 <h3>Have a phase's UI designed before it is planned</h3>
 <p>As the <strong>maintainer</strong>, I want a phase that changes what a user sees designed by a
@@ -600,7 +599,6 @@ to be written and never writes it either.</p>
   <tr><td><code>Question</code></td><td>Something a session asked — or a dialog on an agent's screen, or a blocker the driver raised — and the answer it received, with who answered it</td><td>ours</td><td>the step that asked, plus a sequence number</td></tr>
   <tr><td><code>Signal</code></td><td>A warning or a halt call — from a deterministic driver check or from the watchdog</td><td>ours</td><td>the step it is about, plus a sequence number</td></tr>
   <tr><td><code>Remedy</code></td><td>A proposed repair: its class, the exact command, how it was authorised, what it returned</td><td>ours</td><td>the signal that prompted it</td></tr>
-  <tr><td><code>Fix</code></td><td>A blocker handed to the fixer: the incident it was given, the proposal it made, the maintainer's decision, and what the driver applied</td><td>ours</td><td>the blocker it is for — <code>fix-b&lt;n&gt;</code></td></tr>
   <tr><td><code>Phase</code></td><td>A <code>### Phase N</code> block with its <code>Files:</code>, <code>Risk:</code> and <code>Done when:</code></td><td><strong>copy</strong> — owned by the todo, written by <code>/r:spec-design</code>; r-loop parses the format itself (<a href="#adr-43">ADR-43</a>)</td><td>its heading label within its todo — a string, <code>10</code>, or <code>10a</code> for a phase inserted after 10 once 11 was built; plan order is document order, and the run directory, worktree and branch carry the label (<code>phase-10a</code>)</td></tr>
   <tr><td><code>PhasePlan</code></td><td>The phase plan at <code>.task-plans/&lt;slug&gt;.md</code></td><td><strong>copy</strong> — written by the planning step, read by the implement step</td><td>its path, which travels with the branch</td></tr>
   <tr><td><code>Verdict</code></td><td>What the reviewers reported in one round about a step's plan or diff, and the verdict the step's own session gave each finding</td><td><strong>copy</strong> — written by the reviewer agents and the step's own session</td><td>the step that produced it</td></tr>
@@ -807,16 +805,6 @@ is recorded. The exact command as proposed — not a summary of it — is what i
 is written to the run report. <em>Source: the watchdog can never approve its own action, so the
 allow-list lives in the driver. Configurable: the allow-list, yes; the rule, no.</em></p>
 
-<p><strong>A fix is applied only on the maintainer's confirmation, and never to the code.</strong>
-The fixer investigates without writing anything but its proposal; the driver applies a proposal
-only when the watchdog quotes the maintainer's confirmation for it, per fix, and applies only its
-commands and its change to an r-loop config file. On violation — the fixer changed the primary tree
-or a phase worktree, a proposal names any other file, or <code>apply_fix</code> arrives without a
-quoted reply — nothing is applied, the fix is recorded failed, and the blocker stays open with the
-watchdog. No allow-list class authorises a fix, and an unattended run never starts one
-(<a href="#adr-91">ADR-91</a>). <em>Source: the fixer's cause is a guess about the machine; only the
-maintainer can say it is right. Configurable: no.</em></p>
-
 <p><strong>A question never kills a step.</strong> When a step enters <code>waiting-input</code>,
 its backstop timer is paused for as long as the question is open, per step; on violation — that is,
 if a step in that state is ever killed by a timer — the run halts rather than discarding the
@@ -828,12 +816,17 @@ no.</em></p>
 
 <p><strong>Nothing goes off plan unheard.</strong> When a step fails, a reviewer fails, a landing
 errors, a gate fix or the gate probe fails, or a milestone report fails, the driver holds the phase
-and raises a blocker to the watchdog before it blocks, skips or stops anything, per blocker; on
+and raises a blocker to the watchdog before it blocks or stops anything, per blocker; on
 violation nothing further of that phase runs and the blocker is named. The watchdog clears it only
 with an action the driver authorises — the allow-list, a <code>watchdog.dialogs</code> rule, the
-row's fallback, or the maintainer's quoted reply — or asks the maintainer; unattended, it continues
-the held work as a resume would (<a href="#adr-96">ADR-96</a>), blocks the phase or stops the run. A blocker the watchdog leaves for <code>watchdog.blockerTimeout</code>
-while it is not waiting on the maintainer resolves to <code>block</code>. What still halts without a
+row's fallback, or the maintainer's quoted reply — or asks the maintainer; it may continue the held
+work as a resume would on its own, as it may retry (<a href="#adr-96">ADR-96</a>,
+<a href="#adr-97">ADR-97</a>); unattended, it continues, blocks the phase or stops the run.
+Blocking and stopping are the last resort: while the target has retries left they need the
+maintainer's quoted reply (<a href="#adr-97">ADR-97</a>). A blocker the watchdog leaves for <code>watchdog.blockerTimeout</code>
+while it is not waiting on the maintainer resolves to <code>retry</code> while the target has
+retries left, then to <code>block</code>, or to <code>stop</code> when it takes no
+<code>block</code>. What still halts without a
 blocker — a failed record, the question invariant below, a panic in the land, the question server or
 the signal handler — is posted to the watchdog as <code>run halting: &lt;reason&gt;</code> first; a
 failure before the watchdog exists stays a process exit (<a href="#adr-82">ADR-82</a>).
@@ -853,9 +846,10 @@ starts, if any reviewer named in the step's <code>reviewers</code> cannot be sta
 finish — its pane fails to open, its provider declares no native reviewer where the row needs one,
 its <code>/review</code> sequence fails, or it ends with no findings — the driver raises a blocker
 naming the reviewer, per reviewer; the step's session is not asked to judge anything until every
-reviewer has reported, has been run again, or has been skipped with the maintainer's quoted reply
-and a <code>reviewer-skipped</code> event naming it (<a href="#adr-82">ADR-82</a>). A blocker that
-ends in <code>block</code> fails the step. <em>Source: a
+reviewer has reported or has been run again (<a href="#adr-82">ADR-82</a>); a reviewer blocker
+never skips the reviewer (<a href="#adr-97">ADR-97</a>), and the only <code>reviewer-skipped</code>
+is a reviewer whose <code>requires</code> file is missing, before the first round
+(<a href="#adr-74">ADR-74</a>). A blocker that ends in <code>block</code> fails the step. <em>Source: a
 review that silently ran with fewer readers reads exactly like one that ran with all of them.
 Configurable: the list, yes; the rule, no.</em></p>
 
@@ -953,15 +947,19 @@ r-loop lane.</figcaption>
 <p>The session writes a failure sentinel, or writes an ok sentinel with no evidence behind it.
 The driver records the step <code>failed</code>, raises a blocker <code>b&lt;n&gt;</code> and
 sends it to the watchdog with the reason and the end of the session's screen. The watchdog reads the
-pane and diagnoses. If an authorised action fixes it — a remedy, then a retry within
-<code>watchdog.maxRestarts</code>, or a switch to the row's fallback — it takes it and the step
-restarts as a new attempt. If nothing authorised does, it asks the maintainer in its own session:
-retry, skip, switch provider, continue as resume would, block this phase or stop the run; unattended,
-it continues, blocks or stops. <code>continue</code> re-enters the step as <code>r-loop resume</code>
-would, in the same process: a new attempt with no addendum, resumed at the failed attempt's recorded
-review round when it has one (<a href="#adr-96">ADR-96</a>). The
+pane and diagnoses, then fixes what it finds (<a href="#adr-97">ADR-97</a>): a remedy it runs
+itself, then a retry within <code>watchdog.maxRestarts</code>; a config key it sets with
+<code>set_config</code>, which the driver validates, writes, reloads and commits; a plan line it
+corrects in the primary tree, then <code>continue</code>; or a switch to the row's fallback. The
+step restarts as a new attempt. If nothing authorised does, it asks the maintainer in its own session:
+retry, switch provider, continue as resume would, block this phase or stop the run; unattended,
+it continues, blocks or stops. <code>continue</code> needs no one's word: it is authorised as a retry is. Blocking and stopping wait until the step's retries are spent, or
+until the maintainer says so (<a href="#adr-97">ADR-97</a>). <code>continue</code> re-enters the step as <code>r-loop resume</code>
+would, in the same process: a new attempt with no addendum, on the phase read from the plan again,
+resumed at the failed attempt's recorded review round when it has one (<a href="#adr-96">ADR-96</a>). The
 hold's clock, <code>watchdog.blockerTimeout</code>, stands still while the maintainer is being asked;
-left silent past it, the blocker resolves to <code>block</code>. A reviewer that fails, a landing
+left silent past it, the blocker resolves to <code>retry</code> while retries are left, then to
+<code>block</code>. A reviewer that fails, a landing
 that errors, a gate fix, the gate probe and a milestone report take the same path, each with its own
 meaning of retry (<a href="#adr-82">ADR-82</a>). On <code>block</code> the phase is blocked: its
 worktree — with the step's work uncommitted and a snapshot of it recorded — and its
@@ -970,23 +968,9 @@ skipped. On <code>stop</code> the run halts at once with exit <code>5</code>. Th
 <code>notify.onHalt</code>, and prints the <code>r-loop resume</code> that picks up every blocked
 phase at its stopped step (<a href="#adr-65">ADR-65</a>).</p>
 
-<h4>A blocker goes to the fixer</h4>
-<p>Each blocker's text carries every provider's version at run start and now. When a retry will not
-clear it — the same failure twice, a version that moved, a flag or screen the provider no longer
-knows — the watchdog resolves it with <code>fix</code> and its diagnosis. The blocker stays open and
-its clock stands still. The driver writes the incident to <code>fix-b&lt;n&gt;/incident.md</code>
-in the run folder and opens a fixer session beside the watchdog, which reads it, the
-panes, the logs and the machine, changes nothing, and writes <code>proposal.json</code>: the cause,
-whether it lies in the environment, r-loop's config, r-loop's own code or the project, the commands,
-the config change, what the maintainer must do by hand, and the risk. The driver checks that the
-trees are unchanged and the proposal is well formed, closes the session, and sends the watchdog
-<code>fix b&lt;n&gt; proposed</code> with it. The watchdog shows it to the maintainer in its own
-session. On confirm it calls <code>apply_fix</code> with the reply quoted; the driver runs the
-commands in the fix folder, checks the trees are still unchanged, writes the config, reloads the provider blocks and step rows, and
-resolves the blocker to <code>retry</code>, a new attempt the maintainer authorised. On reject, a
-cause in r-loop's code or the project, a failed command or an invalid config, the blocker stays with
-the watchdog and its usual options. The run waits on the open blocker throughout, as it does for
-any blocker; it is never halted for the fix (<a href="#adr-91">ADR-91</a>).</p>
+<p>Each blocker's text carries every provider's version at run start and now, the arrow only where
+a version moved, so a provider that updated itself mid-run is in front of the watchdog
+(<a href="#adr-6">ADR-6</a>).</p>
 
 <h4>A step asks a question</h4>
 <p>The session calls <code>ask_watchdog</code>, which returns at once, and ends its turn. The
@@ -1717,7 +1701,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Eighty-seven decisions, each with the alternative that was live at the time; eleven are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and forty-four carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, ADR-90 keeps an agent's pane size from ever failing a run, ADR-91 hands a blocker a retry will not clear to a fixer session that proposes a fix the driver applies, on the maintainer's confirmation, without stopping the run, and ADR-92 adds a design step that a claude session with <code>frontend-design</code> runs before the plan step on the phases the watchdog's triage flags as changing what a user sees.</p>
+<p class="lede">Ninety-seven decisions, each with the alternative that was live at the time; twelve are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and fifty-five carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, ADR-90 keeps an agent's pane size from ever failing a run, ADR-91, since superseded, handed a blocker a retry will not clear to a fixer session that proposed a fix the driver applied on the maintainer's confirmation, ADR-92 adds a design step that a claude session with <code>frontend-design</code> runs before the plan step on the phases the watchdog's triage flags as changing what a user sees, ADR-93 has claude sessions report through hooks, ADR-94 has the watchdog retry a minor failure without asking, ADR-95 has it choose the gate's commands from the <code>Done when:</code> line's spans, ADR-96 lets a blocker be continued as a resume would, and ADR-97 replaces the fixer with a watchdog that fixes what it finds — remedies, a config key, a corrected plan line — skips nothing, and blocks only once the retries are spent.</p>
 
 <div id="adr-index">
 
@@ -1822,7 +1806,7 @@ every provider must now declare a fan-out capability — which creates the failu
 
 <div class="adr">
 <h3 id="adr-6">ADR-6 — A provider is a config block, not driver code</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-54">ADR-54</a> — the block declares a native review command where it has one, and no fan-out capability · amended 2026-09-23 — the block may carry <code>flags</code>, fixed flags passed first on every start, because codex's startup update prompt blocks herdr's <code>agent start</code> and the shipped codex block turns it off with <code>-c check_for_update_on_startup=false</code> · amended 2026-09-23 — the completion signal, the sentinel, is <code>{"outcome":"ok"|"failed","reason":"&lt;text&gt;"}</code> and no longer carries <code>at</code>, because a mistyped, never-read timestamp failed a finished step as <code>sentinel unreadable</code>; the driver timestamps every record itself, and a sentinel that still carries <code>at</code> is read with it ignored · amended by <a href="#adr-79">ADR-79</a> — the block may carry <code>dirFlag</code>, a <code>{dir}</code> template passed last, which lets a session in a phase worktree write its phase's run folder; <code>flags</code> may not carry <code>{dir}</code> · amended by <a href="#adr-91">ADR-91</a> — the block may carry <code>version</code>, a subcommand that prints the provider's version, recorded at run start and added to each blocker</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-54">ADR-54</a> — the block declares a native review command where it has one, and no fan-out capability · amended 2026-09-23 — the block may carry <code>flags</code>, fixed flags passed first on every start, because codex's startup update prompt blocks herdr's <code>agent start</code> and the shipped codex block turns it off with <code>-c check_for_update_on_startup=false</code> · amended 2026-09-23 — the completion signal, the sentinel, is <code>{"outcome":"ok"|"failed","reason":"&lt;text&gt;"}</code> and no longer carries <code>at</code>, because a mistyped, never-read timestamp failed a finished step as <code>sentinel unreadable</code>; the driver timestamps every record itself, and a sentinel that still carries <code>at</code> is read with it ignored · amended by <a href="#adr-79">ADR-79</a> — the block may carry <code>dirFlag</code>, a <code>{dir}</code> template passed last, which lets a session in a phase worktree write its phase's run folder; <code>flags</code> may not carry <code>{dir}</code> · amended 2026-10-08 — the block may carry <code>version</code>, a subcommand that prints the provider's version, recorded at run start and added to each blocker; made with <a href="#adr-91">ADR-91</a> and kept when <a href="#adr-97">ADR-97</a> superseded it</p>
 <p><span class="f">Context</span> <em>Portability across agents</em> sets the target at one config
 block and zero driver lines. herdr already supports 23 agent kinds, so the driver cannot ship a
 branch per agent and stay honest about the claim.</p>
@@ -2377,7 +2361,7 @@ and it lives in the watchdog's prompt, which is the part of this that will need 
 
 <div class="adr">
 <h3 id="adr-37">ADR-37 — Consent for a remedy is an allow-list in config, empty by default</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-61">ADR-61</a> — <code>--unattended</code> adds the routine classes for one run; the configured list stays empty by default · amended by <a href="#adr-94">ADR-94</a> (2026-10-14) — the list ships with <code>restart</code> and <code>retry</code></p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-61">ADR-61</a> — <code>--unattended</code> adds the routine classes for one run; the configured list stays empty by default · amended by <a href="#adr-94">ADR-94</a> (2026-10-14) — the list ships with <code>restart</code> and <code>retry</code> · amended by <a href="#adr-97">ADR-97</a> (2026-10-14) — the list ships with every class: <code>deps</code>, <code>ports</code>, <code>containers</code>, <code>locks</code>, <code>restart</code>, <code>retry</code> and <code>provider</code>, and <code>--create-config</code> adds the missing ones to an existing user config</p>
 <p><span class="f">Context</span> If every dependency install needs a keystroke, an unattended run
 still stops for a person — which is the cost remedies exist to remove.</p>
 <p><span class="f">Decision</span> <code>watchdog.allow</code> pre-authorises classes of remedy;
@@ -2751,7 +2735,7 @@ inside a session.</p>
 
 <div class="adr">
 <h3 id="adr-56">ADR-56 — Review is a half of every step: reviewer panes beside the step's session, which verifies and applies</h3>
-<p><span class="f">Status</span> accepted · supersedes <a href="#adr-24">ADR-24</a> and <a href="#adr-25">ADR-25</a> · amends <a href="#adr-2">ADR-2</a>, <a href="#adr-23">ADR-23</a>, <a href="#adr-45">ADR-45</a> and <a href="#adr-54">ADR-54</a> · amended by <a href="#adr-82">ADR-82</a> — a reviewer that fails no longer fails the step it reviews: it raises a blocker, which the watchdog clears by running that reviewer again, pressing keys under a rule or switching to the row's fallback, or, with the maintainer's quoted reply, by skipping it · amended by <a href="#adr-90">ADR-90</a> — reviewers divide the right-hand column evenly, and one whose pane would be under 60×15 opens in a new tab of the step's workspace</p>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-24">ADR-24</a> and <a href="#adr-25">ADR-25</a> · amends <a href="#adr-2">ADR-2</a>, <a href="#adr-23">ADR-23</a>, <a href="#adr-45">ADR-45</a> and <a href="#adr-54">ADR-54</a> · amended by <a href="#adr-82">ADR-82</a> — a reviewer that fails no longer fails the step it reviews: it raises a blocker, which the watchdog clears by running that reviewer again, pressing keys under a rule or switching to the row's fallback, or, with the maintainer's quoted reply, by skipping it · amended by <a href="#adr-90">ADR-90</a> — reviewers divide the right-hand column evenly, and one whose pane would be under 60×15 opens in a new tab of the step's workspace · amended by <a href="#adr-97">ADR-97</a> (2026-10-14) — a reviewer blocker is no longer cleared by skipping the reviewer; a <code>fixed</code> finding that lists unchanged files beside at least one changed file has the unchanged ones dropped with a driver warning, instead of failing the step</p>
 <p><span class="f">Context</span> <a href="#adr-54">ADR-54</a> made review a step of its own: one
 workspace per reviewer, then a fresh fix session on the implement row. It could not review a plan,
 and the fixer had to rebuild the intent behind a diff it did not write. In round 20 the maintainer
@@ -2891,7 +2875,7 @@ an automatic path.</p>
 
 <div class="adr">
 <h3 id="adr-61">ADR-61 — <code>--unattended</code> is a mode: routine remedies pre-authorised, restarts bounded, every automatic decision reported first</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-13">ADR-13</a> and <a href="#adr-37">ADR-37</a> · amended by <a href="#adr-80">ADR-80</a> — the watchdog answers a step's in-pane dialog, and the answer is authorised only by a decline, a <code>watchdog.dialogs</code> rule or the maintainer's quoted reply; with <code>--unattended</code>, only by a decline or a rule · amended by <a href="#adr-82">ADR-82</a> — the remedy window becomes the blocker's hold, <code>watchdog.blockerTimeout</code>, paused while the watchdog waits on the maintainer; a restart is a blocker's <code>retry</code>, bounded by <code>watchdog.maxRestarts</code> as before</p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-13">ADR-13</a> and <a href="#adr-37">ADR-37</a> · amended by <a href="#adr-80">ADR-80</a> — the watchdog answers a step's in-pane dialog, and the answer is authorised only by a decline, a <code>watchdog.dialogs</code> rule or the maintainer's quoted reply; with <code>--unattended</code>, only by a decline or a rule · amended by <a href="#adr-82">ADR-82</a> — the remedy window becomes the blocker's hold, <code>watchdog.blockerTimeout</code>, paused while the watchdog waits on the maintainer; a restart is a blocker's <code>retry</code>, bounded by <code>watchdog.maxRestarts</code> as before · amended by <a href="#adr-97">ADR-97</a> (2026-10-14) — <code>watchdog.maxRestarts</code> defaults to 3, and <code>--create-config</code> raises a lower value in an existing user config to 3</p>
 <p><span class="f">Context</span> In round 21 the maintainer asked that the loop be "as unattended
 as possible". Finishing a plan with nobody present had been a non-goal; it becomes a goal, measured
 as fewer than one halt that needs a person per run. The watchdog could already remedy and restart,
@@ -3283,7 +3267,7 @@ watchdog's pane, or a halt for a gone watchdog costs more than the answer would 
 
 <div class="adr">
 <h3 id="adr-74">ADR-74 — The UI test is a named reviewer on implement, gated on the project's test-app skill</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-23">ADR-23</a> and <a href="#adr-4">ADR-4</a> · amended by <a href="#adr-81">ADR-81</a> — a reviewer with no <code>prompt</code> renders <code>review-plan</code> on the plan row and <code>review</code> elsewhere · amended by <a href="#adr-92">ADR-92</a> — on a phase with a design, the reviewer is given the design's intent and judges the rendered result against it</p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-23">ADR-23</a> and <a href="#adr-4">ADR-4</a> · amended by <a href="#adr-81">ADR-81</a> — a reviewer with no <code>prompt</code> renders <code>review-plan</code> on the plan row and <code>review</code> elsewhere · amended by <a href="#adr-92">ADR-92</a> — on a phase with a design, the reviewer is given the design's intent and judges the rendered result against it · amended by <a href="#adr-97">ADR-97</a> (2026-10-14) — the shipped <code>ui</code> reviewer stays on claude, opus, high, because codex's macOS sandbox cannot start a browser; preflight warns when a <code>review-ui</code> reviewer is configured on codex, and <code>--create-config</code> moves one in an existing user config to claude; a missing <code>requires</code> file is the only <code>reviewer-skipped</code> left</p>
 <p><span class="f">Context</span> Dropping the Workflows (<a href="#adr-4">ADR-4</a>) lost
 <code>/r:task-review</code>'s UI track: deploy the app, drive what the diff changed through the
 project's own <code>/test-app</code> skill, and look at how it renders — three viewports for a web
@@ -3561,7 +3545,7 @@ write somewhere other than its worktree and its phase's run folder.</p>
 
 <div class="adr">
 <h3 id="adr-80">ADR-80 — An in-pane dialog goes to the watchdog; the driver presses its keys</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-61">ADR-61</a>, <a href="#adr-62">ADR-62</a>, <a href="#adr-73">ADR-73</a> and <a href="#adr-76">ADR-76</a> · amended by <a href="#adr-82">ADR-82</a> — a blocker is a question of kind <code>blocker</code> on the same path, and its <code>keys</code> action is authorised as a dialog answer is · amended 2026-10-06 — after a decline's esc is pressed, the driver types a short follow-up into the pane that asked, once the agent has settled out of <code>working</code> and <code>blocked</code>, the way it types an answer (<a href="#adr-76">ADR-76</a>): the request was declined, do not retry it, finish another way or write a failed sentinel naming what was needed; recorded as a <code>note</code>. Both CLIs treat esc as "interrupt and wait for input", so without it every decline cost a stall and a nudge. A rule or maintainer answer lets the tool run and types nothing</p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-61">ADR-61</a>, <a href="#adr-62">ADR-62</a>, <a href="#adr-73">ADR-73</a> and <a href="#adr-76">ADR-76</a> · amended by <a href="#adr-82">ADR-82</a> — a blocker is a question of kind <code>blocker</code> on the same path, and its <code>keys</code> action is authorised as a dialog answer is · amended 2026-10-06 — after a decline's esc is pressed, the driver types a short follow-up into the pane that asked, once the agent has settled out of <code>working</code> and <code>blocked</code>, the way it types an answer (<a href="#adr-76">ADR-76</a>): the request was declined, do not retry it, finish another way or write a failed sentinel naming what was needed; recorded as a <code>note</code>. Both CLIs treat esc as "interrupt and wait for input", so without it every decline cost a stall and a nudge. A rule or maintainer answer lets the tool run and types nothing · amended by <a href="#adr-97">ADR-97</a> (2026-10-14) — <code>watchdog.dialogs</code> ships two rules, approving a sandbox escalation for the project's build, test, container or browser tooling that writes only inside the worktree, the run folder, the temp dir or the tool's own state folder, and declining one that reaches credentials or keys or deletes outside the worktree; <code>--create-config</code> fills an empty list in an existing user config</p>
 <p><span class="f">Context</span> A step or reviewer agent can stop on a dialog of its own CLI: an
 approval to run a command or write a file, or a menu of choices. herdr reports the agent
 <code>blocked</code>. The driver counted that as quiet, typed the nudge after
@@ -3689,7 +3673,7 @@ or a plan review misses something a native pass would have caught.</p>
 
 <div class="adr">
 <h3 id="adr-82">ADR-82 — Anything off plan is a blocker the watchdog clears or asks about</h3>
-<p><span class="f">Status</span> accepted · amends <a href="#adr-35">ADR-35</a>, <a href="#adr-56">ADR-56</a>, <a href="#adr-61">ADR-61</a>, <a href="#adr-62">ADR-62</a>, <a href="#adr-64">ADR-64</a>, <a href="#adr-65">ADR-65</a> and <a href="#adr-80">ADR-80</a> · amended by <a href="#adr-91">ADR-91</a> — every source gains <code>fix</code>, which leaves the blocker open while a fixer session proposes a fix, and a fix the maintainer confirms through <code>apply_fix</code> settles it as <code>retry</code> · amended by <a href="#adr-94">ADR-94</a> (2026-10-14) — a minor failure is retried without asking, within <code>watchdog.maxRestarts</code> · amended by <a href="#adr-96">ADR-96</a> (2026-10-14) — a step, land, gate-fix or gate-probe blocker also takes <code>continue</code>, which re-enters the held work as <code>r-loop resume</code> would, in the same process; it needs the maintainer's quoted reply, or <code>--unattended</code>, and counts against the same budget as a retry</p>
+<p><span class="f">Status</span> accepted · amends <a href="#adr-35">ADR-35</a>, <a href="#adr-56">ADR-56</a>, <a href="#adr-61">ADR-61</a>, <a href="#adr-62">ADR-62</a>, <a href="#adr-64">ADR-64</a>, <a href="#adr-65">ADR-65</a> and <a href="#adr-80">ADR-80</a> · amended by <a href="#adr-94">ADR-94</a> (2026-10-14) — a minor failure is retried without asking, within <code>watchdog.maxRestarts</code> · amended by <a href="#adr-96">ADR-96</a> (2026-10-14) — a step, land, gate-fix or gate-probe blocker also takes <code>continue</code>, which re-enters the held work as <code>r-loop resume</code> would, in the same process; it needs the maintainer's quoted reply, or <code>--unattended</code>, and counts against the same budget as a retry · amended by <a href="#adr-97">ADR-97</a> (2026-10-14) — no source takes <code>skip</code>: a reviewer blocker takes <code>retry</code>, <code>keys</code>, <code>switch</code>, <code>block</code> and <code>stop</code>, a milestone one <code>retry</code>, <code>block</code> and <code>stop</code>, its <code>block</code> leaving the report out; <code>block</code> and <code>stop</code> are no longer always authorised: while the target has retries left they need the maintainer's quoted reply, unless the blocker takes no <code>retry</code>, <code>switch</code> or <code>continue</code>; a blocker left past <code>watchdog.blockerTimeout</code> resolves <code>retry</code> while retries remain, then <code>block</code>, or <code>stop</code> when it takes no <code>block</code>; <code>continue</code> no longer needs the maintainer's quoted reply: it is authorised as <code>retry</code> is</p>
 <p><span class="f">Context</span> The maintainer's rule: "whenever anything in the flow goes off
 plan, the watchdog either fixes it or asks me what to do: stop, or fix it another way." The run did
 not follow it. A failed pipeline step waited a fixed ten-minute remedy window and was then blocked,
@@ -3941,7 +3925,7 @@ plans routinely override proposals the maintainer wanted kept.</p>
 
 <div class="adr">
 <h3 id="adr-89">ADR-89 — Static analysis is a reviewer the driver runs itself</h3>
-<p><span class="f">Status</span> accepted 2026-10-05</p>
+<p><span class="f">Status</span> accepted 2026-10-05 · amended by <a href="#adr-97">ADR-97</a> (2026-10-14) — a failed analysis raises a <code>reviewer</code> blocker with actions <code>retry</code>, <code>block</code> and <code>stop</code>; there is no <code>skip</code></p>
 <p><span class="f">Context</span> Every reviewer is a model reading the change. None runs a static
 analyzer, so what staticcheck, SpotBugs or gosec find mechanically is found only when a model
 happens to notice it. A reviewer told to run the analyzers in its pane would report what it says
@@ -4035,53 +4019,14 @@ agents gain a flag that skips them.</p>
 
 <div class="adr">
 <h3 id="adr-91">ADR-91 — A blocker a retry will not clear goes to a fixer, and a confirmed fix is applied in the same run</h3>
-<p><span class="f">Status</span> accepted 2026-10-08 · amends <a href="#adr-6">ADR-6</a> and <a href="#adr-82">ADR-82</a></p>
-<p><span class="f">Context</span> The agents update themselves. A codex release renames a flag, a
-claude release draws a new screen, a login expires, and the step fails the same way on every attempt.
-The watchdog's options were retry, skip, switch, block and stop: a retry repeats the failure, and the
-rest end the phase or the run. Diagnosing the cause means reading release notes, help output and the
-machine, which is too long a detour for the watchdog, which must keep watching and answering while
-it does it; and every fix it found, the maintainer had to apply by hand and then resume the run.</p>
-<p><span class="f">Decision</span> <code>resolve_blocker</code> gains the action <code>fix</code>, on
-every source. The watchdog may take it on its own word, once per blocker, with its diagnosis as the
-addendum; with <code>--unattended</code> it is refused, since no one could confirm the result. A
-<code>fix</code> does not settle the blocker: the blocker stays open, its clock stands still, and the
-run waits on it as on any blocker. The driver writes the incident to
-<code>fix-b&lt;n&gt;/incident.md</code> in the run folder — the blocker, its excerpt, the diagnosis,
-the run's last records, every provider's version at run start and now, and the resolved config with
-provenance — and opens a <em>fixer</em> session beside the watchdog, on the provider, model and effort
-of <code>watchdog.fixer</code>, with the embedded <code>fixer</code> prompt and no ask channel. The
-fixer reads and runs read-only commands, changes nothing, and writes <code>proposal.json</code>: a
-kind (<code>env</code>, <code>config</code>, <code>r-loop</code> or <code>project</code>), the cause
-and its evidence, the commands, the new content of one r-loop config file, what the maintainer must do
-by hand, and the risk. The driver checks the proposal and that the primary tree and the step's worktree
-are unchanged, closes the session and posts the proposal to the watchdog, which shows it to the
-maintainer in its own session (<a href="#adr-73">ADR-73</a>) and calls
-<code>apply_fix(id, decision, maintainer_said)</code>. Only <code>apply</code> with the maintainer's
-reply quoted is applied: the driver runs the commands in the fix folder, stopping at the first
-non-zero exit, checks the trees again, writes the config file, reloads the provider blocks and the step
-rows for every session started after it, and settles the blocker as <code>retry</code>, by the
-maintainer, cited <code>fix-b&lt;n&gt;</code> and not counted against <code>watchdog.maxRestarts</code>.
-A rejected, failed or timed-out fix, or one of kind <code>r-loop</code> or <code>project</code>,
-leaves the blocker open with its other actions. A provider block gains the key <code>version</code>,
-a subcommand that prints its version; the driver records every provider's version at run start and
-adds the versions now to each blocker's text, so a version that moved is in front of the watchdog.</p>
-<p><span class="f">Alternatives</span> A skill the maintainer runs in another session — rejected: the
-run has to be stopped and resumed, and r-loop would depend on the skill-pack at run time. A fixer
-subagent inside the watchdog's session — rejected: only claude has one, and the watchdog would stop
-watching while it ran. Let the fixer apply its own fix in its pane — rejected: the driver could not
-tell what ran, and the commands would not be recorded verbatim (the remedy invariant). Fix r-loop's
-own code in the same run — rejected: a running binary cannot replace itself without re-attaching to
-live panes, which nothing does today; such a cause is reported and left to the maintainer. Pin each
-provider's version and refuse a mismatch at preflight — rejected: it fails a run on an update that
-changed nothing.</p>
-<p><span class="f">Consequences</span> A provider update costs the maintainer one read and one confirm,
-and the run goes on from the same step. The whole run waits while the fixer investigates, bounded by
-<code>watchdog.fixer.timeout</code>. A config change takes effect for sessions started after it, never
-for one already running. A fix that changes the machine — a downgrade, a re-login — is recorded in the
-run but not undone by anything; the previous config is kept beside the incident.</p>
-<p><span class="f">Revisit when</span> most fixes turn out to be r-loop's own code, or the maintainer
-confirms nearly every proposal unread.</p>
+<p><span class="f">Status</span> superseded by <a href="#adr-97">ADR-97</a> (2026-10-14) — the fixer is gone; the watchdog fixes what it finds itself; the <code>version</code> key it added to <a href="#adr-6">ADR-6</a>'s provider block stays · was accepted 2026-10-08 · amends <a href="#adr-6">ADR-6</a> and <a href="#adr-82">ADR-82</a></p>
+<p><span class="f">Decision</span> <code>resolve_blocker</code> gained a <code>fix</code> action that left
+the blocker open and opened a separate fixer session, on <code>watchdog.fixer</code>, which read an
+incident written to <code>fix-b&lt;n&gt;/incident.md</code>, changed nothing and proposed a fix in
+<code>proposal.json</code>; the watchdog showed it to the maintainer and, on their quoted
+confirmation through <code>apply_fix</code>, the driver ran its commands, wrote the config, reloaded it
+and settled the blocker as <code>retry</code> without spending the step's retries. Each provider block
+gained <code>version</code>, recorded at run start and shown on each blocker, which stays.</p>
 </div>
 
 <div class="adr">
@@ -4203,7 +4148,7 @@ turn ends exactly.</p>
 
 <div class="adr">
 <h3 id="adr-94">ADR-94 — The watchdog retries a minor failure without asking</h3>
-<p><span class="f">Status</span> accepted 2026-10-14 · amends <a href="#adr-37">ADR-37</a> and <a href="#adr-82">ADR-82</a></p>
+<p><span class="f">Status</span> accepted 2026-10-14 · amends <a href="#adr-37">ADR-37</a> and <a href="#adr-82">ADR-82</a> · amended by <a href="#adr-97">ADR-97</a> (2026-10-14) — <code>watchdog.allow</code> ships with every class, <code>skip</code> is gone, and <code>block</code> and <code>stop</code> wait for the target's retries to be spent</p>
 <p><span class="f">Context</span> With <code>watchdog.allow</code> empty, every <code>retry</code> of a
 failed step came back <code>ask</code>, so an attended run stopped for the maintainer on a red test,
 a missing sentinel or a stall that a fresh attempt clears on its own.</p>
@@ -4211,7 +4156,7 @@ a missing sentinel or a stall that a fresh attempt clears on its own.</p>
 <code>retry</code>. The watchdog retries a failure a fresh attempt can get past — a red test or build
 the agent can fix, a missing or unreadable sentinel, evidence left out, a timeout or a stall, a
 transient tool or network error — at once, with an addendum saying what to change, and asks no one.
-It asks only when the same failure repeats (after trying <code>fix</code>), the step has no retries
+It asks only when the same failure repeats, the step has no retries
 left, the cause is out of the agent's reach, or the action needs consent: skip, another provider, a
 class off the allow-list. <code>watchdog.maxRestarts</code> still bounds every step's retries.</p>
 <p><span class="f">Alternatives</span> Retry in the driver, without the watchdog — rejected as in
@@ -4264,7 +4209,7 @@ as the gate.</p>
 
 <div class="adr">
 <h3 id="adr-96">ADR-96 — A blocker can be continued as a resume would, in the same process</h3>
-<p><span class="f">Status</span> accepted 2026-10-14 · amends <a href="#adr-82">ADR-82</a></p>
+<p><span class="f">Status</span> accepted 2026-10-14 · amends <a href="#adr-82">ADR-82</a> · amended by <a href="#adr-97">ADR-97</a> (2026-10-14) — <code>continue</code> is authorised on the watchdog's own word, attended too, as <code>retry</code> is: <code>restart</code> allow-listed and the target under <code>watchdog.maxRestarts</code>, the budget it shares with <code>retry</code> and <code>switch</code>; a step's <code>continue</code> also reads its phase from the plan again, as a land's does; after the watchdog corrects the plan file in the primary tree, the driver commits it as <code>docs(plan): correct phase &lt;N&gt;</code> when it is the only dirty path, and refuses the <code>continue</code> otherwise</p>
 <p><span class="f">Context</span> Run <code>20261014-113002</code> held phase 46 on a land blocker
 after the plan's <code>Done when:</code> line was corrected. The only actions were a
 <code>retry</code>, which carries an addendum and lands the phase it already read, or
@@ -4302,6 +4247,92 @@ doing it; the shared budget bounds that. The restart it starts is recorded with 
 <code>continue</code>.</p>
 <p><span class="f">Revisit when</span> continued attempts fail the same way more often than they
 clear.</p>
+</div>
+
+<div class="adr">
+<h3 id="adr-97">ADR-97 — The watchdog fixes what it finds; nothing is skipped; block is a last resort</h3>
+<p><span class="f">Status</span> accepted 2026-10-14 · supersedes <a href="#adr-91">ADR-91</a> · amends <a href="#adr-37">ADR-37</a>, <a href="#adr-56">ADR-56</a>, <a href="#adr-61">ADR-61</a>, <a href="#adr-74">ADR-74</a>, <a href="#adr-80">ADR-80</a>, <a href="#adr-82">ADR-82</a>, <a href="#adr-89">ADR-89</a>, <a href="#adr-94">ADR-94</a> and <a href="#adr-96">ADR-96</a></p>
+<p><span class="f">Context</span> Run <code>20261014-113002</code> halted on phase 47. Its
+<code>ui</code> reviewer ran on codex, whose macOS seatbelt sandbox keeps Chrome from starting at
+all: the <code>mach-lookup</code> to <code>windowserver</code> and <code>launchservicesd</code> is
+denied, and so is <code>network-bind</code>; a socket folder in <code>TMPDIR</code>, with unix
+sockets allowed, still failed. The reviewer's escalation dialog was declined, the watchdog resolved
+the reviewer blocker <code>block</code> — always authorised, with none of the reviewer's retries
+spent — and the run halted. The fixer (<a href="#adr-91">ADR-91</a>) could not have helped: it was
+read-only, an <code>r-loop</code> or <code>project</code> proposal was never applied, an
+<code>env</code> or <code>config</code> one needed the maintainer, and an unattended run refused it.
+The run already had a session that can diagnose, run a command and edit a file, and every path open
+to it ended in a hand-off or a block.</p>
+<p><span class="f">Decision</span> Six parts. <em>The fixer is gone</em>: the <code>fix</code>
+action, <code>apply_fix</code>, <code>watchdog.fixer</code> and the fixer prompt are removed; the
+provider block's <code>version</code> key and the versions line on a blocker stay. <em>The watchdog
+fixes what it finds</em>, by where the cause lies. In the environment, it proposes the exact command
+with <code>propose_remedy</code>, runs it, then takes <code>retry</code>; <code>watchdog.allow</code>
+ships with every class — <code>deps</code>, <code>ports</code>, <code>containers</code>,
+<code>locks</code>, <code>restart</code>, <code>retry</code> and <code>provider</code>. In the
+config, it calls a new tool, <code>set_config(key, value, why) → {decision: authorised|refused,
+reason?}</code>: the driver validates the key and the value as it validates a config layer, records
+<code>config-set{key, value, why}</code> before it writes, writes the key into
+<code>.r-loop/config.yaml</code>, reloads the config and commits the file alone as
+<code>chore(r-loop): set &lt;key&gt;</code>; a reload that fails, or a config that leaves a
+configured step or reviewer unable to run, restores the file as it was and refuses with the reason.
+A held step takes the new value on <code>continue</code>; a held reviewer takes it on
+<code>retry</code>, which reopens the reviewer from its current row. A key under <code>watchdog.</code> or <code>unattended.</code> is refused:
+the watchdog does not widen its own authority. In the project, outside the step's code — a
+<code>Done when:</code> line no agent can satisfy, a phase block that names the wrong file — it edits
+the plan file in the primary tree and takes <code>continue</code> (<a href="#adr-96">ADR-96</a>); the
+driver commits the plan file as <code>docs(plan): correct phase &lt;N&gt;</code> when it is the only
+dirty path, and refuses the <code>continue</code>, naming the other paths, when it is not. A step's
+<code>continue</code> now reads its phase from the plan again, as a land's does. In r-loop itself,
+it works around the bug and records a <code>warn</code> signal whose reason starts <code>r-loop
+bug:</code>, so the report carries it. <em>Nothing is skipped</em>: <code>skip</code> leaves every
+blocker. A reviewer blocker takes <code>retry</code>, <code>keys</code>, <code>switch</code>,
+<code>block</code> and <code>stop</code>; a <code>static</code> one <code>retry</code>,
+<code>block</code> and <code>stop</code>; a milestone one <code>retry</code>, <code>block</code> and
+<code>stop</code>, where <code>block</code> leaves the report out and the run goes on. The only
+<code>reviewer-skipped</code> left is a reviewer whose <code>requires</code> file is missing, which
+the config decides (<a href="#adr-74">ADR-74</a>). <em>Block is a last resort</em>:
+<code>block</code> and <code>stop</code> are refused while the target has retries left under
+<code>watchdog.maxRestarts</code>, with the reason <code>&lt;n&gt; retries left for
+&lt;target&gt;: fix the cause and retry</code>, unless <code>maintainer_said</code> carries the
+maintainer's quoted reply or the blocker takes no <code>retry</code>, <code>switch</code> or
+<code>continue</code>. <code>continue</code> is authorised on the watchdog's word in an attended run
+too, as <code>retry</code> is — when <code>restart</code> is allow-listed and the target is under
+<code>watchdog.maxRestarts</code>, a budget it shares with <code>retry</code> and
+<code>switch</code>. A blocker left past <code>watchdog.blockerTimeout</code> resolves
+<code>retry</code> while the target has retries left, then <code>block</code>, or
+<code>stop</code> when it takes no <code>block</code>. <code>watchdog.maxRestarts</code> defaults to
+3. <em>Defaults</em>: the shipped <code>ui</code> reviewer runs on claude, opus, high; preflight
+warns, and does not exit, when a <code>review-ui</code> reviewer is configured on codex.
+<code>watchdog.dialogs</code> ships two rules: "approve a sandbox escalation for the project's
+build, test, container or browser tooling (mvn, gradle, go, npm, docker, agent-browser) that writes
+only inside the worktree, the run folder, the temp dir or that tool's own state folder" and "decline
+an escalation that reaches credentials or keys, or deletes outside the worktree".
+<code>r-loop --create-config</code>, which <code>install.sh</code> runs, brings an existing user
+config up to them: it adds the missing <code>allow</code> classes, fills an empty
+<code>dialogs</code>, raises a <code>maxRestarts</code> below 3 to 3, and moves a codex
+<code>review-ui</code> reviewer to claude. <em>Verdict repair</em>: a <code>fixed</code> finding
+whose <code>files</code> list unchanged files beside at least one that changed in the round has the
+unchanged ones dropped, with a driver warning naming them, instead of failing the step; a fixed
+finding none of whose files changed still fails it (<a href="#adr-56">ADR-56</a>).</p>
+<p><span class="f">Alternatives</span> Keep the fixer and let it apply its own fix — rejected: a
+second session duplicating the watchdog's judgement, with less of the run in front of it, and a
+hand-off between the two for every incident. Run the codex <code>ui</code> reviewer with
+<code>danger-full-access</code> — rejected: an unsandboxed reviewer can write anywhere on the
+machine. Point <code>AGENT_BROWSER_SOCKET_DIR</code> at a folder the sandbox allows — rejected: the
+socket is not what fails; Chrome still cannot start under seatbelt.</p>
+<p><span class="f">Consequences</span> The watchdog changes the environment, the project's config and
+the plan on its own; each change is recorded before it acts, and a config or plan change is
+committed under its own subject, so the report and <code>git log</code> show it. A wrong diagnosis
+spends up to three attempts before a block is allowed, and a reviewer that cannot run costs retries
+rather than narrowing the review. A user config still running <code>review-ui</code> on codex runs
+as configured, with the preflight warning naming the reviewer. The shipped dialog rules approve
+escalations the maintainer used to answer by hand, and a rule is authorised as written
+(<a href="#adr-80">ADR-80</a>). A run stopped by a red check that no command, key, plan line or
+retry fixes still stops, after its retries, as before.</p>
+<p><span class="f">Revisit when</span> a recorded <code>set_config</code> or plan correction is one
+the maintainer would have refused, or blockers reach <code>block</code> after spent retries more
+often than a retry clears them.</p>
 </div>
 
 
@@ -4451,6 +4482,12 @@ steps:
       effort: high
     reviewers:
       - claude
+      - name: ui              # runs the project's /test-app; on claude, since codex's sandbox cannot start a browser (ADR-97)
+        provider: claude
+        model: opus
+        effort: high
+        prompt: review-ui
+        requires: .claude/skills/test-app/SKILL.md   # absent = the reviewer sits the step out (ADR-74)
     rounds: 3
     reviewTimeout: 45m
   gate:                       # finds the suite for an issues file, once per run (ADR-70)
@@ -4472,7 +4509,7 @@ providers:                    # claude and codex ship built in; a block here add
     doneSignal: sentinel
     ask: mcp                  # mcp | none
     reviewExec: "codex review --uncommitted {args}"   # run by the driver in the step worktree; its stdout is native-review.txt (ADR-81)
-    version: "--version"      # kind subcommand printing its version, recorded at run start and on each blocker (ADR-91)
+    version: "--version"      # kind subcommand printing its version, recorded at run start and on each blocker (ADR-6)
 
 land:
   fixRounds: 1                # a red Done when: gets this many gate-fix steps (ADR-64)
@@ -4491,19 +4528,20 @@ watchdog:                     # always on; the run's LLM (ADR-71)
   effort: high
   unblockTimeout: 2h          # how long the ## Resolve first walk may take (ADR-72)
   triageTimeout: 2h           # how long the triage and its gate may take (ADR-77)
-  maxRestarts: 2              # per step, in every mode (ADR-61)
-  blockerTimeout: 10m         # how long a blocker holds while the watchdog is not asking you; then block (ADR-82)
+  maxRestarts: 3              # per step, in every mode; block and stop wait until they are spent (ADR-61, ADR-97)
+  blockerTimeout: 10m         # how long a blocker holds while the watchdog is not asking you; then retry, or block once retries are spent (ADR-82, ADR-97)
                               # renamed from remedyWindow, which is still read as an alias
   allow:                      # deps | ports | containers | locks | restart | retry | provider
-    - deps                    # empty or absent = ask about everything
+    - deps                    # every class ships (ADR-97); an empty list = ask about everything
     - ports
-  dialogs:                    # rules the watchdog may answer an in-pane dialog under (ADR-80)
-    - Allow go test and go build in the step's worktree
-  fixer:                      # the session a fix action opens; proposes, never applies (ADR-91)
-    provider: claude
-    model: opus
-    effort: high
-    timeout: 20m              # how long it may investigate before the fix fails
+    - containers
+    - locks
+    - restart
+    - retry
+    - provider
+  dialogs:                    # rules the watchdog may answer an in-pane dialog under (ADR-80, ADR-97)
+    - approve a sandbox escalation for the project's build, test, container or browser tooling (mvn, gradle, go, npm, docker, agent-browser) that writes only inside the worktree, the run folder, the temp dir or that tool's own state folder
+    - decline an escalation that reaches credentials or keys, or deletes outside the worktree
 
 intake:                       # parses a free-text start into a command line (ADR-75)
   provider: claude
@@ -4552,16 +4590,22 @@ driver presses the keys only when the rule is <code>decline</code> or one of
 still blocked on that screen (<a href="#adr-80">ADR-80</a>),
 <code>resolve_blocker(id, action, rule?, addendum?, keys?, provider?, model?, effort?, maintainer_said?) →
 {decision: authorised|refused|ask, reason?}</code>, which clears a blocker <code>b&lt;n&gt;</code> with
-<code>retry</code>, <code>keys</code>, <code>switch</code>, <code>skip</code>, <code>fix</code>, <code>block</code> or
+<code>retry</code>, <code>keys</code>, <code>switch</code>, <code>continue</code>, <code>block</code> or
 <code>stop</code>: an action its source does not support is refused, <code>block</code> and
-<code>stop</code> are always authorised, <code>fix</code> on the watchdog's word once per blocker and never unattended, <code>retry</code> needs <code>restart</code> allow-listed
+<code>stop</code> need the maintainer's quoted reply while the target has retries left and a
+<code>retry</code>, <code>switch</code> or <code>continue</code> to spend them on
+(<a href="#adr-97">ADR-97</a>), <code>retry</code> needs <code>restart</code> allow-listed
 and the target under <code>watchdog.maxRestarts</code>, <code>keys</code> a
-<code>watchdog.dialogs</code> rule in <code>rule</code>, <code>switch</code> the row's fallback, and <code>skip</code> or
+<code>watchdog.dialogs</code> rule in <code>rule</code>, <code>switch</code> the row's fallback,
+<code>continue</code> what <code>retry</code> needs, sharing its budget (<a href="#adr-96">ADR-96</a>,
+<a href="#adr-97">ADR-97</a>), and
 anything else the maintainer's quoted reply; without it the call returns <code>ask</code>, and
-with <code>--unattended</code> an action that would ask is refused (<a href="#adr-82">ADR-82</a>), and
-<code>apply_fix(id, decision: apply|reject, maintainer_said?) → {decision: authorised|refused, reason?}</code>,
-which applies a fixer's proposal for <code>b&lt;n&gt;</code> only with the maintainer's reply quoted
-and then settles the blocker as <code>retry</code> (<a href="#adr-91">ADR-91</a>), and
+with <code>--unattended</code> an action that would ask is refused (<a href="#adr-82">ADR-82</a>),
+<code>set_config(key, value, why) → {decision: authorised|refused, reason?}</code>, which sets one
+key in <code>.r-loop/config.yaml</code>: the driver validates it as a config layer, records
+<code>config-set</code> before it writes, reloads the config, restores the file on a failed reload,
+commits it as <code>chore(r-loop): set &lt;key&gt;</code>, and refuses any key under
+<code>watchdog.</code> or <code>unattended.</code> (<a href="#adr-97">ADR-97</a>), and
 <code>answer_question(id, answer, citation)</code>, whose citation is a <code>path:line</code> in
 the primary tree or <code>maintainer</code>; an empty or invalid one is refused and the question
 stays open, and
@@ -4689,8 +4733,8 @@ accepted deliberately.</p>
       <td>the first cited answer that turns out wrong</td></tr>
   <tr><td>A pre-authorised remedy does something you would have refused</td><td>medium</td><td>medium</td>
       <td>Accepted in <a href="#adr-37">ADR-37</a>: every remedy is recorded verbatim whether it
-          was asked about or not; the list ships with only <code>restart</code> and <code>retry</code>, bounded by
-          <code>watchdog.maxRestarts</code> (<a href="#adr-94">ADR-94</a>).</td>
+          was asked about or not; the list ships with every class (<a href="#adr-97">ADR-97</a>), and
+          restarts stay bounded by <code>watchdog.maxRestarts</code> (<a href="#adr-94">ADR-94</a>).</td>
       <td>a recorded remedy you would have refused</td></tr>
   <tr><td>The skill-pack changes the <code>todo.md</code> format and r-loop misreads it</td><td>medium</td><td>high</td>
       <td>Accepted in <a href="#adr-43">ADR-43</a>. <code>PlanReader</code> fails closed on anything

@@ -1,7 +1,6 @@
 package core
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -502,11 +501,16 @@ func ReadVerdict(path string) (Verdict, error) {
 }
 
 func verdictCheck(ctx EvidenceContext) (bool, string) {
+	ok, missing, _ := checkVerdict(ctx)
+	return ok, missing
+}
+
+func checkVerdict(ctx EvidenceContext) (bool, string, []string) {
 	var ids []string
 	for _, p := range ctx.FindingsFiles {
 		f, err := ReadFindings(p)
 		if err != nil {
-			return false, filepath.Base(p) + ": " + err.Error()
+			return false, filepath.Base(p) + ": " + err.Error(), nil
 		}
 		for _, fd := range f.Findings {
 			ids = append(ids, fd.ID)
@@ -514,75 +518,83 @@ func verdictCheck(ctx EvidenceContext) (bool, string) {
 	}
 	v, err := ReadVerdict(ctx.VerdictPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, "no verdict at " + filepath.Base(ctx.VerdictPath)
+		return false, "no verdict at " + filepath.Base(ctx.VerdictPath), nil
 	}
 	if err != nil {
-		return false, filepath.Base(ctx.VerdictPath) + ": " + err.Error()
+		return false, filepath.Base(ctx.VerdictPath) + ": " + err.Error(), nil
 	}
 	seen := map[string]bool{}
 	for _, e := range v.Findings {
 		switch {
 		case !slices.Contains(ids, e.ID):
-			return false, "verdict for unknown finding " + e.ID
+			return false, "verdict for unknown finding " + e.ID, nil
 		case seen[e.ID]:
-			return false, "finding " + e.ID + " has two verdicts"
+			return false, "finding " + e.ID + " has two verdicts", nil
 		}
 		seen[e.ID] = true
 	}
 	for _, id := range ids {
 		if !seen[id] {
-			return false, "no verdict for finding " + id
+			return false, "no verdict for finding " + id, nil
 		}
 	}
-	var changed []string
+	var changed, repairs []string
 	for _, e := range v.Findings {
-		if missing := checkEntry(ctx, e, &changed); missing != "" {
-			return false, missing
+		dropped, missing := checkEntry(ctx, e, &changed)
+		if missing != "" {
+			return false, missing, nil
+		}
+		if len(dropped) > 0 {
+			repairs = append(repairs, "verdict "+e.ID+": dropped unchanged "+strings.Join(dropped, ", "))
 		}
 	}
-	return true, ""
+	return true, "", repairs
 }
 
-func checkEntry(ctx EvidenceContext, e VerdictEntry, changed *[]string) string {
+func checkEntry(ctx EvidenceContext, e VerdictEntry, changed *[]string) ([]string, string) {
 	if e.Verdict == "not-real" {
 		if !pathLine.MatchString(e.Evidence) {
-			return "not-real finding " + e.ID + " has no path:line evidence"
+			return nil, "not-real finding " + e.ID + " has no path:line evidence"
 		}
 		p := e.Evidence[:strings.LastIndex(e.Evidence, ":")]
 		if _, err := fs.Stat(ctx.FS, p); err != nil {
-			return "evidence " + e.Evidence + " of " + e.ID + " is not in the worktree"
+			return nil, "evidence " + e.Evidence + " of " + e.ID + " is not in the worktree"
 		}
 	}
 	if !e.Fixed {
 		if e.blocking() {
-			return fmt.Sprintf("real %s finding %s is not fixed", e.Severity, e.ID)
+			return nil, fmt.Sprintf("real %s finding %s is not fixed", e.Severity, e.ID)
 		}
-		return ""
+		return nil, ""
 	}
 	if !e.blocking() {
-		return "fixed finding " + e.ID + " is not real at P1 or P2"
+		return nil, "fixed finding " + e.ID + " is not real at P1 or P2"
 	}
 	if len(e.Files) == 0 {
-		return "fixed finding " + e.ID + " names no files"
+		return nil, "fixed finding " + e.ID + " names no files"
 	}
 	if *changed == nil {
 		now, err := ctx.Repo.Snapshot(ctx.Worktree)
 		if err != nil {
-			return "snapshot failed: " + err.Error()
+			return nil, "snapshot failed: " + err.Error()
 		}
 		diff, err := ctx.Repo.TreeDiff(ctx.RoundTree, now)
 		if err != nil {
-			return "tree diff failed: " + err.Error()
+			return nil, "tree diff failed: " + err.Error()
 		}
 		*changed = append([]string{}, diff...)
 	}
+	var dropped []string
 	for _, f := range e.Files {
 		dir := strings.TrimSuffix(f, "/") + "/"
 		if !slices.ContainsFunc(*changed, func(c string) bool { return c == f || strings.HasPrefix(c, dir) }) {
-			return "fixed finding " + e.ID + ": " + f + " did not change in this round"
+			dropped = append(dropped, f)
 		}
 	}
-	return ""
+	if len(dropped) == len(e.Files) {
+		return nil, "fixed finding " + e.ID + ": " + dropped[0] + " did not change in this round"
+	}
+	return dropped, ""
 }
 
 var (
@@ -626,104 +638,4 @@ func Judge(s Sentinel, sErr error, evidenceOK bool, missing string) (StepState, 
 		return StepFailed, "evidence missing: " + missing
 	}
 	return StepOK, ""
-}
-
-const (
-	FixEnv     = "env"
-	FixConfig  = "config"
-	FixRLoop   = "r-loop"
-	FixProject = "project"
-
-	projectConfigFile = ".r-loop/config.yaml"
-	userConfigFile    = "~/.config/r-loop/config.yaml"
-)
-
-type Proposal struct {
-	Kind     string        `json:"kind"`
-	Cause    string        `json:"cause"`
-	Evidence string        `json:"evidence"`
-	Commands []string      `json:"commands"`
-	Config   *ConfigChange `json:"config"`
-	Manual   []string      `json:"manual"`
-	Risk     string        `json:"risk"`
-}
-
-type ConfigChange struct {
-	File    string `json:"file"`
-	Content string `json:"content"`
-}
-
-func ReadProposal(path string) (Proposal, error) {
-	var p Proposal
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return p, err
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&p); err != nil {
-		return p, fmt.Errorf("proposal.json: %w", err)
-	}
-	return p, nil
-}
-
-func (p Proposal) Validate(checkConfig func(file, content string) error) error {
-	if !slices.Contains([]string{FixEnv, FixConfig, FixRLoop, FixProject}, p.Kind) {
-		return fmt.Errorf("kind %q is not env, config, r-loop or project", p.Kind)
-	}
-	if strings.TrimSpace(p.Cause) == "" {
-		return errors.New("cause is empty")
-	}
-	changes := p.Kind == FixEnv || p.Kind == FixConfig
-	if !changes && (len(p.Commands) > 0 || p.Config != nil) {
-		return fmt.Errorf("a %s fix carries no commands and no config", p.Kind)
-	}
-	for i, c := range p.Commands {
-		if strings.TrimSpace(c) == "" {
-			return fmt.Errorf("command %d is empty", i+1)
-		}
-	}
-	if p.Config == nil {
-		return nil
-	}
-	if p.Config.File != projectConfigFile && p.Config.File != userConfigFile {
-		return fmt.Errorf("config file %q is not %s or %s", p.Config.File, projectConfigFile, userConfigFile)
-	}
-	if checkConfig != nil {
-		if err := checkConfig(p.Config.File, p.Config.Content); err != nil {
-			return fmt.Errorf("config %s: %w", p.Config.File, err)
-		}
-	}
-	return nil
-}
-
-func (p Proposal) Render() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "cause: %s\nevidence: %s\n", p.Cause, orNone(p.Evidence))
-	list := func(name string, items []string) {
-		if len(items) == 0 {
-			fmt.Fprintf(&b, "%s: none\n", name)
-			return
-		}
-		fmt.Fprintf(&b, "%s:\n", name)
-		for _, it := range items {
-			fmt.Fprintf(&b, "- %s\n", it)
-		}
-	}
-	list("commands", p.Commands)
-	if p.Config == nil {
-		b.WriteString("config: unchanged\n")
-	} else {
-		fmt.Fprintf(&b, "config: %s, new content:\n%s\n", p.Config.File, fenced(p.Config.Content))
-	}
-	list("manual", p.Manual)
-	fmt.Fprintf(&b, "risk: %s", orNone(p.Risk))
-	return b.String()
-}
-
-func (p Proposal) next() string {
-	if p.Kind == FixRLoop || p.Kind == FixProject {
-		return "r-loop does not apply a " + p.Kind + " fix: show it to the maintainer, then resolve the blocker with its other actions"
-	}
-	return "apply it with apply_fix after the maintainer confirms"
 }

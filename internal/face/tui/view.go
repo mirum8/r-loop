@@ -148,11 +148,7 @@ func (m Model) rail() []string {
 		case r.State == core.PhaseUnticked:
 			style = th.Idle
 		}
-		title := r.Title
-		if id := m.fixing[r.ID]; id != "" {
-			title = "fixer · " + id + " " + title
-		}
-		lines = append(lines, fill(style, fmt.Sprintf("%s %2s %s", glyphs[r.State], r.ID, title), railWidth))
+		lines = append(lines, fill(style, fmt.Sprintf("%s %2s %s", glyphs[r.State], r.ID, r.Title), railWidth))
 	}
 	return lines
 }

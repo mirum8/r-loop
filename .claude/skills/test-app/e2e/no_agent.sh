@@ -121,27 +121,6 @@ watchdog_keys '  blockerTimeout: 5m\n  remedyWindow: 5m\n'
 watchdog_keys '  blockerTimeout: 0s\n'
 [ "$rc" = 2 ] && ok "blockerTimeout: 0s exits 2: $(head -1 "$T/err")" || fail "blockerTimeout 0s rc=$rc"
 
-run docs/plan/todo-tiny.md --dry-run --plain
-[ "$rc" = 0 ] && grep -qx 'fixer: claude opus high  ← default' "$T/out" && grep -qx 'prompt fixer: embedded' "$T/out" \
-  && ok "dry-run banner: default fixer and embedded fixer prompt" || fail "default fixer banner rc=$rc: $(grep -e '^fixer' -e 'prompt fixer' "$T/out")"
-
-perl -0pi -e 's/  unblockTimeout: 15m\n/  unblockTimeout: 15m\n  fixer:\n    provider: claude\n    model: sonnet\n    effort: low\n    timeout: 5m\n/' .r-loop/config.yaml
-git commit -qam fixer
-run docs/plan/todo-tiny.md --dry-run --plain
-[ "$rc" = 0 ] && grep -qx 'fixer: claude sonnet low  ← provider .r-loop/config.yaml:watchdog.fixer.provider model .r-loop/config.yaml:watchdog.fixer.model effort .r-loop/config.yaml:watchdog.fixer.effort' "$T/out" \
-  && ok "watchdog.fixer from the project file shows its provenance" || fail "fixer provenance rc=$rc: $(grep '^fixer' "$T/out") $(head -1 "$T/err")"
-git reset -q --hard HEAD~1
-
-fixer_rejected() {
-  watchdog_keys "$1"
-  if [ "$rc" = 2 ] && grep -q "$2" "$T/err" && [ ! -d .r-loop/runs ]; then ok "$3 exits 2: $(head -1 "$T/err")"
-  else fail "$3 rc=$rc: $(head -1 "$T/err")"; fi
-}
-fixer_rejected '  fixer:\n    bogus: 1\n' 'unknown key "watchdog.fixer.bogus"' "watchdog.fixer.bogus"
-fixer_rejected '  fixer:\n    timeout: soon\n' 'watchdog.fixer.timeout: "soon" is not a duration' "watchdog.fixer.timeout: soon"
-fixer_rejected '  fixer:\n    provider: claude\n    model:\n    effort: low\n' 'watchdog.fixer.model: not set' "an empty watchdog.fixer.model"
-fixer_rejected '  fixer: {provider: claude}\n' 'flow style' "a flow-style watchdog.fixer"
-
 claude2() {
   perl -0pi -e 's/(  implement:\n    provider: )claude/${1}claude2/' .r-loop/config.yaml
   printf "providers:\n  claude2:\n    kind: claude\n    doneSignal: sentinel\n    ask: mcp\n$1" >> .r-loop/config.yaml
@@ -153,12 +132,6 @@ claude2 '    version:\n      - --version\n'
   && ok "a provider version that is a list exits 2" || fail "version list rc=$rc: $(head -1 "$T/err")"
 claude2 '    version: "--version"\n'
 [ "$rc" = 0 ] && grep -q '^implement  claude2 ' "$T/out" && ok "a provider version string loads" || fail "version string rc=$rc: $(head -1 "$T/err")"
-
-mkdir -p .r-loop/prompts && printf '# custom fixer\n' > .r-loop/prompts/fixer.md && git add .r-loop/prompts && git commit -qm fixer-prompt
-run docs/plan/todo-tiny.md --dry-run --plain
-[ "$rc" = 0 ] && grep -q '^prompt fixer: .*/\.r-loop/prompts/fixer\.md$' "$T/out" \
-  && ok "an override fixer prompt is reported by path" || fail "fixer prompt override rc=$rc: $(grep 'prompt fixer' "$T/out")"
-git reset -q --hard HEAD~1
 
 run docs/plan/todo-tiny.md --dry-run --plain
 [ "$rc" = 0 ] && grep -q '^  reviewer codex ' "$T/out" && grep -qx 'prompt review-plan: embedded' "$T/out" \
@@ -396,6 +369,92 @@ run docs/plan/todo-design.md --dry-run --plain
 [ "$rc" = 0 ] && [ "$(grep -c '^phase [0-9].* design → plan' "$T/out")" = 2 ] \
   && ok "todo-design.md dry-run: 2 phases, design → plan" || fail "todo-design.md dry-run rc=$rc: $(head -2 "$T/err")"
 cd "$ROOT"; rm -rf "$D"
+
+W=$("$ROOT/testdata/sandbox/make-sandbox.sh") && cd "$W"
+H=$(mktemp -d); HC="$H/.config/r-loop/config.yaml"
+HOME=$H "$BIN" docs/plan/todo-tiny.md --dry-run --plain > "$T/out" 2> "$T/err"; rc=$?
+[ "$rc" = 0 ] && grep -q '^watchdog: .* allow \[deps, ports, containers, locks, restart, retry, provider\]' "$T/out" \
+  && ! grep -q -e '^fixer' -e '^prompt fixer' "$T/out" && ! grep -q '^warning: reviewer' "$T/out" \
+  && ok "dry-run banner: default allow classes, no fixer line, no review-ui warning" || fail "watchdog banner rc=$rc: $(grep '^watchdog' "$T/out")"
+
+perl -0pi -e 's/(  implement:\n(?:    [^\n]*\n)*?    reviewers:\n)/$1      - name: ui\n        provider: codex\n        model: gpt-5.6-sol\n        effort: medium\n        prompt: review-ui\n        requires: .claude\/skills\/test-app\/SKILL.md\n/' .r-loop/config.yaml
+git commit -qam ui-codex
+HOME=$H "$BIN" docs/plan/todo-tiny.md --dry-run --plain > "$T/out" 2> "$T/err"; rc=$?
+[ "$rc" = 0 ] && grep -qx 'warning: reviewer ui runs review-ui on codex, whose sandbox cannot start a browser; use claude' "$T/out" \
+  && ok "a review-ui reviewer on codex warns and still exits 0" || fail "review-ui on codex rc=$rc: $(head -2 "$T/err")"
+git reset -q --hard HEAD~1
+
+perl -0pi -e 's/  unblockTimeout: 15m\n/  unblockTimeout: 15m\n  fixer:\n    provider: claude\n/' .r-loop/config.yaml
+HOME=$H "$BIN" docs/plan/todo-tiny.md --dry-run --plain > "$T/out" 2> "$T/err"; rc=$?
+[ "$rc" = 2 ] && grep -q '\.r-loop/config.yaml:[0-9]*: watchdog.fixer was removed (run r-loop --migrate-config)' "$T/err" \
+  && ok "watchdog.fixer in the project config exits 2" || fail "project fixer rc=$rc: $(head -2 "$T/err")"
+git checkout -q .r-loop/config.yaml
+
+mkdir -p "$H/.config/r-loop"
+printf 'watchdog:\n  effort: high\n  fixer:\n    provider: claude\n    model: opus\n    effort: high\n    timeout: 20m\n' > "$HC"
+HOME=$H "$BIN" docs/plan/todo-tiny.md --dry-run --plain > "$T/out" 2> "$T/err"; rc=$?
+[ "$rc" = 2 ] && grep -q 'watchdog.fixer was removed (run r-loop --migrate-config)' "$T/err" \
+  && ok "watchdog.fixer in ~/.config exits 2" || fail "home fixer rc=$rc: $(head -2 "$T/err")"
+HOME=$H "$BIN" --migrate-config > "$T/out" 2> "$T/err"; rc=$?
+git checkout -q .r-loop/config.yaml; rm -f .r-loop/config.yaml.bak
+HOME=$H "$BIN" docs/plan/todo-tiny.md --dry-run --plain > /dev/null 2> "$T/err"; rc2=$?
+[ "$rc" = 0 ] && grep -q "^$HC: watchdog.fixer: claude opus high → removed" "$T/out" && ! grep -q fixer "$HC" \
+  && grep -qx '  effort: high' "$HC" && [ "$rc2" = 0 ] \
+  && ok "--migrate-config drops watchdog.fixer and the dry-run then loads" || fail "migrate fixer rc=$rc dry-run rc=$rc2: $(cat "$T/out") $(head -1 "$T/err")"
+
+rm -f "$HC.bak"
+cat > "$HC" <<'EOF'
+steps:
+  docs:
+    prompt: docs
+    check: diff
+    provider: claude
+    model: sonnet
+    effort: low
+    timeout: 30m
+    reviewers:
+      - name: ui
+        provider: codex
+        model: sol
+        effort: high
+        prompt: review-ui
+watchdog:
+  maxRestarts: 2
+  allow:
+    - restart
+    - retry
+  dialogs:
+  fixer:
+    provider: claude
+    model: opus
+    effort: high
+    timeout: 20m
+EOF
+HOME=$H "$BIN" --create-config > "$T/out" 2> "$T/err"; rc=$?
+lines_ok=1
+for k in 'steps.docs.reviewers: ui codex sol high → ui claude opus high' 'watchdog.fixer: claude opus high → removed' \
+  'watchdog.allow: restart, retry → restart, retry, deps, ports, containers, locks, provider' \
+  'watchdog.dialogs: none → 2 default rules' 'watchdog.maxRestarts: 2 → 3'; do
+  grep -qF "$HC: $k" "$T/out" || { lines_ok=0; echo "     missing change line: $k"; }
+done
+HOME=$H "$BIN" docs/plan/todo-tiny.md --dry-run --plain > /dev/null 2> "$T/err"; rc2=$?
+if [ "$rc" = 0 ] && [ "$lines_ok" = 1 ] && [ "$rc2" = 0 ] && ! grep -q -e fixer -e codex -e '[[{]' "$HC" \
+  && grep -qx '  maxRestarts: 3' "$HC" && grep -qx '    - provider' "$HC" && grep -q '^    - decline an escalation' "$HC"; then
+  ok "--create-config upgrades an old watchdog block and a codex ui reviewer, block style, loads"
+else fail "--create-config upgrade rc=$rc dry-run rc=$rc2: $(cat "$T/out" "$T/err")"; fi
+rm -rf "$H"
+
+H=$(mktemp -d); HC="$H/.config/r-loop/config.yaml"
+HOME=$H "$BIN" --create-config > /dev/null 2>&1
+grep -qx '  maxRestarts: 3' "$HC" && ! grep -q fixer "$HC" && [ "$(grep -c -e '^    - approve a sandbox' -e '^    - decline an escalation' "$HC")" = 2 ] \
+  && [ "$(sed -n '/name: ui/,/prompt:/p' "$HC" | grep -c -e 'provider: claude' -e 'model: opus')" = 2 ] \
+  && ok "--create-config on an empty HOME writes the new watchdog and ui defaults" || fail "fresh defaults: $(grep -n -e maxRestarts -e fixer "$HC")"
+rm -rf "$H"
+
+strings "$BIN" > "$T/strings"
+! grep -q 'Handing a blocker to the fixer' "$T/strings" && grep -q 'Fixing it yourself' "$T/strings" && grep -q set_config "$T/strings" \
+  && ok "embedded watchdog prompt: no fixer hand-off, fixes itself, set_config" || fail "embedded prompt strings"
+cd "$ROOT"; rm -rf "$W"
 
 cd "$ROOT"
 go test ./internal/face/... > /dev/null 2>&1 && ok "golden harness go test ./internal/face/..." || fail "go test ./internal/face/..."

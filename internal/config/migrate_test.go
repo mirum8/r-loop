@@ -205,3 +205,48 @@ func TestMigrateAddsTheDesignStepBeforeAPlanFileStepUnderAnotherName(t *testing.
 		t.Errorf("pipeline = %q", got)
 	}
 }
+
+func TestMigrateRemovesTheObsoleteWatchdogFixer(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "watchdog:\n  maxRestarts: 4\n  fixer:\n    provider: claude\n    model: opus\n    effort: high\n    timeout: 20m\n")
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	m, err := Migrate(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"watchdog.fixer: claude opus high → removed"}; !reflect.DeepEqual(m.Changes, want) {
+		t.Errorf("changes = %q", m.Changes)
+	}
+	if cfg := d.load(t); cfg.Watchdog.MaxRestarts != 4 {
+		t.Errorf("maxRestarts = %d", cfg.Watchdog.MaxRestarts)
+	}
+}
+
+func TestResetModelsRemovesTheObsoleteWatchdogFixer(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "watchdog:\n  fixer:\n    provider: claude\n    model: opus\n    effort: high\n    timeout: 20m\n")
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	changes, err := ResetModels(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"watchdog.fixer: claude opus high → removed"}; !reflect.DeepEqual(changes, want) {
+		t.Errorf("changes = %q", changes)
+	}
+	d.load(t)
+}
+
+func TestLoadNamesTheMigrationForAnObsoleteWatchdogFixer(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "watchdog:\n  fixer:\n    provider: claude\n    model: opus\n    effort: high\n")
+
+	_, err := Load(d.project, d.home, nil)
+
+	if err == nil || !strings.Contains(err.Error(), "--migrate-config") {
+		t.Errorf("err = %v", err)
+	}
+}

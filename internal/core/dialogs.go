@@ -19,8 +19,7 @@ func (l *RunLoop) Blocked(s *Session) bool {
 	if s.owner != nil {
 		owner = s.owner
 	}
-	fixer := isFixKind(s.Ref.Key.Kind)
-	if !fixer && !l.isStepKind(s.Ref.Key.Kind) {
+	if !l.isStepKind(s.Ref.Key.Kind) {
 		return false
 	}
 	key := s.Ref.Key
@@ -32,7 +31,7 @@ func (l *RunLoop) Blocked(s *Session) bool {
 	_, open := l.openDialog(s.Agent)
 	last := l.screens[s.Agent]
 	l.mu.Unlock()
-	if ctx == nil || live != owner && !fixer {
+	if ctx == nil || live != owner {
 		return false
 	}
 	if open {

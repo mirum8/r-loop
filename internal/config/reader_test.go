@@ -79,7 +79,7 @@ func TestDefaults(t *testing.T) {
 	}
 	wantImpl := StepRow{Prompt: "implement", Check: "diff", Provider: "claude", Model: "opus", Effort: "medium",
 		Fallback: Fallback{Provider: "codex", Model: "sol", Effort: "medium"}, Timeout: 4 * time.Hour,
-		Reviewers: []Reviewer{{Provider: "codex", Model: "sol", Effort: "high"}, {Name: "ui", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}, {Name: "security", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-security"}}, Rounds: 3, ReviewTimeout: 45 * time.Minute}
+		Reviewers: []Reviewer{{Provider: "codex", Model: "sol", Effort: "high"}, {Name: "ui", Provider: "claude", Model: "opus", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}, {Name: "security", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-security"}}, Rounds: 3, ReviewTimeout: 45 * time.Minute}
 	if !reflect.DeepEqual(cfg.Steps["implement"], wantImpl) {
 		t.Errorf("implement = %+v", cfg.Steps["implement"])
 	}
@@ -95,10 +95,12 @@ func TestDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Unattended, wantUnattended) {
 		t.Errorf("Unattended = %+v", cfg.Unattended)
 	}
-	wantWatchdog := Watchdog{Provider: "claude", Model: "opus", Effort: "medium", Allow: []string{"restart", "retry"}, BlockerTimeout: 10 * time.Minute,
+	wantWatchdog := Watchdog{Provider: "claude", Model: "opus", Effort: "medium", Allow: []string{"deps", "ports", "containers", "locks", "restart", "retry", "provider"}, BlockerTimeout: 10 * time.Minute,
 		CheckTimeout: 10 * time.Minute, StallGrace: 2 * time.Minute, UnblockTimeout: 2 * time.Hour, TriageTimeout: 2 * time.Hour,
-		OvertimeFactor: 2, DiffFactor: 3, MaxRestarts: 2, Dialogs: []string{},
-		Fixer: Fixer{Provider: "claude", Model: "opus", Effort: "high", Timeout: 20 * time.Minute}}
+		OvertimeFactor: 2, DiffFactor: 3, MaxRestarts: 3, Dialogs: []string{
+			"approve a sandbox escalation for the project's build, test, container or browser tooling (mvn, gradle, go, npm, docker, agent-browser) that writes only inside the worktree, the run folder, the temp dir or that tool's own state folder",
+			"decline an escalation that reaches credentials or keys, or deletes outside the worktree",
+		}}
 	if !reflect.DeepEqual(cfg.Watchdog, wantWatchdog) {
 		t.Errorf("Watchdog = %+v", cfg.Watchdog)
 	}
@@ -612,7 +614,7 @@ func TestOverrideLeavesFallbackAndReviewersUntouched(t *testing.T) {
 	if cfg.Steps["implement"].Fallback != (Fallback{Provider: "codex", Model: "sol", Effort: "medium"}) {
 		t.Errorf("Fallback = %+v", cfg.Steps["implement"].Fallback)
 	}
-	if !reflect.DeepEqual(cfg.Steps["implement"].Reviewers, []Reviewer{{Provider: "codex", Model: "sol", Effort: "high"}, {Name: "ui", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}, {Name: "security", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-security"}}) {
+	if !reflect.DeepEqual(cfg.Steps["implement"].Reviewers, []Reviewer{{Provider: "codex", Model: "sol", Effort: "high"}, {Name: "ui", Provider: "claude", Model: "opus", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}, {Name: "security", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-security"}}) {
 		t.Errorf("Reviewers = %+v", cfg.Steps["implement"].Reviewers)
 	}
 }
@@ -662,7 +664,7 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 		"implement  claude  opus  medium  4h  diff  ← provider flag:--provider model default effort default",
 		"  review rounds 3 45m  ← default",
 		"  reviewer codex sol high  ← default",
-		"  reviewer codex sol high (name ui, prompt review-ui, requires .claude/skills/test-app/SKILL.md)  ← default",
+		"  reviewer claude opus high (name ui, prompt review-ui, requires .claude/skills/test-app/SKILL.md)  ← default",
 		"  reviewer codex sol high (name security, prompt review-security)  ← default",
 		"  fallback gemini pro high  ← .r-loop/config.yaml:steps.implement.fallback",
 		"milestone  claude  opus  medium  1h  report  ← default",
@@ -672,7 +674,6 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 		"override: implement provider claude (flag) replaces codex (.r-loop/config.yaml)",
 		"override: plan model sonnet (flag) replaces opus (default)",
 		"watchdog: claude opus low allow [deps]  ← provider default model default effort .r-loop/config.yaml:watchdog.effort",
-		"fixer: claude opus high  ← default",
 		"intake: claude sonnet medium  ← default",
 	}, "\n") + "\n"
 	if got := Banner(cfg); got != want {
@@ -827,44 +828,6 @@ func TestUnknownIntakeKeyRejected(t *testing.T) {
 	d.loadErr(t, `unknown key "intake.timeout"`)
 }
 
-func TestWatchdogFixerFromTheProjectFileKeepsItsProvenance(t *testing.T) {
-	d := newDirs(t)
-	d.writeProject(t, "watchdog:\n  fixer:\n    provider: codex\n    model: gpt-5.6\n    timeout: 5m\n")
-
-	cfg := d.load(t)
-
-	if cfg.Watchdog.Fixer != (Fixer{Provider: "codex", Model: "gpt-5.6", Effort: "high", Timeout: 5 * time.Minute}) {
-		t.Fatalf("fixer = %+v", cfg.Watchdog.Fixer)
-	}
-	if got := cfg.Provenance["watchdog.fixer.provider"]; got != ".r-loop/config.yaml:watchdog.fixer.provider" {
-		t.Errorf("provider provenance = %q", got)
-	}
-	if !strings.Contains(Banner(cfg), "fixer: codex gpt-5.6 high  ← provider .r-loop/config.yaml:watchdog.fixer.provider model .r-loop/config.yaml:watchdog.fixer.model effort default\n") {
-		t.Errorf("banner:\n%s", Banner(cfg))
-	}
-}
-
-func TestWatchdogFixerWithoutAModelRejected(t *testing.T) {
-	d := newDirs(t)
-	d.writeProject(t, "watchdog:\n  fixer:\n    model: \"\"\n")
-
-	d.loadErr(t, "watchdog.fixer.model: not set, every session names its provider, model and effort")
-}
-
-func TestUnknownWatchdogFixerKeyRejected(t *testing.T) {
-	d := newDirs(t)
-	d.writeProject(t, "watchdog:\n  fixer:\n    ask: mcp\n")
-
-	d.loadErr(t, `unknown key "watchdog.fixer.ask"`)
-}
-
-func TestWatchdogFixerTimeoutMustBeADuration(t *testing.T) {
-	d := newDirs(t)
-	d.writeProject(t, "watchdog:\n  fixer:\n    timeout: soon\n")
-
-	d.loadErr(t, `watchdog.fixer.timeout: "soon" is not a duration`)
-}
-
 func TestCreateWritesTheDefaultsAsTheMachineFile(t *testing.T) {
 	d := newDirs(t)
 
@@ -909,7 +872,7 @@ func TestResetModelsPutsTheDefaultModelsBackAndKeepsTheRest(t *testing.T) {
 		"steps.plan: fable → claude opus high",
 		"steps.implement: codex gpt-5.6-sol medium → claude opus medium",
 		"steps.implement.fallback: claude opus medium → codex sol medium",
-		"steps.implement.reviewers: claude opus medium → codex sol high, ui codex sol high, security codex sol high",
+		"steps.implement.reviewers: claude opus medium → codex sol high, ui claude opus high, security codex sol high",
 		"steps.milestone.reviewers: codex gpt-5.6-sol medium → removed",
 		"watchdog: high → claude opus medium",
 		"land.fix: high → removed",
@@ -1004,7 +967,7 @@ func TestResetModelsAddsTheDesignStepToAPinnedPipeline(t *testing.T) {
 	}
 }
 
-func TestResetModelsAddsRestartAndRetryToTheWatchdogAllowList(t *testing.T) {
+func TestResetModelsAddsEveryRemedyClassToTheWatchdogAllowList(t *testing.T) {
 	d := newDirs(t)
 	d.writeHome(t, "watchdog:\n  allow: # consent\n    - deps\n")
 	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
@@ -1014,10 +977,10 @@ func TestResetModelsAddsRestartAndRetryToTheWatchdogAllowList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"watchdog.allow: deps → deps, restart, retry"}; !reflect.DeepEqual(changes, want) {
+	if want := []string{"watchdog.allow: deps → deps, ports, containers, locks, restart, retry, provider"}; !reflect.DeepEqual(changes, want) {
 		t.Errorf("changes = %q", changes)
 	}
-	if got := d.load(t).Watchdog.Allow; !reflect.DeepEqual(got, []string{"deps", "restart", "retry"}) {
+	if got := d.load(t).Watchdog.Allow; !reflect.DeepEqual(got, []string{"deps", "ports", "containers", "locks", "restart", "retry", "provider"}) {
 		t.Errorf("allow = %q", got)
 	}
 	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "# consent") {
@@ -1027,7 +990,7 @@ func TestResetModelsAddsRestartAndRetryToTheWatchdogAllowList(t *testing.T) {
 
 func TestResetModelsFillsAnEmptyWatchdogAllowList(t *testing.T) {
 	d := newDirs(t)
-	d.writeHome(t, "watchdog:\n  maxRestarts: 2\n  allow:\n")
+	d.writeHome(t, "watchdog:\n  maxRestarts: 4\n  allow:\n")
 	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
 
 	changes, err := ResetModels(path)
@@ -1035,11 +998,60 @@ func TestResetModelsFillsAnEmptyWatchdogAllowList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"watchdog.allow: none → restart, retry"}; !reflect.DeepEqual(changes, want) {
+	if want := []string{"watchdog.allow: none → deps, ports, containers, locks, restart, retry, provider"}; !reflect.DeepEqual(changes, want) {
 		t.Errorf("changes = %q", changes)
 	}
-	if got := d.load(t).Watchdog.Allow; !reflect.DeepEqual(got, []string{"restart", "retry"}) {
+	if got := d.load(t).Watchdog.Allow; !reflect.DeepEqual(got, []string{"deps", "ports", "containers", "locks", "restart", "retry", "provider"}) {
 		t.Errorf("allow = %q", got)
+	}
+}
+
+func TestResetModelsBringsAnInstalledConfigToTheNewWatchdogAndUIReviewerDefaults(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "steps:\n  implement:\n    reviewers:\n      - provider: codex\n        model: sol\n        effort: high\n      - name: ui\n        provider: codex\n        model: sol\n        effort: high\n        prompt: review-ui\n        requires: .claude/skills/test-app/SKILL.md\n      - name: security\n        provider: codex\n        model: sol\n        effort: high\n        prompt: review-security\n  docs:\n    prompt: docs\n    check: diff\n    provider: claude\n    model: sonnet\n    effort: low\n    timeout: 30m\n    reviewers:\n      - name: look\n        provider: codex\n        model: sol\n        effort: medium\n        prompt: review-ui\nwatchdog:\n  maxRestarts: 2\n  allow:\n    - restart\n    - retry\n  dialogs:\n")
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+	before := d.load(t)
+	if w := before.Watchdog; len(w.Dialogs) != 0 || w.MaxRestarts != 2 || !reflect.DeepEqual(w.Allow, []string{"restart", "retry"}) || before.Steps["implement"].Reviewers[1].Provider != "codex" {
+		t.Fatalf("before reset: watchdog = %+v ui = %+v", w, before.Steps["implement"].Reviewers[1])
+	}
+
+	changes, err := ResetModels(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"steps.implement.reviewers: codex sol high, ui codex sol high, security codex sol high → codex sol high, ui claude opus high, security codex sol high",
+		"steps.docs.reviewers: look codex sol medium → look claude opus high",
+		"watchdog.allow: restart, retry → restart, retry, deps, ports, containers, locks, provider",
+		"watchdog.dialogs: none → 2 default rules",
+		"watchdog.maxRestarts: 2 → 3",
+	}
+	if !reflect.DeepEqual(changes, want) {
+		t.Errorf("changes = %q", changes)
+	}
+	cfg := d.load(t)
+	if got := cfg.Steps["implement"].Reviewers[1]; got.Provider != "claude" || got.Model != "opus" || got.Effort != "high" || got.Prompt != "review-ui" {
+		t.Errorf("implement ui = %+v", got)
+	}
+	if got := cfg.Steps["docs"].Reviewers[0]; got != (Reviewer{Name: "look", Provider: "claude", Model: "opus", Effort: "high", Prompt: "review-ui"}) {
+		t.Errorf("docs ui = %+v", got)
+	}
+	defaults := newDirs(t).load(t).Watchdog
+	if w := cfg.Watchdog; w.MaxRestarts != 3 || !reflect.DeepEqual(w.Dialogs, defaults.Dialogs) || len(w.Allow) != 7 {
+		t.Errorf("watchdog = %+v", w)
+	}
+}
+
+func TestResetModelsKeepsTheMaintainersOwnDialogRulesAndHigherRestarts(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "watchdog:\n  maxRestarts: 5\n  dialogs:\n    - allow go test\n")
+	path := filepath.Join(d.home, ".config", "r-loop", "config.yaml")
+
+	changes, err := ResetModels(path)
+
+	if err != nil || len(changes) != 0 {
+		t.Fatalf("changes=%q err=%v", changes, err)
 	}
 }
 

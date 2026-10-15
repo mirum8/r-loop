@@ -44,8 +44,8 @@ steps:
         model: sol
         effort: high
       - name: ui
-        provider: codex
-        model: sol
+        provider: claude
+        model: opus
         effort: high
         prompt: review-ui
         requires: .claude/skills/test-app/SKILL.md
@@ -84,11 +84,18 @@ watchdog:
   provider: claude
   model: opus
   effort: medium
-  maxRestarts: 2
+  maxRestarts: 3
   allow:
+    - deps
+    - ports
+    - containers
+    - locks
     - restart
     - retry
+    - provider
   dialogs:
+    - approve a sandbox escalation for the project's build, test, container or browser tooling (mvn, gradle, go, npm, docker, agent-browser) that writes only inside the worktree, the run folder, the temp dir or that tool's own state folder
+    - decline an escalation that reaches credentials or keys, or deletes outside the worktree
   blockerTimeout: 10m
   checkTimeout: 10m
   unblockTimeout: 2h
@@ -96,11 +103,6 @@ watchdog:
   stallGrace: 2m
   overtimeFactor: 2
   diffFactor: 3
-  fixer:
-    provider: claude
-    model: opus
-    effort: high
-    timeout: 20m
 
 intake:
   provider: claude

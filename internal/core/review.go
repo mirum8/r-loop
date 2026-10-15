@@ -19,7 +19,7 @@ const (
 	staticReviewer = "static"
 )
 
-var staticActions = []string{actionRetry, actionSkip, actionFix, actionBlock, actionStop}
+var staticActions = []string{actionRetry, actionBlock, actionStop}
 
 type ReviewHalf struct {
 	Sessions *SessionManager
@@ -127,10 +127,8 @@ func (h ReviewHalf) Run(ctx context.Context, ref StepRef, worker *Session, obs O
 		reviewers = nil
 		for _, r := range runs {
 			spent = max(spent, r.out.active)
-			if !r.skipped {
-				reviewers = append(reviewers, r.s)
-				files = append(files, FindingsFile{Reviewer: r.s.Reviewer, Path: r.s.Ref.Vars["FindingsPath"].(string)})
-			}
+			reviewers = append(reviewers, r.s)
+			files = append(files, FindingsFile{Reviewer: r.s.Reviewer, Path: r.s.Ref.Vars["FindingsPath"].(string)})
 		}
 		if staticFile != nil {
 			files = append(files, *staticFile)
@@ -287,14 +285,6 @@ func (h ReviewHalf) settleStatic(ctx context.Context, worker *Session, run *stat
 		}
 		res := raiser.raise(ctx, Blocker{Source: sourceReviewer, Phase: worker.Ref.Key.Phase, Step: reviewerKey(worker.Ref.Key, staticReviewer).Kind, Reason: reason, Actions: staticActions})
 		switch res.Action {
-		case actionSkip:
-			if err := h.event(worker, "reviewer-skipped", map[string]string{"reviewer": staticReviewer, "reason": reason}); err != nil {
-				return nil, 0, sm.fail(worker, "record: "+err.Error())
-			}
-			if err := os.Remove(reviewFindingsPath(worker, staticReviewer, rd.n)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return nil, 0, sm.fail(worker, "reviewer static: "+err.Error())
-			}
-			return nil, 0, Outcome{}
 		case actionRetry:
 			run = h.analyze(ctx, worker).wait()
 		case actionStop:
@@ -331,7 +321,6 @@ type reviewerRun struct {
 	out      Outcome
 	fail     *reviewerFail
 	findings int
-	skipped  bool
 	tab      bool
 }
 
@@ -477,7 +466,7 @@ func (h ReviewHalf) replaceSlot(worker *Session, runs []*reviewerRun, i int) slo
 	}
 	at, tallest := slot{pane: worker.Pane, direction: "right"}, 0
 	for j, o := range runs {
-		if j == i || o == nil || o.skipped || o.tab || o.s.Pane == "" {
+		if j == i || o == nil || o.tab || o.s.Pane == "" {
 			continue
 		}
 		if info, err := h.Sessions.Host.PaneInfo(o.s.Pane); err == nil && info.Rows > tallest {
@@ -523,9 +512,7 @@ func (h ReviewHalf) place(worker *Session, r *reviewerRun, at slot, rd reviewRou
 func (h ReviewHalf) adopt(worker *Session, runs []*reviewerRun) {
 	var sessions []*Session
 	for _, r := range runs {
-		if !r.skipped {
-			sessions = append(sessions, r.s)
-		}
+		sessions = append(sessions, r.s)
 	}
 	worker.setReviewers(sessions)
 }
@@ -593,9 +580,7 @@ func (h ReviewHalf) join(ctx context.Context, worker *Session, runs []*reviewerR
 				return 0, out
 			}
 		}
-		if !r.skipped {
-			total += r.findings
-		}
+		total += r.findings
 	}
 	h.adopt(worker, runs)
 	return total, Outcome{}
@@ -622,7 +607,6 @@ func (h ReviewHalf) found(worker *Session, r *reviewerRun, n, round int) error {
 }
 
 func (h ReviewHalf) recover(ctx context.Context, worker *Session, runs []*reviewerRun, i int, rd reviewRound) Outcome {
-	sm := h.Sessions
 	raiser := h.raiser()
 	r := runs[i]
 	for r.fail != nil {
@@ -638,17 +622,6 @@ func (h ReviewHalf) recover(ctx context.Context, worker *Session, runs []*review
 		res := raiser.raise(ctx, b)
 		var out Outcome
 		switch res.Action {
-		case actionSkip:
-			if err := h.event(worker, "reviewer-skipped", map[string]string{"reviewer": r.rv.ID(), "reason": f.reason}); err != nil {
-				return sm.fail(worker, "record: "+err.Error())
-			}
-			r.skipped, r.fail = true, nil
-			if r.s.Pane != "" {
-				if err := sm.Host.ClosePane(r.s.Pane); err != nil {
-					return sm.fail(worker, "reviewer "+r.s.Reviewer+": "+err.Error())
-				}
-			}
-			return Outcome{}
 		case actionRetry, actionSwitch:
 			out = h.reopen(ctx, worker, runs, i, rd, res)
 		case actionKeys:
@@ -692,17 +665,16 @@ func (h ReviewHalf) reopen(ctx context.Context, worker *Session, runs []*reviewe
 		}
 		r.s.Pane = ""
 	}
+	r.rv = h.latest(worker, r.rv)
 	rv := r.rv
-	if res.Provider != "" || strings.HasPrefix(res.Citation, fixKindPrefix) {
-		if res.Provider != "" {
-			rv.Provider, rv.Model, rv.Effort = res.Provider, res.Model, res.Effort
-		}
-		a, url, err := h.args(worker, rv)
-		if err != nil {
-			return fail(err.Error())
-		}
-		r.args, r.url = a, url
+	if res.Provider != "" {
+		rv.Provider, rv.Model, rv.Effort = res.Provider, res.Model, res.Effort
 	}
+	a, url, err := h.args(worker, rv)
+	if err != nil {
+		return fail(err.Error())
+	}
+	r.args, r.url = a, url
 	s := h.reviewer(worker, r.rv, r.required, r.args, r.url, rd)
 	s.Ref.Kind.Row.Provider, s.Ref.Kind.Row.Model, s.Ref.Kind.Row.Effort = rv.Provider, rv.Model, rv.Effort
 	if res.Addendum != "" {
@@ -740,6 +712,18 @@ func (h ReviewHalf) reopen(ctx context.Context, worker *Session, runs []*reviewe
 		return fail(f.reason)
 	}
 	return h.await(ctx, worker, r, rd)
+}
+
+func (h ReviewHalf) latest(worker *Session, rv Reviewer) Reviewer {
+	if h.Sessions.Reviewers == nil {
+		return rv
+	}
+	for _, cur := range h.Sessions.Reviewers(worker.Ref.Key.Kind) {
+		if cur.ID() == rv.ID() {
+			return cur
+		}
+	}
+	return rv
 }
 
 func (h ReviewHalf) await(ctx context.Context, worker *Session, r *reviewerRun, rd reviewRound) Outcome {

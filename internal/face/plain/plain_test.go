@@ -274,30 +274,6 @@ func TestReviewRoundLines(t *testing.T) {
 	}
 }
 
-func TestFixLinesNameTheFixAndWhatHappened(t *testing.T) {
-	var out bytes.Buffer
-	f := &Face{Out: &out}
-
-	for _, ev := range []core.Event{
-		{At: at, Kind: "fix-started", Phase: "4", Step: "implement", Fields: map[string]string{"id": "b1", "provider": "claude", "model": "opus"}},
-		{At: at, Kind: "fix-proposed", Phase: "4", Step: "implement", Fields: map[string]string{"id": "b1", "kind": "config", "cause": "codex renamed --foo"}},
-		{At: at, Kind: "fix-applied", Phase: "4", Step: "implement", Fields: map[string]string{"id": "b1", "commands": "", "config": ".r-loop/config.yaml"}},
-		{At: at, Kind: "fix-rejected", Phase: "4", Step: "land", Fields: map[string]string{"id": "b2"}},
-		{At: at, Kind: "fix-failed", Phase: "4", Step: "land", Fields: map[string]string{"id": "b3", "reason": "command 1 exited 2"}},
-	} {
-		f.Emit(ev)
-	}
-
-	want := "14:03:09  phase 4  implement  fixer b1 started (claude opus)\n" +
-		"14:03:09  phase 4  implement  fix b1 proposed (config): codex renamed --foo\n" +
-		"14:03:09  phase 4  implement  fix b1 applied\n" +
-		"14:03:09  phase 4  land  fix b2 rejected\n" +
-		"14:03:09  phase 4  land  fix b3 failed: command 1 exited 2\n"
-	if out.String() != want {
-		t.Fatalf("got %q, want %q", out.String(), want)
-	}
-}
-
 func TestDesignLinesNameTheSkipTheIntentAndTheNoVisualChange(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}
@@ -376,6 +352,26 @@ func TestCloseNamesTheDiagnosisAfterTheReport(t *testing.T) {
 	f.Close()
 
 	if want := "report: /repo/.r-loop/runs/r1/report.md\ndiagnosis: /repo/.r-loop/runs/r1/failure-report.md\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
+func TestTheWatchdogsConfigChangesAndPlanCorrectionsReadAsLines(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	for _, ev := range []core.Event{
+		{At: at, Kind: core.EventConfigSet, Fields: map[string]string{"key": "steps.implement.model", "value": "opus", "why": "the row named a retired model"}},
+		{At: at, Kind: core.EventConfigSetFailed, Fields: map[string]string{"key": "steps.implement.modle", "reason": "unknown key"}},
+		{At: at, Kind: core.EventPlanCorrected, Phase: "2", Fields: map[string]string{"phase": "2", "path": "docs/x/todo.md"}},
+	} {
+		f.Emit(ev)
+	}
+
+	want := "14:03:09  config: steps.implement.model = opus — the row named a retired model\n" +
+		"!  config: steps.implement.modle not set: unknown key\n" +
+		"14:03:09  phase 2  plan corrected in docs/x/todo.md\n"
+	if out.String() != want {
 		t.Fatalf("got %q, want %q", out.String(), want)
 	}
 }

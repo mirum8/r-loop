@@ -1254,3 +1254,28 @@ func TestPruneWorktreesDropsARegisteredWorktreeWhoseDirectoryIsGone(t *testing.T
 		t.Fatalf("worktree still registered at %s", got)
 	}
 }
+
+func TestDiffCallsLeaveOutCommitsTheBaseGainedAfterTheWorktreeForked(t *testing.T) {
+	r, dir := newRepo(t)
+	wt := ".r-loop/wt/phase-1"
+	if err := r.AddWorktree(wt, "r-loop/phase-1", "main"); err != nil {
+		t.Fatal(err)
+	}
+	abs := filepath.Join(dir, wt)
+	write(t, filepath.Join(abs, "a.txt"), "one\nTWO\nthree\n")
+	write(t, filepath.Join(dir, ".r-loop", "config.yaml"), "label: x\n")
+	git(t, dir, "add", "-f", ".r-loop/config.yaml")
+	git(t, dir, "commit", "-q", "-m", "chore(r-loop): set label")
+
+	files, err := r.ChangedFiles(wt, "main")
+	if err != nil || !reflect.DeepEqual(files, []string{"a.txt"}) {
+		t.Fatalf("ChangedFiles = %q, %v", files, err)
+	}
+	added, deleted, err := r.DiffStat(wt, "main")
+	if err != nil || added != 2 || deleted != 1 {
+		t.Fatalf("DiffStat = %d, %d, %v; want 2, 1", added, deleted, err)
+	}
+	if ok, err := r.DiffNonEmpty(wt, "main"); err != nil || !ok {
+		t.Fatalf("DiffNonEmpty = %v, %v", ok, err)
+	}
+}

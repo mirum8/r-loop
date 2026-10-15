@@ -31,8 +31,6 @@ type QuestionRouter struct {
 	Remedies *Remedies
 	Blocker  func(id string) (Blocker, bool)
 	Settle   func(Resolution) error
-	Fix      func(id, addendum string) error
-	FixOpen  func(id string) bool
 
 	mu        sync.Mutex
 	open      map[string]string

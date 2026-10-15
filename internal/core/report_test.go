@@ -119,44 +119,6 @@ func TestReportListsEachBlockerWithItsActionAndWhoChoseIt(t *testing.T) {
 	}
 }
 
-func fixEvents() []Event {
-	ev := func(kind, phase string, fields map[string]string) Event {
-		return Event{Kind: kind, Phase: phase, Step: "implement", Fields: fields}
-	}
-	return []Event{
-		ev("fix-started", "1", map[string]string{"id": "b1", "provider": "claude", "model": "opus"}),
-		ev("fix-proposed", "1", map[string]string{"id": "b1", "kind": "config", "cause": "codex renamed --foo"}),
-		ev("fix-applied", "1", map[string]string{"id": "b1", "commands": "", "config": ".r-loop/config.yaml"}),
-		ev("fix-started", "2", map[string]string{"id": "b2", "provider": "claude", "model": "opus"}),
-		ev("fix-proposed", "2", map[string]string{"id": "b2", "kind": "env", "cause": "codex 0.48 broke resume"}),
-		ev("fix-rejected", "2", map[string]string{"id": "b2"}),
-		ev("fix-started", "2", map[string]string{"id": "b3", "provider": "claude", "model": "opus"}),
-		ev("fix-proposed", "2", map[string]string{"id": "b3", "kind": "env", "cause": "codex is logged out"}),
-		ev("fix-failed", "2", map[string]string{"id": "b3", "reason": "command 1 exited 2"}),
-		ev("fix-started", "3", map[string]string{"id": "b4", "provider": "claude", "model": "opus"}),
-		ev("fix-failed", "3", map[string]string{"id": "b4", "reason": "agent gone"}),
-		ev("fix-started", "3", map[string]string{"id": "b5", "provider": "claude", "model": "opus"}),
-		ev("fix-proposed", "3", map[string]string{"id": "b5", "kind": "r-loop", "cause": "blockers.go:12 drops the excerpt"}),
-		ev("fix-started", "3", map[string]string{"id": "b6", "provider": "claude", "model": "opus"}),
-	}
-}
-
-func TestReportListsEachFixWithItsKindCauseAndState(t *testing.T) {
-	st := RunState{ID: "run-1", Events: fixEvents()}
-
-	rep := Report(st, threePhasePlan())
-
-	want := "- fix-b1 config: codex renamed --foo → applied\n" +
-		"- fix-b2 env: codex 0.48 broke resume → rejected\n" +
-		"- fix-b3 env: codex is logged out → failed (command 1 exited 2)\n" +
-		"- fix-b4 → failed (agent gone)\n" +
-		"- fix-b5 r-loop: blockers.go:12 drops the excerpt → proposed\n" +
-		"- fix-b6 → open\n"
-	if !strings.Contains(rep, want) {
-		t.Errorf("report lacks %q:\n%s", want, rep)
-	}
-}
-
 func TestAHaltLineOfABlockedStepListsTheTranscriptsOfItsWorkerAndReviewers(t *testing.T) {
 	// given
 	st := RunState{ID: "run-1", Status: RunHalted, Events: []Event{
@@ -229,5 +191,24 @@ func TestAHaltLineOfALandingStepListsTheTranscriptsOfItsGateAndMilestoneSessions
 	expected := "- phase 2 land: land: gate red — workspace ws-2, worktree /wt/phase-2 — transcripts: gatefix worker a1 /t/gf.jsonl, milestone worker a2 /t/m.jsonl\n"
 	if !strings.Contains(actual, expected) {
 		t.Fatalf("report missing %q:\n%s", expected, actual)
+	}
+}
+
+func TestReportListsTheWatchdogsConfigChangesAndPlanCorrectionsAsAutomaticDecisions(t *testing.T) {
+	st := RunState{ID: "run-1", Events: []Event{
+		{Kind: EventConfigSet, Fields: map[string]string{"key": "steps.implement.model", "value": "gpt-5.5", "why": "gpt-5 is retired"}},
+		{Kind: EventConfigSet, Fields: map[string]string{"key": "steps.implement.modle", "value": "x", "why": "typo"}},
+		{Kind: EventConfigSetFailed, Fields: map[string]string{"key": "steps.implement.modle", "reason": "unknown key"}},
+		{Kind: EventPlanCorrected, Phase: "2", Fields: map[string]string{"phase": "2", "path": "docs/x/todo.md"}},
+	}}
+
+	got := Report(st, threePhasePlan())
+
+	want := "## Automatic decisions\n\n" +
+		"- set steps.implement.model = gpt-5.5 — gpt-5 is retired\n" +
+		"- set steps.implement.modle = x — typo (failed: unknown key)\n" +
+		"- phase 2: plan corrected in docs/x/todo.md\n"
+	if !strings.Contains(got, want) {
+		t.Fatalf("report:\n%s", got)
 	}
 }

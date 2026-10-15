@@ -36,6 +36,7 @@ type SessionManager struct {
 	Store         Store
 	Ask           AskChannel
 	Resolve       func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error)
+	Reviewers     func(kind string) []Reviewer
 	Now           func() time.Time
 	Poll          time.Duration
 	StallGrace    time.Duration
@@ -677,10 +678,12 @@ func (m *SessionManager) judge(s *Session, sentinel Sentinel, sErr error) Outcom
 	if f := s.fix; f != nil {
 		ctx := m.evidence(s)
 		ctx.VerdictPath, ctx.RoundTree, ctx.FindingsFiles = f.verdictPath, f.roundTree, f.findings
-		if ok, missing := verdictCheck(ctx); !ok {
+		ok, missing, repairs := checkVerdict(ctx)
+		if !ok {
 			state, reason := Judge(sentinel, nil, false, missing)
 			return Outcome{State: state, Reason: reason, Session: s}
 		}
+		s.warnings = append(s.warnings, repairs...)
 	}
 	check, found := LookupCheck(s.Ref.Kind.Check)
 	if !found {

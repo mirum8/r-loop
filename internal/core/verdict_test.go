@@ -99,8 +99,8 @@ func TestVerdictCheckFails(t *testing.T) {
 			`"evidence":"b.go:12"`, `"evidence":"gone.go:3"`,
 			"evidence gone.go:3 of codex-r2-2 is not in the worktree",
 		},
-		"fixed entry whose file changed only before the round": {
-			`"files":["a.go"]`, `"files":["a.go","b.go"]`,
+		"fixed entry whose only file changed before the round": {
+			`"files":["a.go"]`, `"files":["b.go"]`,
 			"fixed finding codex-r2-1: b.go did not change in this round",
 		},
 		"fixed entry with no files": {
@@ -501,5 +501,46 @@ func TestVerdictCheckRefusesADirectoryWithNoChangeUnderIt(t *testing.T) {
 
 	if ok || missing != "fixed finding codex-r2-1: target did not change in this round" {
 		t.Fatalf("ok = %v, missing = %q", ok, missing)
+	}
+}
+
+func TestVerdictCheckDropsTheUnchangedFilesOfAFixedEntryWhenAListedFileChanged(t *testing.T) {
+	body := strings.Replace(goodVerdict, `"files":["a.go"]`, `"files":["a.go","b.go",".gitignore"]`, 1)
+	f := newVerdictFixture(t, body)
+
+	ok, missing, repairs := checkVerdict(f.ctx)
+
+	if !ok || missing != "" || !reflect.DeepEqual(repairs, []string{"verdict codex-r2-1: dropped unchanged b.go, .gitignore"}) {
+		t.Fatalf("ok = %v, missing = %q, repairs = %q", ok, missing, repairs)
+	}
+}
+
+func TestAFixWhoseVerdictListsAnUnchangedFileBesideAChangedOneEndsOKWithAWarning(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	ref := r.worker.Ref
+	ref.Key.Attempt = 2
+	r.repo.TreeChanges = []string{"a.go"}
+	r.host.script = func(int) AgentState {
+		os.WriteFile(filepath.Join(r.runDir, "phase-3", "implement-a2.sentinel"), []byte(`{"outcome":"ok","reason":"","commit":"feat(core): add the widget store"}`), 0o644)
+		return AgentWorking
+	}
+	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
+		n := 0
+		if vars["Round"] == 1 {
+			n = 1
+		}
+		writeReview(t, vars, "ok", n)
+	}
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, strings.Replace(entry("codex-r1-1", "real", "P2", true, ""), `["a.go"]`, `["a.go",".gitignore"]`, 1))
+	}
+	runner := DefaultRunners(r.sm, []StepKind{ref.Kind})["diff"]
+
+	out := runner.Run(context.Background(), ref, &recObserver{})
+
+	if out.State != StepOK || out.Warning != "verdict codex-r1-1: dropped unchanged .gitignore" {
+		t.Fatalf("outcome = %+v", out)
 	}
 }

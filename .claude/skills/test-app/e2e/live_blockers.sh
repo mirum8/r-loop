@@ -1,8 +1,10 @@
 #!/bin/sh
 # usage: live_blockers.sh A|B|C
 #   A  ADR-81 happy path: codex plan reviewer runs review-plan as a prompt; the driver runs codex review --uncommitted for the implement reviewer
-#   B  ADR-82 reviewer blocker: codex's reviewExec exits non-zero; the unattended watchdog resolves the blocker, the phase blocks (exit 1)
-#   C  ADR-82 land blocker: the Done-when gate is red and land.fixRounds is 0; the watchdog resolves it (block/stop)
+#   B  ADR-82/97 reviewer blocker: codex's reviewExec exits non-zero, watchdog.maxRestarts is 2; block is refused while the
+#      reviewer has retries left, so the blocker is retried (by the watchdog or on timeout) until they are spent, then
+#      blocked (exit 1), or the watchdog fixes the cause (set_config) and the run finishes (exit 0)
+#   C  ADR-82/97 land blocker: the Done-when gate is red and land.fixRounds is 0; retried while retries remain, then blocked
 set -u
 MODE="${1:-A}"
 case "$MODE" in A|B|C) ;; *) echo "usage: $0 A|B|C"; exit 2 ;; esac
@@ -36,6 +38,8 @@ mode, shipped = sys.argv[1:]
 p = ".r-loop/config.yaml"
 s = open(p).read()
 w = "  blockerTimeout: 3m\n"
+if mode in ("B", "C"):
+    w += "  maxRestarts: 2\n"
 if mode == "C":
     s = s.replace("land:\n  gateTimeout: 5m\n", "land:\n  fixRounds: 0\n  gateTimeout: 5m\n")
     s = s.replace("  implement:\n    provider: claude\n    model: sonnet\n    effort: low\n    timeout: 30m\n    fallback:\n      provider: codex\n      model: gpt-5.6-sol\n      effort: medium\n    reviewers:\n      - provider: codex\n        model: gpt-5.6-sol\n        effort: medium\n",
@@ -210,11 +214,39 @@ case "$MODE" in
       grep -q "waiting    watchdog · $lb" "$OUT/frames/land-blocker-120x40.txt" 2>/dev/null && ok "land blocker frame shows 'waiting    watchdog · $lb'" || fail "no 'waiting    watchdog · $lb' in the land blocker frame"
     fi
     [ "$stalled_workers" = 0 ] && ok "no stalled step state" || fail "$stalled_workers stalled step states"
+    python3 - "$EV" 2 > "$OUT/retries.txt" <<'EOF' && ok "ADR-97 order: $(tr '\n' ' ' < "$OUT/retries.txt")" || fail "ADR-97 order: $(tr '\n' ' ' < "$OUT/retries.txt")"
+import json, sys, re
+max_restarts = int(sys.argv[2])
+used, bad, seq = {}, [], []
+for line in open(sys.argv[1]):
+    e = json.loads(line).get("Event") or {}
+    k, f = e.get("Kind"), e.get("Fields") or {}
+    if k == "blocker-resolved":
+        t, a, by = f.get("step"), f.get("action"), f.get("by")
+        seq.append("%s:%s/%s@%d" % (f.get("id"), a, by, used.get(t, 0)))
+        if a in ("block", "stop") and by not in ("withdrawn", "maintainer") and used.get(t, 0) < max_restarts:
+            bad.append("%s %s by %s with %d/%d retries used" % (f.get("id"), a, by, used.get(t, 0), max_restarts))
+        if a in ("retry", "switch", "continue"):
+            used[t] = used.get(t, 0) + 1
+    elif k == "restart" and not re.fullmatch(r"b[0-9]+", f.get("remedy", "")):
+        used[f.get("step")] = used.get(f.get("step"), 0) + 1
+    elif k in ("config-set", "landed", "blocked"):
+        seq.append(k)
+print(" ".join(seq))
+print("retries used:", used)
+assert not bad, bad
+assert any(":retry/" in x for x in seq), "no retry before the end"
+EOF
     last=$(ev blocker-resolved | tail -1 | grep -o '"action":"[^"]*"' | cut -d'"' -f4)
     case "$last" in
-      block) want=1 ;; stop) want=5 ;; *) want="?" ;;
+      block) want=1 ;; stop) want=5 ;; retry|continue|switch) want=0 ;; *) want="?" ;;
     esac
     [ "$code" = "$want" ] && ok "exit $code matches the last action $last" || fail "exit $code, last action $last (want $want)"
+    if [ "$last" = block ]; then
+      ok "blocked after the retries were spent (by $(ev blocker-resolved | tail -1 | grep -o '"by":"[^"]*"' | cut -d'"' -f4))"
+    else
+      ev config-set > /dev/null && ok "the watchdog fixed the cause: $(ev config-set | grep -o '"Fields":{[^}]*}' | tr '\n' ' ')" || echo "info: last action $last without a config-set"
+    fi
     ;;
 esac
 

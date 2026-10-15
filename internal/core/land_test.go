@@ -2248,7 +2248,7 @@ func TestAGatefixThatDoesNotEndOKRaisesAGatefixBlockerAndSwitchRunsAnotherRoundO
 	if err != nil {
 		t.Fatalf("Land: %v", err)
 	}
-	want := core.Blocker{Source: "gatefix", Phase: "1", Step: "gatefix", Reason: "gate failed: gate-fix round 1 ended failed: could not fix", Actions: []string{"retry", "switch", "fix", "block", "stop", "continue"}}
+	want := core.Blocker{Source: "gatefix", Phase: "1", Step: "gatefix", Reason: "gate failed: gate-fix round 1 ended failed: could not fix", Actions: []string{"retry", "switch", "block", "stop", "continue"}}
 	if len(script.blockers) != 1 || !reflect.DeepEqual(script.blockers[0], want) {
 		t.Fatalf("blockers = %+v", script.blockers)
 	}
@@ -2373,7 +2373,7 @@ func TestAFailedMilestoneReportRaisesAMilestoneBlockerAndRetryRunsTheReportAgain
 		t.Fatalf("Land 2: %v", err)
 	}
 
-	want := core.Blocker{Source: "milestone", Phase: "2", Step: "milestone", Reason: "failed: report failed", Actions: []string{"retry", "skip", "fix", "stop"}}
+	want := core.Blocker{Source: "milestone", Phase: "2", Step: "milestone", Reason: "failed: report failed", Actions: []string{"retry", "block", "stop"}}
 	if len(script.blockers) != 1 || !reflect.DeepEqual(script.blockers[0], want) {
 		t.Fatalf("blockers = %+v", script.blockers)
 	}
@@ -2391,12 +2391,12 @@ func TestAFailedMilestoneReportRaisesAMilestoneBlockerAndRetryRunsTheReportAgain
 	}
 }
 
-func TestAMilestoneBlockerResolvedSkipRecordsTheSkipAsBefore(t *testing.T) {
+func TestAMilestoneBlockerResolvedBlockRecordsTheSkippedReport(t *testing.T) {
 	e := newLandEnv(t)
 	e.phaseWork(1, "one.txt", "1\n")
 	e.phaseWork(2, "two.txt", "2\n")
 	g, host, _ := e.boundaryGate("failed")
-	g.Boundary.Raise = (&blockerScript{answers: []core.Resolution{{Action: "skip", By: "timeout"}}}).raise
+	g.Boundary.Raise = (&blockerScript{answers: []core.Resolution{{Action: "block", By: "timeout"}}}).raise
 	if _, err := g.Land(context.Background(), phaseOne("")); err != nil {
 		t.Fatal(err)
 	}

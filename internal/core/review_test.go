@@ -1418,58 +1418,66 @@ func then(actions ...Resolution) func(n int, b Blocker) Resolution {
 	return func(n int, b Blocker) Resolution { return actions[min(n, len(actions))-1] }
 }
 
-func TestAFailedReviewerRaisesAReviewerBlockerAndSkipLetsTheRoundGoOn(t *testing.T) {
+func TestAFailedReviewerRaisesAReviewerBlockerWithoutASkip(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
 	failCodexOnce(t, r)
 
-	out, obs := r.runRaising(then(Resolution{Action: "skip", By: "maintainer", Citation: "maintainer"}))
+	out, obs := r.runRaising(then(Resolution{Action: "retry", By: "watchdog", Citation: "allow-list"}))
 
 	if out.State != StepOK {
 		t.Fatalf("outcome = %+v", out)
 	}
-	want := Blocker{Source: "reviewer", Phase: "3", Step: "implement-rv-codex", Reason: "reviewer codex: /review is not available in this session", Actions: []string{"retry", "switch", "skip", "fix", "block", "stop"}}
+	want := Blocker{Source: "reviewer", Phase: "3", Step: "implement-rv-codex", Reason: "reviewer codex: /review is not available in this session", Actions: []string{"retry", "switch", "block", "stop"}}
 	if len(obs.blockers) != 1 || !reflect.DeepEqual(obs.blockers[0], want) {
 		t.Fatalf("blockers = %+v", obs.blockers)
 	}
-	skipped := r.events("reviewer-skipped")
-	if len(skipped) != 1 || !reflect.DeepEqual(skipped[0].Fields, map[string]string{"step": "implement", "reviewer": "codex", "reason": want.Reason}) {
+	if skipped := r.events("reviewer-skipped"); len(skipped) != 0 {
 		t.Fatalf("reviewer-skipped = %+v", skipped)
-	}
-	if len(r.callsFrom("SessionHost.ClosePane pane-3")) != 1 {
-		t.Errorf("the skipped reviewer's pane stayed open: %q", r.shared.Calls())
-	}
-	if len(r.events("review-clean")) != 1 {
-		t.Errorf("the round did not go on to clean")
-	}
-	if got := r.worker.asker("implement-rv-codex"); got != "" {
-		t.Errorf("the skipped reviewer still asks as %q", got)
 	}
 }
 
-func TestSkipLeavesTheSkippedReviewerOutOfTheFixHalf(t *testing.T) {
+type expiringObserver struct {
+	recObserver
+	l *RunLoop
+}
+
+func (o *expiringObserver) raises() bool { return true }
+
+func (o *expiringObserver) raise(ctx context.Context, b Blocker) Resolution {
+	return o.l.Raise(ctx, b)
+}
+
+func TestAReviewerBlockerThatTimesOutReopensTheReviewer(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
-	r.worker.Ref.Kind.Row.Rounds = 1
-	r.behave = func(vars map[string]any) {
-		if strings.Contains(vars["FindingsPath"].(string), "codex") {
-			writeFindings(t, vars, "failed", 0)
-			return
+	codex := failCodexOnce(t, r)
+	face := &fakeFace{}
+	watcher := &fakeWatcher{log: r.shared, route: func(context.Context, Question) bool { return true }}
+	obs := &expiringObserver{l: &RunLoop{Sessions: r.sm, Store: r.store, Face: face, RunID: "run-1", Watcher: watcher, BlockerTimeout: 20 * time.Millisecond, MaxRestarts: 2}}
+	h := ReviewHalf{Sessions: r.sm, Store: r.store}
+
+	out := h.Run(context.Background(), r.worker.Ref, r.worker, obs)
+
+	if out.State != StepOK || *codex != 2 {
+		t.Fatalf("outcome = %+v, codex prompted %d", out, *codex)
+	}
+	var resolved []map[string]string
+	for _, ev := range face.events() {
+		if ev.Kind == "blocker-resolved" {
+			resolved = append(resolved, ev.Fields)
 		}
-		writeReview(t, vars, "ok", 1)
 	}
-	r.repo.TreeChanges = nil
-	r.onFix = func(vars map[string]any) {
-		r.repo.TreeChanges = []string{"a.go"}
-		writeVerdict(t, vars, entry("claude-r1-1", "out-of-scope", "P3", false, ""))
+	want := []map[string]string{{"id": "b1", "action": "retry", "by": "timeout", "source": "reviewer", "step": "phase-3/implement-rv-codex"}}
+	if !reflect.DeepEqual(resolved, want) {
+		t.Fatalf("blocker-resolved = %+v", resolved)
 	}
-
-	out, _ := r.runRaising(then(Resolution{Action: "skip", By: "maintainer"}))
-
-	if out.State != StepOK {
-		t.Fatalf("outcome = %+v", out)
+	var codexStates []string
+	for _, f := range r.events("review-find") {
+		if f.Fields["reviewer"] == "codex" {
+			codexStates = append(codexStates, f.Fields["state"])
+		}
 	}
-	want := []FindingsFile{{Reviewer: "claude", Path: filepath.Join(r.runDir, "phase-3", "implement-findings-claude-r1.json")}}
-	if len(r.fixes) != 1 || !reflect.DeepEqual(r.fixes[0]["FindingsFiles"], want) {
-		t.Fatalf("fixes = %+v", r.fixes)
+	if !reflect.DeepEqual(codexStates, []string{"failed", "ok"}) {
+		t.Fatalf("codex review-find states = %v", codexStates)
 	}
 }
 
@@ -1511,20 +1519,6 @@ func TestSwitchReopensTheReviewerOnTheGivenProvider(t *testing.T) {
 	}
 	if starts := r.callsFrom("SessionHost.Start pane-3 "); len(starts) != 1 || !strings.Contains(starts[0], "gemini [--model pro --effort high]") {
 		t.Fatalf("starts = %q", starts)
-	}
-}
-
-func TestAFixRetryReopensTheReviewerWithItsArgumentsResolvedAgain(t *testing.T) {
-	r := newReviewRig(t, Reviewer{Provider: "codex"})
-	failCodexOnce(t, r)
-
-	out, _ := r.runRaising(then(Resolution{Action: "retry", By: "maintainer", Citation: "fix-b1"}))
-
-	if out.State != StepOK {
-		t.Fatalf("outcome = %+v", out)
-	}
-	if want := [][]string{{"codex", "", ""}, {"codex", "", ""}}; !reflect.DeepEqual(r.resolved, want) {
-		t.Fatalf("resolved = %v", r.resolved)
 	}
 }
 
@@ -1621,10 +1615,10 @@ func TestAReviewerThatCannotOpenRaisesABlockerAfterTheOthersReport(t *testing.T)
 	var claudeDone bool
 	out, obs := r.runRaising(func(n int, b Blocker) Resolution {
 		claudeDone = len(r.events("review-find")) == 2
-		return Resolution{Action: "skip", By: "maintainer"}
+		return Resolution{Action: "block", By: "watchdog"}
 	})
 
-	if out.State != StepOK || len(obs.blockers) != 1 || obs.blockers[0].Reason != "reviewer codex: no such binary" {
+	if out.State != StepFailed || len(obs.blockers) != 1 || obs.blockers[0].Reason != "reviewer codex: no such binary" {
 		t.Fatalf("outcome = %+v, blockers %+v", out, obs.blockers)
 	}
 	if !claudeDone {
@@ -2310,10 +2304,10 @@ func TestAnAnalyzeErrorRaisesAStaticReviewerBlocker(t *testing.T) {
 	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
 
 	// when
-	_, obs := r.runAnalyzedRaising(r.failingAnalyzer(errAnalyze(), nil), then(Resolution{Action: "skip"}))
+	_, obs := r.runAnalyzedRaising(r.failingAnalyzer(errAnalyze(), nil), then(Resolution{Action: "retry"}))
 
 	// then
-	expected := []Blocker{{Source: "reviewer", Phase: "3", Step: "implement-rv-static", Reason: "reviewer static: golangci-lint: exit status 3", Actions: []string{"retry", "skip", "fix", "block", "stop"}}}
+	expected := []Blocker{{Source: "reviewer", Phase: "3", Step: "implement-rv-static", Reason: "reviewer static: golangci-lint: exit status 3", Actions: []string{"retry", "block", "stop"}}}
 	if !reflect.DeepEqual(obs.blockers, expected) {
 		t.Fatalf("blockers = %+v", obs.blockers)
 	}
@@ -2429,20 +2423,63 @@ func TestAResumedRoundLeavesAStaticFileThatWasNeverWrittenOutOfThePriorFindings(
 	}
 }
 
-func TestSkippingAStaticBlockerRemovesAnEarlierAttemptsStaticFile(t *testing.T) {
-	// given
-	r := newReviewRig(t, Reviewer{Provider: "claude"})
-	writeRoundFindings(t, r, "static", 1)
-	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+func TestRetryReopensTheReviewerWithTheProvidersCurrentReviewCommand(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.reviewCmd["codex"] = "/broken-review"
+	failCodexOnce(t, r)
 
-	// when
-	out, _ := r.runAnalyzedRaising(r.failingAnalyzer(errAnalyze()), then(Resolution{Action: "skip"}))
+	out, _ := r.runRaising(func(int, Blocker) Resolution {
+		r.reviewCmd["codex"] = "/fixed-review"
+		return Resolution{Action: "retry", By: "watchdog"}
+	})
 
-	// then
-	if _, err := os.Stat(r.phaseFile("implement-findings-static-r1.json")); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("static file stat = %v", err)
+	if out.State != StepOK || len(r.reviews) != 2 {
+		t.Fatalf("outcome = %+v, reviews %d", out, len(r.reviews))
 	}
+	if got := r.reviews[1]["ReviewCommand"]; got != "/fixed-review" {
+		t.Fatalf("the retried reviewer ran %q", got)
+	}
+}
+
+func TestRetryReopensTheReviewerFromItsCurrentConfigRow(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "claude"}, Reviewer{Provider: "codex"})
+	failCodexOnce(t, r)
+	var kinds []string
+	current := []Reviewer{{Provider: "claude"}, {Provider: "codex", Model: "gpt-fixed", Effort: "low"}}
+
+	out, _ := r.runRaising(func(int, Blocker) Resolution {
+		r.sm.Reviewers = func(kind string) []Reviewer {
+			kinds = append(kinds, kind)
+			return current
+		}
+		return Resolution{Action: "retry", By: "watchdog"}
+	})
+
 	if out.State != StepOK {
 		t.Fatalf("outcome = %+v", out)
+	}
+	if want := []string{"codex", "gpt-fixed", "low"}; !reflect.DeepEqual(r.resolved[len(r.resolved)-1], want) {
+		t.Fatalf("resolved = %v", r.resolved)
+	}
+	if !reflect.DeepEqual(kinds, []string{"implement"}) {
+		t.Fatalf("looked up %v", kinds)
+	}
+	if starts := r.callsFrom("SessionHost.Start pane-4 "); len(starts) != 1 || !strings.Contains(starts[0], "codex [--model gpt-fixed --effort low]") {
+		t.Fatalf("starts = %q, calls %q", starts, r.shared.Calls())
+	}
+}
+
+func TestSwitchKeepsItsProviderOverTheCurrentConfigRow(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	failCodexOnce(t, r)
+	r.sm.Reviewers = func(string) []Reviewer { return []Reviewer{{Provider: "codex", Model: "gpt-fixed"}} }
+
+	out, _ := r.runRaising(then(Resolution{Action: "switch", By: "maintainer", Provider: "gemini", Model: "pro", Effort: "high"}))
+
+	if out.State != StepOK {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if want := []string{"gemini", "pro", "high"}; !reflect.DeepEqual(r.resolved[len(r.resolved)-1], want) {
+		t.Fatalf("resolved = %v", r.resolved)
 	}
 }

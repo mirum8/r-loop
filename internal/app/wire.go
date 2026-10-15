@@ -94,7 +94,7 @@ type Wiring struct {
 	Dog       *core.Watchdog
 	Remedies  *core.Remedies
 	Router    *core.QuestionRouter
-	Fixer     *core.Fixer
+	ConfigSet *core.ConfigSetter
 	Triaged   bool
 	LocalTodo bool
 
@@ -529,6 +529,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Store:        w.records,
 		Ask:          w.Ask,
 		Resolve:      w.resolve,
+		Reviewers:    w.reviewers,
 		Now:          time.Now,
 		StallGrace:   cfg.Watchdog.StallGrace,
 		ItemGates:    pl.Backlog,
@@ -577,6 +578,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		PlanSource:  w.Gate.Plan,
 		Reload:      w.reloadConfig,
 		TodoPath:    todo,
+		LocalTodo:   w.LocalTodo,
 		Kinds:       kinds,
 		Sessions:    sm,
 		Store:       w.records,
@@ -607,19 +609,9 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 	w.Remedies.Dog = w.Dog
 	w.Remedies.Blockers = w.Loop
 	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Keys: w.Loop.DeliverKeys, Rules: cfg.Watchdog.Dialogs, Repo: repo, Remedies: w.Remedies, Blocker: w.Loop.OpenBlocker, Settle: w.Loop.SettleBlocker}
+	w.ConfigSet = &core.ConfigSetter{Store: w.records, Face: w.Face, Repo: repo, Write: w.setConfigKey}
 	w.Loop.BlockerTimeout = cfg.Watchdog.BlockerTimeout
 	w.Loop.Versions = w.versions
-	fc := cfg.Watchdog.Fixer
-	w.Fixer = &core.Fixer{
-		Host: w.Host, Prompts: w.Prompts, Store: w.records, Repo: repo, Resolve: w.resolve, Dialogs: w.Loop, Face: w.Face,
-		Post: w.Watch.Post, CheckConfig: w.checkConfig, Versions: w.versions,
-		Reload: w.reloadConfig, Blocker: w.Loop.OpenBlocker, Settle: w.Loop.SettleBlocker,
-		Provider: fc.Provider, Model: fc.Model, Effort: fc.Effort,
-		Root: root, Home: env.Home, Pane: env.Pane, Label: cfg.Label, Timeout: fc.Timeout,
-	}
-	w.Loop.Fixer = w.Fixer
-	w.Router.Fix = w.Loop.StartFix
-	w.Router.FixOpen = w.Loop.FixOpen
 	return w, nil
 }
 
@@ -674,6 +666,11 @@ func (w *Wiring) reloadConfig() error {
 			return err
 		}
 	}
+	for _, r := range w.roles(cfg) {
+		if _, err := checkRole(reg, r); err != nil {
+			return err
+		}
+	}
 	w.cfgMu.Lock()
 	w.Config, w.Registry = cfg, reg
 	w.cfgMu.Unlock()
@@ -683,6 +680,16 @@ func (w *Wiring) reloadConfig() error {
 	w.Probe.Kind = k.gate
 	w.Gate.Boundary.Kind = k.milestone
 	return nil
+}
+
+func (w *Wiring) reviewers(kind string) []core.Reviewer {
+	if kind == "gatefix" {
+		kind = "implement"
+	}
+	w.cfgMu.Lock()
+	row := w.Config.Steps[kind]
+	w.cfgMu.Unlock()
+	return coreRow(row).Reviewers
 }
 
 func (w *Wiring) registry() *providers.Registry {
@@ -713,7 +720,7 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	w.Gate.Picker = w.Dog
 	w.Router.Dog = w.Dog
 	w.Watch.Router = w.Router
-	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, ApplyFix: w.Fixer.Apply, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, ChooseGate: w.Gate.ChooseGate, RunStatus: w.runStatus, StepInfo: w.stepInfo, StopRun: w.Loop.StopRun, PauseRun: w.Loop.PauseRun, ContinueRun: w.Loop.ContinueRun})
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, ChooseGate: w.Gate.ChooseGate, SetConfig: w.ConfigSet.Set, RunStatus: w.runStatus, StepInfo: w.stepInfo, StopRun: w.Loop.StopRun, PauseRun: w.Loop.PauseRun, ContinueRun: w.Loop.ContinueRun})
 	return nil
 }
 
@@ -869,7 +876,7 @@ func (w *Wiring) providerNames() []string {
 }
 
 func providerNamesOf(cfg config.LoopConfig) []string {
-	names := []string{cfg.Watchdog.Provider, cfg.Watchdog.Fixer.Provider, cfg.Intake.Provider, cfg.Land.Fix.Provider}
+	names := []string{cfg.Watchdog.Provider, cfg.Intake.Provider, cfg.Land.Fix.Provider}
 	for _, row := range cfg.Steps {
 		names = append(names, row.Provider, row.Fallback.Provider)
 		for _, rv := range row.Reviewers {
@@ -882,6 +889,45 @@ func providerNamesOf(cfg config.LoopConfig) []string {
 		names = names[1:]
 	}
 	return names
+}
+
+func (w *Wiring) setConfigKey(key, value string) error {
+	path := filepath.Join(w.Repo.Root(), core.ProjectConfig)
+	old, err := os.ReadFile(path)
+	existed := err == nil
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	home, err := os.ReadFile(filepath.Join(w.Env.Home, ".config", "r-loop", "config.yaml"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	data, err := config.Set(old, key, value, home)
+	if err != nil {
+		return err
+	}
+	if err := w.checkConfig(core.ProjectConfig, string(data)); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := core.WriteFileAtomic(path, data); err != nil {
+		return err
+	}
+	rerr := w.reloadConfig()
+	if rerr == nil {
+		return nil
+	}
+	if existed {
+		err = core.WriteFileAtomic(path, old)
+	} else {
+		err = os.Remove(path)
+	}
+	if err != nil {
+		return fmt.Errorf("reload: %v; restore %s: %v", rerr, core.ProjectConfig, err)
+	}
+	return fmt.Errorf("reload: %w; %s restored", rerr, core.ProjectConfig)
 }
 
 func (w *Wiring) checkConfig(file, content string) error {
@@ -1023,7 +1069,7 @@ func (w *Wiring) bind(runID string) {
 	w.Notify.Log = filepath.Join(dir, "notify.log")
 	w.Ask.RunDir, w.Ask.RunID = dir, runID
 	w.Dog.RunID, w.Dog.RunDir = runID, dir
-	w.Fixer.RunID, w.Fixer.RunDir = runID, dir
+	w.ConfigSet.RunID = runID
 	if run, err := w.Store.Load(runID); err == nil {
 		w.Ask.Seq = len(run.Questions)
 		w.Watch.SeedSignals(run.Signals)

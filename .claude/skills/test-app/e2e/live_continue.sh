@@ -4,9 +4,9 @@
 #   primary checkout until a marker file outside the repo exists; land.fixRounds is 0, so the red gate raises a land
 #   blocker. The script creates the marker and calls resolve_blocker continue itself; the driver re-reads the phase,
 #   asks the watchdog for the gate again (choose_gate) and re-lands in the same process.
-#   U  unattended: skip is not a land action, fix is refused "unattended: continue, block or stop", continue is authorised
-#   A  attended: continue without maintainer_said is ask, with maintainer_said is authorised; the script answers every
-#      other question the test watchdog asks (Enter on its recommended option), never a person
+#   U  unattended: skip is not a land action, continue is authorised by the allow-list (restart is on it by default)
+#   A  attended: the same, continue needs no maintainer_said; the script answers every other question the test
+#      watchdog asks (Enter on its recommended option), never a person
 set -u
 MODE="${1:-U}"
 case "$MODE" in U|A) ;; *) echo "usage: $0 U|A"; exit 2 ;; esac
@@ -94,15 +94,8 @@ wd() { "$E2E/wd_call.sh" "$WDURL" "$@"; }
       echo "$BID" > "$OUT/bid.txt"
       cp .r-loop/runs/current "$OUT/current-blocker.txt" 2>/dev/null
       wd resolve_blocker '{"id":"'"$BID"'","action":"skip"}' > "$OUT/call-skip.json" 2>&1
-      if [ "$MODE" = U ]; then
-        wd resolve_blocker '{"id":"'"$BID"'","action":"fix","addendum":"the gate is red"}' > "$OUT/call-fix.json" 2>&1
-        touch "$MARKER"
-        wd resolve_blocker '{"id":"'"$BID"'","action":"continue"}' > "$OUT/call-continue.json" 2>&1
-      else
-        touch "$MARKER"
-        wd resolve_blocker '{"id":"'"$BID"'","action":"continue"}' > "$OUT/call-continue-nosaid.json" 2>&1
-        wd resolve_blocker '{"id":"'"$BID"'","action":"continue","maintainer_said":"yes"}' > "$OUT/call-continue.json" 2>&1
-      fi
+      touch "$MARKER"
+      wd resolve_blocker '{"id":"'"$BID"'","action":"continue"}' > "$OUT/call-continue.json" 2>&1
       date +%T >> "$OUT/calls-at.txt"
       sleep 0.5
       cp "$("$TUI" capture "$H")" "$OUT/frames/continued-120x40.txt"
@@ -189,18 +182,13 @@ for line in open(sys.argv[1]):
 open(os.path.join(os.path.dirname(sys.argv[1]), "options.txt"), "w").write(json.dumps(opts))
 assert opts and opts[-1] == "continue", opts
 EOF
-grep -q 'refused' "$OUT/call-skip.json" 2>/dev/null && grep -q 'retry, fix, block, stop or continue' "$OUT/call-skip.json" && ok "skip refused, listing the land actions: $(cat "$OUT/call-skip.json")" || fail "skip call: $(cat "$OUT/call-skip.json" 2>/dev/null)"
-if [ "$MODE" = U ]; then
-  grep -q '"decision":"refused"' "$OUT/call-fix.json" 2>/dev/null && grep -q 'unattended: continue, block or stop' "$OUT/call-fix.json" && ok "unattended fix refused: $(cat "$OUT/call-fix.json")" || fail "unattended fix: $(cat "$OUT/call-fix.json" 2>/dev/null)"
-else
-  grep -q '"decision":"ask"' "$OUT/call-continue-nosaid.json" 2>/dev/null && ok "attended continue without maintainer_said: $(cat "$OUT/call-continue-nosaid.json")" || fail "attended continue without maintainer_said: $(cat "$OUT/call-continue-nosaid.json" 2>/dev/null)"
-fi
+grep -q 'refused' "$OUT/call-skip.json" 2>/dev/null && grep -q 'retry, block, stop or continue' "$OUT/call-skip.json" && ok "skip refused, listing the land actions: $(cat "$OUT/call-skip.json")" || fail "skip call: $(cat "$OUT/call-skip.json" 2>/dev/null)"
 cont=$(cat "$OUT/call-continue.json" 2>/dev/null)
 case "$cont" in
   *'"decision":"authorised"'*) ok "resolve_blocker continue by the script: $cont" ;;
   *) fail "resolve_blocker continue: $cont; resolved by: $(ev blocker-resolved | grep -o '"Fields":{[^}]*}')" ;;
 esac
-if [ "$MODE" = U ]; then want_cite=unattended; else want_cite=maintainer; fi
+want_cite=allow-list
 R=$(ev blocker-resolved | grep "\"id\":\"$BID\"" | head -1)
 CITE=$(python3 -c 'import json,sys
 c=""

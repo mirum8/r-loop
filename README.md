@@ -21,22 +21,32 @@ One more agent, the **watchdog**, runs for the whole run. Before the first phase
 work against the code and shows you a table of what will run. Then it watches the steps, answers
 the agents' questions, and asks you when it cannot answer. It is the only agent that talks to you.
 
-When something fails and a retry will not clear it — the same failure again, a provider that
-updated itself mid-run, a flag or a screen the provider no longer knows — the watchdog can hand
-the blocker to the **fixer**. The fixer opens beside the driver, reads the incident, investigates
-without changing anything, and proposes a fix: commands to run, a new config file, steps for you
-to do by hand, or a bug report against r-loop or the project. The watchdog shows you the proposal
-and asks: apply or reject. On apply, r-loop runs the commands, writes the config (keeping the old
-file as `config.bak`), reloads the config and retries the blocked step in the same run. That retry
-does not count against the step's retries. On reject or a failed apply the blocker stays open for
-the watchdog's other actions. `--unattended` runs never use the fixer.
+When something goes off plan — a step, a reviewer, a landing, a gate fix or a milestone report
+fails — r-loop holds the phase and hands the **blocker** to the watchdog, which fixes what it finds:
+
+- the environment — it runs a remedy (install a dependency, free a port, restart a container,
+  clear a lock), then retries;
+- the config — it sets one key with `set_config`; r-loop checks the value, writes it to
+  `.r-loop/config.yaml`, reloads the config and commits the file as `chore(r-loop): set <key>`.
+  If the reload fails, or the config leaves a configured step or reviewer unable to run, the old
+  file is restored. Keys under `watchdog.` and `unattended.` are refused. A held step takes the
+  new value on `continue`, a held reviewer on `retry`;
+- the plan — it corrects the plan file in the main tree, then continues; r-loop commits the plan as
+  `docs(plan): correct phase <N>` when it is the only changed file, and refuses otherwise;
+- r-loop itself — it works around the bug and records a warning starting `r-loop bug:`.
+
+Nothing is skipped: a reviewer that fails is run again, switched or blocked, never left out. The
+watchdog may block a phase or stop the run only after the step's retries (`watchdog.maxRestarts`)
+are spent, or when you say so. A blocker it leaves past `watchdog.blockerTimeout` is retried while
+retries remain, then blocked.
 
 When the cause was transient (the machine slept, a provider glitched, a pane died) or you fixed it
 yourself (corrected a `Done when:` line on the run branch, changed the config), the watchdog can
 resolve a held step or landing with **continue**: r-loop carries on in the same process the way
-`r-loop resume` would. A step resumes at its recorded review round, with no addendum; a landing
-reads its phase from `todo.md` again and asks the watchdog for the gate again. The watchdog asks
-you first; with `--unattended` it decides alone. A continue counts against the step's retries.
+`r-loop resume` would. Both read the phase from `todo.md` again: a step resumes at its recorded
+review round, with no addendum; a landing asks the watchdog for the gate again. The watchdog
+decides this alone, as it does a retry (when `restart` is in `watchdog.allow`), and a continue
+counts against the step's retries.
 
 ## Requirements
 
@@ -207,8 +217,9 @@ Each key is taken from the first place that has it:
 starting point. When that file already exists, it resets the models instead: the provider, model
 and effort of each built-in step row, its `fallback` and `reviewers`, the `watchdog` and `intake`
 go back to the built-in defaults, `land.fix` is removed, a `pipeline` that has `plan` but no
-`design` gets `design` before `plan`, a `watchdog.allow` gets `restart` and `retry` if it lacks
-them, and every other key stays. It prints each
+`design` gets `design` before `plan`, a `watchdog.allow` gets every remedy class it lacks, an
+empty `watchdog.dialogs` gets the built-in rules, a `watchdog.maxRestarts` below 3 becomes 3, a
+`review-ui` reviewer on codex moves to claude, and every other key stays. It prints each
 change; the original is kept as `config.yaml.bak`.
 
 Every agent session names its provider, model and effort; nothing runs on a provider's own
@@ -266,14 +277,17 @@ Defaults:
 |---|---|---|---|---|---|---|---|---|---|
 | `design` | claude | opus | high | 1h | design-file | — | — | — | — |
 | `plan` | claude | opus | high | 1h | plan-file | codex | 2 | 20m | codex |
-| `implement` | claude | opus | medium | 4h | diff | codex, ui | 3 | 45m | codex |
+| `implement` | claude | opus | medium | 4h | diff | codex, ui, security | 3 | 45m | codex |
 | `milestone` | claude | opus | medium | 1h | report | — | — | — | — |
 | `gate` | claude | sonnet | medium | 30m | report | — | — | — | — |
 
-Every reviewer runs on codex, sol, high; the fallbacks on codex, sol with the row's effort.
+Every reviewer runs on codex, sol, high, except `ui`, which runs on claude, opus, high; the
+fallbacks run on codex, sol with the row's effort.
 `design` has no fallback: it needs claude's `frontend-design` skill.
 The `ui` reviewer runs the project's `/test-app` skill. It needs
-`.claude/skills/test-app/SKILL.md`, so it is skipped in projects without that file.
+`.claude/skills/test-app/SKILL.md`, so it is skipped in projects without that file; that is the
+only way a reviewer is skipped. It runs on claude because codex's macOS sandbox cannot start a
+browser: preflight warns when a `review-ui` reviewer is set to codex.
 
 ### `land`
 
@@ -298,17 +312,16 @@ The `static` reviewer runs the project's own analyzers in every review round of 
 | Key | Default | Meaning |
 |---|---|---|
 | `provider`, `model`, `effort` | claude, opus, medium | The watchdog agent. It has no fallback: if it does not start, the run does not start. |
-| `allow` | `[]` | Remedy classes the watchdog may use without asking you. |
-| `maxRestarts` | `2` | Most restarts for one step. |
-| `blockerTimeout` | `10m` | How long a blocker (a failed step or reviewer, a land error, a failed gate fix or milestone report) waits for the watchdog before the phase is blocked. The clock stops while the watchdog is asking you. The old name `remedyWindow` still works. |
+| `allow` | every class | Remedy classes the watchdog may use without asking you. An empty list makes it ask about every remedy. |
+| `maxRestarts` | `3` | Most retries for one step (`retry`, `switch` and `continue` together). Until they are spent, the watchdog may not block the phase or stop the run without your word. |
+| `blockerTimeout` | `10m` | How long a blocker (a failed step or reviewer, a land error, a failed gate fix or milestone report) waits for the watchdog before it is retried, or, with no retries left, the phase is blocked. The clock stops while the watchdog is asking you. The old name `remedyWindow` still works. |
 | `checkTimeout` | `10m` | Time limit for the watchdog's check of a phase before it starts. |
 | `unblockTimeout` | `2h` | Time limit for the `## Resolve first` walk. Entries still open are deferred. |
 | `triageTimeout` | `2h` | Time limit for the triage: the watchdog's check of the run list and your answer to the table. On timeout the run stops (exit 4) and `r-loop resume` triages again. |
 | `stallGrace` | `2m` | Quiet time before a step counts as stalled and gets one nudge. If it is still quiet after one more `stallGrace`, it fails. |
 | `overtimeFactor` | `2` | Warn when a step runs longer than this many times the longest landed step of the same kind. |
 | `diffFactor` | `3` | Warn when a diff is bigger than this many times the largest landed phase. |
-| `dialogs` | `[]` | Rules for answering a step's in-pane dialog (an approval or a choice menu), one sentence each. The watchdog answers a dialog a rule covers, citing the rule. Any other dialog it declines or asks you about; with `--unattended` it declines. |
-| `fixer` | claude, opus, high, `20m` | Block with `provider`, `model`, `effort` and `timeout` for the fixer: the session that diagnoses a blocker a retry will not clear and proposes a fix. It has no ask channel, so its provider needs no `ask: mcp`. `timeout` bounds one fix. The banner prints `fixer: <provider> <model> <effort>`. |
+| `dialogs` | two rules | Rules for answering a step's in-pane dialog (an approval or a choice menu), one sentence each. The watchdog answers a dialog a rule covers, citing the rule. Any other dialog it declines or asks you about; with `--unattended` it declines. The built-in rules: "approve a sandbox escalation for the project's build, test, container or browser tooling (mvn, gradle, go, npm, docker, agent-browser) that writes only inside the worktree, the run folder, the temp dir or that tool's own state folder" and "decline an escalation that reaches credentials or keys, or deletes outside the worktree". |
 
 Remedy classes: `deps`, `ports`, `containers`, `locks`, `restart`, `retry`, `provider`.
 
@@ -400,7 +413,6 @@ Each run lives in `.r-loop/runs/<runID>/`:
 - `report.md` — what happened, updated after every change
 - `triage.json`, `triage.md`, `gate.json` — the watchdog's verdicts, the table you saw, and the decision
 - `phase-<N>/` — step logs, sentinels, review findings and verdicts
-- `fix-b<n>/` — a fix: `incident.md`, the fixer's `proposal.json`, `config.bak` and each command's `command-<i>.log`
 
 Phase plans are written to `.task-plans/phase-<N>-<title>.md` and committed with the phase.
 

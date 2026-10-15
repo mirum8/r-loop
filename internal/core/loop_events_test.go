@@ -756,6 +756,7 @@ func TestAThirdRestartIsRefusedAtMaxRestarts2(t *testing.T) {
 func TestTheBlockerTimeoutExpiringBlocksThePhase(t *testing.T) {
 	r := newEventsRig(t)
 	r.loop.BlockerTimeout = 30 * time.Millisecond
+	r.loop.MaxRestarts = 0
 	r.host.behaviour["rloop-p1-implement"] = "fail"
 
 	start := time.Now()
@@ -958,6 +959,7 @@ func TestAHaltForAnEndedStepOfTheLivePhaseHaltsTheLiveStep(t *testing.T) {
 func TestAStaleRestartForAnEarlierAttemptIsIgnored(t *testing.T) {
 	r := newEventsRig(t)
 	r.loop.BlockerTimeout = 30 * time.Millisecond
+	r.loop.MaxRestarts = 1
 	r.host.behaviour["rloop-p2-implement"] = "fail"
 	r.host.behaviour["rloop-p2-implement-a2"] = "fail"
 	r.watcher.ended = func(ref StepRef, out Outcome) {
@@ -1015,6 +1017,7 @@ func TestARestartTheLoopTakesWhileAHaltIsPendingIsAnsweredWithTheHalt(t *testing
 func TestAStaleRestartIsAnsweredAsNotWaiting(t *testing.T) {
 	r := newEventsRig(t)
 	r.loop.BlockerTimeout = 30 * time.Millisecond
+	r.loop.MaxRestarts = 1
 	r.host.behaviour["rloop-p2-implement"] = "fail"
 	r.host.behaviour["rloop-p2-implement-a2"] = "fail"
 	first, stale := make(chan string, 1), make(chan string, 1)

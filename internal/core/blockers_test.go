@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -48,7 +46,7 @@ func newBlockerRig(t *testing.T) *blockerRig {
 }
 
 func reviewerBlocker() Blocker {
-	return Blocker{Source: "reviewer", Phase: "2", Step: "implement-rv-codex", Reason: "review in pane: Review was interrupted", Excerpt: reviewerScreen, Actions: []string{"retry", "keys", "switch", "skip", "block", "stop"}}
+	return Blocker{Source: "reviewer", Phase: "2", Step: "implement-rv-codex", Reason: "review in pane: Review was interrupted", Excerpt: reviewerScreen, Actions: []string{"retry", "keys", "switch", "block", "stop"}}
 }
 
 func landBlocker() Blocker {
@@ -124,7 +122,7 @@ func TestRaiseRecordsRoutesAndPausesTheReviewersOwner(t *testing.T) {
 
 	ch := r.open(t, reviewerBlocker())
 
-	text := "blocker b1 from phase-2/implement-rv-codex (reviewer): review in pane: Review was interrupted\nactions: retry, keys, switch, skip, block, stop; resolve it with resolve_blocker\n\n" + reviewerScreen
+	text := "blocker b1 from phase-2/implement-rv-codex (reviewer): review in pane: Review was interrupted\nactions: retry, keys, switch, block, stop; resolve it with resolve_blocker\n\n" + reviewerScreen
 	qs := r.questions()
 	want := Question{ID: "b1", Kind: QuestionBlocker, Step: reviewerKey(r.s.Ref.Key, "codex"), Text: text, Options: reviewerBlocker().Actions, AskedAt: qs[0].AskedAt}
 	if len(qs) != 1 || !reflect.DeepEqual(qs[0], want) {
@@ -141,7 +139,7 @@ func TestRaiseRecordsRoutesAndPausesTheReviewersOwner(t *testing.T) {
 		t.Errorf("watchdog prompts %q", got)
 	}
 
-	if d, reason := r.resolve("b1", "block"); d != decisionAuthorised {
+	if d, reason := r.resolve("b1", "block", said("block it")); d != decisionAuthorised {
 		t.Fatalf("block %s %q", d, reason)
 	}
 
@@ -176,7 +174,7 @@ func TestABlockerWithNoLiveStepIsHeldWithoutAPane(t *testing.T) {
 	if r.s.OpenQuestion.Load() {
 		t.Error("a land blocker paused the live step")
 	}
-	if d, reason := r.resolve("b1", "stop"); d != decisionAuthorised {
+	if d, reason := r.resolve("b1", "stop", said("stop it")); d != decisionAuthorised {
 		t.Fatalf("stop %s %q", d, reason)
 	}
 	if res := resolved(t, ch); res.Action != "stop" || res.By != "watchdog" {
@@ -229,7 +227,7 @@ func TestRetryOffTheAllowListAsksThenTakesTheMaintainersReply(t *testing.T) {
 		t.Fatalf("retry %s %q", d, reason)
 	}
 	evs := r.events("watchdog-waiting")
-	if len(evs) != 1 || evs[0].Fields["question"] != "blocker b1 from phase-2/implement-rv-codex (reviewer): review in pane: Review was interrupted — what now?" || evs[0].Fields["options"] != "retry; skip; switch provider; block this phase; stop the run" {
+	if len(evs) != 1 || evs[0].Fields["question"] != "blocker b1 from phase-2/implement-rv-codex (reviewer): review in pane: Review was interrupted — what now?" || evs[0].Fields["options"] != "retry; switch provider; block this phase; stop the run" {
 		t.Fatalf("waiting %+v", evs)
 	}
 	stillHeld(t, ch)
@@ -327,7 +325,7 @@ func TestKeysAreRefusedWhenThePaneMovedOnOrNoKeysAreGiven(t *testing.T) {
 		t.Errorf("keys pressed %q", r.sent())
 	}
 	stillHeld(t, ch)
-	if d, _ := r.resolve("b1", "block"); d != decisionAuthorised {
+	if d, _ := r.resolve("b1", "block", said("block it")); d != decisionAuthorised {
 		t.Errorf("the refused keys closed the blocker: %s", d)
 	}
 }
@@ -372,18 +370,110 @@ func TestSwitchElsewhereNeedsTheMaintainerAModelAndAnEffort(t *testing.T) {
 	}
 }
 
-func TestSkipNeedsTheMaintainer(t *testing.T) {
+func spendRetries(r *blockerRig, step string, n int) {
+	for i := range n {
+		ev := Event{Kind: "blocker-resolved", Fields: map[string]string{"id": fmt.Sprintf("b0%d", i), "action": "retry", "by": "watchdog", "source": "land", "step": step}}
+		r.store.Append("run-1", Record{Kind: RecordEvent, Event: &ev})
+	}
+}
+
+func TestSkipIsNotAnActionForReviewerStaticOrMilestoneBlockers(t *testing.T) {
+	for name, actions := range map[string][]string{"reviewer": reviewerActions, "static": staticActions, "milestone": milestoneActions} {
+		if slices.Contains(actions, "skip") {
+			t.Errorf("%s actions %v offer skip", name, actions)
+		}
+	}
 	r := newBlockerRig(t)
 	ch := r.open(t, reviewerBlocker())
 
-	if d, _ := r.resolve("b1", "skip"); d != decisionAsk {
-		t.Errorf("skip without consent: %s", d)
+	if d, reason := r.resolve("b1", "skip", said("skip codex this round")); d != decisionRefused || reason != "skip is not an action for blocker b1 (reviewer): retry, keys, switch, block or stop" {
+		t.Errorf("skip %s %q", d, reason)
 	}
-	if d, reason := r.resolve("b1", "skip", said("skip codex this round")); d != decisionAuthorised {
-		t.Fatalf("skip %s %q", d, reason)
+	stillHeld(t, ch)
+}
+
+func TestBlockAndStopAreRefusedWhileTheTargetHasRetriesLeft(t *testing.T) {
+	for _, unattended := range []bool{false, true} {
+		r := newBlockerRig(t)
+		r.router.Dog.Unattended = unattended
+		spendRetries(r, "phase-2/land", 1)
+		ch := r.open(t, landBlocker())
+
+		for _, action := range []string{"block", "stop"} {
+			if d, reason := r.resolve("b1", action); d != decisionRefused || reason != "1 retries left for phase-2/land: fix the cause and retry" {
+				t.Errorf("unattended %v %s: %s %q", unattended, action, d, reason)
+			}
+		}
+		stillHeld(t, ch)
 	}
-	if res := resolved(t, ch); res.Action != "skip" || res.By != "maintainer" {
+}
+
+func TestBlockIsAllowedWhileRetriesAreLeftWhenTheMaintainerSaidSo(t *testing.T) {
+	r := newBlockerRig(t)
+	ch := r.open(t, landBlocker())
+
+	if d, reason := r.resolve("b1", "block", said("block it, I will look tonight")); d != decisionAuthorised {
+		t.Fatalf("block %s %q", d, reason)
+	}
+
+	if res := resolved(t, ch); !reflect.DeepEqual(res, Resolution{ID: "b1", Action: "block", By: "watchdog", Citation: "always"}) {
 		t.Errorf("resolution %+v", res)
+	}
+}
+
+func TestStopIsAllowedWhileRetriesAreLeftWhenTheMaintainerSaidSo(t *testing.T) {
+	r := newBlockerRig(t)
+	ch := r.open(t, landBlocker())
+
+	if d, reason := r.resolve("b1", "stop", said("stop the run")); d != decisionAuthorised {
+		t.Fatalf("stop %s %q", d, reason)
+	}
+
+	if res := resolved(t, ch); !reflect.DeepEqual(res, Resolution{ID: "b1", Action: "stop", By: "watchdog", Citation: "always"}) {
+		t.Errorf("resolution %+v", res)
+	}
+}
+
+func TestBlockIsAllowedOnceTheRetriesAreSpent(t *testing.T) {
+	r := newBlockerRig(t)
+	spendRetries(r, "phase-2/land", 2)
+	ch := r.open(t, landBlocker())
+
+	if d, reason := r.resolve("b1", "block"); d != decisionAuthorised {
+		t.Fatalf("block %s %q", d, reason)
+	}
+
+	if res := resolved(t, ch); !reflect.DeepEqual(res, Resolution{ID: "b1", Action: "block", By: "watchdog", Citation: "always"}) {
+		t.Errorf("resolution %+v", res)
+	}
+}
+
+func TestStopIsAllowedOnceTheRetriesAreSpent(t *testing.T) {
+	r := newBlockerRig(t)
+	spendRetries(r, "phase-2/land", 2)
+	ch := r.open(t, landBlocker())
+
+	if d, reason := r.resolve("b1", "stop"); d != decisionAuthorised {
+		t.Fatalf("stop %s %q", d, reason)
+	}
+
+	if res := resolved(t, ch); !reflect.DeepEqual(res, Resolution{ID: "b1", Action: "stop", By: "watchdog", Citation: "always"}) {
+		t.Errorf("resolution %+v", res)
+	}
+}
+
+func TestBlockAndStopAreAllowedOnABlockerThatOffersNoRestart(t *testing.T) {
+	for _, action := range []string{"block", "stop"} {
+		r := newBlockerRig(t)
+		ch := r.open(t, Blocker{Source: "land", Phase: "2", Step: "land", Reason: "merge conflict in a.go", Actions: []string{"block", "stop"}})
+
+		if d, reason := r.resolve("b1", action); d != decisionAuthorised {
+			t.Fatalf("%s %s %q", action, d, reason)
+		}
+
+		if res := resolved(t, ch); !reflect.DeepEqual(res, Resolution{ID: "b1", Action: action, By: "watchdog", Citation: "always"}) {
+			t.Errorf("resolution %+v", res)
+		}
 	}
 }
 
@@ -398,8 +488,6 @@ func TestUnattendedNeverAsksAndStillBlocksOrStops(t *testing.T) {
 		opts   []func(*resolveArgs)
 	}{
 		{"retry", nil},
-		{"skip", nil},
-		{"skip", []func(*resolveArgs){said("skip it")}},
 		{"keys", []func(*resolveArgs){keysUnder("", "enter")}},
 		{"switch", []func(*resolveArgs){onProvider("gemini", "pro", "high")}},
 	} {
@@ -421,6 +509,7 @@ func TestUnattendedNeverAsksAndStillBlocksOrStops(t *testing.T) {
 func TestTheHoldExpiresAsABlock(t *testing.T) {
 	r := newBlockerRig(t)
 	r.loop.BlockerTimeout = 20 * time.Millisecond
+	r.loop.MaxRestarts = 0
 
 	res := resolved(t, r.hold(t, context.Background(), landBlocker()))
 
@@ -435,13 +524,61 @@ func TestTheHoldExpiresAsABlock(t *testing.T) {
 	}
 }
 
-func TestAMilestoneBlockerExpiresAsASkip(t *testing.T) {
+func TestTheHoldExpiresAsARetryWhileTheTargetHasRetriesLeft(t *testing.T) {
 	r := newBlockerRig(t)
 	r.loop.BlockerTimeout = 20 * time.Millisecond
+	r.loop.MaxRestarts = 2
+	spendRetries(r, "phase-2/land", 1)
 
-	res := resolved(t, r.hold(t, context.Background(), Blocker{Source: "milestone", Phase: "2", Step: "milestone", Reason: "report failed", Actions: []string{"retry", "skip", "stop"}}))
+	res := resolved(t, r.hold(t, context.Background(), landBlocker()))
 
-	if res.Action != "skip" || res.By != "timeout" {
+	if !reflect.DeepEqual(res, Resolution{ID: "b1", Action: "retry", By: "timeout", Citation: "timeout"}) {
+		t.Errorf("resolution %+v", res)
+	}
+	evs := r.events("blocker-resolved")
+	want := map[string]string{"id": "b1", "action": "retry", "by": "timeout", "source": "land", "step": "phase-2/land"}
+	if len(evs) != 1 || !reflect.DeepEqual(evs[0].Fields, want) {
+		t.Errorf("blocker-resolved %+v", evs)
+	}
+}
+
+func TestRepeatedExpiriesSpendTheRetriesThenBlock(t *testing.T) {
+	r := newBlockerRig(t)
+	r.loop.BlockerTimeout = 20 * time.Millisecond
+	r.loop.MaxRestarts = 2
+
+	var got []string
+	for range 3 {
+		got = append(got, resolved(t, r.hold(t, context.Background(), landBlocker())).Action)
+	}
+
+	if !reflect.DeepEqual(got, []string{"retry", "retry", "block"}) {
+		t.Errorf("expiries %v", got)
+	}
+}
+
+func TestTheHoldExpiresAsAStopWhenTheBlockerOffersNoBlock(t *testing.T) {
+	r := newBlockerRig(t)
+	r.loop.BlockerTimeout = 20 * time.Millisecond
+	r.loop.MaxRestarts = 1
+	spendRetries(r, "phase-2/land", 1)
+
+	res := resolved(t, r.hold(t, context.Background(), Blocker{Source: "land", Phase: "2", Step: "land", Reason: "merge conflict in a.go", Actions: []string{"retry", "stop"}}))
+
+	if !reflect.DeepEqual(res, Resolution{ID: "b1", Action: "stop", By: "timeout", Citation: "timeout"}) {
+		t.Errorf("resolution %+v", res)
+	}
+}
+
+func TestAMilestoneBlockerExpiresAsABlockOnceTheRetriesAreSpent(t *testing.T) {
+	r := newBlockerRig(t)
+	r.loop.BlockerTimeout = 20 * time.Millisecond
+	r.loop.MaxRestarts = 1
+	spendRetries(r, "phase-2/milestone", 1)
+
+	res := resolved(t, r.hold(t, context.Background(), Blocker{Source: "milestone", Phase: "2", Step: "milestone", Reason: "report failed", Actions: milestoneActions}))
+
+	if !reflect.DeepEqual(res, Resolution{ID: "b1", Action: "block", By: "timeout", Citation: "timeout"}) {
 		t.Errorf("resolution %+v", res)
 	}
 }
@@ -450,6 +587,7 @@ func TestTheHoldStopsWhileTheWatchdogAsksTheMaintainer(t *testing.T) {
 	r := newBlockerRig(t)
 	r.rem.Allow = nil
 	r.loop.BlockerTimeout = 250 * time.Millisecond
+	r.loop.MaxRestarts = 0
 	ch := r.open(t, landBlocker())
 
 	if d, _ := r.resolve("b1", "retry"); d != decisionAsk {
@@ -678,7 +816,7 @@ func TestAFailedStepRaisesAStepBlockerAndRetryRerunsItWithTheAddendum(t *testing
 	if code != 0 {
 		t.Fatalf("exit %d, want 0", code)
 	}
-	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b, Blocker{Source: "step", Phase: "2", Step: "implement", Reason: "tests red", Actions: []string{"retry", "switch", "fix", "block", "stop", "continue"}}) {
+	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b, Blocker{Source: "step", Phase: "2", Step: "implement", Reason: "tests red", Actions: []string{"retry", "switch", "block", "stop", "continue"}}) {
 		t.Fatalf("blockers %+v", *seen)
 	}
 	if got := r.agents(); !reflect.DeepEqual(got, []string{"rloop-p2-plan", "rloop-p2-implement", "rloop-p2-implement-a2"}) {
@@ -769,19 +907,28 @@ func TestAStepBlockerResolvedStopHaltsTheRunWithExit5(t *testing.T) {
 	}
 }
 
-func TestAStepBlockerExpiresAsABlock(t *testing.T) {
+func TestAStepBlockerExpiresAsARetryUntilTheRetriesAreSpentThenAsABlock(t *testing.T) {
 	r, _ := newSourceRig(t, nil)
 	r.watcher.route = nil
 	r.loop.BlockerTimeout = 20 * time.Millisecond
-	r.host.behaviour["rloop-p2-implement"] = "fail"
+	for _, agent := range []string{"rloop-p2-implement", "rloop-p2-implement-a2", "rloop-p2-implement-a3"} {
+		r.host.behaviour[agent] = "fail"
+	}
 
 	code := r.run(RunOptions{Phases: []string{"2"}})
 
 	if code != 1 {
 		t.Fatalf("exit %d", code)
 	}
-	if evs := r.events("blocker-resolved"); len(evs) != 1 || evs[0].Fields["by"] != "timeout" || evs[0].Fields["action"] != "block" {
-		t.Errorf("blocker-resolved %+v", evs)
+	var got []string
+	for _, ev := range r.events("blocker-resolved") {
+		got = append(got, ev.Fields["action"]+" by "+ev.Fields["by"])
+	}
+	if !reflect.DeepEqual(got, []string{"retry by timeout", "retry by timeout", "block by timeout"}) {
+		t.Errorf("blocker-resolved %q", got)
+	}
+	if agents := r.agents(); !reflect.DeepEqual(agents, []string{"rloop-p2-plan", "rloop-p2-implement", "rloop-p2-implement-a2", "rloop-p2-implement-a3"}) {
+		t.Errorf("agents %v", agents)
 	}
 }
 
@@ -812,7 +959,7 @@ func TestAMergeConflictRaisesALandBlockerAndRetryLandsAfterTheFix(t *testing.T) 
 	if *calls != 2 {
 		t.Errorf("Land called %d times", *calls)
 	}
-	want := Blocker{Source: "land", Phase: "2", Step: "land", Reason: ErrMergeConflict.Error() + ": a.go", Actions: []string{"retry", "fix", "block", "stop", "continue"}}
+	want := Blocker{Source: "land", Phase: "2", Step: "land", Reason: ErrMergeConflict.Error() + ": a.go", Actions: []string{"retry", "block", "stop", "continue"}}
 	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b, want) {
 		t.Fatalf("blockers %+v", *seen)
 	}
@@ -853,7 +1000,7 @@ func TestAGateTheWatchdogDidNotChooseRaisesALandBlockerAndRetryAsksAgain(t *test
 	if code != 0 || *calls != 2 {
 		t.Fatalf("exit %d, land calls %d", code, *calls)
 	}
-	want := Blocker{Source: "land", Phase: "2", Step: "land", Reason: "the watchdog chose no gate for phase 2: it called no choose_gate", Actions: []string{"retry", "fix", "block", "stop", "continue"}}
+	want := Blocker{Source: "land", Phase: "2", Step: "land", Reason: "the watchdog chose no gate for phase 2: it called no choose_gate", Actions: []string{"retry", "block", "stop", "continue"}}
 	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b, want) {
 		t.Fatalf("blockers %+v", *seen)
 	}
@@ -898,7 +1045,7 @@ func TestAGateProbeErrorRaisesAGateProbeBlockerAndRetryProbesAgain(t *testing.T)
 	if code != 0 || *calls != 2 {
 		t.Fatalf("exit %d, Land calls %d", code, *calls)
 	}
-	if len(*seen) != 1 || (*seen)[0].b.Source != "gate-probe" || (*seen)[0].b.Step != "gate" || !reflect.DeepEqual((*seen)[0].b.Actions, []string{"retry", "fix", "block", "stop", "continue"}) {
+	if len(*seen) != 1 || (*seen)[0].b.Source != "gate-probe" || (*seen)[0].b.Step != "gate" || !reflect.DeepEqual((*seen)[0].b.Actions, []string{"retry", "block", "stop", "continue"}) {
 		t.Fatalf("blockers %+v", *seen)
 	}
 }
@@ -1301,34 +1448,6 @@ func TestAStaticBlockerResolvedRetryAnalyzesTheRoundAgain(t *testing.T) {
 	}
 }
 
-func TestAStaticBlockerResolvedSkipFinishesTheRoundWithoutStatic(t *testing.T) {
-	// given
-	r, _ := newSourceRig(t, resolveAs("skip"))
-	analyzeInLoop(r, errors.New("golangci-lint: exit status 3"))
-
-	// when
-	code := r.run(RunOptions{Phases: []string{"2"}})
-
-	// then
-	if code != 0 {
-		t.Fatalf("exit %d", code)
-	}
-	expected := map[string]string{"step": "implement", "reviewer": "static", "reason": "reviewer static: golangci-lint: exit status 3"}
-	if skipped := r.events("reviewer-skipped"); len(skipped) != 1 || !reflect.DeepEqual(skipped[0].Fields, expected) {
-		t.Fatalf("reviewer-skipped %+v", skipped)
-	}
-	wt := filepath.Join(r.repo.RootDir, ".r-loop", "wt", "phase-2")
-	if actual := r.calls("Analyzer.Analyze "); !reflect.DeepEqual(actual, []string{wt}) {
-		t.Fatalf("analyze calls %q", actual)
-	}
-	if clean := r.events("review-clean"); len(clean) != 1 {
-		t.Fatalf("review-clean %+v", clean)
-	}
-	if _, err := os.Stat(filepath.Join(r.store.dir, "phase-2", "implement-findings-static-r1.json")); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("static file stat = %v", err)
-	}
-}
-
 func TestABlockersTextEndsWithTheVersionsAndAnArrowOnlyWhereOneMoved(t *testing.T) {
 	r := newBlockerRig(t)
 	start := Event{Kind: "provider-versions", Fields: map[string]string{"claude": "2.1.220", "codex": "0.47.0"}}
@@ -1370,211 +1489,9 @@ func TestABlockerHasNoVersionsLineWithoutVersions(t *testing.T) {
 	}
 }
 
-func TestAFixIsAuthorisedOnTheWatchdogsWordAndLeavesTheBlockerOpen(t *testing.T) {
-	r := newFixerRig(t)
-	r.rem.Allow = nil
-	ch := r.open(t, fixableBlocker())
-
-	d, reason := r.resolve("b1", "fix")
-
-	if d != decisionAuthorised || reason != "" {
-		t.Fatalf("fix %s %q", d, reason)
-	}
-	stillHeld(t, ch)
-	if q := r.questions()[0]; q.AnsweredBy != "" {
-		t.Errorf("the blocker was settled: %+v", q)
-	}
-	if got := r.events("blocker-resolved"); len(got) != 0 {
-		t.Errorf("blocker-resolved %+v", got)
-	}
-	if got := r.events("fix-started"); len(got) != 1 {
-		t.Errorf("fix-started %+v", got)
-	}
-}
-
-func TestAnUnattendedRunRefusesAFix(t *testing.T) {
-	r := newFixerRig(t)
-	r.router.Dog.Unattended = true
-	ch := r.open(t, fixableBlocker())
-
-	d, reason := r.resolve("b1", "fix")
-
-	if d != decisionRefused || reason != "unattended: continue, block or stop" {
-		t.Errorf("fix %s %q", d, reason)
-	}
-	if got := r.events("fix-started"); len(got) != 0 {
-		t.Errorf("fix-started %+v", got)
-	}
-	stillHeld(t, ch)
-}
-
-func TestASecondFixOfTheSameBlockerIsRefusedNamingTheFirst(t *testing.T) {
-	for name, tc := range map[string]struct {
-		end    func(t *testing.T, r *fixerRig)
-		reason string
-	}{
-		"failed": {func(t *testing.T, r *fixerRig) {
-			r.write(t, "fixer.sentinel", `{"outcome":"failed","reason":"no network"}`)
-			r.failedWith(t)
-		}, "already fixed: fix-b1 failed"},
-		"proposed": {func(t *testing.T, r *fixerRig) {
-			r.propose(t, configProposal)
-			waitFor(t, func() bool { return len(r.events("fix-proposed")) == 1 })
-		}, "already fixed: fix-b1 proposed"},
-		"open": {func(t *testing.T, r *fixerRig) {}, "already fixed: fix-b1 open"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			r := newFixerRig(t)
-			ch := r.started(t)
-			tc.end(t, r)
-
-			d, reason := r.resolve("b1", "fix")
-
-			if d != decisionRefused || reason != tc.reason {
-				t.Errorf("second fix %s %q, want %q", d, reason, tc.reason)
-			}
-			if got := r.events("fix-started"); len(got) != 1 {
-				t.Errorf("fix-started %+v", got)
-			}
-			stillHeld(t, ch)
-		})
-	}
-}
-
-func TestAFixWhileAnotherIsOpenIsRefusedAsBusy(t *testing.T) {
-	r := newFixerRig(t)
-	r.started(t)
-	ch := r.open(t, Blocker{Source: "milestone", Phase: "2", Step: "milestone", Reason: "report failed", Actions: []string{"retry", "skip", "fix", "stop"}})
-
-	d, reason := r.resolve("b2", "fix")
-
-	if d != decisionRefused || reason != "fixer busy on b1" {
-		t.Errorf("fix %s %q", d, reason)
-	}
-	if got := r.events("fix-started"); len(got) != 1 {
-		t.Errorf("fix-started %+v", got)
-	}
-	stillHeld(t, ch)
-}
-
-func TestTheHoldsClockStandsStillWhileItsFixIsOpen(t *testing.T) {
-	r := newFixerRig(t)
-	r.loop.BlockerTimeout = 250 * time.Millisecond
-	ch := r.started(t)
-
-	time.Sleep(500 * time.Millisecond)
-	stillHeld(t, ch)
-	r.write(t, "fixer.sentinel", `{"outcome":"failed","reason":"no network"}`)
-
-	if res := resolved(t, ch); res.Action != "block" || res.By != "timeout" {
-		t.Errorf("resolution %+v", res)
-	}
-	if got := r.failedWith(t); got != "the fixer failed: no network" {
-		t.Errorf("reason %q", got)
-	}
-}
-
-func TestWhileItsFixIsOpenABlockerRefusesEveryActionButBlockAndStop(t *testing.T) {
-	r := newFixerRig(t)
-	ch := r.started(t)
-
-	d, reason := r.resolve("b1", "retry", said("retry (Recommended)"))
-
-	if d != decisionRefused || reason != "fix b1 is open: wait for the fixer's proposal, or block or stop" {
-		t.Fatalf("retry %s %q", d, reason)
-	}
-	stillHeld(t, ch)
-	if len(r.events("fix-failed")) != 0 {
-		t.Errorf("fix-failed %+v", r.events("fix-failed"))
-	}
-	if d, reason := r.resolve("b1", "block"); d != decisionAuthorised {
-		t.Fatalf("block %s %q", d, reason)
-	}
-	if res := resolved(t, ch); res.Action != "block" {
-		t.Errorf("resolution %+v", res)
-	}
-}
-
-func TestARetrySettledByAFixDoesNotCountTowardsTheRetryBudget(t *testing.T) {
-	r := newBlockerRig(t)
-	r.rem.MaxRestarts = 1
-	for _, ev := range []Event{
-		{Kind: "blocker-resolved", Fields: map[string]string{"id": "b0", "action": "retry", "by": "maintainer", "source": "land", "step": "phase-2/land", "fix": "fix-b0"}},
-		{Kind: "restart", Fields: map[string]string{"step": "phase-2/land", "remedy": "b0", "citation": "fix-b0"}},
-	} {
-		r.store.Append("run-1", Record{Kind: RecordEvent, Event: &ev})
-	}
-	ch := r.open(t, landBlocker())
-
-	if d, reason := r.resolve("b1", "retry"); d != decisionAuthorised {
-		t.Fatalf("retry %s %q", d, reason)
-	}
-	if res := resolved(t, ch); res.Action != "retry" {
-		t.Errorf("resolution %+v", res)
-	}
-}
-
-func TestAStepRetriedByAFixRerunsOnTheReloadedKindWithoutSpendingARestart(t *testing.T) {
-	var r *eventsRig
-	r, _ = newSourceRig(t, func(Blocker) Resolution {
-		row := StepRow{Provider: "claude", Model: "opus", Effort: "high", Timeout: 1000 * time.Hour}
-		r.loop.SetKinds([]StepKind{
-			{Name: "plan", Prompt: "plan", Check: "plan-file", Row: row},
-			{Name: "implement", Prompt: "implement", Check: "diff", Row: row},
-		})
-		return Resolution{Action: "retry", By: "maintainer", Citation: "fix-b1"}
-	})
-	r.loop.MaxRestarts = 0
-	r.host.behaviour["rloop-p2-implement"] = "fail"
-
-	code := r.run(RunOptions{Phases: []string{"2"}})
-
-	if code != 0 {
-		t.Fatalf("exit %d, want 0", code)
-	}
-	if want := []string{"codex//", "codex//", "claude/opus/high"}; !reflect.DeepEqual(r.resolved, want) {
-		t.Errorf("resolved %v, want %v", r.resolved, want)
-	}
-	restarts := r.events("restart")
-	if len(restarts) != 1 || restarts[0].Fields["citation"] != "fix-b1" || restarts[0].Fields["attempt"] != "2" {
-		t.Errorf("restarts %+v", restarts)
-	}
-	if len(r.events("restart-refused")) != 0 {
-		t.Errorf("restart-refused %+v", r.events("restart-refused"))
-	}
-	if n := r.loop.restarts["phase-2/implement"]; n != 0 {
-		t.Errorf("restarts spent %d", n)
-	}
-	if evs := r.events("blocker-resolved"); len(evs) != 1 || evs[0].Fields["fix"] != "fix-b1" {
-		t.Errorf("blocker-resolved %+v", evs)
-	}
-}
-
-func TestAStepAfterAFixInTheSamePhaseStartsOnTheReloadedKind(t *testing.T) {
-	var r *eventsRig
-	r, _ = newSourceRig(t, func(Blocker) Resolution {
-		row := StepRow{Provider: "claude", Model: "opus", Effort: "high", Timeout: 1000 * time.Hour}
-		r.loop.SetKinds([]StepKind{
-			{Name: "plan", Prompt: "plan", Check: "plan-file", Row: row},
-			{Name: "implement", Prompt: "implement", Check: "diff", Row: row},
-		})
-		return Resolution{Action: "retry", By: "maintainer", Citation: "fix-b1"}
-	})
-	r.host.behaviour["rloop-p2-plan"] = "fail"
-
-	code := r.run(RunOptions{Phases: []string{"2"}})
-
-	if code != 0 {
-		t.Fatalf("exit %d, want 0", code)
-	}
-	if want := []string{"codex//", "claude/opus/high", "claude/opus/high"}; !reflect.DeepEqual(r.resolved, want) {
-		t.Errorf("resolved %v, want %v", r.resolved, want)
-	}
-}
-
 func continuable() Blocker {
 	b := stepBlocker()
-	b.Actions = []string{"retry", "switch", "fix", "block", "stop", "continue"}
+	b.Actions = []string{"retry", "switch", "block", "stop", "continue"}
 	return b
 }
 
@@ -1607,16 +1524,25 @@ func TestAnUnattendedRunIsToldItMayContinueBlockOrStop(t *testing.T) {
 	}
 }
 
-func TestAnAttendedContinueAsksTheMaintainerEvenWhenRestartIsAllowListed(t *testing.T) {
+func TestAnAttendedContinueIsAuthorisedAsRetryIs(t *testing.T) {
 	r := newBlockerRig(t)
+	ch := r.open(t, continuable())
+
+	if d, reason := r.resolve("b1", "continue"); d != decisionAuthorised {
+		t.Fatalf("continue %s %q", d, reason)
+	}
+	if res := resolved(t, ch); !reflect.DeepEqual(res, Resolution{ID: "b1", Action: "continue", By: "watchdog", Citation: "allow-list"}) {
+		t.Errorf("resolution %+v", res)
+	}
+}
+
+func TestAnAttendedContinueAsksTheMaintainerWhenRestartIsNotAllowListed(t *testing.T) {
+	r := newBlockerRig(t)
+	r.rem.Allow = nil
 	ch := r.open(t, continuable())
 
 	if d, reason := r.resolve("b1", "continue"); d != decisionAsk || reason != askForBlocker {
 		t.Fatalf("continue %s %q", d, reason)
-	}
-	evs := r.events("watchdog-waiting")
-	if len(evs) != 1 || evs[0].Fields["options"] != "retry; switch provider; hand to the fixer; continue as resume would; block this phase; stop the run" {
-		t.Fatalf("waiting %+v", evs)
 	}
 	stillHeld(t, ch)
 
@@ -1679,7 +1605,7 @@ func continueRun(t *testing.T, recorded bool) (*eventsRig, *[]raised, *[]StepRef
 func TestAStepBlockerResolvedContinueResumesTheFailedAttemptAtItsRecordedRound(t *testing.T) {
 	r, seen, refs := continueRun(t, true)
 
-	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b.Actions, []string{"retry", "switch", "fix", "block", "stop", "continue"}) {
+	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b.Actions, []string{"retry", "switch", "block", "stop", "continue"}) {
 		t.Fatalf("blockers %+v", *seen)
 	}
 	next := (*refs)[1]
@@ -1742,7 +1668,7 @@ func TestALandBlockerResolvedContinueLandsThePhaseReadAgainFromThePlan(t *testin
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b.Actions, []string{"retry", "fix", "block", "stop", "continue"}) {
+	if len(*seen) != 1 || !reflect.DeepEqual((*seen)[0].b.Actions, []string{"retry", "block", "stop", "continue"}) {
 		t.Fatalf("blockers %+v", *seen)
 	}
 	if !reflect.DeepEqual(*doneWhens, []string{"", "`go test ./store/...`"}) {

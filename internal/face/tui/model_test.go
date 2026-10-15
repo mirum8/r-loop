@@ -272,6 +272,9 @@ func TestTheFeedNamesWhatHappenedInItsTone(t *testing.T) {
 		{core.Event{Kind: "restart-refused", Phase: "2", Step: "implement", Fields: map[string]string{"reason": "restart limit 2 reached"}}, "restart limit 2 reached", toneError},
 		{core.Event{Kind: "restart", Phase: "2", Step: "implement"}, "phase 2 implement: restarted", toneDim},
 		{core.Event{Kind: "nudge", Phase: "2", Step: "implement"}, "nudged", toneDim},
+		{core.Event{Kind: core.EventConfigSet, Fields: map[string]string{"key": "steps.implement.model", "value": "opus", "why": "retired model"}}, "config: steps.implement.model = opus", toneDim},
+		{core.Event{Kind: core.EventConfigSetFailed, Fields: map[string]string{"key": "steps.implement.modle", "reason": "unknown key"}}, "config: steps.implement.modle not set: unknown key", toneWarn},
+		{core.Event{Kind: core.EventPlanCorrected, Phase: "2", Fields: map[string]string{"phase": "2", "path": "docs/x/todo.md"}}, "plan corrected in docs/x/todo.md", toneDim},
 		{core.Event{Kind: "landed", Phase: "1", Fields: map[string]string{"merge": "0123456789abcdef", "gateSkipped": "true"}}, "phase 1: landed 0123456 · gate skipped", toneDim},
 		{core.Event{Kind: "gate-fix", Phase: "1", Step: "land", Fields: map[string]string{"round": "2"}}, "land gate fix r2", toneDim},
 		{core.Event{Kind: "assumption", Phase: "1", Step: "plan", Fields: map[string]string{"text": "yaml config"}}, "assumed: yaml config", toneDim},
@@ -1236,69 +1239,6 @@ func TestAPausedRunSaysSoInTheFooterUntilItContinues(t *testing.T) {
 	m = m.Apply(core.Event{At: at(23), Kind: "continued", Phase: "1"})
 	if view := m.View(); strings.Contains(view, "paused · lunch") {
 		t.Fatalf("pause footer stays after continue:\n%s", view)
-	}
-}
-
-func fixEvent(min int, kind string, fields map[string]string) core.Event {
-	return core.Event{At: at(min), Kind: kind, Phase: "2", Step: "implement", Fields: fields}
-}
-
-func railRow(m Model, id string) string {
-	for _, line := range m.rail() {
-		if strings.Contains(line, " "+id+" ") {
-			return line
-		}
-	}
-	return ""
-}
-
-func TestTheFixerShowsOnThePhasesRowUntilItProposesAndEachFixEventIsAFeedLine(t *testing.T) {
-	m := newModel(nil)
-
-	m = m.Apply(fixEvent(10, "fix-started", map[string]string{"id": "b1", "provider": "claude", "model": "opus"}))
-
-	if row := railRow(m, "2"); !strings.Contains(row, "2 fixer · b1 config") {
-		t.Fatalf("row %q", row)
-	}
-	if row := railRow(m, "3"); strings.Contains(row, "fixer") {
-		t.Fatalf("row 3 %q", row)
-	}
-	steps := []struct {
-		ev   core.Event
-		text string
-		tone tone
-	}{
-		{fixEvent(10, "fix-started", map[string]string{"id": "b1", "provider": "claude", "model": "opus"}), "14:10  phase 2 implement: fixer · b1 started (claude opus)", toneDim},
-		{fixEvent(12, "fix-proposed", map[string]string{"id": "b1", "kind": "config", "cause": "codex renamed --foo"}), "14:12  phase 2 implement: fix b1 proposed (config): codex renamed --foo", toneDim},
-		{fixEvent(13, "fix-applied", map[string]string{"id": "b1", "commands": "", "config": ".r-loop/config.yaml"}), "14:13  phase 2 implement: fix b1 applied", toneDim},
-		{fixEvent(14, "fix-rejected", map[string]string{"id": "b2"}), "14:14  phase 2 implement: fix b2 rejected", toneDim},
-		{fixEvent(15, "fix-failed", map[string]string{"id": "b3", "reason": "command 1 exited 2"}), "14:15  phase 2 implement: fix b3 failed: command 1 exited 2", toneError},
-	}
-	for i, s := range steps {
-		if i > 0 {
-			m = m.Apply(s.ev)
-		}
-		if last := m.Feed[len(m.Feed)-1]; last.Text != s.text || last.Tone != s.tone {
-			t.Errorf("feed %+v, want %q", last, s.text)
-		}
-		if i == 1 && strings.Contains(railRow(m, "2"), "fixer") {
-			t.Errorf("row after the proposal %q", railRow(m, "2"))
-		}
-	}
-	if m.DogWaiting {
-		t.Error("a fix marks the watchdog as waiting for the maintainer")
-	}
-}
-
-func TestAFailedFixerLeavesThePhasesRowAndAResumeForgetsAnOpenOne(t *testing.T) {
-	started := fixEvent(10, "fix-started", map[string]string{"id": "b1", "provider": "claude", "model": "opus"})
-	m := newModel([]core.Event{started, fixEvent(11, "fix-failed", map[string]string{"id": "b1", "reason": "agent gone"})})
-
-	if row := railRow(m, "2"); strings.Contains(row, "fixer") {
-		t.Fatalf("row after a failure %q", row)
-	}
-	if row := railRow(replay(newModel(nil), []core.Event{started}), "2"); strings.Contains(row, "fixer") {
-		t.Fatalf("row after a resume %q", row)
 	}
 }
 

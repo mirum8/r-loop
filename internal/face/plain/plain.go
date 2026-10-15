@@ -96,14 +96,18 @@ func (f *Face) emit(w io.Writer, ev core.Event) {
 		fmt.Fprintf(w, "%s  phase %s  %s  blocker %s (%s): %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["id"], ev.Fields["source"], ev.Fields["reason"])
 	case "blocker-resolved":
 		fmt.Fprintf(w, "%s  phase %s  %s  blocker %s → %s (%s)\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["id"], ev.Fields["action"], ev.Fields["by"])
-	case core.EventFixStarted, core.EventFixProposed, core.EventFixApplied, core.EventFixRejected, core.EventFixFailed:
-		fmt.Fprintf(w, "%s  phase %s  %s  %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fixDetail(ev))
 	case "step-skipped":
 		fmt.Fprintf(w, "%s  phase %s  %s  skipped: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["reason"])
 	case "design":
 		fmt.Fprintf(w, "%s  phase %s  design: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["intent"])
 	case "design-skipped":
 		fmt.Fprintf(w, "%s  phase %s  design skipped: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["reason"])
+	case core.EventConfigSet:
+		fmt.Fprintf(w, "%s  config: %s = %s — %s\n", ev.At.Format("15:04:05"), ev.Fields["key"], ev.Fields["value"], ev.Fields["why"])
+	case core.EventConfigSetFailed:
+		fmt.Fprintf(w, "!  config: %s not set: %s\n", ev.Fields["key"], ev.Fields["reason"])
+	case core.EventPlanCorrected:
+		fmt.Fprintf(w, "%s  phase %s  plan corrected in %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["path"])
 	case "review-find":
 		fields := ev.Fields
 		fmt.Fprintf(w, "%s  phase %s  %s  reviewer %s r%s  %s  %s findings", ev.At.Format("15:04:05"), ev.Phase, ev.Step, fields["reviewer"], fields["round"], fields["state"], fields["findings"])
@@ -167,21 +171,6 @@ func runList(fields map[string]string) string {
 		return "none"
 	}
 	return strings.Join(parts, ", ")
-}
-
-func fixDetail(ev core.Event) string {
-	id := ev.Fields["id"]
-	switch ev.Kind {
-	case core.EventFixStarted:
-		return fmt.Sprintf("fixer %s started (%s %s)", id, ev.Fields["provider"], ev.Fields["model"])
-	case core.EventFixProposed:
-		return fmt.Sprintf("fix %s proposed (%s): %s", id, ev.Fields["kind"], ev.Fields["cause"])
-	case core.EventFixFailed:
-		return fmt.Sprintf("fix %s failed: %s", id, ev.Fields["reason"])
-	case core.EventFixApplied:
-		return "fix " + id + " applied"
-	}
-	return "fix " + id + " rejected"
 }
 
 func where(phase, step string) string {

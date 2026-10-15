@@ -344,7 +344,7 @@ func (r *Repo) CommitAll(dir, message string) (string, error) {
 }
 
 func (r *Repo) ChangedFiles(dir, ref string) ([]string, error) {
-	tracked, err := r.git(dir, "diff", "--name-only", "-z", "--no-renames", ref)
+	tracked, err := r.git(dir, "diff", "--name-only", "-z", "--no-renames", "--merge-base", ref)
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +363,7 @@ func (r *Repo) DiffNonEmpty(dir, ref string) (bool, error) {
 }
 
 func (r *Repo) DiffStat(dir, ref string) (int, int, error) {
-	out, err := r.git(dir, "diff", "--numstat", "-z", "--no-renames", ref)
+	out, err := r.git(dir, "diff", "--numstat", "-z", "--no-renames", "--merge-base", ref)
 	if err != nil {
 		return 0, 0, err
 	}

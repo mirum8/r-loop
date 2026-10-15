@@ -109,13 +109,12 @@ func fakeProviders(t *testing.T) {
 func TestAMissingProviderBinaryExits127NamingTheProviderBinaryAndField(t *testing.T) {
 	provider := "providers:\n  ghost:\n    kind: rloop-no-such-binary\n    doneSignal: sentinel\n    ask: mcp\n    review: ghost review\n"
 	for field, cfg := range map[string]string{
-		"watchdog.provider":       "watchdog:\n  provider: ghost\n",
-		"intake.provider":         "intake:\n  provider: ghost\n",
-		"steps.plan.provider":     "steps:\n  plan:\n    provider: ghost\n",
-		"steps.plan.fallback":     "steps:\n  plan:\n    fallback:\n      provider: ghost\n      model: m\n      effort: e\n",
-		"steps.plan.reviewers":    "steps:\n  plan:\n    reviewers:\n      - provider: ghost\n        model: m\n        effort: e\n",
-		"land.fix.provider":       "land:\n  fix:\n    provider: ghost\n    model: m\n    effort: e\n",
-		"watchdog.fixer.provider": "watchdog:\n  fixer:\n    provider: ghost\n",
+		"watchdog.provider":    "watchdog:\n  provider: ghost\n",
+		"intake.provider":      "intake:\n  provider: ghost\n",
+		"steps.plan.provider":  "steps:\n  plan:\n    provider: ghost\n",
+		"steps.plan.fallback":  "steps:\n  plan:\n    fallback:\n      provider: ghost\n      model: m\n      effort: e\n",
+		"steps.plan.reviewers": "steps:\n  plan:\n    reviewers:\n      - provider: ghost\n        model: m\n        effort: e\n",
+		"land.fix.provider":    "land:\n  fix:\n    provider: ghost\n    model: m\n    effort: e\n",
 	} {
 		t.Run(field, func(t *testing.T) {
 			f := newFixture(t)
@@ -436,6 +435,37 @@ func TestUIReviewerNeedsNoReviewCommandAndReportsItsSkill(t *testing.T) {
 	}
 }
 
+func TestUIReviewerOnCodexIsWarnedAboutButStillRuns(t *testing.T) {
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "steps:\n  implement:\n    reviewers:\n      - name: ui\n        provider: codex\n        model: sol\n        effort: high\n        prompt: review-ui\n")
+	f.commit()
+	f.fakeHerdr(1)
+
+	code := f.main(f.todo, "--dry-run", "--plain")
+
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, f.err.String())
+	}
+	if want := "warning: reviewer ui runs review-ui on codex, whose sandbox cannot start a browser; use claude\n"; !strings.Contains(f.out.String(), want) {
+		t.Fatalf("%q missing from:\n%s", want, f.out.String())
+	}
+}
+
+func TestDefaultUIReviewerIsNotWarnedAbout(t *testing.T) {
+	f := newFixture(t)
+	f.commit()
+	f.fakeHerdr(1)
+
+	code := f.main(f.todo, "--dry-run", "--plain")
+
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, f.err.String())
+	}
+	if strings.Contains(f.out.String(), "cannot start a browser") {
+		t.Fatalf("default config warned:\n%s", f.out.String())
+	}
+}
+
 func TestWatchdogProviderIsValidatedUnlessTheWatchdogIsOff(t *testing.T) {
 	f := newFixture(t)
 	f.write(".r-loop/config.yaml", "watchdog:\n  provider: nosuch\n")
@@ -588,7 +618,7 @@ func TestDryRunPrintsBannerWithOverridesAndTheRunList(t *testing.T) {
 		"prompt implement: embedded\n",
 		"prompt review-ui: embedded\n",
 		"reviewer ui requires .claude/skills/test-app/SKILL.md: missing, reviewer skipped\n",
-		"watchdog: claude opus medium allow [restart, retry]  ← default\n",
+		"watchdog: claude opus medium allow [deps, ports, containers, locks, restart, retry, provider]  ← default\n",
 		"intake: claude sonnet medium  ← default\n",
 		"phase 2  PlanReader: phases and milestones  design → plan (review ×2) → implement (review ×3) → land\n",
 		"phase 31  Unattended mode  design → plan (review ×2) → implement (review ×3) → land\n",
@@ -716,7 +746,7 @@ func TestBannerNamesTheReviewAndFixPromptSources(t *testing.T) {
 
 	code := f.main(f.todo, "--dry-run", "--plain")
 
-	for _, want := range []string{"prompt review: " + filepath.Join(f.root, ".r-loop", "prompts", "review.md") + "\n", "prompt fix: embedded\n", "prompt fixer: embedded\n"} {
+	for _, want := range []string{"prompt review: " + filepath.Join(f.root, ".r-loop", "prompts", "review.md") + "\n", "prompt fix: embedded\n"} {
 		if code != 0 || !strings.Contains(f.out.String(), want) {
 			t.Fatalf("code=%d %q missing from:\n%s%s", code, want, f.out.String(), f.err.String())
 		}
@@ -1229,27 +1259,6 @@ func TestAProviderWhoseVersionCommandIsMissingRecordsAQuestionMark(t *testing.T)
 
 	if got := providerVersion(p); got != "?" {
 		t.Errorf("version %q", got)
-	}
-}
-
-func TestAFixerProviderWithoutMCPPassesPreflight(t *testing.T) {
-	f := newFixture(t)
-	f.write(".r-loop/config.yaml", "providers:\n  plainbot:\n    kind: claude\n    doneSignal: sentinel\n    ask: none\nwatchdog:\n  fixer:\n    provider: plainbot\n    model: opus\n    effort: high\n")
-	f.commit()
-
-	w, err := f.preflight(f.todo, "--plain")
-
-	if err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	if w.Fixer.Provider != "plainbot" || w.Fixer.Model != "opus" || w.Fixer.Effort != "high" || w.Fixer.Timeout != 20*time.Minute {
-		t.Errorf("fixer %+v", w.Fixer)
-	}
-	if w.Fixer.RunID != w.Loop.RunID || w.Fixer.RunDir != w.Store.Dir(w.Loop.RunID) || w.Fixer.Root != f.root {
-		t.Errorf("fixer run %q dir %q root %q", w.Fixer.RunID, w.Fixer.RunDir, w.Fixer.Root)
-	}
-	if w.Loop.Fixer != core.BlockerFixer(w.Fixer) || w.Router.Fix == nil {
-		t.Error("the fixer is not wired into the loop and the router")
 	}
 }
 
