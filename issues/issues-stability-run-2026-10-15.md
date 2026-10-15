@@ -44,12 +44,12 @@ or fix these before committing.
       - `r-loop status` errors (repo open, load run, plan read), the Getwd error and the usage line print no C0/C1 control bytes
       - An app test passes an error containing \x1b and \x07 through the stderr error path and finds neither
 
-- [ ] [#23] settleStatic: a cancelled static analyzer can still raise a blocker
+- [x] [#23] settleStatic: a cancelled static analyzer can still raise a blocker  <!-- fixed: r-loop/phase-7 -->
       - When the context is cancelled while the static analyzer runs, no blocker is raised: no question record and no blocked-on event
       - That round returns a failed outcome, not blocked, with an interrupted reason; the run still records halted/aborted
       - A static analyzer failure without cancellation still raises the reviewer blocker with retry/block/stop
 
-- [ ] [#7] An abort during a review is recorded as a reviewer blocker plus a step failure ("interrupted: context canceled"), not as `aborted`
+- [x] [#7] An abort during a review is recorded as a reviewer blocker plus a step failure ("interrupted: context canceled"), not as `aborted`  <!-- fixed: r-loop/phase-7 -->
       - An abort while a reviewer is working records the step as failed with reason `interrupted: context canceled`, without the `reviewer <id>:` prefix
       - The run record is still halted/aborted and report.md still shows "aborted during phase-N/<step>"
       - The reviewer's own review-find event still records state failed

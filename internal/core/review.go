@@ -266,6 +266,12 @@ func (h ReviewHalf) settleStatic(ctx context.Context, worker *Session, run *stat
 	}
 	sm := h.Sessions
 	for {
+		if ctx.Err() != nil {
+			if err := h.foundStatic(worker, rd.n, StepFailed, 0, ""); err != nil {
+				return nil, 0, sm.fail(worker, "record: "+err.Error())
+			}
+			return nil, 0, interrupted(ctx, worker)
+		}
 		if run.err == nil {
 			path := reviewFindingsPath(worker, staticReviewer, rd.n)
 			n := len(run.analysis.Findings)
@@ -572,7 +578,10 @@ func (h ReviewHalf) join(ctx context.Context, worker *Session, runs []*reviewerR
 			first = r.fail
 		}
 	}
-	if first != nil && (h.raiser() == nil || ctx.Err() != nil) {
+	if first != nil && ctx.Err() != nil {
+		return 0, interrupted(ctx, worker)
+	}
+	if first != nil && h.raiser() == nil {
 		return 0, Outcome{State: StepFailed, Reason: first.reason, Session: worker, Stalled: first.stalled}
 	}
 	total := 0
@@ -612,6 +621,9 @@ func (h ReviewHalf) recover(ctx context.Context, worker *Session, runs []*review
 	raiser := h.raiser()
 	r := runs[i]
 	for r.fail != nil {
+		if ctx.Err() != nil {
+			return interrupted(ctx, worker)
+		}
 		f := *r.fail
 		actions := reviewerActions
 		if !f.stalled {
@@ -725,6 +737,10 @@ func (h ReviewHalf) await(ctx context.Context, worker *Session, r *reviewerRun, 
 		return h.Sessions.fail(worker, "record: "+err.Error())
 	}
 	return Outcome{}
+}
+
+func interrupted(ctx context.Context, worker *Session) Outcome {
+	return Outcome{State: StepFailed, Reason: "interrupted: " + ctx.Err().Error(), Session: worker}
 }
 
 func reviewerKey(key StepKey, id string) StepKey {

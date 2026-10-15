@@ -1792,3 +1792,65 @@ func TestABlockedImplementAgentGetsItsKeysAndFinishes(t *testing.T) {
 		t.Errorf("answered the ask channel %q", got)
 	}
 }
+
+type abortingAnalyzer struct {
+	store *loopStore
+	err   error
+}
+
+func (a abortingAnalyzer) Analyze(ctx context.Context, dir string) (Analysis, error) {
+	if err := a.store.MarkAbort("run-1"); err != nil {
+		return Analysis{}, err
+	}
+	<-ctx.Done()
+	return Analysis{Findings: []Finding{}}, a.err
+}
+
+func abortDuringAnalysis(t *testing.T, err error) (*eventsRig, int) {
+	r := newEventsRig(t)
+	r.loop.BlockerTimeout = time.Minute
+	r.loop.Kinds[1].Row.Rounds = 1
+	r.loop.Sessions.Analyzer = abortingAnalyzer{store: r.store, err: err}
+	r.loop.Runners = DefaultRunners(r.loop.Sessions, r.loop.Kinds)
+	return r, r.run(RunOptions{Phases: []string{"2"}})
+}
+
+func TestAnAbortDuringTheStaticAnalysisRecordsNoBlockerQuestionOrBlockedOnEvent(t *testing.T) {
+	// given
+	r, _ := abortDuringAnalysis(t, errors.New("interrupted: context canceled"))
+
+	// when
+	st, err := r.store.Load("run-1")
+
+	// then
+	assertEqual(t, "load error", err, nil)
+	assertEqual(t, "questions", len(st.Questions), 0)
+	assertEqual(t, "blocked-on events", len(r.events("blocked-on")), 0)
+}
+
+func TestAnAbortDuringTheStaticAnalysisHaltsTheRunAsAborted(t *testing.T) {
+	// given
+	r, code := abortDuringAnalysis(t, errors.New("interrupted: context canceled"))
+
+	// when
+	runs := r.runRecords()
+
+	// then
+	last := runs[len(runs)-1]
+	assertEqual(t, "exit code", code, 1)
+	assertEqual(t, "run", last.Run, RunHalted)
+	assertEqual(t, "reason", last.Reason, ReasonAborted)
+}
+
+func TestAnAbortAsTheStaticAnalysisSucceedsRecordsTheStepFailedAsInterrupted(t *testing.T) {
+	// given
+	r, _ := abortDuringAnalysis(t, nil)
+
+	// when
+	recs := recordsForStep(r.store, StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1})
+
+	// then
+	last := recs[len(recs)-1]
+	assertEqual(t, "state", last.State, StepFailed)
+	assertEqual(t, "reason", last.Reason, "interrupted: context canceled")
+}
