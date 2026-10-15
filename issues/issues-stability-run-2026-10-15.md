@@ -15,12 +15,12 @@ codex first-prompt confirmation, reviewer close on abort, evidence ranges/prefix
 swap). #6, #12, #21 and #23 are defects in or next to those uncommitted fixes: commit them first,
 or fix these before committing.
 
-- [ ] [#12] Background work is only recognised when it's started through Claude's Agent or Bash tools
+- [x] [#12] Background work is only recognised when it's started through Claude's Agent or Bash tools  <!-- fixed: r-loop/phase-6 -->
       - A set background flag is time-bounded: an agent idle with background work pending is still nudged after a bounded multiple of StallGrace, never only at the step backstop
       - A test ends a turn after a never-finishing `run_in_background` command with no sentinel and asserts a nudge well before the backstop
       - A text-only reply to a nudge while background work is pending does not fail the step at once while the nudge cap (#6) is not reached
 
-- [ ] [#6] The new stall fix allows endless nudges
+- [x] [#6] The new stall fix allows endless nudges  <!-- fixed: r-loop/phase-6 -->
       - The watch counts the nudges it sends; a nudge past a fixed cap fails the step with Stalled=true and a reason naming the count
       - The cap covers both the hook turn-end path and the herdr idle-quiet path, so codex sessions are bounded too
       - A test where the agent answers every nudge with a tool call and no sentinel fails at the cap, well before the backstop
@@ -78,7 +78,7 @@ or fix these before committing.
       - The action is refused when the agent is gone, and retry/continue keep counting against watchdog.maxRestarts
       - ADR-62 and ADR-97 are amended, tech-design.md is updated, and watchdog.md lists the in-place re-nudge as the first remedy for a stall whose pane is alive
 
-- [ ] [#11] Prompt-side guard. Tell step agents to run tests in the foreground
+- [x] [#11] Prompt-side guard. Tell step agents to run tests in the foreground  <!-- fixed: r-loop/phase-6 -->
       - The shared sentinel/outcome prompt partials tell step agents to run builds and tests in the foreground and not to end a turn while background work they started is still running
       - The wording still allows review.md's wait for a forked slash command's task notification
       - render_test.go asserts the guard appears in the plan, implement, fix and gatefix renders

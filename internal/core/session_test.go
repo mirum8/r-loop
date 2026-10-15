@@ -1459,3 +1459,24 @@ func TestAnAgentWithoutHookEventsThatWorksAgainRestartsItsQuietAndIsNudgedAfterA
 	assertEqual(t, "resumed", obs.resumed, 1)
 	assertEqual(t, "reason", out.Reason, "stalled: no response to nudge")
 }
+
+func TestAnAgentWithoutHookEventsThatWorksAfterEveryNudgeFailsAtTheNudgeCap(t *testing.T) {
+	// given
+	r, s := hooklessStallRig(t, func(n int) AgentState {
+		if n%5 == 2 {
+			return AgentWorking
+		}
+		return AgentIdle
+	})
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertState(t, out, StepFailed, "stalled: no sentinel after 3 nudges")
+	assertEqual(t, "stalled", out.Stalled, true)
+	assertEqual(t, "states before each nudge", statesBeforeEach(r.shared.Calls(), stepPrompt(graceNudgeText)), []int{6, 11, 16})
+	assertEqual(t, "polls", r.host.polls, 21)
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Prompt"), []string{stepPrompt("do phase 3"), stepPrompt(graceNudgeText), stepPrompt(graceNudgeText), stepPrompt(graceNudgeText)})
+	assertCalls(t, prefixed(r.shared.Calls(), "SessionHost.Submit"), nil)
+}

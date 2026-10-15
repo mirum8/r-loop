@@ -1189,6 +1189,40 @@ func TestPromptsThatWriteNoTestsCarryNoTestRules(t *testing.T) {
 	}
 }
 
+func TestStepPromptsTellTheAgentToRunBuildsAndTestsInTheForeground(t *testing.T) {
+	r := New(t.TempDir())
+	for _, name := range []string{"plan", "implement", "fix", "gatefix"} {
+		t.Run(name, func(t *testing.T) {
+			// given
+			vars := fullVars()
+
+			// when
+			actual := render(t, r, name, vars)
+
+			// then
+			for _, expected := range []string{"Run builds and tests in the foreground", "never end your turn while background work you started is still running"} {
+				if !strings.Contains(actual, expected) {
+					t.Errorf("%s prompt missing %q", name, expected)
+				}
+			}
+		})
+	}
+}
+
+func TestTheForegroundGuardStillLetsAReviewerWaitForItsForkedCommand(t *testing.T) {
+	// given
+	r := New(t.TempDir())
+
+	// when
+	actual := render(t, r, "review", fullVars())
+
+	// then
+	for _, expected := range []string{"The one wait allowed is for a task notification this prompt tells you to wait for.", "A slash command that forks into the background reports through a task notification: wait for it"} {
+		if !strings.Contains(actual, expected) {
+			t.Errorf("review prompt missing %q", expected)
+		}
+	}
+}
 func TestOverrideCanUseTheTestsPartial(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".r-loop", "prompts", "implement.md")

@@ -21,6 +21,8 @@ const (
 	defaultStallGrace    = 2 * time.Minute
 	defaultHookStartWait = 10 * time.Second
 	sentinelGrace        = 30 * time.Second
+	maxNudges            = 3
+	backgroundGraces     = 3
 )
 
 func timedOut(err error) bool {
@@ -386,6 +388,7 @@ type watch struct {
 	activity       string
 	turnEnd        int
 	nudged         bool
+	nudges         int
 }
 
 func (m *SessionManager) Wait(ctx context.Context, s *Session, obs Observer) Outcome {
@@ -523,7 +526,7 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 	acted, background := m.hookWork(s.Agent)
 	if seen && !busy && turn > w.turnEnd && s.declining.Load() == 0 && (s.owner == nil || s.owner.declining.Load() == 0) {
 		w.turnEnd = turn
-		answered := w.nudged && acted
+		answered := w.nudged && (acted || background)
 		if answered {
 			w.nudged, w.quiet = false, 0
 			if w.stalled {
@@ -553,13 +556,15 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 		}
 		return Outcome{}, false
 	case AgentIdle, AgentBlocked, AgentDone:
-		if !background {
-			w.quiet += dt
-		}
+		w.quiet += dt
 	default:
 		return Outcome{}, false
 	}
-	if w.quiet < grace {
+	limit := grace
+	if background {
+		limit = backgroundGraces * grace
+	}
+	if w.quiet < limit {
 		return Outcome{}, false
 	}
 	if w.stalled || (seen && w.nudged) {
@@ -567,11 +572,21 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 		out.Stalled = true
 		return out, true
 	}
-	return m.stallAndNudge(w, now, "no sentinel and no activity for "+grace.String(), nil)
+	return m.stallAndNudge(w, now, "no sentinel and no activity for "+limit.String(), nil)
 }
 
 func (m *SessionManager) stallAndNudge(w *watch, now time.Time, cause string, gate *handOff) (Outcome, bool) {
 	s := w.s
+	if w.nudges >= maxNudges {
+		if gate != nil {
+			if _, ready, err := gate.check(); err != nil || !ready {
+				return Outcome{}, false
+			}
+		}
+		out := m.fail(s, fmt.Sprintf("stalled: no sentinel after %d nudges", w.nudges))
+		out.Stalled = true
+		return out, true
+	}
 	w.stalled, w.nudged, w.quiet = true, true, 0
 	if err := m.recordState(now, s, StepStalled); err != nil && !errors.Is(err, errStepEnded) {
 		return m.fail(s, "record: "+err.Error()), true
@@ -587,6 +602,7 @@ func (m *SessionManager) stallAndNudge(w *watch, now time.Time, cause string, ga
 		out.Stalled = true
 		return out, true
 	}
+	w.nudges++
 	m.event(now, s, Event{Kind: "nudge"})
 	if n, ok := w.obs.(interface{ Nudged(*Session) }); ok {
 		n.Nudged(s)

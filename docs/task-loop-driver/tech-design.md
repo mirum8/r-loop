@@ -338,8 +338,14 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   driver sends one fixed nudge (below); `working` again → `running`; still quiet a further
   `stallGrace` after the nudge → `failed(stalled: no response to nudge)`; for a session that
   reports hooks (ADR-93), a turn end (`Stop` or `idle_prompt`) with no sentinel is nudged at the
-  next tick, and after that one nudge its next turn end with no sentinel, or a further
-  `stallGrace` of quiet, fails it the same way; a `SessionEnd` with reason `exit`, `logout`,
+  next tick, a turn after the nudge that used a tool answers it, and an unanswered nudge's next
+  turn end with no sentinel, or a further `stallGrace` of quiet, fails it the same way; once a
+  hook session has started any tool with `run_in_background`, for the rest of that session its
+  turn ends are not nudged, its quiet is measured against 3 × `stallGrace`, and any turn after a
+  nudge answers it; an answered nudge returns the step to `running` and a later stall is nudged
+  again, at most 3 nudges per half and round: the stall after the third →
+  `failed(stalled: no sentinel after 3 nudges)`, except a turn end where a tool starts before the
+  nudge would be typed, which keeps the step running; a `SessionEnd` with reason `exit`, `logout`,
   `prompt_input_exit` or `other` and no sentinel → `failed(agent exited: <reason>)`; elapsed > timeout →
   `failed(backstop)`. The driver never kills a session: a failed step's session is left
   standing. For a step with a review
@@ -356,7 +362,7 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   activity for <grace>. If your work is done, write the sentinel now. If you are blocked, call
   ask_watchdog, or write a failed sentinel with the reason.` — `call ask_watchdog, or` only when the
   session has an ask URL. A turn-end nudge says `your turn ended with no sentinel` in place of
-  `no sentinel and no activity for <grace>`. Sent once per stall, to step agents and reviewers alike, and recorded as
+  `no sentinel and no activity for <grace>` (3 × <grace> while background work is pending). Sent once per stall, to step agents and reviewers alike, and recorded as
   `Event{Kind: "nudge"}`; a nudge that cannot be delivered fails the step `stalled: nudge not
   delivered: <err>`.
 - **Names and paths** — phase branch `r-loop/phase-<N>`; worktree `.r-loop/wt/phase-<N>/` from the
