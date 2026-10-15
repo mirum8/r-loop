@@ -55,12 +55,12 @@ or fix these before committing.
       - The reviewer's own review-find event still records state failed
       - A real reviewer failure without cancellation keeps its `reviewer <id>:` prefix
 
-- [ ] [#13] markWaiting moves focus to the watchdog pane (host.Focus)
+- [x] [#13] markWaiting moves focus to the watchdog pane (host.Focus)  <!-- fixed: r-loop/phase-8 -->
       - With the default config, the watchdog entering watchdog-waiting (by ask_maintainer or by herdr reporting it blocked) does not run `herdr agent focus`
       - In an --unattended run, markWaiting never calls Focus
       - watchdog-waiting is still recorded and emitted to the face (amber state) exactly as before
 
-- [ ] [#8] The watchdog misdiagnoses problems, and its tool results aren't logged
+- [x] [#8] The watchdog misdiagnoses problems, and its tool results aren't logged  <!-- fixed: r-loop/phase-8 -->
       - After a refused submit_triage, events.jsonl has an event for that call with accepted=false and the refusal reason text
       - After an accepted watchdog tool call, events.jsonl records its result (accepted, or the decision and any reason)
       - Errors from resume() or an absent handler ("no triage is open", "not available") are recorded as the call's result
