@@ -429,3 +429,165 @@ func TestAReviewerWhoseStartFailsAfterItsFirstHookRecordsItsTranscript(t *testin
 	assertState(t, out, StepFailed, "reviewer claude: start refused")
 	assertEqual(t, "agent-transcript events", transcriptEvents(r.store), reviewerTranscript(claudeReviewer, "claude", "s-rv", "/home/.claude/projects/-repo/s-rv.jsonl"))
 }
+
+type rolloutHost struct {
+	*scriptedHost
+	rollouts *fakeRollouts
+	marker   string
+	onPrompt int
+	onEnter  bool
+	prompts  int
+}
+
+func (h *rolloutHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	err := h.scriptedHost.Prompt(agent, text, wait, timeout)
+	h.prompts++
+	if h.prompts == h.onPrompt {
+		h.rollouts.show(h.marker)
+	}
+	return err
+}
+
+func (h *rolloutHost) SendKeys(agent string, keys ...string) error {
+	err := h.scriptedHost.SendKeys(agent, keys...)
+	if h.onEnter {
+		h.rollouts.show(h.marker)
+	}
+	return err
+}
+
+func freshCodexRig(t *testing.T) (*rig, *rolloutHost) {
+	shortSubmitWait(t)
+	fastHookPoll(t)
+	r := newRig(t)
+	r.sm.Now = (&stepClock{t: t0}).Now
+	r.sm.Resolve = func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
+		return ProviderArgs{Kind: "codex", Rollout: true}, nil
+	}
+	r.host.script = func(n int) AgentState {
+		if n == 1 {
+			return AgentWorking
+		}
+		return AgentIdle
+	}
+	rollouts := &fakeRollouts{files: map[string]rolloutFile{}}
+	r.sm.Rollouts = rollouts
+	host := &rolloutHost{scriptedHost: r.host, rollouts: rollouts, marker: filepath.Join(r.runDir, "phase-3", "implement-a1.sentinel")}
+	r.sm.Host = host
+	return r, host
+}
+
+func callsOf(r *rig, prefix string) []string {
+	var out []string
+	for _, c := range r.host.Calls() {
+		if strings.HasPrefix(c, prefix) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func TestAFreshCodexPromptNoRolloutEverShowsIsRetypedThenFailsTheSpawn(t *testing.T) {
+	// given
+	r, _ := freshCodexRig(t)
+
+	// when
+	_, err := r.sm.Spawn(context.Background(), r.ref(1))
+
+	// then
+	if err == nil || !strings.Contains(err.Error(), "prompt to "+stepAgent+" not received") {
+		t.Fatalf("spawn error = %v, want a prompt not received failure", err)
+	}
+	assertEqual(t, "prompts typed", len(callsOf(r, "SessionHost.Prompt ")), 3)
+	assertEqual(t, "enters sent", len(callsOf(r, "SessionHost.SendKeys ")), 3)
+	assertEqual(t, "agent-transcript events", transcriptEvents(r.store), []Event(nil))
+}
+
+func TestAFreshCodexPromptLostOnceIsRetypedUntilItsRolloutShowsIt(t *testing.T) {
+	// given
+	r, host := freshCodexRig(t)
+	host.onPrompt = 2
+
+	// when
+	r.spawn(t, 1)
+
+	// then
+	assertEqual(t, "prompts typed", len(callsOf(r, "SessionHost.Prompt ")), 2)
+	assertEqual(t, "transcripts", transcriptPaths(r.store), []string{codexRollout})
+}
+
+func TestAFreshCodexPromptLeftInTheComposerIsSubmittedByEnterNotRetyped(t *testing.T) {
+	// given
+	r, host := freshCodexRig(t)
+	host.onEnter = true
+
+	// when
+	r.spawn(t, 1)
+
+	// then
+	assertEqual(t, "prompts typed", len(callsOf(r, "SessionHost.Prompt ")), 1)
+	assertEqual(t, "enters sent", len(callsOf(r, "SessionHost.SendKeys ")), 1)
+}
+
+func TestAFreshCodexPromptItsRolloutShowsIsTypedOnce(t *testing.T) {
+	// given
+	r, host := freshCodexRig(t)
+	host.onPrompt = 1
+
+	// when
+	r.spawn(t, 1)
+
+	// then
+	assertEqual(t, "prompts typed", len(callsOf(r, "SessionHost.Prompt ")), 1)
+	assertEqual(t, "enters sent", len(callsOf(r, "SessionHost.SendKeys ")), 0)
+	assertEqual(t, "transcripts", transcriptPaths(r.store), []string{codexRollout})
+}
+
+func TestACodexReviewerWhoseFirstPromptNeverArrivesFailsTheStepWithADeliveryReason(t *testing.T) {
+	// given
+	shortSubmitWait(t)
+	fastHookPoll(t)
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	rolloutResolve(r)
+	r.sm.Rollouts = &fakeRollouts{files: map[string]rolloutFile{}}
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	out := r.run()
+
+	// then
+	if out.State != StepFailed || !strings.HasPrefix(out.Reason, "reviewer codex: prompt to ") || !strings.Contains(out.Reason, " not received") {
+		t.Fatalf("outcome = %s %q, want a reviewer prompt not received failure", out.State, out.Reason)
+	}
+}
+
+func TestACodexWorkerResumedIntoReviewHasItsFixPromptConfirmedByTheFixSentinel(t *testing.T) {
+	// given
+	shortSubmitWait(t)
+	fastHookPoll(t)
+	r := newReviewRig(t, Reviewer{Provider: "claude"})
+	rollouts := &fakeRollouts{files: map[string]rolloutFile{}}
+	r.sm.Rollouts = rollouts
+	r.worker.rollout = true
+	r.worker.Ref.ReviewFrom = 1
+	r.behave = func(vars map[string]any) {
+		r.repo.TreeChanges = nil
+		findings := 0
+		if vars["Round"] == 1 {
+			findings = 1
+		}
+		writeReview(t, vars, "ok", findings)
+	}
+	r.onFix = func(vars map[string]any) {
+		rollouts.show(vars["Sentinel"].(string))
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, entry("claude-r1-1", "real", "P1", true, ""))
+	}
+
+	// when
+	out := r.run()
+
+	// then
+	assertState(t, out, StepOK, "")
+	assertEqual(t, "fix prompts typed", len(r.callsFrom(`SessionHost.Prompt `+r.worker.Agent+` "fix r1"`)), 1)
+}

@@ -654,6 +654,12 @@ func (f *fakeRollouts) Find(dir, marker string, since time.Time) (string, string
 	return r.path, r.session
 }
 
+func (f *fakeRollouts) show(marker string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.files[marker] = rolloutFile{codexRollout, "019a"}
+}
+
 type pickAll struct{ g *LandGate }
 
 func (p pickAll) PickGate(_ context.Context, phase Phase, candidates []string) error {

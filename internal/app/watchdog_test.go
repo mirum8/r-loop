@@ -110,6 +110,7 @@ func TestAWatchdogAndAStepSessionWriteTheirMCPConfigUnderARepoRootWithASpace(t *
 	f.sim(w, newSim())
 	steps := &configAtStart{SessionHost: newSim(), mcp: map[string]string{}}
 	w.Loop.Sessions.Host = spacedSim{configAtStart: steps, root: root, link: link}
+	w.Loop.Sessions.Rollouts = nil
 	dogH := &dogHost{}
 	dog := &configAtStart{SessionHost: dogH, mcp: map[string]string{}}
 	w.Dog.Host = dog
@@ -998,6 +999,7 @@ func TestADialogGoesThroughTheWatchdogWhichAnswersItUnderARuleAndTheDriverPresse
 	}
 	f.sim(w, sim.simHost)
 	w.Loop.Sessions.Host = sim
+	w.Loop.Sessions.Rollouts = nil
 	answers := make(chan map[string]any, 1)
 	dog := &dogHost{}
 	dog.onPrompt = func(text string) {

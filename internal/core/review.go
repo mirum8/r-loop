@@ -186,15 +186,17 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, files []FindingsFi
 	if f, ok := obs.(interface{ Fixing(*Session, int) }); ok {
 		f.Fixing(worker, rd.n)
 	}
+	own := worker.Sentinel
 	text, _, err := sm.Prompts.Render("fix", vars)
 	if err == nil {
+		worker.Sentinel = sentinel
 		err = sm.prompt(worker.Agent, text, nil)
 	}
 	if err != nil {
+		worker.Sentinel = own
 		return false, sm.fail(worker, "fix: "+err.Error())
 	}
-	own := worker.Sentinel
-	worker.Sentinel, worker.fix = sentinel, &fixHalf{verdictPath: verdictPath, roundTree: rd.tree, findings: paths, spent: spent}
+	worker.fix = &fixHalf{verdictPath: verdictPath, roundTree: rd.tree, findings: paths, spent: spent}
 	out := sm.waitAll(ctx, []*Session{worker}, obs)[0]
 	worker.Sentinel, worker.fix = own, nil
 	if out.State != StepOK {

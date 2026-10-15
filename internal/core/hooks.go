@@ -41,6 +41,8 @@ var (
 	submitWait = 10 * time.Second
 )
 
+const promptTries = 3
+
 var errTurnNotOver = errors.New("turn not over")
 
 func isEditTool(tool string) bool {
@@ -215,6 +217,9 @@ func (m *SessionManager) prompt(agent, text string, gate *handOff) error {
 	defer lock.Unlock()
 	_ = m.drainHooks()
 	if seen, _, _ := m.hookTurn(agent); !seen {
+		if s := m.unreceived(agent); s != nil {
+			return m.promptReceived(s, text)
+		}
 		return m.Host.Prompt(agent, text, false, 0)
 	}
 	if gate != nil {
@@ -243,6 +248,52 @@ func (m *SessionManager) prompt(agent, text string, gate *handOff) error {
 		return nil
 	}
 	return fmt.Errorf("prompt to %s not submitted: no matching UserPromptSubmit", agent)
+}
+
+func (m *SessionManager) unreceived(agent string) *Session {
+	if m.Rollouts == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range m.tracked {
+		if s.Agent == agent && s.rollout && !s.transcribed.Load() {
+			return s
+		}
+	}
+	return nil
+}
+
+func (m *SessionManager) awaitRollout(s *Session) bool {
+	deadline := time.Now().Add(submitWait)
+	for {
+		m.recordTranscript(s)
+		if s.transcribed.Load() {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(hookPoll)
+	}
+}
+
+func (m *SessionManager) promptReceived(s *Session, text string) error {
+	for range promptTries {
+		if err := m.Host.Prompt(s.Agent, text, false, 0); err != nil {
+			return err
+		}
+		if m.awaitRollout(s) {
+			return nil
+		}
+		if err := m.Host.SendKeys(s.Agent, "enter"); err != nil {
+			return err
+		}
+		if m.awaitRollout(s) {
+			return nil
+		}
+	}
+	return fmt.Errorf("prompt to %s not received: no rollout shows it after %d tries", s.Agent, promptTries)
 }
 
 type handOff struct {

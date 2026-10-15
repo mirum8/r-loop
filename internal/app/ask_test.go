@@ -151,6 +151,7 @@ func startAskRun(t *testing.T, dog func(w *Wiring) *dogHost) *askRun {
 	f.sim(w, host.simHost)
 	w.Dog.Host = dog(w)
 	w.Loop.Sessions.Host = host
+	w.Loop.Sessions.Rollouts = nil
 	clock := &fakeClock{now: time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)}
 	w.Loop.Sessions.Now = clock.Now
 	r := &askRun{f: f, w: w, host: host, clock: clock, code: make(chan int, 1)}
