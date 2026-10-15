@@ -89,7 +89,7 @@ or fix these before committing.
       - Fake binaries reach the code under test without process-wide t.Setenv("PATH"), so fixture tests can run with t.Parallel and `go test -race -count=3 ./internal/app/` finishes inside the default 10m
       - TestALoserNamesAWinnerThatPublishesLate no longer sleeps a fixed 2.5s
 
-- [ ] [#20] no_agent.sh dirty-tree check passes when the herdr server is unreachable
+- [x] [#20] no_agent.sh dirty-tree check passes when the herdr server is unreachable  <!-- fixed: r-loop/phase-20 -->
       - The dirty-tree check prints OK only when stderr names calc.go and "primary tree is not clean"; "herdr server unreachable" is avoided with a stub herdr first on PATH or reported as NOT RUN
       - With herdr unreachable and a clean tree, the check does not print OK
       - A relative TEST_APP_BIN (`bin/r-loop` from the repo root) works: BIN is made absolute against the caller's cwd before any cd
@@ -100,7 +100,7 @@ or fix these before committing.
       - The amber preflight line says "blocks phases 3, 4" for two phases and "blocks phase 3" for one
       - triage_test.go expectations and the tech-design.md banner template match the new wording
 
-- [ ] [#24] Untested paths: a normal live run can't reliably trigger the nudge-reply path or the path repair
+- [x] [#24] Untested paths: a normal live run can't reliably trigger the nudge-reply path or the path repair  <!-- fixed: r-loop/phase-20 -->
       - A live script with implement on claude and a committed prompt override has the agent start `sleep 60` with run_in_background and end its turn; hooks.jsonl holds a "background":true line, events.jsonl has no nudge or stall for that step, and the step ends ok
       - A live script whose override makes the agent end its first implement turn without a sentinel shows stalled → nudge → running → ok in events.jsonl, with no "no response to nudge"
       - A live script with a guaranteed finding and a fix.md override asking for `.r-loop/wt/phase-1/<file>:<line>` evidence records an "… read as …" warning and accepts the round

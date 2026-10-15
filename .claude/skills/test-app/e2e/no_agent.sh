@@ -2,11 +2,16 @@
 set -u
 ROOT=$(git rev-parse --show-toplevel)
 BIN="${TEST_APP_BIN:-$ROOT/bin/r-loop}"
+case "$BIN" in /*) ;; *) BIN="$PWD/$BIN" ;; esac
 [ -n "${TEST_APP_BIN:-}" ] || (cd "$ROOT" && go build -o bin/r-loop ./cmd/r-loop) || { echo "FAIL build"; exit 1; }
 fails=0
 T=$(mktemp -d)
 ok()   { echo "OK   $1"; }
 fail() { echo "FAIL $1"; fails=$((fails + 1)); }
+mkdir -p "$T/herdr-up" "$T/herdr-down"
+printf '#!/bin/sh\necho "{}"\n' > "$T/herdr-up/herdr"
+printf '#!/bin/sh\necho "herdr: server not running" >&2\nexit 1\n' > "$T/herdr-down/herdr"
+chmod +x "$T/herdr-up/herdr" "$T/herdr-down/herdr"
 fresh() { S=$("$ROOT/testdata/sandbox/make-sandbox.sh") && cd "$S"; }
 run()  { "$BIN" "$@" > "$T/out" 2> "$T/err"; rc=$?; }
 
@@ -187,13 +192,18 @@ run docs/plan/todo-tiny.md --dry-run --plain
 [ "$rc" = 0 ] && grep -q 'reviewer execonly' "$T/out" && ok "a reviewer with only reviewExec passes preflight" || fail "reviewExec-only reviewer rc=$rc: $(head -2 "$T/err")"
 git checkout -q .r-loop/config.yaml
 
+dirty_refused() {
+  [ "$rc" = 4 ] && grep -q 'primary tree is not clean' "$T/err" && grep -q 'calc.go' "$T/err" \
+    && [ -z "$(ls .r-loop/runs 2>/dev/null | grep -vx -e gate -e lock)" ]
+}
 echo "// dirty" >> calc.go
-run docs/plan/todo-tiny.md --plain
-if [ "$rc" = 4 ] && { grep -q 'calc.go' "$T/err" || grep -q 'herdr server unreachable' "$T/err"; } \
-  && [ -z "$(ls .r-loop/runs 2>/dev/null | grep -vx -e gate -e lock)" ]; then
-  ok "dirty tree refused before any run ($(head -c 60 "$T/err"))"
-else fail "dirty tree rc=$rc"; fi
+PATH="$T/herdr-up:$PATH" "$BIN" docs/plan/todo-tiny.md --plain > "$T/out" 2> "$T/err"; rc=$?
+dirty_refused && ok "dirty tree refused before any run ($(head -c 80 "$T/err"))" || fail "dirty tree rc=$rc: $(head -c 120 "$T/err")"
 git checkout -q calc.go
+
+PATH="$T/herdr-down:$PATH" "$BIN" docs/plan/todo-tiny.md --plain > "$T/out" 2> "$T/err"; rc=$?
+grep -q 'herdr server unreachable' "$T/err" && ! dirty_refused \
+  && ok "an unreachable herdr on a clean tree is not taken for a dirty-tree refusal" || fail "unreachable herdr on a clean tree rc=$rc: $(head -c 120 "$T/err")"
 
 H=$(mktemp -d); HC="$H/.config/r-loop/config.yaml"
 HOME=$H "$BIN" --create-config > "$T/out" 2> "$T/err"; rc=$?
@@ -456,6 +466,7 @@ strings "$BIN" > "$T/strings"
   && ok "embedded watchdog prompt: no fixer hand-off, fixes itself, set_config" || fail "embedded prompt strings"
 cd "$ROOT"; rm -rf "$W"
 
+. "$ROOT/.claude/skills/test-app/e2e/steering_checkers_test.sh"
 cd "$ROOT"
 go test ./internal/face/... > /dev/null 2>&1 && ok "golden harness go test ./internal/face/..." || fail "go test ./internal/face/..."
 
