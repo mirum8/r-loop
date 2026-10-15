@@ -29,7 +29,12 @@ type hookAgent struct {
 	transcript   string
 	acted        bool
 	background   bool
+	recent       []hookCall
 }
+
+type hookCall struct{ tool, target string }
+
+const recentTools = 5
 
 type hookLog struct {
 	mu      sync.Mutex
@@ -97,6 +102,10 @@ func (h *hookLog) apply(ev HookEvent) {
 		}
 	case "PreToolUse":
 		a.busy, a.notice, a.tool, a.target = true, "", ev.Tool, ev.Target
+		a.recent = append(a.recent, hookCall{ev.Tool, ev.Target})
+		if len(a.recent) > recentTools {
+			a.recent = a.recent[1:]
+		}
 	case "PostToolUse":
 		a.busy, a.notice = true, ""
 		if isEditTool(ev.Tool) && ev.Target != "" {
@@ -266,7 +275,7 @@ func (m *SessionManager) unreceived(agent string) *Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, s := range m.tracked {
-		if s.Agent == agent && s.rollout && !s.transcribed.Load() {
+		if s.Agent == agent && s.rollout && !s.transcribed.Load() && !s.received.Load() {
 			return s
 		}
 	}
@@ -287,18 +296,32 @@ func (m *SessionManager) awaitRollout(s *Session) bool {
 	}
 }
 
+func (m *SessionManager) takenUp(s *Session) bool {
+	state, err := m.Host.State(s.Agent)
+	if err == nil && (state == AgentIdle || state == AgentDone) {
+		return false
+	}
+	seen := "reports it " + string(state)
+	if err != nil {
+		seen = "state failed (" + err.Error() + ")"
+	}
+	s.received.Store(true)
+	m.warn(s, fmt.Sprintf("prompt to %s: no rollout shows it (lookup by %s found nothing); herdr %s, so it counts as received", s.Agent, s.Sentinel, seen))
+	return true
+}
+
 func (m *SessionManager) promptReceived(s *Session, text string) error {
 	for range promptTries {
 		if err := m.Host.Prompt(s.Agent, text, false, 0); err != nil {
 			return err
 		}
-		if m.awaitRollout(s) {
+		if m.awaitRollout(s) || m.takenUp(s) {
 			return nil
 		}
 		if err := m.Host.SendKeys(s.Agent, "enter"); err != nil {
 			return err
 		}
-		if m.awaitRollout(s) {
+		if m.awaitRollout(s) || m.takenUp(s) {
 			return nil
 		}
 	}
@@ -439,6 +462,10 @@ func (m *SessionManager) hookStart(s *Session, hooks bool) {
 	m.hooks.mu.Lock()
 	m.hooks.agent(s.Agent).pinned = true
 	m.hooks.mu.Unlock()
+	m.warn(s, fmt.Sprintf("hook events: no SessionStart from %s within %s (hook tap %s hook-tap); its turn ends follow herdr", s.Agent, wait, m.HookTap))
+}
+
+func (m *SessionManager) warn(s *Session, reason string) {
 	if m.Face == nil {
 		return
 	}
@@ -451,8 +478,51 @@ func (m *SessionManager) hookStart(s *Session, hooks bool) {
 		Kind:   "warning",
 		Phase:  key.Phase,
 		Step:   key.Kind,
-		Fields: map[string]string{"reason": fmt.Sprintf("hook events: no SessionStart from %s within %s (hook tap %s hook-tap); its turn ends follow herdr", s.Agent, wait, m.HookTap)},
+		Fields: map[string]string{"reason": reason},
 	})
+}
+
+func (m *SessionManager) stepEvidence(s *Session) string {
+	if s == nil || s.Agent == "" {
+		return ""
+	}
+	lines := []string{"agent: " + s.Agent}
+	if m.Hooks != nil {
+		_ = m.drainHooks()
+		m.recordTranscript(s)
+		var calls []string
+		m.hookAgent(s.Agent, func(a *hookAgent) {
+			for _, c := range a.recent {
+				calls = append(calls, toolCall(c, s.Dir))
+			}
+		})
+		if len(calls) == 0 {
+			lines = append(lines, "last tools: none seen by hooks")
+		} else {
+			lines = append(lines, "last tools: "+strings.Join(calls, "; "))
+		}
+	}
+	s.mu.Lock()
+	path := s.transcript
+	s.mu.Unlock()
+	if path != "" {
+		lines = append(lines, "transcript: "+path)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func toolCall(c hookCall, dir string) string {
+	target := c.target
+	switch {
+	case c.tool == "Bash":
+		target = strings.Join(strings.Fields(strings.SplitN(strings.TrimSpace(c.target), "\n", 2)[0]), " ")
+	case c.tool == "Read" || isEditTool(c.tool):
+		target = relPath(dir, c.target)
+	}
+	if target == "" {
+		return c.tool
+	}
+	return c.tool + " " + target
 }
 
 func (m *SessionManager) hookNotice(agent string) string {

@@ -108,8 +108,8 @@ const (
 )
 
 type Blocker struct {
-	Source, Phase, Step, Reason, Excerpt string
-	Actions                              []string
+	Source, Phase, Step, Reason, Excerpt, Evidence string
+	Actions                                        []string
 }
 
 type Resolution struct {

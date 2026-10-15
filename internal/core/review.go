@@ -619,7 +619,7 @@ func (h ReviewHalf) recover(ctx context.Context, worker *Session, runs []*review
 		}
 		b := Blocker{Source: sourceReviewer, Phase: worker.Ref.Key.Phase, Step: reviewerKey(worker.Ref.Key, r.rv.ID()).Kind, Reason: f.reason, Excerpt: f.excerpt, Actions: actions}
 		if b.Excerpt == "" {
-			b.Excerpt = h.screen(r.s)
+			b.Excerpt = h.Sessions.screen(r.s)
 		}
 		res := raiser.raise(ctx, b)
 		var out Outcome
@@ -638,17 +638,6 @@ func (h ReviewHalf) recover(ctx context.Context, worker *Session, runs []*review
 		}
 	}
 	return Outcome{}
-}
-
-func (h ReviewHalf) screen(s *Session) string {
-	if s.Agent == "" || s.Pane == "" {
-		return ""
-	}
-	raw, err := h.Sessions.Host.Screen(s.Agent)
-	if err != nil {
-		return ""
-	}
-	return normaliseScreen(raw)
 }
 
 func (h ReviewHalf) reopen(ctx context.Context, worker *Session, runs []*reviewerRun, i int, rd reviewRound, res Resolution) Outcome {

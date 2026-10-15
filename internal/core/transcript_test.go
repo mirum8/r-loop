@@ -12,6 +12,8 @@ import (
 const (
 	claudeReviewer = "rloop-2kuxv-p3-implemen-q1s68-r1"
 	codexRollout   = "/home/.codex/sessions/2026/10/13/rollout-2026-10-13T12-00-01-019a.jsonl"
+	firstPrompt    = `SessionHost.Prompt rloop-2kuxv-p3-implement "do phase 3" false 0s`
+	firstEnter     = "SessionHost.SendKeys rloop-2kuxv-p3-implement enter"
 )
 
 func transcriptEvents(store *fakeStore) []Event {
@@ -464,12 +466,7 @@ func freshCodexRig(t *testing.T) (*rig, *rolloutHost) {
 	r.sm.Resolve = func(provider, model, effort, askURL, mcpConfigPath, dir string) (ProviderArgs, error) {
 		return ProviderArgs{Kind: "codex", Rollout: true}, nil
 	}
-	r.host.script = func(n int) AgentState {
-		if n == 1 {
-			return AgentWorking
-		}
-		return AgentIdle
-	}
+	r.host.script = func(int) AgentState { return AgentIdle }
 	rollouts := &fakeRollouts{files: map[string]rolloutFile{}}
 	r.sm.Rollouts = rollouts
 	host := &rolloutHost{scriptedHost: r.host, rollouts: rollouts, marker: filepath.Join(r.runDir, "phase-3", "implement-a1.sentinel")}
@@ -498,9 +495,145 @@ func TestAFreshCodexPromptNoRolloutEverShowsIsRetypedThenFailsTheSpawn(t *testin
 	if err == nil || !strings.Contains(err.Error(), "prompt to "+stepAgent+" not received") {
 		t.Fatalf("spawn error = %v, want a prompt not received failure", err)
 	}
-	assertEqual(t, "prompts typed", len(callsOf(r, "SessionHost.Prompt ")), 3)
-	assertEqual(t, "enters sent", len(callsOf(r, "SessionHost.SendKeys ")), 3)
+	assertEqual(t, "prompts typed", callsOf(r, "SessionHost.Prompt "), []string{firstPrompt, firstPrompt, firstPrompt})
+	assertEqual(t, "enters sent", callsOf(r, "SessionHost.SendKeys "), []string{firstEnter, firstEnter, firstEnter})
 	assertEqual(t, "agent-transcript events", transcriptEvents(r.store), []Event(nil))
+}
+
+func TestAFreshCodexPromptNoRolloutShowsWhileHerdrReportsItBusyIsTypedOnceAndTheSpawnSucceeds(t *testing.T) {
+	for _, state := range []AgentState{AgentWorking, AgentBlocked, AgentUnknown, AgentGone} {
+		t.Run(string(state), func(t *testing.T) {
+			// given
+			r, _ := freshCodexRig(t)
+			r.host.script = func(int) AgentState { return state }
+
+			// when
+			_, err := r.sm.Spawn(context.Background(), r.ref(1))
+
+			// then
+			assertEqual(t, "spawn error", err, error(nil))
+			assertEqual(t, "prompts typed", callsOf(r, "SessionHost.Prompt "), []string{firstPrompt})
+			assertEqual(t, "enters sent", callsOf(r, "SessionHost.SendKeys "), []string(nil))
+		})
+	}
+}
+
+func TestAFreshCodexPromptWhoseHerdrStateCannotBeReadCountsAsReceived(t *testing.T) {
+	// given
+	r, _ := freshCodexRig(t)
+	r.host.StateErr = errors.New("herdr: timed out")
+	face := &fakeFace{}
+	r.sm.Face = face
+
+	// when
+	_, err := r.sm.Spawn(context.Background(), r.ref(1))
+
+	// then
+	assertEqual(t, "spawn error", err, error(nil))
+	assertEqual(t, "prompts typed", callsOf(r, "SessionHost.Prompt "), []string{firstPrompt})
+	assertEqual(t, "enters sent", callsOf(r, "SessionHost.SendKeys "), []string(nil))
+	assertEqual(t, "warnings", warnings(face), []string{"prompt to rloop-2kuxv-p3-implement: no rollout shows it (lookup by " + filepath.Join(r.runDir, "phase-3", "implement-a1.sentinel") + " found nothing); herdr state failed (herdr: timed out), so it counts as received"})
+}
+
+func TestAFreshCodexPromptHerdrReportsWorkingAfterTheEnterIsNotRetyped(t *testing.T) {
+	// given
+	r, _ := freshCodexRig(t)
+	r.host.script = func(n int) AgentState {
+		if n == 1 {
+			return AgentIdle
+		}
+		return AgentWorking
+	}
+
+	// when
+	_, err := r.sm.Spawn(context.Background(), r.ref(1))
+
+	// then
+	assertEqual(t, "spawn error", err, error(nil))
+	assertEqual(t, "prompts typed", callsOf(r, "SessionHost.Prompt "), []string{firstPrompt})
+	assertEqual(t, "enters sent", callsOf(r, "SessionHost.SendKeys "), []string{firstEnter})
+}
+
+func TestAFreshCodexPromptHerdrReportsDoneIsRetypedUntilTheTriesRunOut(t *testing.T) {
+	// given
+	r, _ := freshCodexRig(t)
+	r.host.script = func(int) AgentState { return AgentDone }
+
+	// when
+	_, err := r.sm.Spawn(context.Background(), r.ref(1))
+
+	// then
+	if err == nil || !strings.Contains(err.Error(), "prompt to rloop-2kuxv-p3-implement not received") {
+		t.Fatalf("spawn error = %v, want a prompt not received failure", err)
+	}
+	assertEqual(t, "prompts typed", callsOf(r, "SessionHost.Prompt "), []string{firstPrompt, firstPrompt, firstPrompt})
+	assertEqual(t, "enters sent", callsOf(r, "SessionHost.SendKeys "), []string{firstEnter, firstEnter, firstEnter})
+}
+
+func TestAFreshCodexPromptCountedReceivedByHerdrStateWarnsOnceNamingTheAgentAndTheRolloutLookup(t *testing.T) {
+	// given
+	r, _ := freshCodexRig(t)
+	r.host.script = func(int) AgentState { return AgentWorking }
+	face := &fakeFace{}
+	r.sm.Face = face
+
+	// when
+	r.spawn(t, 1)
+
+	// then
+	assertEqual(t, "warnings", warnings(face), []string{"prompt to rloop-2kuxv-p3-implement: no rollout shows it (lookup by " + filepath.Join(r.runDir, "phase-3", "implement-a1.sentinel") + " found nothing); herdr reports it working, so it counts as received"})
+}
+
+func TestHerdrStateIsNotReadWhileTheRolloutConfirmsTheFirstPrompt(t *testing.T) {
+	// given
+	r, host := freshCodexRig(t)
+	r.host.script = func(int) AgentState { return AgentWorking }
+	host.rollouts.files[host.marker] = rolloutFile{codexRollout, "019a"}
+	host.rollouts.misses = 1
+
+	// when
+	r.spawn(t, 1)
+
+	// then
+	assertEqual(t, "state reads", callsOf(r, "SessionHost.State "), []string(nil))
+	assertEqual(t, "prompts typed", callsOf(r, "SessionHost.Prompt "), []string{firstPrompt})
+	assertEqual(t, "transcripts", transcriptPaths(r.store), []string{codexRollout})
+}
+
+func TestALaterPromptToACodexAgentCountedReceivedByHerdrStateIsTypedWithoutARolloutWait(t *testing.T) {
+	// given
+	r, _ := freshCodexRig(t)
+	r.host.script = func(int) AgentState { return AgentWorking }
+	face := &fakeFace{}
+	r.sm.Face = face
+	r.spawn(t, 1)
+
+	// when
+	err := r.sm.prompt(stepAgent, "r-loop: go on", nil)
+
+	// then
+	assertEqual(t, "prompt error", err, error(nil))
+	assertEqual(t, "prompts typed", callsOf(r, "SessionHost.Prompt "), []string{firstPrompt, `SessionHost.Prompt rloop-2kuxv-p3-implement "r-loop: go on" false 0s`})
+	assertEqual(t, "state reads", callsOf(r, "SessionHost.State "), []string{"SessionHost.State rloop-2kuxv-p3-implement"})
+	assertEqual(t, "warnings", len(warnings(face)), 1)
+}
+
+func TestACodexReviewerWhoseRolloutNeverShowsWhileHerdrReportsItWorkingRunsItsReview(t *testing.T) {
+	// given
+	shortSubmitWait(t)
+	fastHookPoll(t)
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	rolloutResolve(r)
+	r.sm.Rollouts = &fakeRollouts{files: map[string]rolloutFile{}}
+	r.host.script = func(int) AgentState { return AgentWorking }
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 0) }
+
+	// when
+	out := r.run()
+
+	// then
+	assertState(t, out, StepOK, "")
+	assertEqual(t, "reviewer prompts", r.callsFrom("SessionHost.Prompt "+codexReviewer), []string{`SessionHost.Prompt rloop-2kuxv-p3-implemen-8lgad-r1 "review r1" false 0s`})
 }
 
 func TestAFreshCodexPromptLostOnceIsRetypedUntilItsRolloutShowsIt(t *testing.T) {
