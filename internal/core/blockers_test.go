@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1991,4 +1992,58 @@ func TestAStepBlockerOfARunnerThatPanickedBeforeAnySessionCarriesNoEvidenceOrScr
 	assertEqual(t, "evidence", (*seen)[0].b.Evidence, "")
 	assertEqual(t, "excerpt", (*seen)[0].b.Excerpt, "")
 	assertEqual(t, "screen reads", r.calls("SessionHost.Screen "), []string(nil))
+}
+
+func retryOnceThenBlock() func(Blocker) Resolution {
+	var calls atomic.Int32
+	return func(Blocker) Resolution {
+		if calls.Add(1) == 1 {
+			return Resolution{Action: "retry", Citation: "always"}
+		}
+		return Resolution{Action: "block", Citation: "always"}
+	}
+}
+
+func abortDuringRetriedAnalysis(t *testing.T) (*eventsRig, *[]raised) {
+	r, seen := newSourceRig(t, retryOnceThenBlock())
+	r.loop.Kinds[1].Row.Rounds = 1
+	var calls atomic.Int32
+	r.loop.Sessions.Analyzer = analyzerFunc(func(ctx context.Context, dir string) (Analysis, error) {
+		if calls.Add(1) == 1 {
+			return Analysis{}, errors.New("golangci-lint: exit status 3")
+		}
+		if err := r.store.MarkAbort("run-1"); err != nil {
+			return Analysis{}, err
+		}
+		<-ctx.Done()
+		return Analysis{}, errors.New("interrupted: context canceled")
+	})
+	r.loop.Runners = DefaultRunners(r.loop.Sessions, r.loop.Kinds)
+	r.run(RunOptions{Phases: []string{"2"}})
+	return r, seen
+}
+
+func blockersOf(rs []raised) []Blocker {
+	var out []Blocker
+	for _, x := range rs {
+		out = append(out, x.b)
+	}
+	return out
+}
+
+func TestAnAbortDuringARetriedStaticAnalysisFailsAsInterruptedAfterOnlyTheFirstBlocker(t *testing.T) {
+	// given
+	r, seen := abortDuringRetriedAnalysis(t)
+
+	// when
+	recs := recordsForStep(r.store, StepKey{Run: "run-1", Phase: "2", Kind: "implement", Attempt: 1})
+
+	// then
+	expected := []Blocker{{Source: "reviewer", Phase: "2", Step: "implement-rv-static", Reason: "reviewer static: golangci-lint: exit status 3", Actions: []string{"retry", "block", "stop"}}}
+	assertEqual(t, "routed blockers", blockersOf(*seen), expected)
+	assertEqual(t, "stored questions", len(r.questionsOf(t)), 1)
+	assertEqual(t, "blocked-on events", len(r.events("blocked-on")), 1)
+	last := recs[len(recs)-1]
+	assertEqual(t, "state", last.State, StepFailed)
+	assertEqual(t, "reason", last.Reason, "interrupted: context canceled")
 }

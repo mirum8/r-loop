@@ -910,7 +910,7 @@ func TestAReviewCanceledByAnAbortRaisesNoReviewerBlocker(t *testing.T) {
 	out := ReviewHalf{Sessions: r.sm, Store: r.store}.Run(ctx, r.worker.Ref, r.worker, obs)
 
 	// then the step fails with the interruption and no blocker is raised for the reviewer
-	if out.State != StepFailed || out.Reason != "reviewer codex: interrupted: context canceled" {
+	if out.State != StepFailed || out.Reason != "interrupted: context canceled" {
 		t.Fatalf("outcome = %+v", out)
 	}
 	if len(obs.blockers) != 0 {
@@ -2524,4 +2524,107 @@ func TestSwitchKeepsItsProviderOverTheCurrentConfigRow(t *testing.T) {
 	if want := []string{"gemini", "pro", "high"}; !reflect.DeepEqual(r.resolved[len(r.resolved)-1], want) {
 		t.Fatalf("resolved = %v", r.resolved)
 	}
+}
+
+func TestAReviewCanceledByAnAbortStillRecordsTheReviewersFindAsFailed(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	ctx, cancel := context.WithCancel(context.Background())
+	r.behave = func(map[string]any) { cancel() }
+	obs := &raisingObserver{resolve: then(Resolution{Action: actionBlock})}
+
+	// when
+	ReviewHalf{Sessions: r.sm, Store: r.store}.Run(ctx, r.worker.Ref, r.worker, obs)
+
+	// then
+	expected := []map[string]string{{"step": "implement", "round": "1", "reviewer": "codex", "state": "failed", "findings": "0", "command": "/codex-review"}}
+	assertEqual(t, "codex finds", r.findsBy("codex"), expected)
+}
+
+func failCodexThenCancel(t *testing.T, r *reviewRig, cancel context.CancelFunc) {
+	codex := 0
+	r.behave = func(vars map[string]any) {
+		if strings.Contains(vars["FindingsPath"].(string), "codex") {
+			codex++
+			switch codex {
+			case 1:
+				writeFindings(t, vars, "failed", 0)
+				if err := os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"failed","reason":"/review is not available in this session"}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return
+			case 2:
+				cancel()
+				return
+			}
+		}
+		writeReview(t, vars, "ok", 0)
+	}
+}
+
+func TestAnAbortWhileARetriedReviewerWorksFailsTheStepAsInterrupted(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	ctx, cancel := context.WithCancel(context.Background())
+	failCodexThenCancel(t, r, cancel)
+	obs := &raisingObserver{resolve: then(Resolution{Action: "retry"}, Resolution{Action: "block"})}
+
+	// when
+	actualOut := ReviewHalf{Sessions: r.sm, Store: r.store}.Run(ctx, r.worker.Ref, r.worker, obs)
+
+	// then
+	assertState(t, actualOut, StepFailed, "interrupted: context canceled")
+}
+
+func TestAnAbortWhileARetriedReviewerWorksRaisesNoSecondBlocker(t *testing.T) {
+	// given
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	ctx, cancel := context.WithCancel(context.Background())
+	failCodexThenCancel(t, r, cancel)
+	obs := &raisingObserver{resolve: then(Resolution{Action: "retry"}, Resolution{Action: "block"})}
+
+	// when
+	ReviewHalf{Sessions: r.sm, Store: r.store}.Run(ctx, r.worker.Ref, r.worker, obs)
+
+	// then
+	expected := []Blocker{{Source: "reviewer", Phase: "3", Step: "implement-rv-codex", Reason: "reviewer codex: /review is not available in this session", Actions: []string{"retry", "switch", "block", "stop"}}}
+	assertEqual(t, "blockers", obs.blockers, expected)
+}
+
+type cancelingAnalyzer struct{ cancel context.CancelFunc }
+
+func (a cancelingAnalyzer) Analyze(ctx context.Context, dir string) (Analysis, error) {
+	a.cancel()
+	<-ctx.Done()
+	return Analysis{}, fmt.Errorf("interrupted: %w", ctx.Err())
+}
+
+func (r *reviewRig) runCanceledAnalysis() (Outcome, *raisingObserver) {
+	ctx, cancel := context.WithCancel(context.Background())
+	obs := &raisingObserver{resolve: then(Resolution{Action: "block"})}
+	return ReviewHalf{Sessions: r.sm, Store: r.store, Analyzer: cancelingAnalyzer{cancel: cancel}}.Run(ctx, r.worker.Ref, r.worker, obs), obs
+}
+
+func TestACanceledAnalysisRaisesNoStaticBlocker(t *testing.T) {
+	// given
+	r := newReviewRig(t)
+
+	// when
+	_, obs := r.runCanceledAnalysis()
+
+	// then
+	assertEqual(t, "blockers", len(obs.blockers), 0)
+}
+
+func TestACanceledAnalysisFailsTheRoundAsInterruptedNotBlocked(t *testing.T) {
+	// given
+	r := newReviewRig(t)
+
+	// when
+	out, _ := r.runCanceledAnalysis()
+
+	// then
+	assertState(t, out, StepFailed, "interrupted: context canceled")
+	assertEqual(t, "blocked", out.blocked, false)
+	assertEqual(t, "halted", out.Halted, false)
 }

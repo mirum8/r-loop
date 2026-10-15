@@ -2052,3 +2052,34 @@ func TestAnAbortDuringAReviewClosesTheReviewerPaneAndLeavesTheStepSession(t *tes
 		t.Errorf("closed workspaces %v", got)
 	}
 }
+
+func TestAnAbortDuringAReviewRecordsTheStepFailedAsInterruptedWithoutTheReviewerPrefix(t *testing.T) {
+	// given
+	r := newLoopRig(t)
+	r.loop.Kinds[0].Row.Rounds = 1
+	r.loop.Kinds[0].Row.Reviewers = []Reviewer{{Provider: "codex"}}
+	r.loop.Sessions.Host = abortingReviewerHost{r.host}
+
+	// when
+	r.run(RunOptions{Phases: []string{"1"}})
+
+	// then
+	recs := recordsForStep(r.store, StepKey{Run: "run-1", Phase: "1", Kind: "plan", Attempt: 1})
+	last := recs[len(recs)-1]
+	assertEqual(t, "state", last.State, StepFailed)
+	assertEqual(t, "reason", last.Reason, "interrupted: context canceled")
+}
+
+func TestAnAbortDuringAReviewReportsWhereTheRunWasAborted(t *testing.T) {
+	// given
+	r := newLoopRig(t)
+	r.loop.Kinds[0].Row.Rounds = 1
+	r.loop.Kinds[0].Row.Reviewers = []Reviewer{{Provider: "codex"}}
+	r.loop.Sessions.Host = abortingReviewerHost{r.host}
+
+	// when
+	r.run(RunOptions{Phases: []string{"1"}})
+
+	// then
+	assertEqual(t, "report says aborted during phase 1 plan", strings.Contains(r.report(t), "- aborted during phase 1 plan"), true)
+}

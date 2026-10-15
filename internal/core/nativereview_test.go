@@ -1,12 +1,15 @@
 package core
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 const execReviewCommand = "codex review --uncommitted"
@@ -197,4 +200,24 @@ func TestAnExecReviewerWithoutARunnerFails(t *testing.T) {
 	if out.State != StepFailed || !strings.Contains(out.Reason, "reviewer codex: native review `"+execReviewCommand+"`: no review runner") {
 		t.Fatalf("outcome = %+v", out)
 	}
+}
+
+type cancelingReviewRunner struct{ cancel context.CancelFunc }
+
+func (r cancelingReviewRunner) RunReview(ctx context.Context, dir, command string, timeout time.Duration) (string, error) {
+	r.cancel()
+	return "", fmt.Errorf("interrupted: %w", ctx.Err())
+}
+
+func TestAnExecReviewCanceledByAnAbortFailsTheStepAsInterrupted(t *testing.T) {
+	// given
+	ctx, cancel := context.WithCancel(context.Background())
+	r := execReviewRig(t, cancelingReviewRunner{cancel: cancel}, Reviewer{Provider: "codex"})
+	obs := &raisingObserver{resolve: then(Resolution{Action: "block"})}
+
+	// when
+	out := ReviewHalf{Sessions: r.sm, Store: r.store}.Run(ctx, r.worker.Ref, r.worker, obs)
+
+	// then
+	assertState(t, out, StepFailed, "interrupted: context canceled")
 }
