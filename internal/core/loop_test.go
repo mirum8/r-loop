@@ -2011,3 +2011,44 @@ func TestPipelineAcceptsADesignStepBeforeThePlanStep(t *testing.T) {
 		t.Fatalf("kinds = %+v, err = %v", kinds, err)
 	}
 }
+
+type abortingReviewerHost struct {
+	*agentSim
+}
+
+func (h abortingReviewerHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
+	if strings.Contains(agent, "-rv-") {
+		h.record("SessionHost.Prompt %s", agent)
+		return h.store.MarkAbort("run-1")
+	}
+	return h.agentSim.Prompt(agent, text, wait, timeout)
+}
+
+func TestAnAbortDuringAReviewClosesTheReviewerPaneAndLeavesTheStepSession(t *testing.T) {
+	// given a plan step with one codex reviewer, and the maintainer aborting the run while that reviewer works
+	r := newLoopRig(t)
+	r.loop.Kinds[0].Row.Rounds = 1
+	r.loop.Kinds[0].Row.Reviewers = []Reviewer{{Provider: "codex"}}
+	r.loop.Sessions.Host = abortingReviewerHost{r.host}
+
+	// when the run goes
+	code := r.run(RunOptions{Phases: []string{"1"}})
+
+	// then the run halts as aborted with the reviewer's pane closed and the step's own session left alone
+	if code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	runs := r.runRecords()
+	if last := runs[len(runs)-1]; last.Run != RunHalted || last.Reason != ReasonAborted {
+		t.Fatalf("last = %+v", last)
+	}
+	if got := r.calls("SessionHost.ClosePane "); !reflect.DeepEqual(got, []string{"pane-2"}) {
+		t.Errorf("closed panes %v, calls %q", got, r.shared.Calls())
+	}
+	if got := r.calls("SessionHost.Interrupt "); len(got) != 0 {
+		t.Errorf("interrupts %v", got)
+	}
+	if got := r.calls("SessionHost.Close "); len(got) != 0 {
+		t.Errorf("closed workspaces %v", got)
+	}
+}

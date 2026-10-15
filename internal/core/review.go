@@ -570,7 +570,7 @@ func (h ReviewHalf) join(ctx context.Context, worker *Session, runs []*reviewerR
 			first = r.fail
 		}
 	}
-	if first != nil && h.raiser() == nil {
+	if first != nil && (h.raiser() == nil || ctx.Err() != nil) {
 		return 0, Outcome{State: StepFailed, Reason: first.reason, Session: worker, Stalled: first.stalled}
 	}
 	total := 0

@@ -1249,7 +1249,29 @@ func (l *RunLoop) runnerPanicked(ref StepRef, v any) Outcome {
 	return out
 }
 
+func (l *RunLoop) closeReviewers(owner *Session) {
+	if owner == nil {
+		return
+	}
+	owner.mu.Lock()
+	rvs := slices.Clone(owner.reviewers)
+	owner.mu.Unlock()
+	for _, rv := range rvs {
+		if rv.Pane == "" {
+			continue
+		}
+		if err := l.Sessions.Host.ClosePane(rv.Pane); err != nil {
+			l.emit(Event{Kind: "warning", Phase: rv.Ref.Key.Phase, Step: rv.Ref.Key.Kind, Fields: map[string]string{"reason": "close reviewer " + rv.Reviewer + ": " + err.Error()}})
+		}
+	}
+}
+
 func (l *RunLoop) stopStep(ctx context.Context, ref StepRef, out Outcome) (Outcome, bool) {
+	owner := l.liveSession()
+	if owner == nil {
+		owner = out.Session
+	}
+	l.closeReviewers(owner)
 	l.emitStep(ref, out.State, out.Reason, out.Session)
 	l.watcher().StepEnded(ref, out)
 	l.withdrawStep(ref.Key, out.State)

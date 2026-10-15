@@ -876,6 +876,48 @@ func TestRetriedAttemptSuffixesReviewerNamesAndDropsStaleFindings(t *testing.T) 
 	}
 }
 
+func TestAResumedReviewRoundDoesNotUseFindingsLeftByTheAbortedAttempt(t *testing.T) {
+	// given a step resumed at review round 1 on attempt 2, with the aborted attempt's reviewer findings still on disk
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.worker.Ref.Key.Attempt = 2
+	r.worker.Ref.ReviewFrom = 1
+	stale := filepath.Join(r.runDir, "phase-3", "implement-findings-codex-r1.json")
+	os.WriteFile(stale, []byte(`{"reviewer":"codex","findings":[{"id":"codex-r1-1","title":"stale","detail":"d","files":["a.go"]}]}`), 0o644)
+	r.behave = func(vars map[string]any) {
+		os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"ok","reason":""}`), 0o644)
+	}
+
+	// when the resumed round's reviewer ends without writing findings of its own
+	out := r.run()
+
+	// then the stale findings are not taken as this round's evidence
+	if out.State != StepFailed || out.Reason != "reviewer codex: evidence missing: no findings at implement-findings-codex-r1.json" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if len(r.fixes) != 0 {
+		t.Fatalf("fixes = %+v", r.fixes)
+	}
+}
+
+func TestAReviewCanceledByAnAbortRaisesNoReviewerBlocker(t *testing.T) {
+	// given a review round whose reviewer is still working when the run is aborted
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	ctx, cancel := context.WithCancel(context.Background())
+	r.behave = func(map[string]any) { cancel() }
+	obs := &raisingObserver{resolve: then(Resolution{Action: actionBlock})}
+
+	// when the review half sees the cancellation
+	out := ReviewHalf{Sessions: r.sm, Store: r.store}.Run(ctx, r.worker.Ref, r.worker, obs)
+
+	// then the step fails with the interruption and no blocker is raised for the reviewer
+	if out.State != StepFailed || out.Reason != "reviewer codex: interrupted: context canceled" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if len(obs.blockers) != 0 {
+		t.Fatalf("blockers = %+v", obs.blockers)
+	}
+}
+
 type failingEventStore struct {
 	*fakeStore
 	kind string
