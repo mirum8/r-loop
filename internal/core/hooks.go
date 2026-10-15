@@ -27,6 +27,8 @@ type hookAgent struct {
 	typed        bool
 	session      string
 	transcript   string
+	acted        bool
+	background   bool
 }
 
 type hookLog struct {
@@ -78,6 +80,13 @@ func (h *hookLog) apply(ev HookEvent) {
 	defer func() {
 		if a.busy && (!wasBusy || ev.Event == "UserPromptSubmit") {
 			a.turn++
+			a.acted, a.background = false, false
+		}
+		switch ev.Event {
+		case "PreToolUse":
+			a.acted, a.background = true, a.background || ev.Background
+		case "PostToolUse":
+			a.acted = true
 		}
 	}()
 	switch ev.Event {
@@ -381,6 +390,11 @@ func (m *SessionManager) hookTurn(agent string) (seen, busy bool, turn int) {
 	var heard, pinned bool
 	seen = m.hookAgent(agent, func(a *hookAgent) { busy, turn, heard, pinned = a.busy, a.turn, a.heard, a.pinned })
 	return seen && heard && !pinned, busy, turn
+}
+
+func (m *SessionManager) hookWork(agent string) (acted, background bool) {
+	m.hookAgent(agent, func(a *hookAgent) { acted, background = a.acted, a.background })
+	return acted, background
 }
 
 func (m *SessionManager) hookExit(agent string) string {

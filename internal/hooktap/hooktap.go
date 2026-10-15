@@ -25,6 +25,7 @@ type line struct {
 	Reason     string    `json:"reason,omitempty"`
 	Prompt     string    `json:"prompt,omitempty"`
 	PromptCut  bool      `json:"prompt_cut,omitempty"`
+	Background bool      `json:"background,omitempty"`
 	Session    string    `json:"session_id,omitempty"`
 	Transcript string    `json:"transcript_path,omitempty"`
 }
@@ -50,6 +51,7 @@ func Tap(stdin io.Reader, out string, getenv func(string) string) {
 			Command      string `json:"command"`
 			Pattern      string `json:"pattern"`
 			Description  string `json:"description"`
+			Background   bool   `json:"run_in_background"`
 		} `json:"tool_input"`
 	}
 	if json.Unmarshal(input, &hook) != nil || hook.Event == "" {
@@ -62,7 +64,7 @@ func Tap(stdin io.Reader, out string, getenv func(string) string) {
 			target = v
 		}
 	}
-	data, err := json.Marshal(line{At: time.Now(), Agent: capped(agent), Event: capped(hook.Event), Tool: capped(hook.Tool), Target: capped(target), Notice: capped(hook.Message), Type: capped(hook.Type), Reason: capped(hook.Reason), Prompt: capped(hook.Prompt), PromptCut: len(hook.Prompt) > fieldCap, Session: hook.Session, Transcript: hook.Transcript})
+	data, err := json.Marshal(line{At: time.Now(), Agent: capped(agent), Event: capped(hook.Event), Tool: capped(hook.Tool), Target: capped(target), Notice: capped(hook.Message), Type: capped(hook.Type), Reason: capped(hook.Reason), Prompt: capped(hook.Prompt), PromptCut: len(hook.Prompt) > fieldCap, Background: in.Background, Session: hook.Session, Transcript: hook.Transcript})
 	if err != nil {
 		return
 	}
@@ -132,7 +134,7 @@ func (f *Feed) Read() ([]core.HookEvent, error) {
 		if json.Unmarshal(raw, &l) != nil || l.Agent == "" || l.Event == "" {
 			continue
 		}
-		events = append(events, core.HookEvent{At: l.At, Agent: l.Agent, Event: l.Event, Tool: l.Tool, Target: l.Target, Notice: l.Notice, Type: l.Type, Reason: l.Reason, Prompt: l.Prompt, PromptCut: l.PromptCut, Session: l.Session, Transcript: l.Transcript})
+		events = append(events, core.HookEvent{At: l.At, Agent: l.Agent, Event: l.Event, Tool: l.Tool, Target: l.Target, Notice: l.Notice, Type: l.Type, Reason: l.Reason, Prompt: l.Prompt, PromptCut: l.PromptCut, Background: l.Background, Session: l.Session, Transcript: l.Transcript})
 	}
 	return events, nil
 }

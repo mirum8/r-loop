@@ -1547,6 +1547,75 @@ func TestAHookAgentThatEndsASecondTurnWithoutASentinelFailsAsStalled(t *testing.
 	assertEqual(t, "nudges", len(r.events("nudge")), 1)
 }
 
+func TestAHookAgentThatAnswersTheNudgeAndWaitsOnABackgroundTaskIsNotStalled(t *testing.T) {
+	// given
+	r, feed, s := hookStallRig(t)
+	r.host.script = func(n int) AgentState {
+		switch n {
+		case 1:
+			feed.push(stop(stepAgent))
+		case 5:
+			feed.push(
+				HookEvent{At: t0, Agent: stepAgent, Event: "PreToolUse", Tool: "Agent", Target: "run mvn test in the background"},
+				HookEvent{At: t0, Agent: stepAgent, Event: "PostToolUse", Tool: "Agent", Target: "run mvn test in the background"},
+				stop(stepAgent),
+			)
+		case 7:
+			feed.push(HookEvent{At: t0, Agent: stepAgent, Event: "PreToolUse", Tool: "Write", Target: s.Sentinel})
+			r.writeSentinel(t, s, "ok", "")
+			feed.push(stop(stepAgent))
+		}
+		return AgentWorking
+	}
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertState(t, out, StepOK, "")
+}
+
+func TestAHookAgentQuietPastTheGraceWhileItsBackgroundTaskRunsIsNotStalled(t *testing.T) {
+	// given
+	r, feed, s := hookStallRig(t)
+	r.sm.Now = (&stepClock{t: t0, step: time.Minute}).Now
+	nudged, replied := false, 0
+	r.host.onSubmit = func(agent, text string) {
+		feed.push(promptSubmit(agent, text, t1))
+		if text == hookNudgeText {
+			nudged = true
+		}
+	}
+	r.host.script = func(n int) AgentState {
+		switch {
+		case n == 1:
+			feed.push(stop(stepAgent))
+		case nudged && replied == 0:
+			replied = n
+			feed.push(
+				HookEvent{At: t0, Agent: stepAgent, Event: "PreToolUse", Tool: "Bash", Target: "mvn test", Background: true},
+				HookEvent{At: t0, Agent: stepAgent, Event: "PostToolUse", Tool: "Bash", Target: "mvn test"},
+				stop(stepAgent),
+			)
+		case replied > 0 && n == replied+8:
+			feed.push(HookEvent{At: t0, Agent: stepAgent, Event: "PreToolUse", Tool: "Write", Target: s.Sentinel})
+			r.writeSentinel(t, s, "ok", "")
+			feed.push(stop(stepAgent))
+		}
+		if replied > 0 && n > replied {
+			return AgentIdle
+		}
+		return AgentWorking
+	}
+
+	// when
+	out := r.sm.Wait(waitCtx(t), s, &recObserver{})
+
+	// then
+	assertState(t, out, StepOK, "")
+	assertEqual(t, "nudges", len(r.events("nudge")), 1)
+}
+
 func TestAHookAgentQuietForAGraceAfterItsTurnEndNudgeFailsWithoutASecondNudge(t *testing.T) {
 	// given
 	r, feed, s := hookStallRig(t)

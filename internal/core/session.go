@@ -520,14 +520,26 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 		return m.fail(s, "backstop "+timeout.String()), true
 	}
 	seen, busy, turn := m.hookTurn(s.Agent)
+	acted, background := m.hookWork(s.Agent)
 	if seen && !busy && turn > w.turnEnd && s.declining.Load() == 0 && (s.owner == nil || s.owner.declining.Load() == 0) {
 		w.turnEnd = turn
-		if w.nudged {
-			out := m.fail(s, "stalled: no response to nudge")
-			out.Stalled = true
-			return out, true
+		answered := w.nudged && acted
+		if answered {
+			w.nudged, w.quiet = false, 0
+			if w.stalled {
+				if out, done := m.resume(w, now); done {
+					return out, true
+				}
+			}
 		}
-		return m.stallAndNudge(w, now, "your turn ended with no sentinel", m.handOff(s.Agent))
+		if !answered && !background {
+			if w.nudged {
+				out := m.fail(s, "stalled: no response to nudge")
+				out.Stalled = true
+				return out, true
+			}
+			return m.stallAndNudge(w, now, "your turn ended with no sentinel", m.handOff(s.Agent))
+		}
 	}
 	switch state {
 	case AgentWorking:
@@ -541,7 +553,9 @@ func (m *SessionManager) tick(w *watch, now time.Time, dt time.Duration) (Outcom
 		}
 		return Outcome{}, false
 	case AgentIdle, AgentBlocked, AgentDone:
-		w.quiet += dt
+		if !background {
+			w.quiet += dt
+		}
 	default:
 		return Outcome{}, false
 	}
@@ -565,12 +579,8 @@ func (m *SessionManager) stallAndNudge(w *watch, now time.Time, cause string, ga
 	w.obs.Stalled(s)
 	err := m.prompt(s.Agent, nudge(cause, s.Ref.AskURL != ""), gate)
 	if errors.Is(err, errTurnNotOver) {
-		w.stalled, w.nudged = false, false
-		if err := m.recordState(now, s, StepRunning); err != nil && !errors.Is(err, errStepEnded) {
-			return m.fail(s, "record: "+err.Error()), true
-		}
-		w.obs.Resumed(s)
-		return Outcome{}, false
+		w.nudged = false
+		return m.resume(w, now)
 	}
 	if err != nil {
 		out := m.fail(s, "stalled: nudge not delivered: "+err.Error())
@@ -581,6 +591,15 @@ func (m *SessionManager) stallAndNudge(w *watch, now time.Time, cause string, ga
 	if n, ok := w.obs.(interface{ Nudged(*Session) }); ok {
 		n.Nudged(s)
 	}
+	return Outcome{}, false
+}
+
+func (m *SessionManager) resume(w *watch, now time.Time) (Outcome, bool) {
+	w.stalled = false
+	if err := m.recordState(now, w.s, StepRunning); err != nil && !errors.Is(err, errStepEnded) {
+		return m.fail(w.s, "record: "+err.Error()), true
+	}
+	w.obs.Resumed(w.s)
 	return Outcome{}, false
 }
 

@@ -21,7 +21,7 @@ type HookEvent struct {
 	Type                               string
 	Reason                             string
 	Prompt                             string
-	PromptCut                          bool
+	PromptCut, Background              bool
 	Session, Transcript                string
 }
 

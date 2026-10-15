@@ -212,3 +212,19 @@ func TestTapRecordsTheSessionIdAndTranscriptPath(t *testing.T) {
 		t.Fatalf("events = %+v, want one with session s-1 and transcript /home/.claude/projects/-wt/s-1.jsonl", actual)
 	}
 }
+
+func TestFeedCarriesWhetherAToolWasStartedInTheBackground(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "hooks.jsonl")
+	feed := NewFeed(out)
+
+	Tap(strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"mvn test","run_in_background":true}}`), out, env("rloop-a"))
+	Tap(strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"go test ./..."}}`), out, env("rloop-a"))
+	events, err := feed.Read()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || !events[0].Background || events[1].Background {
+		t.Fatalf("events = %+v", events)
+	}
+}
