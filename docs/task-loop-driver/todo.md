@@ -54,6 +54,9 @@ ADR-97 added Milestone 21, Phase 56: the watchdog fixes what it finds — a reme
 key it sets with `set_config`, a plan line it corrects before `continue` — no blocker takes `skip`,
 `block` and `stop` wait until the retries are spent, the `ui` reviewer ships on claude, and
 `--create-config` brings an existing config up to the new defaults.
+ADR-98 added Milestone 22, Phases 57–58: the project keeps a memory across runs in
+`.r-loop/memory/`, one fact to a file, that only the watchdog writes with `remember` and `forget`,
+every session reads by an index in its prompt, and the watchdog compacts when a run ends.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -98,6 +101,8 @@ key it sets with `set_config`, a plan line it corrects before `continue` — no 
 - Wave 38: Phase 54
 - Wave 39: Phase 55
 - Wave 40: Phase 56
+- Wave 41: Phase 57
+- Wave 42: Phase 58
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -941,6 +946,31 @@ Contracts: `tech-design.md#milestone-21-the-watchdog-fixes-what-it-finds`
 - [x] `defaults.yaml` ships `watchdog.maxRestarts: 3`, `watchdog.allow` with every class, the two `watchdog.dialogs` rules, and the `ui` reviewer on `claude/opus/high`; preflight warns, never exits, on a `review-ui` reviewer on codex; `--create-config` on an existing file adds the missing classes, fills an empty `dialogs`, raises `maxRestarts` below 3 and moves a codex `review-ui` reviewer to claude, printing each change
 - [x] tests prove the removed actions refused, the last-resort refusal and its exceptions, the expiry order, `set_config`'s refusals, record-before-write, reload restore and commit, the plan-correction commit and refusal, the verdict repair, the shipped defaults, the preflight warning and each `--create-config` upgrade
 **Done when:** `go test -race ./...` is green and `grep -n "set_config" internal/askmcp/watchdog.go` prints the tool.
+
+## Milestone 22 — Project memory
+Contracts: `tech-design.md#milestone-22-project-memory`
+
+### Phase 57 — Memory store, `remember` and `forget`, and the exclude line
+**Implements:** Leave a run to finish on its own
+**Depends on:** Phase 56
+**Files:** `internal/core/ports.go` (modify) · `internal/core/memory.go` (create) · `internal/core/memory_test.go` (create) · `internal/core/fakes_test.go` (modify) · `internal/memory/memory.go` (create) · `internal/memory/memory_test.go` (create) · `internal/askmcp/watchdog.go` (modify) · `internal/askmcp/watchdog_test.go` (modify) · `internal/store/store.go` (modify) · `internal/store/store_test.go` (modify) · `internal/app/wire.go` (modify)
+- [x] `core.Memory` and `core.MemoryFact` in `ports.go`; `internal/memory` lists, writes atomically under a driver-made id and deletes facts in `.r-loop/memory/`, skipping an unreadable file with a warning and refusing an id that leaves the folder
+- [x] `core.MemoryKeeper` refuses a bad scope, a bad description, an over-long body and a sixty-first fact with the reason, records `memory-remember` or `memory-forget` before it writes or deletes, and renders `Index` by scope, empty with a warning when the folder cannot be read
+- [x] the watchdog surface gains `remember` and `forget`, in `watchdogTools`, recorded before their handlers and wired to the keeper
+- [x] `store.EnsureExcluded` adds `.r-loop/memory/`
+- [x] tests prove the adapter's round trip, collision suffix, skip and refusal; the keeper's refusals, record-before-write and scope filter; the tools' delegation, recording and 404 on a step path; the exclude line written once
+**Done when:** `go test -race ./internal/core/... ./internal/memory/... ./internal/askmcp/... ./internal/store/...` is green and `grep -n '"remember"' internal/askmcp/watchdog.go` prints the tool.
+
+### Phase 58 — Memory in every prompt, compaction at run end, feed lines
+**Implements:** Leave a run to finish on its own
+**Depends on:** Phase 57
+**Files:** `internal/core/loop.go` (modify) · `internal/core/session.go` (modify) · `internal/core/review.go` (modify) · `internal/core/watchdog.go` (modify) · `internal/core/failurereport.go` (modify) · `internal/core/memory_test.go` (modify) · `internal/prompts/render.go` (modify) · `internal/prompts/templates/*.md` (modify) · `internal/prompts/render_test.go` (modify) · `internal/face/tui/model.go` (modify) · `internal/face/tui/model_test.go` (modify) · `internal/app/wire.go` (modify) · `README.md` (modify) · `CLAUDE.md` (modify)
+- [x] `StepVars` carries `Memory`; a step's prompt and its fix rounds get `Index("all", "step")`, a reviewer's `Index("all", "review")`, the watchdog's `Index()`
+- [x] the `memory` partial renders a `## Project memory` section only when `Memory` is set, in every step and review template; `watchdog.md` says what to remember and when to forget
+- [x] `Watchdog.CompactMemory` types the compaction prompt when a run ends, not aborted, with the watchdog live and facts on disk, and records `memory-compacted`; `wire.go` calls it after `FailureReport`
+- [x] the TUI logs a feed line for each memory event; `README.md` and `CLAUDE.md` describe the memory
+- [x] tests prove the section in each template with and without memory, the index each role gets, the compaction's skips and prompt, and the feed lines
+**Done when:** `go test -race ./...` is green and `go run ./cmd/r-loop docs/task-loop-driver/todo.md --dry-run --plain` exits 0.
 
 ## Open questions
 

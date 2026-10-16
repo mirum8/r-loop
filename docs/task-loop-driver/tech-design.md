@@ -1499,3 +1499,70 @@ the plan itself, nothing is skipped, and `block` and `stop` wait until the retri
   use claude`, on the dry run and the real start; never an exit.
 - **Events** — `config-set{key, value, why}`, appended before the write; the plan commit and the
   config commit are driver commits like any other (ADR-87's subjects).
+
+## Milestone 22 — Project memory
+
+ADR-98. One fact to a file in `.r-loop/memory/`, written only by the watchdog, read by every
+session through an index in its prompt, compacted by the watchdog when a run ends.
+
+- **Fact file** — `.r-loop/memory/<id>.md`:
+  ```
+  ---
+  scope: step
+  description: the integration tests need port 5432 free; stop the local postgres first
+  run: 20261016-101500
+  at: 2026-10-16T10:31:02Z
+  ---
+  <body>
+  ```
+  `scope` is one of `all`, `step`, `review`, `watchdog`. The id is
+  `<yyyymmdd of at>-<slug of description>`: lower-case ASCII letters and digits, other runs
+  collapsed to one `-`, cut to 48 characters; on a collision `-2`, `-3`, … is appended.
+- **Limits** — constants in core: description non-empty, one line, ≤ 150 characters; body
+  ≤ 2048 bytes; at most 60 facts. A write that breaks one is refused with the reason, and
+  nothing is written.
+- **Port** — in `internal/core/ports.go`:
+  ```go
+  type MemoryFact struct {
+      ID, Scope, Description, Body, Run, Path string
+      At                                      time.Time
+  }
+  type Memory interface {
+      List() ([]MemoryFact, error)
+      Write(f MemoryFact) (string, error)
+      Delete(id string) error
+  }
+  ```
+  `List` returns the facts sorted by id, `Path` absolute; a file that is not `.md` is ignored and
+  one whose front matter cannot be read is skipped with a warning on stderr. `Write` picks the id,
+  writes atomically (temp file then rename) and returns the id. `Delete` refuses an id with a path
+  separator or `..`, and a missing file is `fact <id> not found`. The adapter is
+  `internal/memory`, `memory.New(root)` over `<root>/.r-loop/memory`.
+- **`core.MemoryKeeper{Memory, Store, Face, RunID, Now}`** —
+  `Remember(scope, description, body, why string) (bool, string)` validates, appends
+  `Event{Kind: "memory-remember", Fields{scope, description, why}}`, then writes, and an accepted
+  call's reason is `remembered as <id>`. `Forget(id, why string) (bool, string)`
+  checks the id exists, appends `Event{Kind: "memory-forget", Fields{id, why}}`, then deletes.
+  `Facts() int` counts the facts, 0 on an error. `Index(scopes ...string) string` renders `- <path> — <description>` per fact whose scope is in
+  `scopes` (all facts when none are given, each line then tagged `[<scope>] `); a `List` error
+  shows a warning and returns `""`. A nil `MemoryKeeper` or nil `Memory` indexes `""` and refuses
+  writes with `not available`.
+- **Watchdog tools** — `remember{scope, description, body, why} → {accepted, reason?}` and
+  `forget{id, why} → {accepted, reason?}`, in `watchdogTools`, recorded as `watchdog-call` before
+  the handler, which first calls `Resume`; `WatchdogHandlers` gains `Remember` and `Forget`.
+- **Prompts** — `StepVars` carries `Memory: ""`. The session manager sets it to
+  `Index("all", "step")` for a step's prompt and its fix rounds, the review half to
+  `Index("all", "review")`, and the watchdog's start to `Index()`. A shared `{{define "memory"}}`
+  partial renders, only when `Memory` is set, a `## Project memory` section with the lines and
+  the rule that a fact is advice the phase block and the code override. `watchdog.md` tells the
+  watchdog what to remember — a lesson that will hold in a later run — and to forget a fact
+  shown wrong.
+- **Compaction** — `Watchdog.CompactMemory(ctx, timeout)`, called after `FailureReport` and
+  before the watchdog stops: skipped when the run was aborted, `ctx` is done, the watchdog is not
+  live or `Memory.List` is empty; otherwise it types the compaction prompt, which carries the count and a fresh `Index()`, with
+  `NotifyContext(…, wait=true, timeout)` and appends `Event{Kind: "memory-compacted",
+  Fields{facts: <n before>}}`.
+- **Exclude** — `store.EnsureExcluded` adds `.r-loop/memory/` beside `.r-loop/runs/` and
+  `.r-loop/wt/`.
+- **Faces** — the TUI logs one dim feed line for `memory-remember`, `memory-forget` and
+  `memory-compacted`; plain prints them through its default.

@@ -599,6 +599,7 @@ to be written and never writes it either.</p>
   <tr><td><code>Question</code></td><td>Something a session asked — or a dialog on an agent's screen, or a blocker the driver raised — and the answer it received, with who answered it</td><td>ours</td><td>the step that asked, plus a sequence number</td></tr>
   <tr><td><code>Signal</code></td><td>A warning or a halt call — from a deterministic driver check or from the watchdog</td><td>ours</td><td>the step it is about, plus a sequence number</td></tr>
   <tr><td><code>Remedy</code></td><td>A proposed repair: its class, the exact command, how it was authorised, what it returned</td><td>ours</td><td>the signal that prompted it</td></tr>
+  <tr><td><code>MemoryFact</code></td><td>One lesson kept across runs: its scope, a one-line description and a body, in <code>.r-loop/memory/&lt;id&gt;.md</code>, written only by the watchdog (<a href="#adr-98">ADR-98</a>)</td><td>ours</td><td>its id, the file name</td></tr>
   <tr><td><code>Phase</code></td><td>A <code>### Phase N</code> block with its <code>Files:</code>, <code>Risk:</code> and <code>Done when:</code></td><td><strong>copy</strong> — owned by the todo, written by <code>/r:spec-design</code>; r-loop parses the format itself (<a href="#adr-43">ADR-43</a>)</td><td>its heading label within its todo — a string, <code>10</code>, or <code>10a</code> for a phase inserted after 10 once 11 was built; plan order is document order, and the run directory, worktree and branch carry the label (<code>phase-10a</code>)</td></tr>
   <tr><td><code>PhasePlan</code></td><td>The phase plan at <code>.task-plans/&lt;slug&gt;.md</code></td><td><strong>copy</strong> — written by the planning step, read by the implement step</td><td>its path, which travels with the branch</td></tr>
   <tr><td><code>Verdict</code></td><td>What the reviewers reported in one round about a step's plan or diff, and the verdict the step's own session gave each finding</td><td><strong>copy</strong> — written by the reviewer agents and the step's own session</td><td>the step that produced it</td></tr>
@@ -1701,7 +1702,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Ninety-seven decisions, each with the alternative that was live at the time; twelve are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and fifty-five carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, ADR-90 keeps an agent's pane size from ever failing a run, ADR-91, since superseded, handed a blocker a retry will not clear to a fixer session that proposed a fix the driver applied on the maintainer's confirmation, ADR-92 adds a design step that a claude session with <code>frontend-design</code> runs before the plan step on the phases the watchdog's triage flags as changing what a user sees, ADR-93 has claude sessions report through hooks, ADR-94 has the watchdog retry a minor failure without asking, ADR-95 has it choose the gate's commands from the <code>Done when:</code> line's spans, ADR-96 lets a blocker be continued as a resume would, and ADR-97 replaces the fixer with a watchdog that fixes what it finds — remedies, a config key, a corrected plan line — skips nothing, and blocks only once the retries are spent.</p>
+<p class="lede">Ninety-eight decisions, each with the alternative that was live at the time; twelve are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and fifty-five carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, ADR-90 keeps an agent's pane size from ever failing a run, ADR-91, since superseded, handed a blocker a retry will not clear to a fixer session that proposed a fix the driver applied on the maintainer's confirmation, ADR-92 adds a design step that a claude session with <code>frontend-design</code> runs before the plan step on the phases the watchdog's triage flags as changing what a user sees, ADR-93 has claude sessions report through hooks, ADR-94 has the watchdog retry a minor failure without asking, ADR-95 has it choose the gate's commands from the <code>Done when:</code> line's spans, ADR-96 lets a blocker be continued as a resume would, and ADR-97 replaces the fixer with a watchdog that fixes what it finds — remedies, a config key, a corrected plan line — skips nothing, and blocks only once the retries are spent, and ADR-98 gives the project a memory across runs, one fact to a file, that only the watchdog writes and every session reads by an index in its prompt.</p>
 
 <div id="adr-index">
 
@@ -3163,7 +3164,7 @@ refuses tests a human would accept.</p>
 
 <div class="adr">
 <h3 id="adr-71">ADR-71 — The driver is deterministic; the watchdog is the run's LLM</h3>
-<p><span class="f">Status</span> accepted · supersedes the "never approve" tier of <a href="#adr-32">ADR-32</a> and the invariant "The watchdog never approves" · amends <a href="#adr-53">ADR-53</a> · amended by <a href="#adr-73">ADR-73</a> — its one-channel paragraph is replaced: step agents ask the watchdog, and the watchdog asks the maintainer in its own session; <code>watchdog.fallback</code> is removed · amended by <a href="#adr-75">ADR-75</a> — before a run started from free text, a short intake session turns the text into a command line, which the driver validates · amended by <a href="#adr-77">ADR-77</a> — the watchdog also verifies the run list before the first phase, through <code>submit_triage</code> and <code>submit_gate</code>; the driver checks both and still keeps the run list</p>
+<p><span class="f">Status</span> accepted · supersedes the "never approve" tier of <a href="#adr-32">ADR-32</a> and the invariant "The watchdog never approves" · amends <a href="#adr-53">ADR-53</a> · amended by <a href="#adr-73">ADR-73</a> — its one-channel paragraph is replaced: step agents ask the watchdog, and the watchdog asks the maintainer in its own session; <code>watchdog.fallback</code> is removed · amended by <a href="#adr-75">ADR-75</a> — before a run started from free text, a short intake session turns the text into a command line, which the driver validates · amended by <a href="#adr-77">ADR-77</a> — the watchdog also verifies the run list before the first phase, through <code>submit_triage</code> and <code>submit_gate</code>; the driver checks both and still keeps the run list · amended by <a href="#adr-98">ADR-98</a> (2026-10-16) — the watchdog keeps the project memory across runs with <code>remember</code> and <code>forget</code>, and compacts it when a run ends</p>
 <p><span class="f">Context</span> Some run-wide work cannot be done by rule: briefing a blocker, judging
 whether a plan drifted, answering an agent's question. The watchdog is the one session that is open
 for the whole run and holds the plan, the spec and what it watched. The three-tier rule kept it to
@@ -4334,6 +4335,51 @@ the maintainer would have refused, or blockers reach <code>block</code> after sp
 often than a retry clears them.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-98">ADR-98 — Project memory the watchdog keeps</h3>
+<p><span class="f">Status</span> accepted 2026-10-16 · amends <a href="#adr-71">ADR-71</a></p>
+<p><span class="f">Context</span> Everything a run learns lives in its own run folder, and the next
+run starts from nothing: a reviewer's false positive the watchdog dismissed twice, a port the test
+suite needs free, the maintainer's answer to a question that comes back every run. The watchdog
+relearns each of them, and the maintainer answers the same question again.</p>
+<p><span class="f">Decision</span> The project keeps a memory in <code>.r-loop/memory/</code>, one
+fact to a file, <code>&lt;id&gt;.md</code>, with a block-style front matter — <code>scope</code>
+(<code>all</code>, <code>step</code>, <code>review</code> or <code>watchdog</code>),
+<code>description</code>, <code>run</code>, <code>at</code> — and a body. The
+folder is listed in <code>.git/info/exclude</code> beside <code>.r-loop/runs/</code> and is never
+committed. <em>Only the watchdog writes it</em>, through two tools on its surface:
+<code>remember(scope, description, body, why) → {accepted, reason?}</code> and
+<code>forget(id, why) → {accepted, reason?}</code>; the driver records
+<code>memory-remember</code> or <code>memory-forget</code> before it writes or deletes the file,
+names the file itself, <code>&lt;yyyymmdd&gt;-&lt;slug of description&gt;</code>, and refuses a
+bad scope, an empty or over-long description (150 characters), a body over 2 KiB, a sixty-first
+fact and an id outside the folder. <em>Every session reads it</em>: the driver renders, at each
+session's start, an index of one line per fact — its path and its description — into the prompt,
+filtered by role: a step sees <code>all</code> and <code>step</code>, a reviewer <code>all</code>
+and <code>review</code>, the watchdog every fact with its scope. The agent opens a file when its
+line bears on its work; a fact is advice, and the phase block and the code win over it. A memory
+folder that cannot be read leaves the index empty with a warning, and never fails a step. <em>The
+watchdog compacts it</em>: when a run ends, finished or halted and not aborted, with the watchdog
+live and at least one fact, the driver types a compaction prompt into the watchdog's pane and
+waits for it — merge duplicates, forget what was wrong or held for one run only, stay under the
+cap — through the same two tools, and records <code>memory-compacted</code>.</p>
+<p><span class="f">Alternatives</span> One notes file pasted into every prompt — rejected: it
+grows without bound and gives every reviewer every lesson. Typed records the driver mines from
+events, beside the watchdog's notes — rejected: the mining rules are speculative until a repeated
+pattern costs a run. Lessons written into the repository's <code>CLAUDE.md</code> and committed —
+rejected: they churn the project's own instructions with run lessons and cannot be scoped to a
+role. Step agents writing memory — rejected: the watchdog judges and the driver records
+(<a href="#adr-71">ADR-71</a>); a step's lesson reaches the watchdog through
+<code>ask_watchdog</code> or its findings.</p>
+<p><span class="f">Consequences</span> A lesson survives the run that learned it, on this machine
+only: a fresh clone starts empty, and the maintainer edits or deletes a fact by hand like any file.
+Each prompt grows by at most sixty short lines. A fact remembered mid-run reaches the sessions that
+start after it, not the ones already running. A wrong fact misleads until the watchdog or the
+maintainer forgets it.</p>
+<p><span class="f">Revisit when</span> facts are forgotten as wrong more often than they are read
+as useful, or the cap is reached on every run.</p>
+</div>
+
 
 
 
@@ -4605,6 +4651,9 @@ key in <code>.r-loop/config.yaml</code>: the driver validates it as a config lay
 <code>config-set</code> before it writes, reloads the config, restores the file on a failed reload,
 commits it as <code>chore(r-loop): set &lt;key&gt;</code>, and refuses any key under
 <code>watchdog.</code> or <code>unattended.</code> (<a href="#adr-97">ADR-97</a>), and
+<code>remember(scope, description, body, why) → {accepted, reason?}</code> and
+<code>forget(id, why) → {accepted, reason?}</code>, which write and delete one fact of the project
+memory in <code>.r-loop/memory/</code>, recorded before the file changes (<a href="#adr-98">ADR-98</a>), and
 <code>answer_question(id, answer, citation)</code>, whose citation is a <code>path:line</code> in
 the primary tree or <code>maintainer</code>; an empty or invalid one is refused and the question
 stays open, and
