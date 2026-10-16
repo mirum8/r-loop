@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1146,6 +1147,10 @@ func (l *RunLoop) runStep(ctx context.Context, ref StepRef) (Outcome, bool) {
 			return l.stopStep(ctx, ref, <-done)
 		case sig := <-l.watcher().Signals():
 			if sig.Kind != SignalHalt {
+				if live := l.liveSession(); live != nil && sameStep(sig.Step, live.Ref.Key) {
+					live.addWatchdogWarning(sig.Reason)
+					go l.steer(live, sig.Reason)
+				}
 				l.warn(sig)
 				continue
 			}
@@ -1325,6 +1330,32 @@ func sameStep(a, b StepKey) bool {
 func (l *RunLoop) warn(sig Signal) {
 	l.emit(Event{Kind: "warning", Phase: sig.Step.Phase, Step: sig.Step.Kind, Fields: map[string]string{"reason": sig.Reason, "source": string(sig.Source)}})
 	l.fire(l.Hooks.OnWarn, "warning", sig.Step.Phase, sig.Step.Kind, sig.Reason)
+}
+
+func (l *RunLoop) steer(s *Session, reason string) {
+	key := s.Ref.Key
+	defer func() {
+		if r := recover(); r != nil {
+			ev, _ := panicked(key.Phase, key.Kind, "watchdog warning", r)
+			quietly(func() { l.emit(ev) })
+		}
+	}()
+	lock := l.Sessions.typingLock(s.Agent)
+	lock.Lock()
+	defer lock.Unlock()
+	var err error
+	s.live(func() {
+		if state, stateErr := l.Sessions.Host.State(s.Agent); stateErr != nil || state != AgentWorking {
+			return
+		}
+		if _, statErr := os.Stat(s.Sentinel); !errors.Is(statErr, fs.ErrNotExist) {
+			return
+		}
+		err = l.Sessions.Host.Submit(s.Agent, "r-loop: watchdog warning: "+reason)
+	})
+	if err != nil {
+		l.emit(Event{Kind: "warning", Phase: key.Phase, Step: key.Kind, Fields: map[string]string{"reason": "watchdog warning not typed: " + err.Error()}})
+	}
 }
 
 func (l *RunLoop) ServeQuestions(ctx context.Context) {
@@ -2137,46 +2168,47 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 		}
 	}
 	return map[string]any{
-		"PhaseNumber":     ph.ID,
-		"PhaseTitle":      ph.Title,
-		"PhaseBlock":      ph.Block,
-		"Criteria":        strings.Join(criteria, "\n"),
-		"TodoPath":        todoPath,
-		"SpecDir":         filepath.Dir(todoPath),
-		"PlanPath":        phasePlanPath(ph.ID, ph.Title),
-		"Branch":          ref.Branch,
-		"Base":            ref.Base,
-		"Worktree":        ref.Worktree,
-		"Sentinel":        "",
-		"RunDir":          runDir,
-		"AskURL":          ref.AskURL,
-		"PhaseWarnings":   "",
-		"ItemGate":        false,
-		"ReviewedKind":    "",
-		"Round":           0,
-		"Rounds":          0,
-		"ReviewCommand":   "",
-		"ReviewRan":       false,
-		"FindingsPath":    "",
-		"ArtifactsDir":    "",
-		"RequiredPath":    "",
-		"FindingsFiles":   []FindingsFile(nil),
-		"PriorFindings":   "",
-		"PriorVerdicts":   "",
-		"RoundTree":       "",
-		"VerdictPath":     "",
-		"ReportPath":      "",
-		"MilestoneName":   msName,
-		"MilestonePhases": msPhases,
-		"Addendum":        "",
-		"GroupItems":      strings.Join(ph.Members, ", "),
-		"Reworks":         strings.Join(ph.Reworks, ", "),
-		"TriageNotes":     ph.Triage,
-		"DesignPath":      phaseDesignPath(ph.ID, ph.Title),
-		"DesignNote":      ph.DesignNote,
-		"Design":          "",
-		"DesignIntent":    "",
-		"Memory":          "",
+		"PhaseNumber":      ph.ID,
+		"PhaseTitle":       ph.Title,
+		"PhaseBlock":       ph.Block,
+		"Criteria":         strings.Join(criteria, "\n"),
+		"TodoPath":         todoPath,
+		"SpecDir":          filepath.Dir(todoPath),
+		"PlanPath":         phasePlanPath(ph.ID, ph.Title),
+		"Branch":           ref.Branch,
+		"Base":             ref.Base,
+		"Worktree":         ref.Worktree,
+		"Sentinel":         "",
+		"RunDir":           runDir,
+		"AskURL":           ref.AskURL,
+		"PhaseWarnings":    "",
+		"ItemGate":         false,
+		"ReviewedKind":     "",
+		"Round":            0,
+		"Rounds":           0,
+		"ReviewCommand":    "",
+		"ReviewRan":        false,
+		"FindingsPath":     "",
+		"ArtifactsDir":     "",
+		"RequiredPath":     "",
+		"FindingsFiles":    []FindingsFile(nil),
+		"PriorFindings":    "",
+		"PriorVerdicts":    "",
+		"RoundTree":        "",
+		"VerdictPath":      "",
+		"ReportPath":       "",
+		"MilestoneName":    msName,
+		"MilestonePhases":  msPhases,
+		"Addendum":         "",
+		"GroupItems":       strings.Join(ph.Members, ", "),
+		"Reworks":          strings.Join(ph.Reworks, ", "),
+		"TriageNotes":      ph.Triage,
+		"DesignPath":       phaseDesignPath(ph.ID, ph.Title),
+		"DesignNote":       ph.DesignNote,
+		"Design":           "",
+		"DesignIntent":     "",
+		"Memory":           "",
+		"WatchdogWarnings": "",
 	}
 }
 

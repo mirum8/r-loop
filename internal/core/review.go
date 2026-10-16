@@ -165,7 +165,7 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, files []FindingsFi
 	for i, f := range files {
 		paths[i] = f.Path
 	}
-	vars := make(map[string]any, len(worker.Ref.Vars)+8)
+	vars := make(map[string]any, len(worker.Ref.Vars)+9)
 	for k, v := range worker.Ref.Vars {
 		vars[k] = v
 	}
@@ -178,6 +178,7 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, files []FindingsFi
 	vars["FindingsFiles"] = files
 	vars["VerdictPath"] = verdictPath
 	vars["Memory"] = sm.Memory.Index("all", "step")
+	vars["WatchdogWarnings"] = worker.watchdogWarningLines()
 	if worker.Ref.AskURL != "" {
 		vars["AskURL"] = worker.Ref.AskURL
 	}
@@ -190,16 +191,17 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, files []FindingsFi
 	own := worker.Sentinel
 	text, _, err := sm.Prompts.Render("fix", vars)
 	if err == nil {
-		worker.Sentinel = sentinel
+		worker.setSentinel(sentinel)
 		err = sm.prompt(worker.Agent, text, nil)
 	}
 	if err != nil {
-		worker.Sentinel = own
+		worker.setSentinel(own)
 		return false, sm.fail(worker, "fix: "+err.Error())
 	}
 	worker.fix = &fixHalf{verdictPath: verdictPath, roundTree: rd.tree, findings: paths, spent: spent}
 	out := sm.waitAll(ctx, []*Session{worker}, obs)[0]
-	worker.Sentinel, worker.fix = own, nil
+	worker.setSentinel(own)
+	worker.fix = nil
 	if out.State != StepOK {
 		return false, out
 	}
@@ -792,7 +794,7 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 	id := rv.ID()
 	base := fmt.Sprintf("%s-rv-%s-r%d", key.Kind, id, rd.n)
 	artifacts := filepath.Join(dir, fmt.Sprintf("%s-a%d", base, key.Attempt))
-	vars := make(map[string]any, len(worker.Ref.Vars)+11)
+	vars := make(map[string]any, len(worker.Ref.Vars)+12)
 	for k, v := range worker.Ref.Vars {
 		vars[k] = v
 	}
@@ -826,6 +828,7 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 	vars["RoundTree"] = rd.prevTree
 	vars["PriorFindings"] = bullets(rd.prior)
 	vars["PriorVerdicts"] = bullets(rd.verdicts)
+	vars["WatchdogWarnings"] = worker.watchdogWarningLines()
 	s.Ref = StepRef{
 		Key:      key,
 		Kind:     StepKind{Name: key.Kind, Prompt: rv.TemplateFor(key.Kind), Check: "findings", Row: StepRow{Provider: rv.Provider, Model: rv.Model, Effort: rv.Effort, Timeout: worker.Ref.Kind.Row.ReviewTimeout}},

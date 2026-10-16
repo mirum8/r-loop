@@ -50,6 +50,11 @@ When you need a decision you cannot take from the repository, call the ` + "`" +
 {{.Addendum}}
 {{- end}}
 {{end}}
+{{define "watchdog-warnings"}}
+## The watchdog warned during this step:
+
+{{.WatchdogWarnings}}
+{{end}}
 {{define "commit"}}
 ## Naming the commit
 

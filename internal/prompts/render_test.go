@@ -73,27 +73,28 @@ func fullVars() map[string]any {
 			{Reviewer: "claude", Path: "/runs/r1/phase-7/implement-findings-claude-r1.json"},
 			{Reviewer: "codex", Path: "/runs/r1/phase-7/implement-findings-codex-r1.json"},
 		},
-		"ArtifactsDir":    "/runs/r1/phase-7/implement-rv-ui-r1",
-		"RequiredPath":    "/repo/.claude/skills/test-app/SKILL.md",
-		"PriorFindings":   "",
-		"PriorVerdicts":   "",
-		"Memory":          "",
-		"RoundTree":       "",
-		"VerdictPath":     "/runs/r1/phase-7/implement-r1.verdict.json",
-		"ReportPath":      "/runs/r1/report-m2.md",
-		"MilestoneName":   "Milestone 2",
-		"MilestonePhases": "4, 5, 6, 7",
-		"GateCommand":     "go test ./internal/prompts/...",
-		"GateOutput":      "FAIL",
-		"Addendum":        "",
-		"GroupItems":      "",
-		"Reworks":         "",
-		"TriageNotes":     "",
-		"DesignPath":      ".task-plans/phase-7.design.md",
-		"DesignNote":      "",
-		"Design":          "",
-		"DesignIntent":    "",
-		"Root":            "/repo",
+		"ArtifactsDir":     "/runs/r1/phase-7/implement-rv-ui-r1",
+		"RequiredPath":     "/repo/.claude/skills/test-app/SKILL.md",
+		"PriorFindings":    "",
+		"PriorVerdicts":    "",
+		"Memory":           "",
+		"RoundTree":        "",
+		"VerdictPath":      "/runs/r1/phase-7/implement-r1.verdict.json",
+		"ReportPath":       "/runs/r1/report-m2.md",
+		"MilestoneName":    "Milestone 2",
+		"MilestonePhases":  "4, 5, 6, 7",
+		"GateCommand":      "go test ./internal/prompts/...",
+		"GateOutput":       "FAIL",
+		"Addendum":         "",
+		"GroupItems":       "",
+		"Reworks":          "",
+		"TriageNotes":      "",
+		"DesignPath":       ".task-plans/phase-7.design.md",
+		"DesignNote":       "",
+		"Design":           "",
+		"DesignIntent":     "",
+		"Root":             "/repo",
+		"WatchdogWarnings": "",
 	}
 }
 
@@ -788,6 +789,55 @@ func TestReviewNamesPriorRounds(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("review round 2 missing %q", want)
 		}
+	}
+}
+
+func TestReviewersAndFixCarryTheWatchdogWarnings(t *testing.T) {
+	for _, name := range []string{"review", "review-plan", "review-security", "review-ui", "fix"} {
+		t.Run(name, func(t *testing.T) {
+			vars := fullVars()
+			vars["WatchdogWarnings"] = "- tests are being skipped\n- the plan drifted"
+
+			text := render(t, New(t.TempDir()), name, vars)
+
+			if !strings.Contains(text, "## The watchdog warned during this step:\n\n- tests are being skipped\n- the plan drifted\n") {
+				t.Errorf("%s does not list the watchdog warnings:\n%s", name, text)
+			}
+		})
+	}
+}
+
+func TestReviewersAndFixLeaveTheWatchdogSectionOutWithoutWarnings(t *testing.T) {
+	for _, name := range []string{"review", "review-plan", "review-security", "review-ui", "fix"} {
+		t.Run(name, func(t *testing.T) {
+			text := render(t, New(t.TempDir()), name, fullVars())
+
+			if strings.Contains(text, "watchdog warned") {
+				t.Errorf("%s carries a watchdog section with no warnings", name)
+			}
+		})
+	}
+}
+
+func TestReviewersReportAnUnaddressedWatchdogWarningAsAFinding(t *testing.T) {
+	vars := fullVars()
+	vars["WatchdogWarnings"] = "- tests are being skipped"
+
+	text := render(t, New(t.TempDir()), "review", vars)
+
+	if !strings.Contains(text, "report each one it does not address as a finding") {
+		t.Errorf("review does not ask for unaddressed warnings as findings:\n%s", text)
+	}
+}
+
+func TestFixAddressesEachWatchdogWarning(t *testing.T) {
+	vars := fullVars()
+	vars["WatchdogWarnings"] = "- tests are being skipped"
+
+	text := render(t, New(t.TempDir()), "fix", vars)
+
+	if !strings.Contains(text, "Address each warning in this round: fix it, or, when it does not apply, say why") {
+		t.Errorf("fix does not ask to address the warnings:\n%s", text)
 	}
 }
 

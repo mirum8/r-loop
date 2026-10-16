@@ -2348,7 +2348,7 @@ with its reason and the threshold is tuned from those rows.</p>
 
 <div class="adr">
 <h3 id="adr-36">ADR-36 — Two severities: warn and halt</h3>
-<p><span class="f">Status</span> accepted · amended 2026-10-14 — a watchdog <code>warn</code> that <code>Watch</code> rejects, such as one naming a step that has already ended <code>ok</code>, is recorded and shown and never halts the run, after a rejected warn about a finished step was turned into a halt of the healthy live step; a rejected watchdog <code>halt</code>, a signal of another kind, or one whose step is not <code>phase-&lt;N&gt;/&lt;kind&gt;</code> still halts the run, exit <code>5</code></p>
+<p><span class="f">Status</span> accepted · amended 2026-10-14 — a watchdog <code>warn</code> that <code>Watch</code> rejects, such as one naming a step that has already ended <code>ok</code>, is recorded and shown and never halts the run, after a rejected warn about a finished step was turned into a halt of the healthy live step; a rejected watchdog <code>halt</code>, a signal of another kind, or one whose step is not <code>phase-&lt;N&gt;/&lt;kind&gt;</code> still halts the run, exit <code>5</code> · amended 2026-10-16 — a watchdog <code>warn</code> on the live step reaches the step, after an accepted warn was shown to the maintainer and never to the agent it was about: the driver types <code>r-loop: watchdog warning: &lt;reason&gt;</code> into the step's pane while its agent is working and before its sentinel exists, and carries the warning into every later reviewer and fix prompt of that step, where a reviewer reports a warning the change does not address as a finding and the fix round fixes it or says why it does not apply; a warn sent to a step with no review rounds after its turn has ended is only recorded and shown</p>
 <p><span class="f">Context</span> If every observation stops the run it is unusable; if none does it
 is decoration.</p>
 <p><span class="f">Decision</span> A <strong>warning</strong> is report-only — a banner in the TUI
@@ -4680,7 +4680,9 @@ is rejected by <code>Watch</code> and the rejection is recorded — the tool sur
 design, but the enforcement is not the surface. A <code>signal</code> whose step is not
 <code>phase-&lt;N&gt;/&lt;kind&gt;</code> goes through <code>Watch</code> too, is rejected, and
 halts the run. A rejected watchdog <code>warn</code> for a well-formed step is only recorded and
-shown (<a href="#adr-36">ADR-36</a>).</p>
+shown. An accepted <code>warn</code> on the live step is also typed into its pane while its agent
+works, and reaches every later reviewer and fix round of that step; one sent to a step with no
+review rounds after its turn has ended is only recorded and shown (<a href="#adr-36">ADR-36</a>).</p>
 
 <p>Prompts are embedded in the binary — <code>plan</code>, <code>implement</code>,
 <code>review</code>, <code>review-plan</code>, <code>fix</code>, <code>milestone</code>, <code>gatefix</code> and

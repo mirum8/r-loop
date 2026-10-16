@@ -23,6 +23,10 @@ The phase:
 Report only what this change introduces or leaves in what it changed, and only with a concrete path from an attacker-controlled input to the sink. A pattern that merely looks risky, with no such path, is not a finding.
 
 The attacker must control what makes the flaw exploitable, not just touch the code path. Data the operator supplies — configuration, flags, environment, files in a directory the operator owns — is trusted. So a request that picks which trusted file to read is not a memory-exhaustion finding unless the attacker also controls that file's size; it is a traversal finding when the name can leave the directory.
+{{- if .WatchdogWarnings}}
+{{template "watchdog-warnings" .}}
+Check whether the change addresses each warning, and report each one it does not address as a finding.
+{{- end}}
 {{- if .PriorFindings}}
 
 ## Earlier rounds

@@ -28,6 +28,11 @@ Write `{{.VerdictPath}}` as:
 
 with one entry per finding, answering every finding id across every findings file exactly once, the `id`, `reviewer` and `title` copied from the findings file. The driver checks this file against the findings and the worktree before it accepts the round.
 
+{{- if .WatchdogWarnings}}
+{{template "watchdog-warnings" .}}
+Address each warning in this round: fix it, or, when it does not apply, say why in the `reason` of your `ok` sentinel. A warning a reviewer reported as a finding is answered in the verdict file like any other finding.
+{{- end}}
+
 Do not commit: the driver commits the step's work once the review is done.
 {{template "tests" .}}
 {{if not (or (eq .ReviewedKind "gate") (eq .ReviewedKind "milestone"))}}{{template "commit-fix" .}}{{end}}

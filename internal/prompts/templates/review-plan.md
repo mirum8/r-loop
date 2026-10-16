@@ -30,6 +30,10 @@ Its open criteria:
 
 For each criterion, name the test that proves it in the plan's `## Tests`, and report every criterion no test proves as a finding. A criterion that prescribes a means — a type, a signature, a mechanism, a file — is proved by a test of the outcome it serves, not of the means. The spec's invariants and ADRs outrank an item's proposed means: never report a change or a plan for avoiding a means they rule out. When the plan says `status: already-done` or `status: not-work`, open each `path:line` under `## Evidence` instead, and report every criterion the cited code does not show.
 {{- end}}
+{{- if .WatchdogWarnings}}
+{{template "watchdog-warnings" .}}
+Check whether the plan addresses each warning, and report each one it does not address as a finding.
+{{- end}}
 {{- if .PriorFindings}}
 
 ## Earlier rounds

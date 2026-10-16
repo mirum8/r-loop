@@ -94,10 +94,33 @@ type Session struct {
 	received                         atomic.Bool
 	askAttempt                       int
 
-	mu         sync.Mutex
-	ended      bool
-	reviewers  []*Session
-	transcript string
+	mu               sync.Mutex
+	ended            bool
+	reviewers        []*Session
+	transcript       string
+	watchdogWarnings []string
+}
+
+func (s *Session) addWatchdogWarning(text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.watchdogWarnings = append(s.watchdogWarnings, text)
+}
+
+func (s *Session) watchdogWarningLines() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lines := make([]string, len(s.watchdogWarnings))
+	for i, w := range s.watchdogWarnings {
+		lines[i] = "- " + w
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (s *Session) setSentinel(path string) {
+	s.mu.Lock()
+	s.Sentinel = path
+	s.mu.Unlock()
 }
 
 func (s *Session) setReviewers(reviewers []*Session) {

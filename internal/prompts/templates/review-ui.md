@@ -20,6 +20,10 @@ The phase:
 {{- end}}
 
 Report a defect this diff causes or leaves in what it changed; not an old defect elsewhere in the app. In each finding's `files`, name the source files that cause it, so the fix can be checked against them. When `/test-app` could not run — the build, deploy or launch failed — report that as one finding with the error: a check that did not run is never an empty list.
+{{- if .WatchdogWarnings}}
+{{template "watchdog-warnings" .}}
+Check whether the change addresses each warning, and report each one it does not address as a finding.
+{{- end}}
 {{- if .PriorFindings}}
 
 ## Earlier rounds
