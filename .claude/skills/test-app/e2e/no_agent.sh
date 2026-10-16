@@ -466,6 +466,20 @@ strings "$BIN" > "$T/strings"
   && ok "embedded watchdog prompt: no fixer hand-off, fixes itself, set_config" || fail "embedded prompt strings"
 cd "$ROOT"; rm -rf "$W"
 
+P=$("$ROOT/testdata/sandbox/make-sandbox.sh") && cd "$P"
+mkdir -p .r-loop/prompts
+printf 'Review phase {{.PhaseNumber}} ({{.PhaseTitle}}). Write findings to {{.FindingsPath}}.\n' > .r-loop/prompts/review.md
+"$BIN" docs/plan/todo-tiny.md --dry-run --plain > "$T/out" 2> "$T/err"; rc=$?
+[ "$rc" = 0 ] && grep -q "^prompt review: .*/.r-loop/prompts/review.md" "$T/out" \
+  && ok "a review.md override that never names WatchdogWarnings still renders" || fail "old review override rc=$rc: $(cat "$T/err")"
+printf 'Review {{.Bogus}}\n' > .r-loop/prompts/review.md
+"$BIN" docs/plan/todo-tiny.md --dry-run --plain > "$T/out" 2> "$T/err"; rc=$?
+[ "$rc" = 2 ] && grep -q 'map has no entry for key "Bogus"' "$T/err" \
+  && ok "dry-run renders the override: an unknown key in it exits 2" || fail "bogus review override rc=$rc: $(cat "$T/err")"
+cd "$ROOT"; rm -rf "$P"
+env -u HERDR_PANE_ID bash "$ROOT/.claude/skills/test-app/e2e/live_step_warn.sh" > "$T/out" 2>&1 < /dev/null; rc=$?
+[ "$rc" = 3 ] && [ "$(cat "$T/out")" = "NOT RUN: no herdr pane (HERDR_PANE_ID unset)" ] && ok "live_step_warn: NOT RUN without HERDR_PANE_ID" || fail "live_step_warn without a pane rc=$rc: $(cat "$T/out")"
+
 . "$ROOT/.claude/skills/test-app/e2e/steering_checkers_test.sh"
 cd "$ROOT"
 go test ./internal/face/... > /dev/null 2>&1 && ok "golden harness go test ./internal/face/..." || fail "go test ./internal/face/..."
