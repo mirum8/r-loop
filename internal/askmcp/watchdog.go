@@ -41,6 +41,9 @@ type WatchdogHandlers struct {
 	StopRun     func(when, reason, maintainerSaid string) (bool, string)
 	PauseRun    func(reason, maintainerSaid string) (bool, string)
 	ContinueRun func(maintainerSaid string) (bool, string)
+
+	Remember func(scope, description, body, why string) (bool, string)
+	Forget   func(id, why string) (bool, string)
 }
 
 type stopRunInput struct {
@@ -56,6 +59,18 @@ type pauseRunInput struct {
 
 type continueRunInput struct {
 	MaintainerSaid string `json:"maintainer_said"`
+}
+
+type rememberInput struct {
+	Scope       string `json:"scope"`
+	Description string `json:"description"`
+	Body        string `json:"body,omitempty"`
+	Why         string `json:"why"`
+}
+
+type forgetInput struct {
+	ID  string `json:"id"`
+	Why string `json:"why"`
 }
 
 type askMaintainerInput struct {
@@ -255,7 +270,7 @@ func watchdogTool[In any, Out toolOutput[Out]](s *Server, h mcp.ToolHandlerFor[I
 	})
 }
 
-var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true, "stop_run": true, "pause_run": true, "continue_run": true, "choose_gate": true, "set_config": true}
+var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true, "stop_run": true, "pause_run": true, "continue_run": true, "choose_gate": true, "set_config": true, "remember": true, "forget": true}
 
 func (s *Server) Handle(h WatchdogHandlers) {
 	s.mu.Lock()
@@ -395,6 +410,40 @@ func (s *Server) watchdogServer() *mcp.Server {
 			return nil, acceptedOutput{Reason: notAvailable}, nil
 		}
 		ok, reason := h(in.MaintainerSaid)
+		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "remember",
+		Description: "Keep a lesson in the project memory for later runs: one fact in .r-loop/memory/, shown by its description in the prompts of the sessions its scope names — all, step, review or watchdog. Remember only what will still hold in a later run; the description is one line of at most 150 characters, the body at most 2 KiB. An accepted call names the fact's id.",
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in rememberInput) (*mcp.CallToolResult, acceptedOutput, error) {
+		if err := s.record("remember", "", map[string]string{"scope": in.Scope, "description": in.Description, "why": in.Why}); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		if err := s.resume(); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		h := s.handlersNow().Remember
+		if h == nil {
+			return nil, acceptedOutput{Reason: notAvailable}, nil
+		}
+		ok, reason := h(in.Scope, in.Description, in.Body, in.Why)
+		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "forget",
+		Description: "Delete one fact from the project memory by its id, the file name without .md: a fact shown wrong, held for one run only, or merged into another.",
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in forgetInput) (*mcp.CallToolResult, acceptedOutput, error) {
+		if err := s.record("forget", "", map[string]string{"id": in.ID, "why": in.Why}); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		if err := s.resume(); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		h := s.handlersNow().Forget
+		if h == nil {
+			return nil, acceptedOutput{Reason: notAvailable}, nil
+		}
+		ok, reason := h(in.ID, in.Why)
 		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
 	}))
 	mcp.AddTool(srv, &mcp.Tool{

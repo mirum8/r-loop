@@ -441,7 +441,7 @@ func TestWatchdogPathListsNoAskTool(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	if want := []string{"answer_dialog", "answer_question", "ask_maintainer", "choose_gate", "continue_run", "pause_run", "propose_remedy", "resolve_blocker", "restart_step", "run_status", "set_config", "signal", "step_info", "stop_run", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
+	if want := []string{"answer_dialog", "answer_question", "ask_maintainer", "choose_gate", "continue_run", "forget", "pause_run", "propose_remedy", "remember", "resolve_blocker", "restart_step", "run_status", "set_config", "signal", "step_info", "stop_run", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
 		t.Fatalf("watchdog tools = %v, want %v", names, want)
 	}
 }
@@ -491,7 +491,7 @@ func TestWatchdogToolsOnAStepPathAre404(t *testing.T) {
 	if len(tools.Tools) != 1 || tools.Tools[0].Name != "ask_watchdog" {
 		t.Fatalf("step tools = %+v", tools.Tools)
 	}
-	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info", "stop_run", "pause_run", "continue_run", "choose_gate", "set_config"} {
+	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info", "stop_run", "pause_run", "continue_run", "choose_gate", "set_config", "remember", "forget"} {
 		_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{"kind": "halt", "step": "phase-3/implement"}})
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not found") {
 			t.Fatalf("%s on a step path: err = %v", name, err)
@@ -1321,4 +1321,54 @@ func toolDescription(tools []*mcp.Tool, name string) string {
 		}
 	}
 	return ""
+}
+
+func TestMemoryToolsAreRecordedResumeAndReachTheirHandlers(t *testing.T) {
+	// given
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	var calls []string
+	s.Handle(WatchdogHandlers{
+		Resume: func() error {
+			calls = append(calls, "resume")
+			return nil
+		},
+		Remember: func(scope, description, body, why string) (bool, string) {
+			calls = append(calls, fmt.Sprintf("remember %s|%s|%s|%s records=%d", scope, description, body, why, len(st.records())))
+			return true, ""
+		},
+		Forget: func(id, why string) (bool, string) {
+			calls = append(calls, "forget "+id+"|"+why)
+			return false, "fact " + id + " not found"
+		},
+	})
+	cs := connect(t, s.WatchdogURL())
+
+	// when
+	remember := call(t, cs, "remember", map[string]any{"scope": "step", "description": "port 5432 must be free", "body": "stop postgres", "why": "failed twice"})
+	forget := call(t, cs, "forget", map[string]any{"id": "20261016-x", "why": "wrong"})
+
+	// then
+	if remember["accepted"] != true || forget["accepted"] != false || forget["reason"] != "fact 20261016-x not found" {
+		t.Fatalf("remember = %+v, forget = %+v", remember, forget)
+	}
+	want := "resume,remember step|port 5432 must be free|stop postgres|failed twice records=1,resume,forget 20261016-x|wrong"
+	if got := strings.Join(calls, ","); got != want {
+		t.Fatalf("calls = %s", got)
+	}
+	recs := st.records()
+	if len(recs) != 4 || recs[0].Event.Fields["tool"] != "remember" || recs[0].Event.Fields["scope"] != "step" || recs[2].Event.Fields["tool"] != "forget" || recs[2].Event.Fields["id"] != "20261016-x" {
+		t.Fatalf("records = %+v", recs)
+	}
+}
+
+func TestMemoryToolsWithNoHandlerAreNotAvailable(t *testing.T) {
+	cs := connect(t, serveWatchdog(t, &memStore{}).WatchdogURL())
+
+	remember := call(t, cs, "remember", map[string]any{"scope": "all", "description": "d", "why": "w"})
+	forget := call(t, cs, "forget", map[string]any{"id": "x", "why": "w"})
+
+	if remember["reason"] != notAvailable || forget["reason"] != notAvailable {
+		t.Fatalf("remember = %+v, forget = %+v", remember, forget)
+	}
 }

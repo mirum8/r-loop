@@ -29,6 +29,7 @@ import (
 	"r-loop/internal/gitrepo"
 	"r-loop/internal/herdr"
 	"r-loop/internal/hooktap"
+	"r-loop/internal/memory"
 	"r-loop/internal/notify"
 	"r-loop/internal/plan"
 	"r-loop/internal/prompts"
@@ -119,6 +120,7 @@ type Wiring struct {
 	Remedies  *core.Remedies
 	Router    *core.QuestionRouter
 	ConfigSet *core.ConfigSetter
+	Memory    *core.MemoryKeeper
 	Triaged   bool
 	LocalTodo bool
 	todoRel   string
@@ -426,6 +428,7 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 		w.startTUI(ctx)
 		code = w.run(ctx, opts)
 		w.Dog.FailureReport(ctx, w.Config.Watchdog.CheckTimeout)
+		w.Dog.CompactMemory(ctx, w.Config.Watchdog.CheckTimeout)
 	}
 	return code
 }
@@ -547,6 +550,11 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		w.Face = w.TUI
 	}
 	w.Ask = &askmcp.Server{Store: w.records}
+	mem := memory.New(root)
+	mem.Warn = func(msg string) {
+		w.Face.Emit(core.Event{At: time.Now(), Kind: "warning", Fields: map[string]string{"reason": msg}})
+	}
+	w.Memory = &core.MemoryKeeper{Memory: mem, Store: w.records, Face: w.Face, Now: time.Now}
 	w.Notify = &notify.Shell{Emit: w.Face.Emit}
 	k, err := kindsOf(cfg)
 	if err != nil {
@@ -563,6 +571,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Prompts:      w.Prompts,
 		Store:        w.records,
 		Ask:          w.Ask,
+		Memory:       w.Memory,
 		Resolve:      w.resolve,
 		Reviewers:    w.reviewers,
 		Now:          time.Now,
@@ -640,7 +649,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		fallbacks[k.Name] = k.Row.Fallback
 	}
 	w.Remedies = &core.Remedies{Allow: allow, Store: w.records, Face: w.Face, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks, Asks: w.asks}
-	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.records, Face: w.Face, Root: root, Pane: env.Pane, Label: cfg.Label, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow, Dialogs: cfg.Watchdog.Dialogs, Unattended: opts.Unattended}
+	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.records, Face: w.Face, Root: root, Pane: env.Pane, Label: cfg.Label, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow, Dialogs: cfg.Watchdog.Dialogs, Unattended: opts.Unattended, Memory: w.Memory}
 	w.Remedies.Dog = w.Dog
 	w.Remedies.Blockers = w.Loop
 	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Keys: w.Loop.DeliverKeys, Rules: cfg.Watchdog.Dialogs, Repo: repo, Remedies: w.Remedies, Blocker: w.Loop.OpenBlocker, Settle: w.Loop.SettleBlocker}
@@ -769,9 +778,6 @@ func addedClasses(cfg config.LoopConfig) []string {
 
 func (w *Wiring) startWatchdog(ctx context.Context) error {
 	wd := w.Config.Watchdog
-	if err := w.startDog(ctx, wd.Provider, wd.Model, wd.Effort); err != nil {
-		return err
-	}
 	w.Watch.Dog = w.Dog
 	w.Dog.OnGone = w.Watch.WatchdogGone
 	w.Watch.PhaseCheck = &core.PhaseCheck{Dog: w.Dog, Repo: w.Loop.Sessions.Repo, Timeout: wd.CheckTimeout, Backlog: w.Plan.Backlog}
@@ -779,8 +785,8 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	w.Gate.Picker = w.Dog
 	w.Router.Dog = w.Dog
 	w.Watch.Router = w.Router
-	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, ChooseGate: w.Gate.ChooseGate, SetConfig: w.ConfigSet.Set, RunStatus: w.runStatus, StepInfo: w.stepInfo, StopRun: w.Loop.StopRun, PauseRun: w.Loop.PauseRun, ContinueRun: w.Loop.ContinueRun})
-	return nil
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, ChooseGate: w.Gate.ChooseGate, SetConfig: w.ConfigSet.Set, RunStatus: w.runStatus, StepInfo: w.stepInfo, StopRun: w.Loop.StopRun, PauseRun: w.Loop.PauseRun, ContinueRun: w.Loop.ContinueRun, Remember: w.Memory.Remember, Forget: w.Memory.Forget})
+	return w.startDog(ctx, wd.Provider, wd.Model, wd.Effort)
 }
 
 func (w *Wiring) runState() (core.RunState, error) {
@@ -1129,6 +1135,7 @@ func (w *Wiring) bind(runID string) {
 	w.Ask.RunDir, w.Ask.RunID = dir, runID
 	w.Dog.RunID, w.Dog.RunDir = runID, dir
 	w.ConfigSet.RunID = runID
+	w.Memory.RunID = runID
 	if run, err := w.Store.Load(runID); err == nil {
 		w.Ask.Seq = len(run.Questions)
 		w.Watch.SeedSignals(run.Signals)

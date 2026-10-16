@@ -60,6 +60,16 @@ The driver commits this step's work under a message you write. Put it in the ` +
 - The description is imperative and lower case, names the substance of the change, and keeps the whole subject to one line of at most 100 characters.
 - Never name the phase, its number or this step: ` + "`" + `feat(core): phase 3` + "`" + ` or ` + "`" + `chore: implement` + "`" + ` is rejected, and a missing or malformed ` + "`" + `commit` + "`" + ` fails the step.
 {{end}}
+{{define "memory"}}
+{{- if .Memory}}
+
+## Project memory
+
+Facts the watchdog kept from earlier runs of this project, one file each. Open a file when its line bears on your work. A fact is advice: where it disagrees with the phase block or the code, they win.
+
+{{.Memory}}
+{{end}}
+{{- end}}
 {{define "commit-fix"}}
 Your ` + "`" + `ok` + "`" + ` sentinel may carry ` + "`" + `commit` + "`" + `, a Conventional Commits subject (` + "`" + `<type>(<scope>): <description>` + "`" + `, at most 100 characters, never naming the phase or the step). Set it only when this round's fixes change what the step's work does; otherwise leave it out and the step keeps the subject it already named.
 {{end}}

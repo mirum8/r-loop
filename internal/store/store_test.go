@@ -389,7 +389,7 @@ func TestEnsureExcludedAppendsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := readFile(t, exclude); got != "*.log\n.r-loop/runs/\n.r-loop/wt/\n" {
+	if got := readFile(t, exclude); got != "*.log\n.r-loop/runs/\n.r-loop/wt/\n.r-loop/memory/\n" {
 		t.Fatalf("exclude = %q", got)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
@@ -400,13 +400,13 @@ func TestEnsureExcludedAppendsOnce(t *testing.T) {
 func TestEnsureExcludedAddsOnlyTheMissingLine(t *testing.T) {
 	root := gitInit(t)
 	exclude := filepath.Join(root, ".git", "info", "exclude")
-	os.WriteFile(exclude, []byte(".r-loop/wt/\n"), 0o644)
+	os.WriteFile(exclude, []byte(".r-loop/wt/\n.r-loop/memory/\n"), 0o644)
 
 	if err := EnsureExcluded(root); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := readFile(t, exclude); got != ".r-loop/wt/\n.r-loop/runs/\n" {
+	if got := readFile(t, exclude); got != ".r-loop/wt/\n.r-loop/memory/\n.r-loop/runs/\n" {
 		t.Fatalf("exclude = %q", got)
 	}
 }

@@ -20,4 +20,5 @@ Make that command pass in `{{.Worktree}}`. Do not weaken, skip or delete any tes
 
 When the fix lies outside this phase, write a `failed` sentinel whose reason names the cause.
 {{template "commit" .}}
+{{- template "memory" .}}
 {{template "outcome" .}}

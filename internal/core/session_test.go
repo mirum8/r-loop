@@ -472,7 +472,7 @@ func TestSpawnRendersTheStepVariablesPlusTheSentinel(t *testing.T) {
 
 	s := r.spawn(t, 1)
 
-	want := map[string]any{"PhaseNumber": "3", "Sentinel": s.Sentinel}
+	want := map[string]any{"PhaseNumber": "3", "Sentinel": s.Sentinel, "Memory": ""}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("vars = %v", got)
 	}

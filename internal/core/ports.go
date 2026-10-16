@@ -128,6 +128,17 @@ type Store interface {
 	Dir(runID string) string
 }
 
+type MemoryFact struct {
+	ID, Scope, Description, Body, Run, Path string
+	At                                      time.Time
+}
+
+type Memory interface {
+	List() ([]MemoryFact, error)
+	Write(f MemoryFact) (string, error)
+	Delete(id string) error
+}
+
 type Prompts interface {
 	Render(name string, vars map[string]any) (string, string, error)
 }

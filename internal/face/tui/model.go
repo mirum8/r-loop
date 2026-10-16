@@ -321,6 +321,12 @@ func (m Model) Apply(ev core.Event) Model {
 		m.log(ev, toneDim, "diagnosis: "+filepath.Base(ev.Fields["path"]))
 	case core.EventFailureReportMissing:
 		m.log(ev, toneDim, "no diagnosis: "+ev.Fields["reason"])
+	case core.EventMemoryRemember:
+		m.log(ev, toneDim, "remembered: "+ev.Fields["description"])
+	case core.EventMemoryForget:
+		m.log(ev, toneDim, "forgot: "+ev.Fields["id"])
+	case core.EventMemoryCompacted:
+		m.log(ev, toneDim, "memory compacted, "+ev.Fields["facts"]+" facts before")
 	case "stop-requested":
 		m.log(ev, toneDim, "stop requested after this phase: "+ev.Fields["reason"])
 	case "pause-requested":

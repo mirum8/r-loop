@@ -54,4 +54,5 @@ status: no-visual-change
 - <why>: <path:line>
 ```
 {{template "commit" .}}
+{{- template "memory" .}}
 {{template "sentinel" .}}

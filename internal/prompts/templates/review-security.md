@@ -49,4 +49,5 @@ Convert what you report into `{{.FindingsPath}}` as:
 where `<name>` is your reviewer name — the `<name>` in the findings file name `<kind>-findings-<name>-r<round>.json` — `<round>` is {{.Round}} and `<n>` is numbered from 1. Every id is unique within the file and starts with `<name>-r{{.Round}}-`: the step agent answers each id exactly once in its verdict file, and the driver checks the two against each other. `title`, `detail` and `files` are required on every finding. Each `detail` gives the severity (P1 exploitable as shipped, P2 exploitable under a plausible condition, P3 hardening), the affected `path:line`, the input, the path it takes to the sink, and the remediation. With nothing to report, write an empty `findings` list.
 
 Change no file in `{{.Worktree}}`: every file you create goes under `{{.ArtifactsDir}}`.
+{{- template "memory" .}}
 {{if or (eq .ReviewedKind "gatefix") (eq .ReviewedKind "gate") (eq .ReviewedKind "milestone")}}{{template "outcome" .}}{{else}}{{template "sentinel" .}}{{end}}

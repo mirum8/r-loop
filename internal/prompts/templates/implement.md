@@ -26,4 +26,5 @@ The design at `{{.Design}}` is the UI spec the plan builds: what each screen sho
 When the plan is wrong — it names a file that cannot work, a test that cannot pass, or contradicts the code — do not deviate from it: write a `failed` sentinel whose reason names what is wrong with the plan.
 {{template "tests" .}}
 {{template "commit" .}}
+{{- template "memory" .}}
 {{template "sentinel" .}}

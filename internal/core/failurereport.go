@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -61,4 +62,31 @@ func aborted(st RunState) bool {
 		}
 	}
 	return out
+}
+
+func CompactMemoryText(n int, index string) string {
+	return fmt.Sprintf(`compact memory
+The run is over. The project memory in .r-loop/memory/ holds %d facts, and the next run's sessions will read them:
+%s
+A fact's id is its file name without .md. Read the files you need, then compact the memory before your session is closed:
+- merge facts that say the same thing: remember the merged one, then forget the others
+- forget each fact that proved wrong, or held for this run only
+- keep each description one line that states the rule itself
+Change the memory with remember and forget only; edit no file, and call no other tool.`, n, index)
+}
+
+func (d *Watchdog) CompactMemory(ctx context.Context, timeout time.Duration) {
+	st, err := d.Store.Load(d.RunID)
+	if err != nil || aborted(st) || ctx.Err() != nil || !d.live() {
+		return
+	}
+	n := d.Memory.Facts()
+	if n == 0 {
+		return
+	}
+	fields := map[string]string{"facts": strconv.Itoa(n)}
+	if err := d.NotifyContext(ctx, CompactMemoryText(n, d.Memory.Index()), true, timeout); err != nil {
+		fields["reason"] = err.Error()
+	}
+	recordEvent(d.Store, d.Face, d.RunID, Event{Kind: EventMemoryCompacted, Fields: fields})
 }

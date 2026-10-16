@@ -416,6 +416,17 @@ Each run lives in `.r-loop/runs/<runID>/`:
 
 Phase plans are written to `.task-plans/phase-<N>-<title>.md` and committed with the phase.
 
+## Project memory
+
+What a run learns is kept for the next one in `.r-loop/memory/`, one fact to a markdown file:
+a reviewer's false positive, a port the tests need free, an answer of yours that settles a
+question for good. Only the watchdog writes it, with `remember` and `forget`; r-loop records each
+change before it makes it. Every session's prompt lists the facts of its scope — `step`,
+`review`, `watchdog` or `all` — by path and one-line description, and the agent opens the file
+when it applies. When a run ends, the watchdog merges and prunes the facts. The folder is listed
+in `.git/info/exclude` and never committed; edit or delete a fact by hand like any file. The limits
+are 60 facts, a 150-character description and a 2 KiB body.
+
 ## Development
 
 ```sh

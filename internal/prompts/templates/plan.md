@@ -98,4 +98,5 @@ Re-read the plan as the implementer would, then fix it until all of this holds: 
 {{template "commit" .}}
 
 This step's commit adds only the plan file, so its subject is `docs(plan): <what the plan covers>`, such as `docs(plan): plan the subtract function and its table test` — never the `feat` or `fix` subject the implementer will give the code.
+{{- template "memory" .}}
 {{template "sentinel" .}}

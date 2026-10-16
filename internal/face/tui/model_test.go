@@ -1366,3 +1366,21 @@ func TestFaceNamesTheDiagnosisOnClose(t *testing.T) {
 		t.Fatalf("out:\n%s", out.String())
 	}
 }
+
+func TestMemoryEventsAreLoggedInTheFeed(t *testing.T) {
+	// given
+	m := newModel(recorded())
+
+	// when
+	m = m.Apply(core.Event{At: at(10), Kind: core.EventMemoryRemember, Fields: map[string]string{"id": "20261016-port", "scope": "step", "description": "port 5432 must be free"}})
+	m = m.Apply(core.Event{At: at(11), Kind: core.EventMemoryForget, Fields: map[string]string{"id": "20261015-old"}})
+	m = m.Apply(core.Event{At: at(12), Kind: core.EventMemoryCompacted, Fields: map[string]string{"facts": "4"}})
+
+	// then
+	view := m.View()
+	for _, want := range []string{"remembered: port 5432 must be free", "forgot: 20261015-old", "memory compacted, 4 facts before"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view missing %q:\n%s", want, view)
+		}
+	}
+}

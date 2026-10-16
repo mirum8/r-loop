@@ -1322,3 +1322,45 @@ func TestAHaltedRunHasTheWatchdogWriteAFailureReportBeforeItCloses(t *testing.T)
 		t.Errorf("plain output:\n%s", f.out)
 	}
 }
+
+func TestTheWatchdogToolsAnswerFromTheWatchdogsFirstPrompt(t *testing.T) {
+	t.Parallel()
+	// given
+	f := newResumeFixture(t, noReviewConfig)
+	sim := newSim()
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, sim)
+	var reason string
+	dog := &dogHost{}
+	dog.onPrompt = func(text string) {
+		if !strings.HasPrefix(text, "# Watchdog") || reason != "" {
+			return
+		}
+		client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+		cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: w.Ask.WatchdogURL(), MaxRetries: -1}, nil)
+		if err != nil {
+			reason = "connect: " + err.Error()
+			return
+		}
+		defer cs.Close()
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "remember", Arguments: map[string]any{"scope": "phase", "description": "d", "why": "w"}})
+		if err != nil {
+			reason = "call: " + err.Error()
+			return
+		}
+		out, _ := res.StructuredContent.(map[string]any)
+		reason, _ = out["reason"].(string)
+	}
+	w.Dog.Host = dog
+
+	// when
+	w.Execute(core.RunOptions{Phases: []string{"1"}})
+
+	// then
+	if want := `scope "phase": want one of all, step, review, watchdog`; reason != want {
+		t.Fatalf("remember during the first prompt: %q, want %q", reason, want)
+	}
+}

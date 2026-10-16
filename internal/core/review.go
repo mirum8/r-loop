@@ -177,6 +177,7 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, files []FindingsFi
 	vars["RoundTree"] = rd.tree
 	vars["FindingsFiles"] = files
 	vars["VerdictPath"] = verdictPath
+	vars["Memory"] = sm.Memory.Index("all", "step")
 	if worker.Ref.AskURL != "" {
 		vars["AskURL"] = worker.Ref.AskURL
 	}
@@ -796,6 +797,7 @@ func (h ReviewHalf) reviewer(worker *Session, rv Reviewer, required string, args
 		vars[k] = v
 	}
 	vars["Addendum"] = ""
+	vars["Memory"] = h.Sessions.Memory.Index("all", "review")
 	s := &Session{
 		Dir:       worker.Dir,
 		StartSHA:  worker.StartSHA,

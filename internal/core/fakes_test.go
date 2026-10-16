@@ -601,7 +601,43 @@ var (
 	_ Analyzer      = (*fakeAnalyzer)(nil)
 	_ ReviewRunner  = (*fakeReviewRunner)(nil)
 	_ RolloutFinder = (*fakeRollouts)(nil)
+	_ Memory        = (*fakeMemory)(nil)
 )
+
+type fakeMemory struct {
+	callLog
+	Facts   []MemoryFact
+	ListErr error
+	Err     error
+}
+
+func (f *fakeMemory) List() ([]MemoryFact, error) {
+	return append([]MemoryFact(nil), f.Facts...), f.ListErr
+}
+
+func (f *fakeMemory) Write(fact MemoryFact) (string, error) {
+	f.record("Memory.Write %s %q", fact.Scope, fact.Description)
+	if f.Err != nil {
+		return "", f.Err
+	}
+	fact.ID = fmt.Sprintf("fact-%d", len(f.Facts)+1)
+	fact.Path = "/mem/" + fact.ID + ".md"
+	f.Facts = append(f.Facts, fact)
+	return fact.ID, nil
+}
+
+func (f *fakeMemory) Delete(id string) error {
+	f.record("Memory.Delete %s", id)
+	if f.Err != nil {
+		return f.Err
+	}
+	for i, fact := range f.Facts {
+		if fact.ID == id {
+			f.Facts = append(f.Facts[:i], f.Facts[i+1:]...)
+		}
+	}
+	return nil
+}
 
 type fakeHookFeed struct {
 	mu     sync.Mutex

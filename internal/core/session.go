@@ -52,6 +52,7 @@ type SessionManager struct {
 	HookTap       string
 	Rollouts      RolloutFinder
 	Face          Face
+	Memory        *MemoryKeeper
 	hooks         hookLog
 	typing        map[string]*sync.Mutex
 	tracked       []*Session
@@ -359,6 +360,7 @@ func (m *SessionManager) start(s *Session, stepDir string) error {
 		vars[k] = v
 	}
 	vars["Sentinel"] = s.Sentinel
+	vars["Memory"] = m.Memory.Index("all", "step")
 	if ref.AskURL != "" {
 		vars["AskURL"] = ref.AskURL
 	}

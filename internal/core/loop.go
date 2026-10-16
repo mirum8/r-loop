@@ -2176,6 +2176,7 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 		"DesignNote":      ph.DesignNote,
 		"Design":          "",
 		"DesignIntent":    "",
+		"Memory":          "",
 	}
 }
 

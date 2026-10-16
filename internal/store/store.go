@@ -470,7 +470,7 @@ func EnsureExcluded(repoRoot string) error {
 		present[strings.TrimSpace(line)] = true
 	}
 	var add string
-	for _, line := range []string{".r-loop/runs/", ".r-loop/wt/"} {
+	for _, line := range []string{".r-loop/runs/", ".r-loop/wt/", ".r-loop/memory/"} {
 		if !present[line] {
 			add += line + "\n"
 		}

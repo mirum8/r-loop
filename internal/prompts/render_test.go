@@ -77,6 +77,7 @@ func fullVars() map[string]any {
 		"RequiredPath":    "/repo/.claude/skills/test-app/SKILL.md",
 		"PriorFindings":   "",
 		"PriorVerdicts":   "",
+		"Memory":          "",
 		"RoundTree":       "",
 		"VerdictPath":     "/runs/r1/phase-7/implement-r1.verdict.json",
 		"ReportPath":      "/runs/r1/report-m2.md",
@@ -1437,5 +1438,42 @@ func TestWatchdogListsTheInPlaceNudgeFirstForAStalledLivePane(t *testing.T) {
 	nudge, retry := strings.Index(text, expected), strings.Index(text, "  - `retry` runs it again")
 	if nudge < 0 || nudge > retry {
 		t.Errorf("nudge bullet at %d, retry bullet at %d:\n%s", nudge, retry, text)
+	}
+}
+
+func TestEveryStepPromptListsTheProjectMemoryOnlyWhenThereIsSome(t *testing.T) {
+	r := New(t.TempDir())
+	for _, name := range stepTemplates {
+		t.Run(name, func(t *testing.T) {
+			// given
+			fact := "- /repo/.r-loop/memory/20261016-port.md — port 5432 must be free"
+
+			// when
+			without := render(t, r, name, fullVars())
+			withMemory := render(t, r, name, with("Memory", fact))
+
+			// then
+			if strings.Contains(without, "## Project memory") {
+				t.Errorf("memory section without memory:\n%s", without)
+			}
+			if !strings.Contains(withMemory, "\n\n## Project memory\n\nFacts the watchdog kept from earlier runs") || !strings.Contains(withMemory, "they win.\n\n"+fact+"\n") {
+				t.Errorf("memory section missing or malformed:\n%s", withMemory)
+			}
+		})
+	}
+}
+
+func TestTheWatchdogPromptExplainsTheMemoryAndListsItsFacts(t *testing.T) {
+	r := New(t.TempDir())
+	fact := "- [review] /repo/.r-loop/memory/20261016-x.md — ignore the generated mocks"
+
+	without := render(t, r, "watchdog", fullVars())
+	withMemory := render(t, r, "watchdog", with("Memory", fact))
+
+	if !strings.Contains(without, "## Project memory") || !strings.Contains(without, "`remember(scope, description, body?, why)` and `forget(id, why)`") || strings.Contains(without, "The facts kept so far") {
+		t.Errorf("watchdog prompt without memory:\n%s", without)
+	}
+	if !strings.Contains(withMemory, "The facts kept so far:\n\n"+fact+"\n") {
+		t.Errorf("watchdog prompt with memory:\n%s", withMemory)
 	}
 }

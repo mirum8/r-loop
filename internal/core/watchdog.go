@@ -29,6 +29,7 @@ type Watchdog struct {
 	GateTimeout                            time.Duration
 	Sleep                                  func(time.Duration)
 	OnGone                                 func()
+	Memory                                 *MemoryKeeper
 
 	mu           sync.Mutex
 	send         sync.Mutex
@@ -96,7 +97,7 @@ func (d *Watchdog) Start(ctx context.Context) error {
 	if _, err := d.Host.Start(pane, name, d.Provider.Kind, d.Provider.Args); err != nil {
 		return fmt.Errorf("start %s: %w", name, err)
 	}
-	text, _, err := d.Prompts.Render("watchdog", map[string]any{"TodoPath": d.TodoPath, "SpecDir": d.SpecDir, "RunDir": d.RunDir, "Allow": d.Allow, "Dialogs": d.Dialogs, "Unattended": d.Unattended})
+	text, _, err := d.Prompts.Render("watchdog", map[string]any{"TodoPath": d.TodoPath, "SpecDir": d.SpecDir, "RunDir": d.RunDir, "Allow": d.Allow, "Dialogs": d.Dialogs, "Unattended": d.Unattended, "Memory": d.Memory.Index()})
 	if err != nil {
 		return fmt.Errorf("render watchdog: %w", err)
 	}
