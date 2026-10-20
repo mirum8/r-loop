@@ -275,13 +275,7 @@ func blockerText(id string, b Blocker, versions string) string {
 	if b.Evidence != "" {
 		text += "\n\n" + b.Evidence
 	}
-	excerpt := strings.TrimRight(b.Excerpt, " \t\r\n")
-	if len(excerpt) > screenBytes {
-		excerpt = excerpt[len(excerpt)-screenBytes:]
-		for excerpt != "" && !utf8.RuneStart(excerpt[0]) {
-			excerpt = excerpt[1:]
-		}
-	}
+	excerpt := tailBytes(strings.TrimRight(b.Excerpt, " \t\r\n"), screenBytes)
 	if excerpt != "" {
 		text += "\n\n" + excerpt
 	}
@@ -289,6 +283,17 @@ func blockerText(id string, b Blocker, versions string) string {
 		text += "\n\n" + versions
 	}
 	return text
+}
+
+func tailBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	s = s[len(s)-n:]
+	for s != "" && !utf8.RuneStart(s[0]) {
+		s = s[1:]
+	}
+	return s
 }
 
 func (l *RunLoop) versionsLine() string {

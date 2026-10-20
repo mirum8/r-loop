@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	screenLines  = 40
-	screenBytes  = 4096
-	closedInPane = "dialog closed in the pane"
+	screenLines     = 40
+	screenBytes     = 4096
+	gateOutputBytes = 16 << 10
+	closedInPane    = "dialog closed in the pane"
 )
 
 func (l *RunLoop) Blocked(s *Session) bool {

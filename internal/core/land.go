@@ -661,7 +661,11 @@ func (g *LandGate) fix(ctx context.Context, phase Phase, kind StepKind, command,
 	}
 	ref.Vars = StepVars(ref, Plan{}, g.TodoPath, ref.RunDir)
 	ref.Vars["GateCommand"] = command
-	ref.Vars["GateOutput"] = output
+	if len(output) <= gateOutputBytes {
+		ref.Vars["GateOutput"] = output
+	} else {
+		ref.Vars["GateOutput"] = "… earlier output cut; the full log (latest run at its end) is " + g.gateLog(n) + "\n" + tailBytes(output, gateOutputBytes)
+	}
 	ref.Vars["Addendum"] = addendum
 	key := ref.Key
 	if err := g.Store.Append(g.RunID, Record{Kind: RecordStep, At: time.Now(), Step: &key, State: StepQueued}); err != nil {

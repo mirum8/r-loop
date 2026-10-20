@@ -900,6 +900,34 @@ func fixingRunner(e *landEnv, refs *[]core.StepRef) runnerFunc {
 	}
 }
 
+func TestLandGateFixPromptCarriesOnlyTheTailOfALargeGateOutput(t *testing.T) {
+	e := newLandEnv(t)
+	e.phaseWork(1, "feature.txt", "new\n")
+	var refs []core.StepRef
+	g := e.gate()
+	g.FixRounds = 1
+	g.Runner = fixingRunner(e, &refs)
+
+	_, err := g.Land(context.Background(), phaseOne("test -f fix1.txt || { head -c 2000000 /dev/zero | tr '\\0' x; echo; echo last line; exit 1; }"))
+
+	if err != nil {
+		t.Fatalf("Land: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("gate-fix runs = %d, want 1", len(refs))
+	}
+	out, _ := refs[0].Vars["GateOutput"].(string)
+	if len(out) > 20<<10 {
+		t.Errorf("GateOutput is %d bytes, want at most %d", len(out), 20<<10)
+	}
+	if !strings.Contains(out, "last line") {
+		t.Errorf("GateOutput lacks the output's tail: %q", out[max(0, len(out)-200):])
+	}
+	if log := filepath.Join(e.store.Dir("run1"), "phase-1", "gate.log"); !strings.Contains(out, log) {
+		t.Errorf("GateOutput does not name %s: %q", log, out[:min(len(out), 200)])
+	}
+}
+
 func TestLandGateRedFixedByOneGateFixRoundThenLands(t *testing.T) {
 	e := newLandEnv(t)
 	e.phaseWork(1, "feature.txt", "new\n")
