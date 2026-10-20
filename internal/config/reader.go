@@ -84,7 +84,7 @@ type Unattended struct {
 }
 
 type Notify struct {
-	OnHalt, OnWarn, OnDone string
+	OnHalt, OnWarn, OnDone, OnAsk string
 }
 
 type LoopConfig struct {
@@ -137,7 +137,7 @@ var topSchema = schema{
 	"land":       schema{"fixRounds": nil, "gateTimeout": nil, "gateIdle": nil, "fix": roleSchema},
 	"analyze":    schema{"enabled": nil, "timeout": nil},
 	"unattended": schema{"allow": nil},
-	"notify":     schema{"onHalt": nil, "onWarn": nil, "onDone": nil},
+	"notify":     schema{"onHalt": nil, "onWarn": nil, "onDone": nil, "onAsk": nil},
 	"watchdog": schema{
 		"provider": nil, "model": nil, "effort": nil, "allow": nil, "dialogs": nil, "maxRestarts": nil,
 		"blockerTimeout": nil, "remedyWindow": nil, "checkTimeout": nil, "stallGrace": nil, "unblockTimeout": nil, "triageTimeout": nil,
@@ -678,7 +678,7 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 	}{
 		{"watchdog.provider", &w.Provider}, {"watchdog.model", &w.Model}, {"watchdog.effort", &w.Effort},
 		{"intake.provider", &cfg.Intake.Provider}, {"intake.model", &cfg.Intake.Model}, {"intake.effort", &cfg.Intake.Effort},
-		{"notify.onHalt", &cfg.Notify.OnHalt}, {"notify.onWarn", &cfg.Notify.OnWarn}, {"notify.onDone", &cfg.Notify.OnDone},
+		{"notify.onHalt", &cfg.Notify.OnHalt}, {"notify.onWarn", &cfg.Notify.OnWarn}, {"notify.onDone", &cfg.Notify.OnDone}, {"notify.onAsk", &cfg.Notify.OnAsk},
 	} {
 		if *f.dst, err = r.str(f.path); err != nil {
 			return err

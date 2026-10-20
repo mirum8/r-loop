@@ -16,7 +16,7 @@ import (
 )
 
 type Hooks struct {
-	OnHalt, OnWarn, OnDone string
+	OnHalt, OnWarn, OnDone, OnAsk string
 }
 
 type Lander interface {
@@ -2138,6 +2138,18 @@ func (l *RunLoop) fire(hook, status, phase, step, reason string) {
 			l.Face.Emit(Event{At: time.Now(), Kind: "notify-failed", Fields: map[string]string{"hook": hook, "status": status, "reason": err.Error()}})
 		}
 	}()
+}
+
+func (l *RunLoop) WatchdogWaiting(question string) {
+	if question == "" {
+		question = "the watchdog's pane needs you"
+	}
+	l.mu.Lock()
+	if l.runDir == "" {
+		l.runDir = l.Store.Dir(l.RunID)
+	}
+	l.mu.Unlock()
+	l.fire(l.Hooks.OnAsk, "asking", "", "", question)
 }
 
 func (l *RunLoop) waitHooks() {

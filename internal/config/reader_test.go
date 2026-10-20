@@ -1220,3 +1220,17 @@ func TestADiffRowWithRoundsAndNoReviewersNeedsNoReviewTimeoutWhenAnalysisIsOff(t
 		t.Fatalf("docs reviewTimeout = %v", actual)
 	}
 }
+
+func TestTheAskHookIsReadFromTheMachineFile(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "notify:\n  onAsk: say asking\n")
+
+	cfg := d.load(t)
+
+	if cfg.Notify.OnAsk != "say asking" {
+		t.Errorf("onAsk = %q", cfg.Notify.OnAsk)
+	}
+	if got := cfg.Provenance["notify.onAsk"]; !strings.HasSuffix(got, "notify.onAsk") || got == "default" {
+		t.Errorf("provenance = %q", got)
+	}
+}

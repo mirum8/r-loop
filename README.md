@@ -346,9 +346,10 @@ Shell commands run on run events (with `sh -c`, 60 s limit). Empty means off.
 | `onHalt` | The run halts. |
 | `onWarn` | A warning is raised, or a phase is blocked. |
 | `onDone` | Every phase has landed. |
+| `onAsk` | The watchdog waits for you: it asked a question, or its pane is blocked on a dialog. |
 
 The command gets these environment variables: `R_LOOP_RUN`, `R_LOOP_STATUS` (`halted`,
-`finished`, `warning` or `blocked`), `R_LOOP_PHASE`, `R_LOOP_STEP`, `R_LOOP_REASON`,
+`finished`, `warning`, `blocked` or `asking`), `R_LOOP_PHASE`, `R_LOOP_STEP`, `R_LOOP_REASON`,
 `R_LOOP_TODO`, `R_LOOP_REPORT`.
 
 ### `providers.<name>`
@@ -397,6 +398,7 @@ watchdog:
 
 notify:
   onHalt: osascript -e 'display notification "r-loop halted" with title "r-loop"'
+  onAsk: 'osascript -e "display notification \"$R_LOOP_REASON\" with title \"r-loop asks\""'
 ```
 
 ## Prompts

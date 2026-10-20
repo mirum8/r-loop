@@ -29,6 +29,7 @@ type Watchdog struct {
 	GateTimeout                            time.Duration
 	Sleep                                  func(time.Duration)
 	OnGone                                 func()
+	OnWaiting                              func(question string)
 	Memory                                 *MemoryKeeper
 
 	mu           sync.Mutex
@@ -395,7 +396,16 @@ func (d *Watchdog) markWaiting(fields map[string]string, byPrompt bool) error {
 	if was {
 		return nil
 	}
-	return d.emit("watchdog-waiting", fields, func() { d.asking, d.blocked = true, byPrompt })
+	if err := d.emit("watchdog-waiting", fields, func() { d.asking, d.blocked = true, byPrompt }); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	fn := d.OnWaiting
+	d.mu.Unlock()
+	if fn != nil {
+		fn(fields["question"])
+	}
+	return nil
 }
 
 func (d *Watchdog) markResumed(byPrompt bool) error {

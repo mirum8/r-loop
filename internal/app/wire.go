@@ -780,6 +780,7 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	wd := w.Config.Watchdog
 	w.Watch.Dog = w.Dog
 	w.Dog.OnGone = w.Watch.WatchdogGone
+	w.Dog.OnWaiting = w.Loop.WatchdogWaiting
 	w.Watch.PhaseCheck = &core.PhaseCheck{Dog: w.Dog, Repo: w.Loop.Sessions.Repo, Timeout: wd.CheckTimeout, Backlog: w.Plan.Backlog}
 	w.Dog.GateTimeout = wd.CheckTimeout
 	w.Gate.Picker = w.Dog

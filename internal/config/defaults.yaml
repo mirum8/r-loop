@@ -122,3 +122,4 @@ notify:
   onHalt: ""
   onWarn: ""
   onDone: ""
+  onAsk: ""

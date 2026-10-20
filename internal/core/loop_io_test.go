@@ -652,3 +652,35 @@ func TestAPanickingHookIsReportedAndTheRunEnds(t *testing.T) {
 		t.Fatalf("notify failures: %+v", failed)
 	}
 }
+
+func TestTheWatchdogAskingFiresTheAskHookWithTheQuestion(t *testing.T) {
+	r := newLoopRig(t)
+	r.loop.Hooks.OnAsk = "ask-hook"
+
+	r.loop.WatchdogWaiting("which store?")
+	r.loop.WatchdogWaiting("")
+	r.loop.waitHooks()
+
+	if got, want := r.hooks(), []string{"ask-hook asking", "ask-hook asking"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("hooks %v, want %v", got, want)
+	}
+	if got := r.notifier.Fired[0]["R_LOOP_REASON"]; got != "which store?" {
+		t.Errorf("reason = %q", got)
+	}
+	if got := r.notifier.Fired[1]["R_LOOP_REASON"]; got != "the watchdog's pane needs you" {
+		t.Errorf("reason = %q", got)
+	}
+}
+
+func TestAnAskBeforeTheRunStartsPointsTheHookAtThisRunsReport(t *testing.T) {
+	store := &loopStore{dir: t.TempDir()}
+	n := &fakeNotifier{}
+	l := &RunLoop{Store: store, Face: &fakeFace{}, Notifier: n, Hooks: Hooks{OnAsk: "ask-hook"}, RunID: "run-1"}
+
+	l.WatchdogWaiting("which store?")
+	l.waitHooks()
+
+	if got, want := n.Fired[0]["R_LOOP_REPORT"], filepath.Join(store.dir, "report.md"); got != want {
+		t.Errorf("report = %q, want %q", got, want)
+	}
+}

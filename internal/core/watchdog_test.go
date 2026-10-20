@@ -1598,3 +1598,29 @@ func TestPickGateOfAGoneWatchdogFails(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestTheWatchdogStartingToWaitCallsOnWaitingOncePerWait(t *testing.T) {
+	host := &askingHost{blockedFor: 1}
+	host.States = map[string]AgentState{dogName: AgentBlocked}
+	dog := newWatchdog(host, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	dog.Face = &fakeFace{}
+	var asked []string
+	dog.OnWaiting = func(question string) { asked = append(asked, question) }
+
+	if err := dog.AskMaintainer("which store?", nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.AskMaintainer("still which store?", nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.Notify("step started phase-2/implement", false, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{"which store?", ""}; !reflect.DeepEqual(asked, want) {
+		t.Errorf("OnWaiting got %q, want %q", asked, want)
+	}
+}

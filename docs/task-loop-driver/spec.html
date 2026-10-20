@@ -2095,7 +2095,7 @@ a one-off task through <code>/r:task-quick</code> or <code>/r:task-run</code>.</
 
 <div class="adr">
 <h3 id="adr-22">ADR-22 — Completion hooks are one shell command each, and never fail the run</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted · amended 2026-10-20 — <code>notify.onAsk</code> runs when the watchdog starts waiting for the maintainer (an <code>ask_maintainer</code> question, or its pane blocked on a dialog), once per wait, with <code>R_LOOP_STATUS=asking</code> and the question in <code>R_LOOP_REASON</code></p>
 <p><span class="f">Context</span> <em>Be told when a run halts</em> (Part 1). ralphex ships
 Telegram, email, Slack, webhook and script notifiers; each is an integration to maintain, and the
 maintainer already has a terminal manager that can be scripted.</p>
@@ -4606,6 +4606,7 @@ notify:
   onHalt: ""                  # one shell command; run summary in the environment
   onWarn: ""
   onDone: ""
+  onAsk: ""                   # the watchdog waits for you
 </code></pre>
 
 <p>Adding a step is a pipeline entry and a <code>steps</code> row with its own prompt — a
