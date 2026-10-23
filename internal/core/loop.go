@@ -379,6 +379,7 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 				l.noteDesign(ph, last.Dir, false)
 			}
 			l.advance(n, kind.Name)
+			l.closeStepWorkspaces(n, kind.Name)
 			if l.itemSkipped(ph, kind, last.Dir) {
 				l.closeWorkspaces(n, EveryWorkspace)
 				return l.skipCleanup(n)
@@ -412,6 +413,7 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 			l.fire(l.Hooks.OnWarn, "warning", n, kind.Name, out.Warning)
 		}
 		l.advance(n, kind.Name)
+		l.closeStepWorkspaces(n, kind.Name)
 		if kind.Check == designCheck && out.Session != nil {
 			l.noteDesign(ph, out.Session.Dir, true)
 		}

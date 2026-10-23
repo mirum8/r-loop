@@ -39,19 +39,34 @@ func TestALandedPhaseClosesEveryWorkspaceItsStepsOpened(t *testing.T) {
 	if !reflect.DeepEqual(closed, []string{"plan ws-1", "implement ws-2"}) {
 		t.Fatalf("workspace-closed %v", closed)
 	}
+}
+
+func TestAFinishedStepClosesItsWorkspaceBeforeTheNextStepOpens(t *testing.T) {
+	r := newLoopRig(t)
+
+	r.run(RunOptions{Phases: []string{"2"}})
+
 	calls := r.shared.Calls()
-	if land, first := indexOf(calls, "Land 2"), indexOf(calls, "SessionHost.Close ws-1"); land < 0 || first < land {
+	closePlan, closeImplement, land := indexOf(calls, "SessionHost.Close ws-1"), indexOf(calls, "SessionHost.Close ws-2"), indexOf(calls, "Land 2")
+	openImplement := -1
+	for i, c := range calls {
+		if strings.HasPrefix(c, "SessionHost.Open") && i > closePlan {
+			openImplement = i
+			break
+		}
+	}
+	if closePlan < 0 || openImplement < 0 || closeImplement < openImplement || land < closeImplement {
 		t.Fatalf("calls %v", calls)
 	}
 }
 
-func TestABlockedPhaseLeavesItsWorkspacesStanding(t *testing.T) {
+func TestABlockedPhaseClosesItsFinishedStepsButLeavesTheFailedOneStanding(t *testing.T) {
 	r := newLoopRig(t)
 	r.host.behaviour["rloop-p1-implement"] = "fail"
 
 	r.run(RunOptions{Phases: []string{"1"}})
 
-	if got := r.calls("SessionHost.Close "); len(got) != 0 {
+	if got := r.calls("SessionHost.Close "); !reflect.DeepEqual(got, []string{"ws-1"}) {
 		t.Fatalf("closed %v", got)
 	}
 }
@@ -67,7 +82,7 @@ func TestANewAttemptClosesTheEarlierAttemptsWorkspaceOnce(t *testing.T) {
 	if closeOld, open := indexOf(calls, "SessionHost.Close ws-old"), indexOf(calls, "SessionHost.Open"); closeOld < 0 || open < closeOld {
 		t.Fatalf("calls %v", calls)
 	}
-	if got := r.calls("SessionHost.Close "); !reflect.DeepEqual(got, []string{"ws-old", "ws-plan", "ws-1"}) {
+	if got := r.calls("SessionHost.Close "); !reflect.DeepEqual(got, []string{"ws-plan", "ws-old", "ws-1"}) {
 		t.Fatalf("closed %v", got)
 	}
 }

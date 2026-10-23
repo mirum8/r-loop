@@ -2227,8 +2227,12 @@ func TestAFailedSentinelAfterANudgeFailsTheNewAttemptAndKeepsItsWorkspaceOpen(t 
 	assertEqual(t, "exit", code, 1)
 	assertEqual(t, "reason", (*seen)[1].b.Reason, "gave up")
 	assertEqual(t, "actions", (*seen)[1].b.Actions, []string{"retry", "switch", "block", "stop", "continue"})
-	assertEqual(t, "workspace-closed", len(r.events("workspace-closed")), 0)
-	assertEqual(t, "closed", len(r.calls("SessionHost.Close ")), 0)
+	var closed []string
+	for _, ev := range r.events("workspace-closed") {
+		closed = append(closed, ev.Step)
+	}
+	assertEqual(t, "workspace-closed", closed, []string{"plan"})
+	assertEqual(t, "closed", len(r.calls("SessionHost.Close ")), 1)
 }
 
 func TestANudgeAtTheRestartLimitIsRefusedAndBlocksTheStalledPhase(t *testing.T) {

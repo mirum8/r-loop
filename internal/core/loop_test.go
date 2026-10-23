@@ -916,7 +916,7 @@ func TestCleanRunLandsEveryUntickedPhaseInOrder(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, want 0", code)
 	}
-	wantPhase := []string{"phase-start", "phase-state", "assumption", "phase-state", "phase-state", "landed", "workspace-closed", "workspace-closed", "worktree-removed"}
+	wantPhase := []string{"phase-start", "phase-state", "workspace-closed", "assumption", "phase-state", "workspace-closed", "phase-state", "landed", "worktree-removed"}
 	var want []string
 	for range 3 {
 		want = append(want, wantPhase...)

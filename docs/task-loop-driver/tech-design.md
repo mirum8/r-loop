@@ -402,10 +402,11 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   Reviewing(s, round)}` — `Reviewing` a review round's find half; an observer that also has
   `Fixing(s, round)` is told when the fix half starts — and returns on a sentinel, a gone agent, the
   backstop, a stall unanswered after its nudge (`failed(stalled: no response to nudge)`, ADR-62) or
-  the context ending (`failed(interrupted: <ctx error>)`). `Stop` is `Interrupt`. A step's workspace
-  stays standing while its phase is blocked or aborted, for inspection; the loop closes it when a
-  later attempt of the same step starts (resume or watchdog restart), and closes every workspace
-  the phase's steps opened once the phase lands or its item is skipped. Each close appends a
+  the context ending (`failed(interrupted: <ctx error>)`). `Stop` is `Interrupt`. The loop closes
+  a step's workspaces as soon as the step finishes `ok`, before the next step opens. A failed step's
+  workspace stays standing while its phase is blocked or aborted, for inspection; the loop closes it
+  when a later attempt of the same step starts (resume or watchdog restart), and closes every
+  workspace the phase's steps opened once the phase lands or its item is skipped. Each close appends a
   `workspace-closed` event before the `Close` call, so no workspace is closed twice; a failed close
   is a warning, never a failure. After a land, and after its workspaces close, the loop appends `worktree-removed`
   and runs `RemoveWorktree(.r-loop/wt/phase-<N>)` then `DeleteBranch(r-loop/phase-<N>)`

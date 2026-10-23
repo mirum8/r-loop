@@ -41,6 +41,10 @@ func (l *RunLoop) closeWorkspaces(phase string, match func(kind string, attempt 
 	}
 }
 
+func (l *RunLoop) closeStepWorkspaces(phase, step string) {
+	l.closeWorkspaces(phase, func(kind string, _ int) bool { return kind == step })
+}
+
 func OpenWorkspaces(st RunState, phase string, match func(kind string, attempt int) bool) []StepWorkspace {
 	closed := map[string]bool{}
 	for _, ev := range st.Events {
