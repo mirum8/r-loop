@@ -1490,9 +1490,10 @@ change is visible as an edit to one small type.</figcaption>
   <li><strong>In-process orchestration</strong> — what the pack does today with
       <code>Workflow</code> scripts. Ruled out by <em>portability across agents</em>: the mechanism
       exists only inside one vendor's CLI (<a href="#adr-4">ADR-4</a>).</li>
-  <li><strong>Embedding an agent SDK as a library</strong> — ruled out by <em>determinism</em>, and
-      by cost: it puts the loop back inside a model's context, and the subscription rules make
-      non-interactive API-billed runs a separate pool.</li>
+  <li><strong>Embedding an agent SDK as a library</strong> — ruled out by <em>determinism</em>:
+      it puts the loop back inside a model's context. Cost is not the reason: the separate credit
+      pool for non-interactive runs announced for 2026-06-15 was withdrawn, and <code>claude -p</code>
+      still draws on the subscription's limits.</li>
   <li><strong>A daemon with an HTTP API and a dashboard</strong> — ruled out by proportionality.
       One maintainer on one machine, and herdr already renders every session.</li>
   <li><strong>A headless driver with an attachable client</strong> — the shape that would let a run
