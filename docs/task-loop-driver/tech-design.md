@@ -1745,7 +1745,7 @@ display-only line, and the TUI can be read back with keys that change nothing.
   `pgdn` and `space` scroll the end report a page (the rows it is given), clamped to its last page,
   and do nothing on a live run or with details open. While the stop prompt is open every key goes to
   it. The `ctrl+c` stop prompt and the quit keys are otherwise unchanged.
-- **Details pane** — replaces the panel while open: `PHASE <n> · <title>`, its state, the full
+- **Details pane** — replaces the panel while open: `PHASE <n> · <title>`, its state (`· live · <step>` for the live phase), the full
   summary wrapped to the panel width; `started`, duration, commit and `+<a> −<d> · <n> files`;
   review rounds with real and fixed findings, restarts and nudges, the blocker; the plan path
   `.task-plans/phase-<N>-*.md` from `core.PhasePlanPath(n, title)` (the loop's own slug rule, exported
@@ -1764,7 +1764,8 @@ display-only line, and the TUI can be read back with keys that change nothing.
   human touches `human` events, both kept through `replay()`. The report gets the panel's rows less
   the watchdog line and up to three `EVENTS` lines. The status bar reads `<status> · ↑↓ select ·
   enter details · pgup/pgdn scroll · q quit · report: <path>` (no status under the halt banner),
-  dropping `pgup/pgdn scroll`, `enter details`, `↑↓ select`, then cutting the path from its left.
+  first cutting the path from its left down to 24 cells, then dropping `pgup/pgdn scroll`,
+  `enter details`, `↑↓ select`, then cutting the path further.
 - **Plain face** — `phase-summary` prints `<hh:mm:ss>  phase <N>  summary  <text>`, `narration` prints
   `<hh:mm:ss>  watchdog: <text>`, and `Close` prints `run report: <path>` after `report:`, as it prints
   `diagnosis:`. The TUI face logs `run report: <file>` (`no run report: <reason>` on a

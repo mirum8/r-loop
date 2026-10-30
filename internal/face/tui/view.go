@@ -13,13 +13,14 @@ import (
 )
 
 const (
-	limitHot   = 90
-	margin     = 2
-	railWidth  = 24
-	stackBelow = 80
-	sepWidth   = 5
-	endFeed    = 3
-	weekly     = "7d"
+	limitHot      = 90
+	margin        = 2
+	railWidth     = 24
+	stackBelow    = 80
+	sepWidth      = 5
+	endFeed       = 3
+	minReportPath = 24
+	weekly        = "7d"
 )
 
 var glyphs = map[core.PhaseState]string{
@@ -602,10 +603,11 @@ func (m Model) hint(status []string, w int) string {
 		if full := line + m.Report; lipgloss.Width(full) <= w {
 			return full
 		}
-		if n > 0 {
+		keep := w - lipgloss.Width(line) - 1
+		if n > 0 && keep < minReportPath {
 			continue
 		}
-		if keep := w - lipgloss.Width(line) - 1; keep > 0 {
+		if keep > 0 {
 			return line + "…" + ansi.TruncateLeft(m.Report, lipgloss.Width(m.Report)-keep, "")
 		}
 		return strings.TrimSuffix(line, " · report: ")
@@ -719,7 +721,14 @@ func (m Model) detailsPane(w int) []string {
 	add := func(label, value string, style lipgloss.Style) {
 		lines = append(lines, m.labeled(label, value, style, w)...)
 	}
-	add("state", string(r.State), m.rowStyle(r))
+	state := string(r.State)
+	if r.ID == m.Current {
+		state += " · live"
+		if m.Live != nil {
+			state += " · " + m.Live.Kind
+		}
+	}
+	add("state", state, m.rowStyle(r))
 	if p.summary != "" {
 		lines = append(lines, wrap(th.Text, p.summary, w)...)
 	}

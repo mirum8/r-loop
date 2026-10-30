@@ -831,7 +831,7 @@ func TestTheQuitKeyStaysVisibleWhenTheReportPathIsLong(t *testing.T) {
 					footer = l
 				}
 			}
-			if !strings.Contains(footer, "q quit · report: …") || !strings.HasSuffix(strings.TrimRight(footer, " "), "20260930-142940/report.md") || strings.Contains(footer, "select") {
+			if !strings.Contains(footer, "q quit · report: …") || !strings.HasSuffix(strings.TrimRight(footer, " "), "20260930-142940/report.md") || !strings.Contains(footer, "↑↓ select") {
 				t.Fatalf("footer %q in view:\n%s", footer, view)
 			}
 		})
@@ -1649,6 +1649,14 @@ func TestEnterOpensTheDetailsAndEnterOrEscClosesThem(t *testing.T) {
 	}
 }
 
+func TestTheDetailsOfTheLivePhaseSayItIsLive(t *testing.T) {
+	m, _ := press(newModel(recorded()), "down", "enter")
+
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "state      planned · live · implement") {
+		t.Fatalf("live state missing:\n%s", view)
+	}
+}
+
 func TestEscWithDetailsOpenClosesThemRatherThanQuittingAnEndedRun(t *testing.T) {
 	m := newModel(recorded()).Apply(core.Event{At: at(90), Kind: "finished"})
 	m, _ = press(m, "down", "enter")
@@ -1857,9 +1865,9 @@ func TestTheEndedStatusBarDropsItsHintsInOrder(t *testing.T) {
 		want  string
 	}{
 		{140, "finished · ↑↓ select · enter details · pgup/pgdn scroll · q quit · report: /repo/.r-loop/runs/20260918-140000/report.md"},
-		{110, "finished · ↑↓ select · enter details · q quit · report: /repo/.r-loop/runs/20260918-140000/report.md"},
-		{95, "finished · ↑↓ select · q quit · report: /repo/.r-loop/runs/20260918-140000/report.md"},
-		{80, "finished · q quit · report: /repo/.r-loop/runs/20260918-140000/report.md"},
+		{110, "finished · ↑↓ select · enter details · pgup/pgdn scroll · q quit · report: …runs/20260918-140000/report.md"},
+		{95, "finished · ↑↓ select · enter details · q quit · report: …oop/runs/20260918-140000/report.md"},
+		{80, "finished · ↑↓ select · q quit · report: …loop/runs/20260918-140000/report.md"},
 		{60, "finished · q quit · report: …s/20260918-140000/report.md"},
 	} {
 		m.Width = tc.width

@@ -170,9 +170,9 @@ changes the run, answers or consents, and amber keeps its one meaning.
   `pgup`, `pgdn` and `space` scroll it a page; the halt banner stays above it, unscrolled.
 - **Status bar hint** — once the run has ended it reads `<status> · ↑↓ select · enter details ·
   pgup/pgdn scroll · q quit · report: <path>` (no status word under the halt banner), dim on
-  `surface-raised`; a live run shows no hint. When it does not fit, at 80 columns or
-  less, parts drop in this order: `pgup/pgdn scroll`, `enter details`, `↑↓ select`; then the report
-  path is cut from its left with `…`. `q quit` never drops.
+  `surface-raised`; a live run shows no hint. When it does not fit, the report path is
+  cut from its left with `…` first, down to 24 cells; past that, parts drop in this order:
+  `pgup/pgdn scroll`, `enter details`, `↑↓ select`, and the path is cut further. `q quit` never drops.
 
 ## Colors
 
