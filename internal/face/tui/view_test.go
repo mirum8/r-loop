@@ -29,7 +29,7 @@ func frame(t *testing.T, width, height int) string {
 	m.Report = "/repo/.r-loop/runs/20260918-140000/report.md"
 	next, _ := m.Update(tickMsg(at(43)))
 	m = next.(Model)
-	next, _ = m.Update(usageMsg(limits(42, 3)[:1]))
+	next, _ = m.Update(usageMsg(limits(42, 3)))
 	m = next.(Model)
 	next, _ = m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	return next.(Model).View()
@@ -726,5 +726,113 @@ func TestTheRecordedRunFitsEachSize(t *testing.T) {
 				t.Errorf("%dx%d lacks %q:\n%s", size[0], size[1], want, ansi.Strip(view))
 			}
 		}
+	}
+}
+
+func endedRun(t *testing.T, m Model) Model {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "run-report.md")
+	text := "## Summary\n\nThe run scaffolded the module and built the layered config reader with provenance per key; the state store waits on a decision about the database.\n\n## Problems\n\n- phase 3 blocked: the gate needs a database that is not running on this host\n\n## Follow-ups\n\n- start the database and run r-loop resume\n"
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.Report = "/repo/.r-loop/runs/20260918-140000/report.md"
+	events := recorded()
+	events = append(events[:len(events)-1],
+		step(50, 2, "implement", "ok", "codex", "gpt-5", "medium", "ws-4"),
+		core.Event{At: at(51), Kind: "review-round", Phase: "2", Step: "implement", Fields: map[string]string{"round": "1", "attempt": "1"}},
+		core.Event{At: at(52), Kind: "finding", Phase: "2", Step: "implement", Fields: map[string]string{"round": "1", "verdict": "real", "fixed": "true", "severity": "P2"}},
+		phaseState(55, 2, "landed"),
+		core.Event{At: at(55), Kind: "landed", Phase: "2", Fields: map[string]string{"phase": "2", "merge": "def5678abc", "gateSkipped": "false", "added": "210", "deleted": "40", "files": "6"}},
+		core.Event{At: at(56), Kind: "phase-start", Phase: "3", Fields: map[string]string{"phase": "3"}},
+		core.Event{At: at(58), Kind: "phase-blocked", Phase: "3", Fields: map[string]string{"phase": "3", "reason": "needs a database"}},
+		core.Event{At: at(90), Kind: "finished"},
+		core.Event{At: at(91), Kind: core.EventRunReport, Fields: map[string]string{"path": path}},
+	)
+	for _, ev := range events {
+		m = m.Apply(ev)
+	}
+	return m
+}
+
+func detailsOpen(m Model) Model {
+	m, _ = press(m, "down", "up", "enter")
+	return m
+}
+
+func sized(m Model, width, height int) Model {
+	m.Width, m.Height = width, height
+	m.Now = at(43)
+	return m
+}
+
+func TestEndFrameAt120x40(t *testing.T) {
+	got := sized(endedRun(t, newModel(nil)), 120, 40).View()
+
+	fits(t, got, 120, 40)
+	golden(t, "end-120x40.golden", got)
+}
+
+func TestDetailsFrameAt120x40(t *testing.T) {
+	events := recorded()
+	events = append(events[:5:5], append([]core.Event{
+		{At: at(5), Kind: "phase-summary", Phase: "1", Step: "plan", Fields: map[string]string{"phase": "1", "text": "Scaffold the Go module with the hexagonal core, one adapter package per port and a boundary test that fails on any adapter import from core."}},
+		{At: at(15), Kind: "review-round", Phase: "1", Step: "implement", Fields: map[string]string{"round": "1", "attempt": "1"}},
+		{At: at(16), Kind: "finding", Phase: "1", Step: "implement", Fields: map[string]string{"round": "1", "verdict": "real", "fixed": "true", "severity": "P2"}},
+		{At: at(16), Kind: "finding", Phase: "1", Step: "implement", Fields: map[string]string{"round": "1", "verdict": "real", "fixed": "true", "severity": "P1"}},
+		{At: at(17), Kind: "review-round", Phase: "1", Step: "implement", Fields: map[string]string{"round": "2", "attempt": "1"}},
+		{At: at(18), Kind: "nudge", Phase: "1", Step: "implement"},
+	}, events[5:]...)...)
+
+	got := sized(detailsOpen(newModel(events)), 120, 40).View()
+
+	fits(t, got, 120, 40)
+	golden(t, "details-120x40.golden", got)
+}
+
+func TestTheEndAndDetailsStatesFitEachSize(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {70, 30}, {120, 40}} {
+		for name, m := range map[string]Model{
+			"end":          endedRun(t, newModel(nil)),
+			"end details":  detailsOpen(endedRun(t, newModel(nil))),
+			"live details": detailsOpen(newModel(recorded())),
+		} {
+			m = sized(m, size[0], size[1])
+			m.Limits = limits(42, 3)
+			view := m.View()
+			fits(t, view, size[0], size[1])
+			if !strings.Contains(ansi.Strip(view), "q quit") && strings.HasPrefix(name, "end") {
+				t.Errorf("%s %dx%d lacks q quit:\n%s", name, size[0], size[1], ansi.Strip(view))
+			}
+		}
+	}
+}
+
+func TestTheSelectedRowIsOnPrimaryAndTheEndAndDetailsHaveNoAmber(t *testing.T) {
+	for name, m := range map[string]Model{
+		"end":     endedRun(t, coloured(false)),
+		"details": detailsOpen(coloured(false).Apply(core.Event{At: at(2), Kind: "phase-start", Phase: "2"})),
+	} {
+		m.Width, m.Height = 120, 40
+		m.Feed = slices.DeleteFunc(slices.Clone(m.Feed), func(e Entry) bool { return e.Tone == toneWarn })
+		view := m.View()
+		if regexp.MustCompile(`\x1b\[38;2;224;16[34];88`).MatchString(view) {
+			t.Errorf("%s has amber: %q", name, view)
+		}
+		if name == "details" && !regexp.MustCompile(`\x1b\[[0-9;]*48;2;110;159;19[5-7][0-9;]*m·  1 scaffold`).MatchString(view) {
+			t.Errorf("selected row is not on primary: %q", view)
+		}
+	}
+	m, _ := press(coloured(false).Apply(core.Event{At: at(2), Kind: "phase-start", Phase: "2"}), "down")
+	if !regexp.MustCompile(`\x1b\[1;[0-9;]*48;2;110;159;19[5-7][0-9;]*m·  2 config reader`).MatchString(m.View()) {
+		t.Errorf("the selected live row is not bold on primary: %q", m.View())
+	}
+}
+
+func TestNoColorDrawsTheSelectedRowReversed(t *testing.T) {
+	m, _ := press(coloured(true), "down")
+
+	if view := m.View(); !strings.Contains(view, "\x1b[7m·  1 scaffold") {
+		t.Fatalf("view %q", view)
 	}
 }

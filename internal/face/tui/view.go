@@ -17,6 +17,9 @@ const (
 	margin     = 2
 	railWidth  = 24
 	stackBelow = 80
+	sepWidth   = 5
+	endFeed    = 3
+	weekly     = "7d"
 )
 
 var glyphs = map[core.PhaseState]string{
@@ -33,14 +36,14 @@ func (m Model) View() string {
 	lines := []string{m.header(w), ""}
 	rail := m.rail()
 	footer := m.footer(w)
+	pw, room := m.panelSize()
 	if m.Width < stackBelow {
 		lines = append(lines, rail...)
 		lines = append(lines, "")
-		lines = append(lines, m.panel(w, m.Height-4-len(rail)-len(footer))...)
+		lines = append(lines, m.panel(pw, room)...)
 	} else {
 		sep := "  " + th.Border.Render("│") + "  "
-		pw := w - railWidth - lipgloss.Width(sep)
-		panel := m.panel(pw, m.Height-3-len(footer))
+		panel := m.panel(pw, room)
 		for i := range max(len(rail), len(panel)) {
 			left, right := strings.Repeat(" ", railWidth), ""
 			if i < len(rail) {
@@ -63,11 +66,19 @@ func (m Model) View() string {
 	return strings.Join(lines, "\n")
 }
 
+func (m Model) panelSize() (int, int) {
+	w := m.Width - 2*margin
+	footer := len(m.footer(w))
+	if m.Width < stackBelow {
+		return w, m.Height - 5 - len(m.Phases) - footer
+	}
+	return w - railWidth - sepWidth, m.Height - 3 - footer
+}
+
 func (m Model) header(w int) string {
 	th := m.theme
 	left := fmt.Sprintf("r-loop  %s  %s", m.RunID, m.Todo)
-	right := fmt.Sprintf("started %s · %s", m.Started.Format("15:04"), m.clock().Sub(m.Started).Truncate(time.Second))
-	eta := m.eta()
+	started := fmt.Sprintf("started %s · %s", m.Started.Format("15:04"), m.clock().Sub(m.Started).Truncate(time.Second))
 	dog, dogStyle := "", th.Header
 	switch {
 	case m.DogGone:
@@ -77,17 +88,22 @@ func (m Model) header(w int) string {
 	case m.RunID != "" && m.Status == "":
 		dog = "watchdog live"
 	}
-	if eta != "" {
-		_, all := m.limits(w)
-		if w-lipgloss.Width(left)-all-lipgloss.Width(dog+" · "+eta+" · "+right) >= 2 {
-			right = eta + " · " + right
+	sep := ""
+	if dog != "" {
+		sep = " · "
+	}
+	right := ""
+	for _, r := range []string{m.eta() + " · " + started, started} {
+		if strings.HasPrefix(r, " · ") {
+			continue
+		}
+		if w-lipgloss.Width(left)-lipgloss.Width(dog+sep+r) >= 2 {
+			right = sep + r
+			break
 		}
 	}
-	if dog != "" {
-		right = " · " + right
-		if w-lipgloss.Width(left)-lipgloss.Width(dog+right) < 2 {
-			right = ""
-		}
+	if right == "" && dog == "" {
+		right = started
 	}
 	gap := w - lipgloss.Width(left) - lipgloss.Width(dog+right)
 	if gap < 2 {
@@ -112,13 +128,21 @@ func (m Model) limits(room int) (string, int) {
 		b.WriteString(th.Header.Render(l.Provider))
 		plain := len(l.Provider)
 		for _, win := range l.Windows {
-			style := th.Header
-			if win.Percent >= limitHot {
+			style, text := th.Header, fmt.Sprintf("%.0f%%", win.Percent)
+			switch {
+			case win.Percent >= limitHot:
 				style = th.HeaderFailed
+				if win.Label != weekly {
+					text = win.Label + " " + text
+				}
+			case win.Label != weekly:
+				continue
 			}
-			text := fmt.Sprintf("%s %.0f%%", win.Label, win.Percent)
 			b.WriteString(th.Header.Render(" ") + style.Render(text))
 			plain += 1 + lipgloss.Width(text)
+		}
+		if plain == len(l.Provider) {
+			continue
 		}
 		b.WriteString(th.Header.Render(" · "))
 		plain += lipgloss.Width(" · ")
@@ -144,27 +168,44 @@ func (m Model) rail() []string {
 	}
 	lines := []string{fill(th.Label, fmt.Sprintf("%s %d/%d", noun, landed, len(m.Phases)), railWidth)}
 	for _, r := range m.Phases {
-		style := th.Text
-		switch {
-		case r.ID == m.Current:
-			style = th.Live
-		case r.State == core.PhaseBlocked:
-			style = th.Failed
-		case r.State == core.PhaseLanded:
-			style = th.Landed
-		case r.State == core.PhaseUnticked:
-			style = th.Idle
+		style := m.rowStyle(r)
+		if r.ID == m.selected {
+			style = th.Selected.Bold(r.ID == m.Current)
 		}
 		lines = append(lines, fill(style, fmt.Sprintf("%s %2s %s", glyphs[r.State], r.ID, r.Title), railWidth))
 	}
 	return lines
 }
 
+func (m Model) rowStyle(r Row) lipgloss.Style {
+	th := m.theme
+	switch {
+	case r.ID == m.Current:
+		return th.Live
+	case r.State == core.PhaseBlocked:
+		return th.Failed
+	case r.State == core.PhaseLanded:
+		return th.Landed
+	case r.State == core.PhaseUnticked:
+		return th.Idle
+	}
+	return th.Text
+}
+
 func (m Model) panel(w, room int) []string {
 	th := m.theme
+	if m.details {
+		if lines := m.detailsPane(w); lines != nil {
+			return lines[:min(len(lines), max(1, room))]
+		}
+	}
 	var lines []string
 	add := func(style lipgloss.Style, s string) { lines = append(lines, style.Render(ansi.Truncate(s, w, "…"))) }
-	if m.checking != "" {
+	if m.Status != "" {
+		report, window := m.endReport(w), m.reportWindow(room)
+		from := min(m.scroll, max(0, len(report)-window))
+		lines = append(lines, report[from:min(len(report), from+window)]...)
+	} else if m.checking != "" {
 		add(th.Label, fmt.Sprintf("phase %s · watchdog checking the plan · %s", m.checking, m.clock().Sub(m.checkFrom).Truncate(time.Second)))
 	} else if m.landing != "" {
 		add(th.Label, fmt.Sprintf("phase %s · landing · %s · %s", m.landing, m.landStage, m.clock().Sub(m.landFrom).Truncate(time.Second)))
@@ -203,6 +244,9 @@ func (m Model) panel(w, room int) []string {
 		add(th.Label, "no step running")
 	}
 	if m.narration != "" {
+		if m.Status != "" && !m.details {
+			lines = append(lines, "")
+		}
 		add(th.Idle, field("watchdog", m.narration+" · "+age(m.clock().Sub(m.narratedAt))))
 	}
 	if m.Live != nil || m.checking != "" {
@@ -538,17 +582,199 @@ func (m Model) footer(w int) []string {
 		if m.Resume != "" {
 			banner += " · resume: " + m.Resume
 		}
-		return []string{fill(th.Halt, banner, w), fill(th.Status, "q quit"+m.report(), w)}
+		return []string{fill(th.Halt, banner, w), fill(th.Status, m.hint(nil, w), w)}
 	default:
-		return []string{fill(th.Status, m.Status+" · q quit"+m.report(), w)}
+		return []string{fill(th.Status, m.hint([]string{m.Status}, w), w)}
 	}
 }
 
-func (m Model) report() string {
-	if m.Report == "" {
-		return ""
+func (m Model) hint(status []string, w int) string {
+	keys := []string{"↑↓ select", "enter details", "pgup/pgdn scroll"}
+	for n := len(keys); ; n-- {
+		line := strings.Join(slices.Concat(status, keys[:n], []string{"q quit"}), " · ")
+		if m.Report == "" {
+			if lipgloss.Width(line) <= w || n == 0 {
+				return line
+			}
+			continue
+		}
+		line += " · report: "
+		if full := line + m.Report; lipgloss.Width(full) <= w {
+			return full
+		}
+		if n > 0 {
+			continue
+		}
+		if keep := w - lipgloss.Width(line) - 1; keep > 0 {
+			return line + "…" + ansi.TruncateLeft(m.Report, lipgloss.Width(m.Report)-keep, "")
+		}
+		return strings.TrimSuffix(line, " · report: ")
 	}
-	return " · report: " + m.Report
+}
+
+func (m Model) reportWindow(room int) int {
+	tail := 2 + max(1, min(len(m.Feed), endFeed))
+	if m.narration != "" {
+		tail += 2
+	}
+	return max(1, room-tail)
+}
+
+func (m Model) endReport(w int) []string {
+	th := m.theme
+	var lines []string
+	add := func(label, value string) { lines = append(lines, m.labeled(label, value, th.Text, w)...) }
+	landed, blocked, left := 0, 0, 0
+	for _, r := range m.Phases {
+		switch r.State {
+		case core.PhaseLanded:
+			landed++
+		case core.PhaseBlocked:
+			blocked++
+		default:
+			left++
+		}
+	}
+	var sum phaseInfo
+	for _, p := range m.info {
+		sum.added, sum.deleted, sum.files = sum.added+p.added, sum.deleted+p.deleted, sum.files+p.files
+		sum.rounds, sum.fixed = sum.rounds+p.rounds, sum.fixed+p.fixed
+		sum.restarts, sum.nudges = sum.restarts+p.restarts, sum.nudges+p.nudges
+	}
+	noun := "phases"
+	if m.Backlog {
+		noun = "items"
+	}
+	add(noun, fmt.Sprintf("%d landed · %d blocked · %d left", landed, blocked, left))
+	add("time", minutes(m.clock().Sub(m.Started)))
+	add("diff", fmt.Sprintf("+%d −%d · %s", sum.added, sum.deleted, core.Plural(sum.files, "file")))
+	add("review", fmt.Sprintf("%s · %d fixed", core.Plural(sum.rounds, "round"), sum.fixed))
+	add("restarts", fmt.Sprintf("%d · nudges %d", sum.restarts, sum.nudges))
+	add("questions", fmt.Sprintf("%d · human touches %d", m.asked, m.touches))
+	var done []string
+	for _, r := range m.Phases {
+		p := m.info[r.ID]
+		if p.sha == "" {
+			continue
+		}
+		parts := []string{r.ID + " " + r.Title}
+		if !p.started.IsZero() && !p.landedAt.Before(p.started) {
+			parts = append(parts, minutes(p.landedAt.Sub(p.started)))
+		}
+		parts = append(parts, fmt.Sprintf("+%d −%d", p.added, p.deleted), short(p.sha))
+		done = append(done, ansi.Truncate(th.Landed.Render("✓")+th.Idle.Render(" "+strings.Join(parts, " · ")), w, "…"))
+	}
+	if len(done) > 0 {
+		lines = append(append(lines, ""), done...)
+	}
+	switch {
+	case m.story != "":
+		lines = append(append(lines, ""), m.storyLines(w)...)
+	case m.storyGone != "":
+		lines = append(append(lines, ""), wrap(th.Idle, m.storyGone, w)...)
+	case !m.closed && !m.Aborted && !m.DogGone:
+		lines = append(lines, "", th.Idle.Render(ansi.Truncate("watchdog is writing the summary…", w, "…")))
+	}
+	return lines
+}
+
+func (m Model) storyLines(w int) []string {
+	th := m.theme
+	var lines []string
+	heading := false
+	for _, raw := range strings.Split(m.story, "\n") {
+		line := strings.TrimSpace(core.Printable(raw))
+		title := strings.TrimLeft(line, "#")
+		switch {
+		case len(title) < len(line) && (title == "" || title[0] == ' '):
+			if len(lines) > 0 && lines[len(lines)-1] != "" {
+				lines = append(lines, "")
+			}
+			lines = append(lines, th.Label.Render(ansi.Truncate(strings.ToUpper(strings.TrimSpace(title)), w, "…")))
+			heading = true
+			continue
+		case line == "":
+			if len(lines) > 0 && lines[len(lines)-1] != "" && !heading {
+				lines = append(lines, "")
+			}
+		default:
+			lines = append(lines, wrap(th.Text, line, w)...)
+		}
+		heading = false
+	}
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+func (m Model) detailsPane(w int) []string {
+	i := slices.IndexFunc(m.Phases, func(r Row) bool { return r.ID == m.selected })
+	if i < 0 {
+		return nil
+	}
+	th := m.theme
+	r, p := m.Phases[i], m.info[m.Phases[i].ID]
+	lines := []string{th.Text.Render(ansi.Truncate(fmt.Sprintf("PHASE %s · %s", r.ID, r.Title), w, "…"))}
+	add := func(label, value string, style lipgloss.Style) {
+		lines = append(lines, m.labeled(label, value, style, w)...)
+	}
+	add("state", string(r.State), m.rowStyle(r))
+	if p.summary != "" {
+		lines = append(lines, wrap(th.Text, p.summary, w)...)
+	}
+	if !p.started.IsZero() {
+		started := p.started.Format("15:04")
+		switch {
+		case !p.landedAt.IsZero() && !p.landedAt.Before(p.started):
+			started += " · " + minutes(p.landedAt.Sub(p.started))
+		case r.ID == m.Current:
+			started += " · " + minutes(m.clock().Sub(p.started))
+		}
+		add("started", started, th.Text)
+	}
+	if p.sha != "" {
+		add("commit", fmt.Sprintf("%s · +%d −%d · %s", short(p.sha), p.added, p.deleted, core.Plural(p.files, "file")), th.Text)
+	}
+	if p.rounds > 0 || p.realFindings > 0 {
+		add("review", fmt.Sprintf("%s · %d real · %d fixed", core.Plural(p.rounds, "round"), p.realFindings, p.fixed), th.Text)
+	}
+	if p.restarts > 0 || p.nudges > 0 {
+		add("restarts", fmt.Sprintf("%d · nudges %d", p.restarts, p.nudges), th.Text)
+	}
+	if p.blocker != "" && (r.State == core.PhaseBlocked || slices.ContainsFunc(m.Questions, func(q Question) bool { return q.Blocker && q.Phase == r.ID })) {
+		add("blocked", p.blocker, th.Failed)
+	}
+	if r.State != core.PhaseUnticked || !p.started.IsZero() {
+		add("plan", core.PhasePlanPath(r.ID, r.Title), th.Idle)
+	}
+	return lines
+}
+
+func (m Model) labeled(label, value string, style lipgloss.Style, w int) []string {
+	const indent = 11
+	head := m.theme.Label.Render(fmt.Sprintf("%-10s ", label))
+	if w <= indent {
+		return []string{ansi.Truncate(head+style.Render(value), w, "…")}
+	}
+	body := wrap(style, value, w-indent)
+	lines := []string{head + body[0]}
+	for _, l := range body[1:] {
+		lines = append(lines, strings.Repeat(" ", indent)+l)
+	}
+	return lines
+}
+
+func wrap(style lipgloss.Style, text string, w int) []string {
+	var lines []string
+	for _, l := range strings.Split(ansi.Wrap(text, max(1, w), ""), "\n") {
+		lines = append(lines, style.Render(strings.TrimRight(l, " ")))
+	}
+	return lines
+}
+
+func short(sha string) string {
+	return sha[:min(7, len(sha))]
 }
 
 func field(label, value string) string {

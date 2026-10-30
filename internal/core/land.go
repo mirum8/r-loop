@@ -556,7 +556,7 @@ func (g *LandGate) mergeMessage(phase Phase) (string, error) {
 }
 
 func (g *LandGate) itemCommand(phase Phase) (string, error) {
-	rel := phasePlanPath(phase.ID, phase.Title)
+	rel := PhasePlanPath(phase.ID, phase.Title)
 	data, err := os.ReadFile(filepath.Join(g.Repo.Root(), rel))
 	if err != nil {
 		return "", fmt.Errorf("%w: no plan names the item's tests: %v", ErrNoGate, err)

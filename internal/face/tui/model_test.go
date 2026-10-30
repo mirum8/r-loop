@@ -3,7 +3,10 @@ package tui
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -13,6 +16,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"r-loop/internal/core"
 	"r-loop/internal/face/plain"
@@ -196,6 +200,9 @@ func TestPlainFaceAndTUIModelShowTheSameRun(t *testing.T) {
 	}
 	if len(want.states) != 2 {
 		t.Fatalf("plain states %v", want.states)
+	}
+	if !strings.Contains(out.String(), "landed  added=120 deleted=30 files=8 ") || !strings.HasSuffix(m.Feed[0].Text, "phase 1: landed abc1234 · +120 −30 · 8 files") {
+		t.Errorf("landed stats differ: plain\n%s\ntui %+v", out.String(), m.Feed)
 	}
 	live := strings.Join([]string{m.Live.Phase, m.Live.Kind, m.Live.State, m.Live.Provider}, " ")
 	if live != want.live || live != "2 implement waiting-input codex" {
@@ -818,8 +825,14 @@ func TestTheQuitKeyStaysVisibleWhenTheReportPathIsLong(t *testing.T) {
 			m = m.Apply(core.Event{At: at(90), Kind: kind, Fields: map[string]string{"resume": "r-loop resume"}})
 
 			view := m.View()
-			if !strings.Contains(view, "q quit") || !strings.Contains(view, "report: /private/var") {
-				t.Fatalf("view:\n%s", view)
+			footer := ""
+			for _, l := range strings.Split(view, "\n") {
+				if strings.Contains(l, "q quit") {
+					footer = l
+				}
+			}
+			if !strings.Contains(footer, "q quit · report: …") || !strings.HasSuffix(strings.TrimRight(footer, " "), "20260930-142940/report.md") || strings.Contains(footer, "select") {
+				t.Fatalf("footer %q in view:\n%s", footer, view)
 			}
 		})
 	}
@@ -833,12 +846,15 @@ func TestAFinishedRunStopsTheClocks(t *testing.T) {
 	next, _ := m.Update(tickMsg(at(120)))
 
 	view := next.(Model).View()
-	for _, want := range []string{"started 14:00 · 1h30m0s", "no step running"} {
+	for _, want := range []string{"started 14:00 · 1h30m0s", "time       1h30m", "watchdog is writing the summary…"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view lacks %q:\n%s", want, view)
 		}
 	}
-	for _, unwanted := range []string{"PHASE 2 · implement", "elapsed", " left"} {
+	if head := strings.Split(view, "\n")[0]; strings.Contains(head, " left") {
+		t.Errorf("header keeps the ETA: %q", head)
+	}
+	for _, unwanted := range []string{"PHASE 2 · implement", "elapsed", "no step running"} {
 		if strings.Contains(view, unwanted) {
 			t.Errorf("view contains %q:\n%s", unwanted, view)
 		}
@@ -863,12 +879,15 @@ func TestAHaltedOrAbortedRunShowsNoLiveStep(t *testing.T) {
 			m = m.Apply(tc.ev)
 			next, _ := m.Update(tickMsg(at(120)))
 			view := next.(Model).View()
-			for _, want := range []string{"no step running", "halted"} {
+			for _, want := range []string{"phases     1 landed · 0 blocked · 3 left", "halted"} {
 				if !strings.Contains(view, want) {
 					t.Errorf("view lacks %q:\n%s", want, view)
 				}
 			}
-			for _, unwanted := range []string{"PHASE 2 · implement", " left"} {
+			if head := strings.Split(view, "\n")[0]; strings.Contains(head, " left") {
+				t.Errorf("header keeps the ETA: %q", head)
+			}
+			for _, unwanted := range []string{"PHASE 2 · implement", "no step running"} {
 				if strings.Contains(view, unwanted) {
 					t.Errorf("view contains %q:\n%s", unwanted, view)
 				}
@@ -1476,7 +1495,7 @@ func TestTheETAGoesWhenTheRunEnds(t *testing.T) {
 	}
 }
 
-func TestAShortHeaderDropsTheETABeforeTheLimits(t *testing.T) {
+func TestAShortHeaderDropsTheLimitsBeforeTheETA(t *testing.T) {
 	m := newModel(recorded())
 	m.Limits = limits(49, 3)
 	width := 200
@@ -1486,10 +1505,10 @@ func TestAShortHeaderDropsTheETABeforeTheLimits(t *testing.T) {
 
 	got := header(m, width)
 
-	if !strings.Contains(got, "codex 7d 3% · watchdog live · started 14:00") {
+	if !strings.Contains(got, "watchdog live · started 14:00") || strings.Contains(got, "claude") || strings.Contains(got, "codex") {
 		t.Fatalf("header at %d %q", width, got)
 	}
-	if head := header(m, width+1); !strings.Contains(head, "codex 7d 3% · watchdog live · ~1h3m left · started") {
+	if head := header(m, width+1); !strings.Contains(head, "  watchdog live · ~1h3m left · started") || strings.Contains(head, "codex") {
 		t.Fatalf("header at %d %q", width+1, head)
 	}
 }
@@ -1542,5 +1561,314 @@ func TestTheLandedLineCarriesTheDiffStats(t *testing.T) {
 		if got := landedText(tc.fields); got != tc.want {
 			t.Errorf("landedText(%v) = %q, want %q", tc.fields, got, tc.want)
 		}
+	}
+}
+
+func press(m Model, keys ...string) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	for _, k := range keys {
+		var key tea.KeyMsg
+		switch k {
+		case "up":
+			key = tea.KeyMsg{Type: tea.KeyUp}
+		case "down":
+			key = tea.KeyMsg{Type: tea.KeyDown}
+		case "enter":
+			key = tea.KeyMsg{Type: tea.KeyEnter}
+		case "esc":
+			key = tea.KeyMsg{Type: tea.KeyEsc}
+		case "pgup":
+			key = tea.KeyMsg{Type: tea.KeyPgUp}
+		case "pgdown":
+			key = tea.KeyMsg{Type: tea.KeyPgDown}
+		case "space":
+			key = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")}
+		case "ctrl+c":
+			key = tea.KeyMsg{Type: tea.KeyCtrlC}
+		default:
+			key = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+		}
+		var next tea.Model
+		next, cmd = m.Update(key)
+		m = next.(Model)
+	}
+	return m, cmd
+}
+
+func quits(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	_, ok := cmd().(tea.QuitMsg)
+	return ok
+}
+
+func TestTheCursorIsHiddenUntilTheFirstPressAndStaysOnTheRail(t *testing.T) {
+	m := newModel(recorded())
+	if m.selected != "" {
+		t.Fatalf("selected %q before any press", m.selected)
+	}
+
+	for _, tc := range []struct {
+		keys []string
+		want string
+	}{
+		{[]string{"down"}, "2"},
+		{[]string{"j"}, "2"},
+		{[]string{"up"}, "2"},
+		{[]string{"down", "down", "j", "down", "down"}, "4"},
+		{[]string{"down", "up", "k", "up", "up"}, "1"},
+	} {
+		got, cmd := press(m, tc.keys...)
+		if got.selected != tc.want || cmd != nil {
+			t.Errorf("%v: selected %q, command %v, want %q", tc.keys, got.selected, cmd, tc.want)
+		}
+	}
+	if got, _ := press(newModel(nil), "down"); got.selected != "1" {
+		t.Errorf("with no live phase the first press selects %q", got.selected)
+	}
+}
+
+func TestEnterOpensTheDetailsAndEnterOrEscClosesThem(t *testing.T) {
+	m := newModel(recorded())
+	if got, _ := press(m, "enter"); got.details {
+		t.Fatal("enter opened details with no selection")
+	}
+
+	m, _ = press(m, "down", "up", "enter")
+
+	view := ansi.Strip(m.View())
+	if !m.details || !strings.Contains(view, "PHASE 1 · scaffold") || strings.Contains(view, "PHASE 2 · implement") {
+		t.Fatalf("details not open:\n%s", view)
+	}
+	if got, _ := press(m, "enter"); got.details || !strings.Contains(got.View(), "PHASE 2 · implement") {
+		t.Fatalf("enter did not close the details:\n%s", got.View())
+	}
+	if got, cmd := press(m, "esc"); got.details || cmd != nil {
+		t.Fatalf("esc: details %v, command %v", got.details, cmd)
+	}
+}
+
+func TestEscWithDetailsOpenClosesThemRatherThanQuittingAnEndedRun(t *testing.T) {
+	m := newModel(recorded()).Apply(core.Event{At: at(90), Kind: "finished"})
+	m, _ = press(m, "down", "enter")
+
+	m, cmd := press(m, "esc")
+	if cmd != nil || m.details {
+		t.Fatalf("esc with details open: command %v, details %v", cmd, m.details)
+	}
+	if _, cmd := press(m, "esc"); !quits(cmd) {
+		t.Fatal("esc without details did not quit")
+	}
+	m, _ = press(m, "enter")
+	if _, cmd := press(m, "q"); !quits(cmd) {
+		t.Fatal("q with details open did not quit")
+	}
+}
+
+func TestNavigationKeysDoNotAnswerTheStopPrompt(t *testing.T) {
+	m := newModel(recorded())
+	aborted := 0
+	m.abort = func() error { aborted++; return nil }
+
+	m, _ = press(m, "ctrl+c", "j")
+
+	if m.selected != "" || m.stopping || aborted != 0 {
+		t.Fatalf("selected %q, stopping %v, aborted %d", m.selected, m.stopping, aborted)
+	}
+	if m, _ = press(m, "esc"); m.stopping {
+		t.Fatal("esc opened the stop prompt")
+	}
+}
+
+func story(t *testing.T, name, text string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestTheEndReportShowsTheRunReportWhenItArrives(t *testing.T) {
+	m := newModel(recorded()).Apply(core.Event{At: at(90), Kind: "finished"})
+	m.Width, m.Height = 120, 40
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "watchdog is writing the summary…") {
+		t.Fatalf("no placeholder:\n%s", view)
+	}
+	path := story(t, "run-report.md", "# Run report\n\n## Summary\n\nBuilt the config reader.\n\n\n## Problems\n\nnone\n")
+
+	m = m.Apply(core.Event{At: at(91), Kind: core.EventRunReport, Fields: map[string]string{"path": path}})
+
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"RUN REPORT", "SUMMARY", "Built the config reader.", "PROBLEMS", "none", "questions  2 · human touches 1", "✓ 1 scaffold · 21m · +120 −30 · abc1234"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view lacks %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "writing the summary") || strings.Contains(view, "## ") {
+		t.Errorf("view:\n%s", view)
+	}
+}
+
+func TestAHaltedRunShowsTheFailureReport(t *testing.T) {
+	m := newModel(recorded()).Apply(core.Event{At: at(90), Kind: "halt", Fields: map[string]string{"reason": "gate red", "resume": "r-loop resume"}})
+	m.Width, m.Height = 120, 40
+	path := story(t, "failure-report.md", "## Verdict\n\nplan: the gate needs a database that is not running on this host")
+
+	m = m.Apply(core.Event{At: at(91), Kind: core.EventFailureReport, Fields: map[string]string{"path": path}})
+
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"VERDICT", "plan: the gate needs a database", "halted · resume: r-loop resume"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view lacks %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestTheEndReportSaysWhyThereIsNoSummary(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ev   []core.Event
+		want string
+	}{
+		{"run report missing", []core.Event{{At: at(90), Kind: "finished"}, {At: at(91), Kind: core.EventRunReportMissing, Fields: map[string]string{"reason": "watchdog wrote no run-report.md: timeout"}}}, "watchdog wrote no run-report.md: timeout"},
+		{"failure report missing", []core.Event{{At: at(90), Kind: "halt"}, {At: at(91), Kind: core.EventFailureReportMissing, Fields: map[string]string{"reason": "watchdog wrote no failure-report.md"}}}, "watchdog wrote no failure-report.md"},
+		{"unreadable", []core.Event{{At: at(90), Kind: "finished"}, {At: at(91), Kind: core.EventRunReport, Fields: map[string]string{"path": "/nonexistent/run-report.md"}}}, "/nonexistent/run-report.md"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel(append(recorded(), tc.ev...))
+			m.Width, m.Height = 120, 40
+			view := ansi.Strip(m.View())
+			if !strings.Contains(view, tc.want) || strings.Contains(view, "writing the summary") {
+				t.Fatalf("view:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestNoSummaryIsAwaitedAfterAnAbortOrOnceTheFaceCloses(t *testing.T) {
+	aborted := newModel(recorded()).Apply(core.Event{At: at(90), Kind: "aborted"})
+	next, _ := newModel(recorded()).Apply(core.Event{At: at(90), Kind: "finished"}).Update(closedMsg{})
+	for name, m := range map[string]Model{"aborted": aborted, "closed": next.(Model)} {
+		if view := ansi.Strip(m.View()); strings.Contains(view, "writing the summary") || !strings.Contains(view, "phases     1 landed") {
+			t.Errorf("%s:\n%s", name, view)
+		}
+	}
+}
+
+func TestPageKeysScrollTheEndReport(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("## Summary\n\n")
+	for i := range 60 {
+		fmt.Fprintf(&b, "line %02d\n", i)
+	}
+	m := newModel(recorded()).Apply(core.Event{At: at(90), Kind: "finished"})
+	m = m.Apply(core.Event{At: at(91), Kind: core.EventRunReport, Fields: map[string]string{"path": story(t, "run-report.md", b.String())}})
+	m.Width, m.Height = 120, 24
+	if view := m.View(); !strings.Contains(view, "phases ") || strings.Contains(view, "line 59") {
+		t.Fatalf("top:\n%s", view)
+	}
+
+	m, _ = press(m, "pgdown")
+	first := m.scroll
+	if first == 0 || strings.Contains(m.View(), "phases ") {
+		t.Fatalf("pgdown scrolled to %d:\n%s", first, m.View())
+	}
+	if m, _ = press(m, "space"); m.scroll != 2*first {
+		t.Fatalf("space scrolled to %d, want %d", m.scroll, 2*first)
+	}
+	m, _ = press(m, "pgdown", "pgdown", "pgdown", "pgdown", "space")
+	view := m.View()
+	fits(t, view, 120, 24)
+	if !strings.Contains(view, "line 59") {
+		t.Fatalf("bottom:\n%s", view)
+	}
+	if m, _ = press(m, "pgup", "pgup", "pgup", "pgup", "pgup", "pgup", "pgup", "pgup"); m.scroll != 0 || !strings.Contains(m.View(), "phases ") {
+		t.Fatalf("pgup scrolled to %d", m.scroll)
+	}
+	if live, _ := press(newModel(recorded()), "pgdown"); live.scroll != 0 {
+		t.Fatalf("pgdown scrolled a live run to %d", live.scroll)
+	}
+}
+
+func TestTheDetailsPaneShowsOnlyTheFieldsAPhaseHas(t *testing.T) {
+	events := append(recorded()[:9],
+		core.Event{At: at(12), Kind: "review-round", Phase: "1", Step: "implement", Fields: map[string]string{"round": "1", "attempt": "1"}},
+		core.Event{At: at(13), Kind: "finding", Phase: "1", Step: "implement", Fields: map[string]string{"round": "1", "verdict": "real", "fixed": "true", "severity": "P1"}},
+		core.Event{At: at(14), Kind: "nudge", Phase: "1", Step: "implement"},
+		core.Event{At: at(15), Kind: "phase-blocked", Phase: "3", Fields: map[string]string{"phase": "3", "reason": "needs the database the gate talks to"}},
+	)
+	m := newModel(events)
+	m.Width, m.Height = 120, 40
+
+	m, _ = press(m, "down", "enter")
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"PHASE 1 · scaffold", "state      landed", "started    14:00 · 21m", "commit     abc1234 · +120 −30 · 8 files", "review     1 round · 1 real · 1 fixed", "restarts   0 · nudges 1", "plan       .task-plans/phase-1-scaffold.md"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("phase 1 lacks %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "blocked  ") || strings.Contains(view, "EVENTS") {
+		t.Errorf("phase 1:\n%s", view)
+	}
+
+	m, _ = press(m, "enter", "down", "down", "enter")
+	view = ansi.Strip(m.View())
+	for _, want := range []string{"PHASE 3 · state store", "state      blocked", "blocked    needs the database the gate talks to", "plan       .task-plans/phase-3-state-store.md"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("phase 3 lacks %q:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"commit  ", "review  ", "restarts  ", "started  "} {
+		if strings.Contains(view, unwanted) {
+			t.Errorf("phase 3 shows %q:\n%s", unwanted, view)
+		}
+	}
+
+	m, _ = press(m, "enter", "down", "enter")
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "PHASE 4 · session manager") || !strings.Contains(view, "state      unticked") || strings.Contains(view, "plan  ") || strings.Contains(view, "started  ") {
+		t.Errorf("phase 4:\n%s", view)
+	}
+}
+
+func TestTheDetailsHideABlockerOnceItIsResolved(t *testing.T) {
+	m := newModel([]core.Event{
+		phaseStart(0, 1),
+		{At: at(3), Kind: "blocked-on", Phase: "1", Step: "land", Fields: map[string]string{"id": "b1", "source": "land", "reason": "gate failed"}},
+	})
+	m, _ = press(m, "down", "enter")
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "blocked    gate failed") {
+		t.Fatalf("open blocker missing:\n%s", view)
+	}
+
+	m = m.Apply(core.Event{At: at(4), Kind: "blocker-resolved", Phase: "1", Step: "land", Fields: map[string]string{"id": "b1", "action": "retry", "by": "watchdog"}})
+
+	if view := ansi.Strip(m.View()); strings.Contains(view, "gate failed") && strings.Contains(view, "blocked    ") {
+		t.Fatalf("resolved blocker still shown:\n%s", view)
+	}
+}
+
+func TestTheEndedStatusBarDropsItsHintsInOrder(t *testing.T) {
+	m := newModel(recorded()).Apply(core.Event{At: at(90), Kind: "finished"})
+	m.Report = "/repo/.r-loop/runs/20260918-140000/report.md"
+	for _, tc := range []struct {
+		width int
+		want  string
+	}{
+		{140, "finished · ↑↓ select · enter details · pgup/pgdn scroll · q quit · report: /repo/.r-loop/runs/20260918-140000/report.md"},
+		{110, "finished · ↑↓ select · enter details · q quit · report: /repo/.r-loop/runs/20260918-140000/report.md"},
+		{95, "finished · ↑↓ select · q quit · report: /repo/.r-loop/runs/20260918-140000/report.md"},
+		{80, "finished · q quit · report: /repo/.r-loop/runs/20260918-140000/report.md"},
+		{60, "finished · q quit · report: …s/20260918-140000/report.md"},
+	} {
+		m.Width = tc.width
+		lines := strings.Split(ansi.Strip(m.View()), "\n")
+		if got := strings.TrimSpace(lines[len(lines)-1]); got != tc.want {
+			t.Errorf("width %d: %q, want %q", tc.width, got, tc.want)
+		}
+	}
+	if live := newModel(recorded()); strings.Contains(ansi.Strip(live.View()), "select") {
+		t.Errorf("a live run shows the hint:\n%s", live.View())
 	}
 }

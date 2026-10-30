@@ -28,7 +28,7 @@ func TestTheHeaderShowsEachProvidersLimitsBeforeTheWatchdog(t *testing.T) {
 
 	got := header(m, 140)
 
-	if !strings.Contains(got, "claude 5h 12% 7d 49% · codex 7d 3% · watchdog live · ~1h3m left · started") {
+	if !strings.Contains(got, "claude 49% · codex 3% · watchdog live · ~1h3m left · started") {
 		t.Fatalf("header %q", got)
 	}
 }
@@ -43,7 +43,7 @@ func TestANarrowHeaderDropsTheLimitsBeforeAnythingElse(t *testing.T) {
 
 	got := header(m, width)
 
-	if !strings.Contains(got, "watchdog live · started") {
+	if !strings.Contains(got, "watchdog live · ~1h3m left · started") {
 		t.Fatalf("header at %d without limits %q", width, got)
 	}
 }
@@ -58,7 +58,7 @@ func TestAHeaderTooShortForEveryProviderKeepsTheFirstThatFit(t *testing.T) {
 
 	got := header(m, width)
 
-	if !strings.Contains(got, "claude 5h 12% 7d 49% · watchdog live · started") {
+	if !strings.Contains(got, "claude 49% · watchdog live · ~1h3m left · started") {
 		t.Fatalf("header at %d %q", width, got)
 	}
 }
@@ -70,13 +70,38 @@ func TestALimitAtNinetyPercentIsInTheErrorColourAndBelowItIsDim(t *testing.T) {
 
 	head := strings.Split(m.View(), "\n")[0]
 
-	if !regexp.MustCompile(`\x1b\[38;2;224;115;10[56][0-9;]*m7d 90%`).MatchString(head) {
+	if !regexp.MustCompile(`\x1b\[38;2;224;115;10[56][0-9;]*m90%`).MatchString(head) {
 		t.Fatalf("90%% is not in the error colour: %q", head)
 	}
-	if regexp.MustCompile(`\x1b\[38;2;224;115;10[56][0-9;]*m7d 89%`).MatchString(head) {
+	if regexp.MustCompile(`\x1b\[38;2;224;115;10[56][0-9;]*m89%`).MatchString(head) {
 		t.Fatalf("89%% is in the error colour: %q", head)
 	}
 	if strings.Contains(head, "38;2;224;16") {
 		t.Fatalf("limits use amber: %q", head)
+	}
+}
+
+func TestAHotFiveHourWindowIsShownInTheErrorColour(t *testing.T) {
+	m := coloured(false)
+	m.Width = 160
+	m.Limits = limits(42, 3)
+	m.Limits[0].Windows[0].Percent = 93
+
+	head := strings.Split(m.View(), "\n")[0]
+
+	if !strings.Contains(ansi.Strip(head), "claude 5h 93% 42% · codex 3%") {
+		t.Fatalf("header %q", ansi.Strip(head))
+	}
+	if !regexp.MustCompile(`\x1b\[38;2;224;115;10[56][0-9;]*m5h 93%`).MatchString(head) {
+		t.Fatalf("hot 5h is not in the error colour: %q", head)
+	}
+}
+
+func TestACoolFiveHourWindowIsLeftOut(t *testing.T) {
+	m := newModel(recorded())
+	m.Limits = limits(42, 3)
+
+	if got := header(m, 160); strings.Contains(got, "5h") || strings.Contains(got, "12%") {
+		t.Fatalf("header %q", got)
 	}
 }

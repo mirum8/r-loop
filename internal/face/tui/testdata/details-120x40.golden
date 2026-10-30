@@ -1,0 +1,11 @@
+  r-loop  20260918-140000  docs/x/todo.md                           watchdog live · ~1h3m left · started 14:00 · 43m0s
+
+  PHASES 1/4                │  PHASE 1 · scaffold
+  ✓  1 scaffold             │  state      landed
+  p  2 config reader        │  Scaffold the Go module with the hexagonal core, one adapter package per port and a
+  ·  3 state store          │  boundary test that fails on any adapter import from core.
+  ·  4 session manager      │  started    14:00 · 21m
+                            │  commit     abc1234 · +120 −30 · 8 files
+                            │  review     2 rounds · 2 real · 2 fixed
+                            │  restarts   0 · nudges 1
+                            │  plan       .task-plans/phase-1-scaffold.md

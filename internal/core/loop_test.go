@@ -1785,7 +1785,7 @@ func TestAnAlreadyDonePlanOnResumeSkipsTheItemAgain(t *testing.T) {
 	r := newLoopRig(t)
 	r.loop.Sessions.ItemGates = true
 	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: "2", Kind: "plan", Attempt: 1}, State: StepOK})
-	plan := filepath.Join(r.repo.RootDir, ".r-loop/wt/phase-2", phasePlanPath("2", "Store"))
+	plan := filepath.Join(r.repo.RootDir, ".r-loop/wt/phase-2", PhasePlanPath("2", "Store"))
 	writeFile(plan, "status: not-work\n\n## Evidence\n- a question: docs/spec.md:3\n")
 
 	code := r.run(RunOptions{Phases: []string{"2"}, Resume: true})

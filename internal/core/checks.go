@@ -180,7 +180,7 @@ func planTouched(ctx CheckContext) string {
 		return ""
 	}
 	todo := todoRel(ctx)
-	own := phasePlanPath(ctx.Step.Phase.ID, ctx.Step.Phase.Title)
+	own := PhasePlanPath(ctx.Step.Phase.ID, ctx.Step.Phase.Title)
 	design := phaseDesignPath(ctx.Step.Phase.ID, ctx.Step.Phase.Title)
 	for _, p := range changed {
 		switch {

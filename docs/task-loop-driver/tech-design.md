@@ -1727,30 +1727,44 @@ display-only line, and the TUI can be read back with keys that change nothing.
 - **Header ETA** — `~<h>h<m>m left` (`~<m>m left` under an hour) before `started …`: the mean of
   `landedAt − started` over the phases landed in this run, times the phases in the run list
   neither landed nor blocked, rounded to the minute. Shown once one phase has landed, hidden once the run ends, and the first part dropped when
-  the header is short, before the provider limits.
+  the header is short, after the provider limits and right before `started …`.
+- **Header limits** — per provider only the weekly (`7d`) window's percent, `claude 42% · codex 3%`;
+  a window at `limitHot` (90%) or more is in `error`, and a hot non-weekly one is also shown,
+  labelled, before it (`claude 5h 93% 42%`); a provider with neither is left out. They drop a
+  provider at a time before anything else in the header.
 - **Panel** — under `PHASE <n> · <kind>`, a `summary` line with the live phase's `phase-summary`,
   truncated to the panel width; a dim `watchdog` line with the latest narration and its age
   (`2m ago`, `<1m ago` under a minute), shown with or without a live step, never in `secondary`. `landedText` reads
   `landed <sha> · +<added> −<deleted> · <n> files`.
 - **Keys and the cursor** — `↑`/`k` and `↓`/`j` move a rail cursor over the run's phases, clamped
-  at both ends, hidden until the first press; the selected row draws `row-selected` (theme
+  at both ends, hidden until the first press, which lands on the live row (the first row when none
+  is live); the cursor follows a phase id, so a regrouped run list keeps it; the selected row draws `row-selected` (theme
   `Selected`: `on-primary` on `primary`, reverse under `NO_COLOR`), and the live row keeps bold.
   `enter` opens the details pane for the selected phase; `esc` or `enter` closes it, and `esc`
-  with details open never quits. `pgup`, `pgdn` and `space` scroll the end report. The `ctrl+c`
-  stop prompt and the quit keys are otherwise unchanged.
+  with details open never quits; `q` and `ctrl+c` still quit an ended run with details open. `pgup`,
+  `pgdn` and `space` scroll the end report a page (the rows it is given), clamped to its last page,
+  and do nothing on a live run or with details open. While the stop prompt is open every key goes to
+  it. The `ctrl+c` stop prompt and the quit keys are otherwise unchanged.
 - **Details pane** — replaces the panel while open: `PHASE <n> · <title>`, its state, the full
   summary wrapped to the panel width; `started`, duration, commit and `+<a> −<d> · <n> files`;
   review rounds with real and fixed findings, restarts and nudges, the blocker; the plan path
-  `.task-plans/phase-<N>-*.md`. A field with nothing to show is left out.
+  `.task-plans/phase-<N>-*.md` from `core.PhasePlanPath(n, title)` (the loop's own slug rule, exported
+  for the face). A field with nothing to show is left out; the blocker shows only while the row is
+  blocked or a `blocked-on` for it is open, and the plan path once the phase has started or left
+  `unticked`.
 - **End report pane** — on `finished`, `halt` or `aborted` it replaces `no step running` and stays
   until quit: first the stats from the `phaseInfo`s — phases landed, blocked and remaining, total
   time, total `+/−` and files, review rounds and findings fixed, restarts and nudges, questions
   and human touches — and one line per landed phase, `✓ <n> <title> · <duration> · +<a> −<d> ·
   <sha>`; then the narrative, read with `os.ReadFile` when `run-report` (on finish) or
   `failure-report` (on halt) arrives, each `## ` heading drawn as a label and the body wrapped.
-  Until then a dim `watchdog is writing the summary…`; a `*-missing` event shows its reason
-  instead. The status bar reads `↑↓ select · enter details · pgup/pgdn scroll · q quit · report:
-  <path>`.
+  Until then a dim `watchdog is writing the summary…`, left out for an aborted run, a gone watchdog
+  or once the face has closed; a `*-missing` event, or a file `os.ReadFile` cannot read, shows its
+  reason instead. File lines pass through `core.Printable`. Questions count `question` events and
+  human touches `human` events, both kept through `replay()`. The report gets the panel's rows less
+  the watchdog line and up to three `EVENTS` lines. The status bar reads `<status> · ↑↓ select ·
+  enter details · pgup/pgdn scroll · q quit · report: <path>` (no status under the halt banner),
+  dropping `pgup/pgdn scroll`, `enter details`, `↑↓ select`, then cutting the path from its left.
 - **Plain face** — `phase-summary` prints `<hh:mm:ss>  phase <N>  summary  <text>`, `narration` prints
   `<hh:mm:ss>  watchdog: <text>`, and `Close` prints `run report: <path>` after `report:`, as it prints
   `diagnosis:`. The TUI face logs `run report: <file>` (`no run report: <reason>` on a

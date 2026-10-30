@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -128,6 +129,14 @@ type Model struct {
 	info       map[string]phaseInfo
 	narration  string
 	narratedAt time.Time
+	asked      int
+	touches    int
+	story      string
+	storyGone  string
+	selected   string
+	details    bool
+	scroll     int
+	closed     bool
 	Current    string
 	Live       *Step
 	past       []Step
@@ -282,6 +291,7 @@ func (m Model) Apply(ev core.Event) Model {
 	case core.EventPlanCorrected:
 		m.log(ev, toneDim, "plan corrected in "+ev.Fields["path"])
 	case "question":
+		m.asked++
 		m.Questions = append(append([]Question(nil), m.Questions...), Question{ID: ev.Fields["id"], Phase: ev.Phase, Step: ev.Step, At: ev.At})
 		m.log(ev, toneDim, "asked "+ev.Fields["id"])
 	case "question-answered":
@@ -307,6 +317,7 @@ func (m Model) Apply(ev core.Event) Model {
 		m.settle(ev.Fields["id"])
 		m.log(ev, toneDim, fmt.Sprintf("%s → %s (%s)", ev.Fields["id"], ev.Fields["action"], ev.Fields["by"]))
 	case "human":
+		m.touches++
 		if ev.Fields["what"] == "resume" {
 			m.log(ev, toneDim, "resumed")
 		}
@@ -332,12 +343,16 @@ func (m Model) Apply(ev core.Event) Model {
 	case "signal-rejected", "note", "report-skipped", "reviewer-skipped":
 		m.log(ev, toneDim, ev.Fields["reason"])
 	case core.EventFailureReport:
+		m.readStory(ev.Fields["path"])
 		m.log(ev, toneDim, "diagnosis: "+filepath.Base(ev.Fields["path"]))
 	case core.EventFailureReportMissing:
+		m.story, m.storyGone = "", ev.Fields["reason"]
 		m.log(ev, toneDim, "no diagnosis: "+ev.Fields["reason"])
 	case core.EventRunReport:
+		m.readStory(ev.Fields["path"])
 		m.log(ev, toneDim, "run report: "+filepath.Base(ev.Fields["path"]))
 	case core.EventRunReportMissing:
+		m.story, m.storyGone = "", ev.Fields["reason"]
 		m.log(ev, toneDim, "no run report: "+ev.Fields["reason"])
 	case core.EventMemoryRemember:
 		m.log(ev, toneDim, "remembered: "+ev.Fields["description"])
@@ -379,7 +394,17 @@ func replay(m Model, history []core.Event) Model {
 	m.checking, m.landing = "", ""
 	m.Questions, m.DogGone, m.DogWaiting, m.Paused = nil, false, false, ""
 	m.activity = nil
+	m.story, m.storyGone, m.scroll = "", "", 0
 	return m
+}
+
+func (m *Model) readStory(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		m.story, m.storyGone = "", err.Error()
+		return
+	}
+	m.story, m.storyGone = string(data), ""
 }
 
 func (m *Model) record(ev core.Event) {
@@ -717,6 +742,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case usageMsg:
 		m.Limits = msg
 	case closedMsg:
+		m.closed = true
 		if m.Status == "" {
 			m.end("ended", m.Now)
 		}
@@ -726,6 +752,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyMsg:
 		switch {
+		case msg.Type == tea.KeyEsc && m.details && !m.stopping:
+			m.details = false
 		case m.Status != "" && quitKey(msg):
 			return m, tea.Quit
 		case msg.Type == tea.KeyCtrlC && (m.stopping || m.aborting):
@@ -737,9 +765,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.confirmStop(msg)
 		case msg.Type == tea.KeyCtrlC && m.Status == "":
 			m.stopping, m.Notice = true, "stop the run? keep session for resume [y/n; ctrl+c again to quit now]"
+		default:
+			m.navigate(msg)
 		}
 	}
 	return m, nil
+}
+
+func (m *Model) navigate(key tea.KeyMsg) {
+	switch key.String() {
+	case "up", "k":
+		m.move(-1)
+	case "down", "j":
+		m.move(1)
+	case "enter":
+		m.details = !m.details && m.selected != ""
+	case "pgup":
+		m.page(-1)
+	case "pgdown", " ":
+		m.page(1)
+	}
+}
+
+func (m *Model) move(by int) {
+	i := slices.IndexFunc(m.Phases, func(r Row) bool { return r.ID == m.selected })
+	switch {
+	case len(m.Phases) == 0:
+		return
+	case i >= 0:
+		i = min(max(i+by, 0), len(m.Phases)-1)
+	default:
+		i = max(0, slices.IndexFunc(m.Phases, func(r Row) bool { return r.ID == m.Current }))
+	}
+	m.selected = m.Phases[i].ID
+}
+
+func (m *Model) page(by int) {
+	if m.Status == "" || m.details {
+		return
+	}
+	w, room := m.panelSize()
+	window := m.reportWindow(room)
+	m.scroll = min(max(m.scroll+by*window, 0), max(0, len(m.endReport(w))-window))
 }
 
 func quitKey(key tea.KeyMsg) bool {

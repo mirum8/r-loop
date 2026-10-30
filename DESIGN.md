@@ -99,8 +99,10 @@ authoritative where this document or `docs/design/variants/layouts/rail.txt` dif
 carrying the watchdog's health (`watchdog live` dim, `watchdog waiting for you` in `secondary`
 while it asks you in its own pane — from its `ask_maintainer` call, a remedy that needs your word,
 or herdr reporting it blocked — until its next call, `watchdog gone` in `error`), preceded by the
-usage limits of the providers the run uses (`claude 5h 12% 7d 49% · codex 7d 3%`, dim, a window at
-90% or more in `error`, never `secondary`; dropped a provider at a time, before anything but the ETA, when the line is short), the phase rail
+usage limits of the providers the run uses (`claude 49% · codex 3%`: the weekly window's number only, dim;
+a window at 90% or more in `error`, never `secondary`, and a hot shorter window is shown labelled beside
+it, `claude 5h 93% 49%`, so it is never hidden; a provider with neither is left out; dropped a provider at
+a time, before anything else, when the line is short), the phase rail
 beside the live-step panel (stacked below 80 columns), and a status line for a notice or a finished
 run. The rail lists only the phases (or, for an issues file, the items) chosen for this run — the
 launch selection, or the recorded run list on resume — under a `PHASES <landed>/<total>` (`ITEMS …`)
@@ -135,15 +137,16 @@ changes the run, answers or consents, and amber keeps its one meaning.
 
 - **Header ETA** — `~1h40m left` (`~25m left` under an hour) sits before `started …`, dim: the mean
   time of the phases landed in this run times the phases left, neither landed nor blocked. It appears once one phase has
-  landed, goes when the run ends, and is the first part dropped when the header is short — before
-  the provider limits.
+  landed, goes when the run ends, and outlasts the provider limits when the header is short: the
+  limits drop first, a provider at a time, and the ETA goes only right before `started …` does.
 - **Panel lines** — under `PHASE <n> · <kind>`, a `summary` line: the live phase's summary, the
   label dim and the text `on-surface`, cut with `…` at the panel's edge. Below the steps a
   `watchdog` line, all dim: the watchdog's latest narration and its age (`watchdog  phase 3 landed
   clean; 4 is the big one · 2m ago`, `<1m ago` under a minute). It stays when no step runs. It is never `secondary`: a
   narration is news, never a question, and the watchdog asks only in its own pane.
 - **Selected row** — `↑`/`↓` (`k`/`j`) move a cursor over the rail. It is hidden until the first
-  press, so a screen nobody touches has no selection. The row under it is `row-selected`: the row's
+  press, so a screen nobody touches has no selection; that press lands on the live row, or the first
+  row when none is live. The row under it is `row-selected`: the row's
   text in `on-primary` on `primary`, full rail width; under `NO_COLOR`, reverse. The live row keeps
   its bold when selected, so bold still marks exactly the live phase. A landed `✓` row loses its
   `tertiary` while selected and regains it when the cursor leaves.
@@ -162,10 +165,12 @@ changes the run, answers or consents, and amber keeps its one meaning.
   the rest dim. Below, the watchdog's narrative — `run-report.md` on a finished run,
   `failure-report.md` on a halted one — each `## ` heading drawn as a dim label in capitals, like
   `AGENTS`, and its body wrapped to the panel in `on-surface`. Until the watchdog has written it a
-  dim `watchdog is writing the summary…` holds its place; when it wrote nothing, the reason, dim.
+  dim `watchdog is writing the summary…` holds its place; when it wrote nothing, the reason, dim. An
+  aborted run, a gone watchdog or a closed face expects no narrative, so the placeholder is left out.
   `pgup`, `pgdn` and `space` scroll it a page; the halt banner stays above it, unscrolled.
-- **Status bar hint** — once the run has ended it reads `↑↓ select · enter details · pgup/pgdn
-  scroll · q quit · report: <path>`, dim on `surface-raised`. When it does not fit, at 80 columns or
+- **Status bar hint** — once the run has ended it reads `<status> · ↑↓ select · enter details ·
+  pgup/pgdn scroll · q quit · report: <path>` (no status word under the halt banner), dim on
+  `surface-raised`; a live run shows no hint. When it does not fit, at 80 columns or
   less, parts drop in this order: `pgup/pgdn scroll`, `enter details`, `↑↓ select`; then the report
   path is cut from its left with `…`. `q quit` never drops.
 

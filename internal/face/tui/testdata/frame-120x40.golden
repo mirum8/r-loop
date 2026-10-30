@@ -1,4 +1,4 @@
-  r-loop  20260918-140000  docs/x/todo.md    claude 5h 12% 7d 42% · watchdog live · ~1h3m left · started 14:00 · 43m0s
+  r-loop  20260918-140000  docs/x/todo.md   claude 42% · codex 3% · watchdog live · ~1h3m left · started 14:00 · 43m0s
 
   PHASES 1/4                │  PHASE 2 · implement
   ✓  1 scaffold             │  summary    Read the layered config with provenance per key and reject flow-style YAML.

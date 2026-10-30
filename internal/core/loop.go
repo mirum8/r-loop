@@ -650,7 +650,7 @@ func (l *RunLoop) itemSkipped(ph Phase, kind StepKind, dir string) bool {
 	if kind.Name != "plan" || !l.Sessions.ItemGates || ph.DoneWhen != "" {
 		return false
 	}
-	status, evidence := PlanSkip(phasePlanPath(ph.ID, ph.Title), os.DirFS(dir))
+	status, evidence := PlanSkip(PhasePlanPath(ph.ID, ph.Title), os.DirFS(dir))
 	if status == "" {
 		return false
 	}
@@ -2191,7 +2191,7 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 		"Criteria":         strings.Join(criteria, "\n"),
 		"TodoPath":         todoPath,
 		"SpecDir":          filepath.Dir(todoPath),
-		"PlanPath":         phasePlanPath(ph.ID, ph.Title),
+		"PlanPath":         PhasePlanPath(ph.ID, ph.Title),
 		"Branch":           ref.Branch,
 		"Base":             ref.Base,
 		"Worktree":         ref.Worktree,
@@ -2230,10 +2230,10 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 }
 
 func phaseDesignPath(n, title string) string {
-	return strings.TrimSuffix(phasePlanPath(n, title), ".md") + ".design.md"
+	return strings.TrimSuffix(PhasePlanPath(n, title), ".md") + ".design.md"
 }
 
-func phasePlanPath(n, title string) string {
+func PhasePlanPath(n, title string) string {
 	prefix := fmt.Sprintf(".task-plans/phase-%s", n)
 	slug := kebab(title)
 	if room := 60 - len(prefix) - len("-.md"); len(slug) > room {
