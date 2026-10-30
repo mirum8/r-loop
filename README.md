@@ -3,7 +3,7 @@
 r-loop runs a coding plan from start to finish with AI agents.
 
 You give it a plan file. For each phase in the plan, r-loop starts fresh agent sessions
-(`claude` or `codex`) in herdr panes. Each phase goes through three steps:
+(`claude` or `codex`) in herdr or herdr-app panes. Each phase goes through three steps:
 
 1. **plan** — an agent reads the phase and writes a short plan for it.
 2. **implement** — an agent writes the code and the tests.
@@ -52,9 +52,17 @@ counts against the step's retries.
 
 - Go 1.25 or newer (only to build)
 - git
-- herdr 0.9, with its server running
-- `claude` and/or `codex` CLI, logged in
-- Run r-loop inside a herdr pane. The watchdog opens beside it.
+- herdr 0.9 with its server running, or herdr-app with herdr-core (`hc`)
+- `claude` and/or `codex` CLI, logged in; on herdr-app, codex 0.166 or newer
+- Run r-loop inside a herdr or herdr-app pane. The watchdog opens beside it.
+
+### Host
+
+r-loop picks its host when it starts: `HERDR_PANE_ID` set means herdr, else `HC_TERMINAL_ID` set
+means herdr-app. Outside both, it probes each host on `PATH`: if one is reachable, it uses that;
+if both are, it stops (exit 2) and asks you to set `host`; if neither is, it stops (exit 4). To
+choose yourself, set the top-level `host` key (`auto`, `herdr` or `app`; default `auto`) or pass
+`--host`.
 
 ## Install
 
@@ -65,8 +73,12 @@ cd r-loop
 ```
 
 `install.sh` builds the binary into `~/.local/bin/r-loop`. Set `PREFIX` to use another folder.
-It also adds an r-loop block to herdr's `config.toml`, so the herdr sidebar shows each step's
-state.
+It needs `herdr` or `herdr-app` on `PATH`. When `herdr` is there, it adds an r-loop block to herdr's
+`config.toml`, so the herdr sidebar shows each step's state. When `herdr-app` is there, it copies
+the `rloop` mod to `${HERDR_APP_HOME:-~/.config/herdr-app}/mods/rloop/` and checks it with
+`herdr-app check`. The mod is a narrow panel on the left that lists each space running an r-loop
+step: the space's name, then the step's state (`p3·implement`) in blue, or what it waits for in
+bold amber. Click a row to go to that space.
 
 ## Quick start
 
@@ -156,6 +168,7 @@ r-loop --version
 | `--unattended` | Run with no person present. Skip the `## Resolve first` walk and the question after the triage table (the watchdog still verifies the work). Allow the remedies in `unattended.allow` without asking. |
 | `--yes` | Start right after the triage without asking you. The watchdog still verifies the work, and a phase or issue it finds done or blocked is still left out. |
 | `--plain` | Print plain text lines instead of the full-screen TUI. Plain is also used when stdin or stdout is not a terminal. |
+| `--host <host>` | Run on `herdr`, `app` (herdr-app) or `auto` (see [Host](#host)). |
 | `--dry-run` | Check the plan, config, prompts and tools, print the banner, the run list, the plan-check notes and the table, then stop. It starts no session, so the table ends with `verification: not run`. |
 
 A phase is named by its heading label: `10`, or `10a` for a phase inserted after 10 (`--phases 10a,10b`, `--from 10a`). Order is the order of the headings in the plan.
@@ -172,7 +185,7 @@ r-loop "the task-loop plan, only phases 3 and 4, codex for implement"
 ```
 
 Anything other than a single path ending in `.md` counts as free text. r-loop opens a short
-intake session in herdr (the `intake:` row). The session finds the plan, works out the flags,
+intake session in the host (the `intake:` row). The session finds the plan, works out the flags,
 and shows you the full command. Say yes, and r-loop checks the command the same way as a typed
 one. It prints `r-loop: resolved: r-loop <argv>` and starts that run. If the command is wrong
 (a ticked phase, an unknown step), the session gets the reason and asks you again.
@@ -187,7 +200,7 @@ With `--unattended`, the intake session starts the command without asking you. C
 | `resume` | Continue the last halted run. Landed phases and finished steps are skipped. The step that stopped runs again as a new attempt. A run that stopped before you confirmed its table is triaged again; one that passed it keeps its run list and groups. |
 | `resume --replan` | Also run the phase's `plan` step again before the step that failed. The failure reason goes into the new plan. |
 | `abort` | Stop the live run. The run can be resumed later. |
-| `--cleanup` | Close the herdr step workspaces left by earlier runs, force-remove every worktree under `.r-loop/wt/` and delete every `r-loop/phase-*` branch, merged or not. A halted run can no longer be resumed afterwards. Refused while a run is live (exit 4); exit 1 if anything could not be removed. Run history under `.r-loop/runs/` is kept. |
+| `--cleanup` | Close the step workspaces left by earlier runs, force-remove every worktree under `.r-loop/wt/` and delete every `r-loop/phase-*` branch, merged or not. A halted run can no longer be resumed afterwards. Refused while a run is live (exit 4); exit 1 if anything could not be removed. Run history under `.r-loop/runs/` is kept. |
 
 ### Exit codes
 
@@ -197,9 +210,9 @@ With `--unattended`, the intake session starts the command without asking you. C
 | `1` | A step failed, or the run was aborted (also at the triage question). |
 | `2` | Bad usage, bad config or plan, a git state problem, or a detected language's toolchain missing for static analysis. |
 | `3` | A step stalled (no activity) and then failed. |
-| `4` | Preflight refused to start: dirty tree, herdr not reachable, watchdog did not start, and similar. Also: the triage did not finish within `watchdog.triageTimeout`, or was interrupted. `--cleanup` also exits 4 while a run is live. |
+| `4` | Preflight refused to start: dirty tree, no host reachable, watchdog did not start, and similar. Also: the triage did not finish within `watchdog.triageTimeout`, or was interrupted. `--cleanup` also exits 4 while a run is live. |
 | `5` | The watchdog halted the run, or is gone (also during the triage). |
-| `127` | `git` or `herdr` was not found. |
+| `127` | `git`, `herdr` or `herdr-app`/`hc` was not found. |
 
 When a run halts, r-loop prints `r-loop resume`. The exit code comes from the first blocked
 phase.
@@ -236,6 +249,10 @@ The banner (see `--dry-run`) prints every value and where it came from. Use bloc
 only. Flow style (`[a, b]`, `{a: b}`) and unknown keys are errors (exit 2).
 
 Durations use Go format: `30m`, `1h`, `2h30m`.
+
+### `host`
+
+`auto` (default), `herdr` or `app`: where the sessions run. See [Host](#host).
 
 ### `pipeline`
 

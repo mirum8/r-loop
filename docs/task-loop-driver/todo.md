@@ -1017,9 +1017,9 @@ Contracts: `tech-design.md#milestone-23-herdr-or-herdr-app`
 **Implements:** See where a run is
 **Depends on:** Phase 59
 **Files:** `herdr-app/rloop/main.js` (create) · `herdr-app/rloop/mod.json` (create) · `install.sh` (modify) · `README.md` (modify)
-- [ ] `herdr-app/rloop/mod.json` is `{"place": "left", "size": 120, "title": "r-loop"}`; `main.js` lists, on render from `spaces()` and `terminals()`, each space that has a terminal labelled `rloop.agent`: its name, then its `rloop_wait` label in `#E0A458` bold when set, else its `rloop` label in `#6E9FC4`; clicking a row runs `space.select {id}`; it uses theme colours for everything else and polls nothing
-- [ ] `install.sh` copies the mod to `${HERDR_APP_HOME:-$HOME/.config/herdr-app}/mods/rloop/` and runs `herdr-app check` on it when `herdr-app` is on the path, failing the install on a failed check; it keeps writing the herdr sidebar block only when `herdr` is on the path, and needs at least one of the two
-- [ ] `README.md` says r-loop runs in herdr or herdr-app, how the host is recognised, the `host` key and `--host`, codex 0.166 on herdr-app, and what the `rloop` mod shows
+- [x] `herdr-app/rloop/mod.json` is `{"place": "left", "size": 120, "title": "r-loop"}`; `main.js` lists, on render from `spaces()` and `terminals()`, each space that has a terminal labelled `rloop.agent`: its name, then its `rloop_wait` label in `#E0A458` bold when set, else its `rloop` label in `#6E9FC4`; clicking a row runs `space.select {id}`; it uses theme colours for everything else and polls nothing
+- [x] `install.sh` copies the mod to `${HERDR_APP_HOME:-$HOME/.config/herdr-app}/mods/rloop/` and runs `herdr-app check` on it when `herdr-app` is on the path, failing the install on a failed check; it keeps writing the herdr sidebar block only when `herdr` is on the path, and needs at least one of the two
+- [x] `README.md` says r-loop runs in herdr or herdr-app, how the host is recognised, the `host` key and `--host`, codex 0.166 on herdr-app, and what the `rloop` mod shows
 **Done when:** `herdr-app check herdr-app/rloop` exits 0 and `sh -n install.sh` exits 0.
 
 ### Phase 62 — `/test-app` runs live on herdr-app
