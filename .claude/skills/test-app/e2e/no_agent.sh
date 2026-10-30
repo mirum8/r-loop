@@ -197,11 +197,11 @@ dirty_refused() {
     && [ -z "$(ls .r-loop/runs 2>/dev/null | grep -vx -e gate -e lock)" ]
 }
 echo "// dirty" >> calc.go
-PATH="$T/herdr-up:$PATH" "$BIN" docs/plan/todo-tiny.md --plain > "$T/out" 2> "$T/err"; rc=$?
+env -u HC_TERMINAL_ID HERDR_PANE_ID=stub PATH="$T/herdr-up:$PATH" "$BIN" docs/plan/todo-tiny.md --plain > "$T/out" 2> "$T/err"; rc=$?
 dirty_refused && ok "dirty tree refused before any run ($(head -c 80 "$T/err"))" || fail "dirty tree rc=$rc: $(head -c 120 "$T/err")"
 git checkout -q calc.go
 
-PATH="$T/herdr-down:$PATH" "$BIN" docs/plan/todo-tiny.md --plain > "$T/out" 2> "$T/err"; rc=$?
+env -u HC_TERMINAL_ID HERDR_PANE_ID=stub PATH="$T/herdr-down:$PATH" "$BIN" docs/plan/todo-tiny.md --plain > "$T/out" 2> "$T/err"; rc=$?
 grep -q 'herdr server unreachable' "$T/err" && ! dirty_refused \
   && ok "an unreachable herdr on a clean tree is not taken for a dirty-tree refusal" || fail "unreachable herdr on a clean tree rc=$rc: $(head -c 120 "$T/err")"
 
