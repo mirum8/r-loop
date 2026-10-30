@@ -3,13 +3,13 @@
 # whose printed output is the deliverable) for design and leaves phase 2 (pure library logic) unflagged. Phase 1 runs
 # design → plan → implement with the design file committed on its own and named in the plan prompt; phase 2 gets a
 # step-skipped for design and no design session. The TUI leaves design out of phase 2's step row and logs the design line.
-# The run gets a herdr workspace of its own, so its watchdog never splits the maintainer's pane; --unattended asks nothing.
-# Usage (from the repo root, inside a herdr pane): sh .claude/skills/test-app/e2e/live_design.sh
+# The run gets a workspace of its own, so its watchdog never splits the maintainer's pane; --unattended asks nothing.
+# Usage (from the repo root, inside herdr or herdr-app): sh .claude/skills/test-app/e2e/live_design.sh
 set -u
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
 case "$PWD" in */.r-loop/wt/*) echo "NOT RUN: inside an r-loop worktree"; exit 3 ;; esac
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 
 ROOT=$(git rev-parse --show-toplevel)
 BIN="${TEST_APP_BIN:-$ROOT/bin/r-loop}"
@@ -40,14 +40,14 @@ base=$(git rev-parse HEAD)
 touch "$OUT/start.marker"
 export TUI_SESSION_SUFFIX="${TUI_SESSION_SUFFIX:-design}"
 export TUI_START_TIMEOUT="${TUI_START_TIMEOUT:-300}" TUI_TTL="${TUI_TTL:-5400}"
-RUNWS_JSON=$(herdr workspace create --cwd "$S" --label "r-loop test design" --no-focus)
-RUNWS=$(printf '%s' "$RUNWS_JSON" | jq -r '.result.workspace.workspace_id')
-RUNPANE=$(printf '%s' "$RUNWS_JSON" | jq -r '.result.root_pane.pane_id')
+RUNWS_IDS=$(ws_open "r-loop test design" "$S")
+RUNWS=${RUNWS_IDS% *}
+RUNPANE=${RUNWS_IDS#* }
 [ -n "$RUNPANE" ] && [ "$RUNPANE" != null ] || { echo "FAIL could not create the test workspace"; exit 1; }
 echo "workspace $RUNWS ($RUNPANE)"
-H=$("$TUI" start --geometry 120x40 -- env HERDR_PANE_ID="$RUNPANE" "$BIN" docs/plan/todo-design.md --unattended) \
-  || { echo "FAIL start rc=$?"; herdr workspace close "$RUNWS" > /dev/null 2>&1; exit 1; }
-trap '"$TUI" stop "$H" > /dev/null 2>&1; herdr workspace close "$RUNWS" > /dev/null 2>&1' EXIT
+H=$("$TUI" start --geometry 120x40 -- env $(host_env "$RUNPANE") "$BIN" docs/plan/todo-design.md --unattended) \
+  || { echo "FAIL start rc=$?"; ws_close "$RUNWS" > /dev/null 2>&1; exit 1; }
+trap '"$TUI" stop "$H" > /dev/null 2>&1; ws_close "$RUNWS" > /dev/null 2>&1' EXIT
 echo "handle  $H"
 
 steps_of() { grep -A1 "PHASE $1 · " "$2" | grep -o 'steps .*' | head -1; }
@@ -192,7 +192,7 @@ sleep 2
 "$TUI" stop "$H" --expect-exited; rc=$?
 [ "$rc" = 0 ] && ok "q quits, terminal restored" || fail "stop --expect-exited rc=$rc ($(cat "$OUT/tui-status.txt"))"
 trap - EXIT
-herdr workspace close "$RUNWS" > /dev/null 2>&1
+ws_close "$RUNWS" > /dev/null 2>&1
 
 echo "failures: $fails"
 echo "sandbox $S"

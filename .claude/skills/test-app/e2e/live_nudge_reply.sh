@@ -1,6 +1,7 @@
 #!/bin/sh
 set -u
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
+[ -n "$HOST" ] || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
 case "$PWD" in */.r-loop/wt/*) echo "NOT RUN: inside an r-loop worktree"; exit 3 ;; esac
 ROOT=$(cd "$(dirname "$0")/../../../.." && pwd)
@@ -13,9 +14,9 @@ prov=$(cd "$P" && "$BIN" docs/plan/todo-tiny.md --dry-run --plain "$@" 2> /dev/n
 rm -rf "$P"
 [ "$prov" = claude ] || { echo "NOT RUN: the implement step runs on ${prov:-an unknown provider}, not claude"; exit 3; }
 
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 . "$(dirname "$0")/own_workspace.sh"
-export HERDR_SOCKET_PATH="${HERDR_SOCKET_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/herdr.sock}"
+[ "$HOST" != herdr ] || export HERDR_SOCKET_PATH="${HERDR_SOCKET_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/herdr.sock}"
 
 TUI="${TUI:-/Users/mirum8/.claude/skills/r/skills/test-app-create/scripts/tui-session.sh}"
 LIMIT="${LIVE_LIMIT:-1800}"

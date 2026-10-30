@@ -1,9 +1,10 @@
 #!/bin/bash
 set -u
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
 case "$PWD" in */.r-loop/wt/*) echo "NOT RUN: inside an r-loop worktree"; exit 3 ;; esac
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
+host_needs_herdr "the narrow-pane check (pane splits and widths)"
 
 ROOT=$(git rev-parse --show-toplevel)
 BIN="${TEST_APP_BIN:-$ROOT/bin/r-loop}"
@@ -17,21 +18,22 @@ mkdir -p "$OUT/screens"
 fails=0
 ok()   { echo "OK   $1"; }
 fail() { echo "FAIL $1"; fails=$((fails + 1)); }
-width() { herdr pane layout --pane "$1" | python3 -c 'import json,sys
+width() { pane_layout "$1" | python3 -c 'import json,sys
 r=json.load(sys.stdin)["result"]["layout"]
 print(next(p["rect"]["width"] for p in r["panes"] if p["pane_id"]==sys.argv[1]))' "$1"; }
 
-WS=$(herdr workspace create --label "narrow-test-$$" --no-focus --cwd /tmp | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["workspace"]["workspace_id"])') || { echo "FAIL workspace create"; exit 1; }
-P="$WS:p1"
+WSJ=$(ws_open "narrow-test-$$" /tmp) || { echo "FAIL workspace create"; exit 1; }
+WS=${WSJ% *}
+P=${WSJ#* }
 i=0; while [ "$i" -lt "$SPLITS" ]; do i=$((i + 1))
-  P=$(herdr pane split "$P" --direction right --no-focus --cwd /tmp | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])') || { echo "FAIL split"; herdr workspace close "$WS"; exit 1; }
+  P=$(pane_split "$P" /tmp | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])') || { echo "FAIL split"; ws_close "$WS"; exit 1; }
 done
 PW=$(width "$P")
 echo "workspace $WS parent $P width $PW"
-herdr pane layout --pane "$P" > "$OUT/layout-before.json"
+pane_layout "$P" > "$OUT/layout-before.json"
 
 S="$HOME/r-loop-test-narrow-$(openssl rand -hex 4)"
-"$ROOT/testdata/sandbox/make-sandbox.sh" "$S" > /dev/null || { herdr workspace close "$WS"; exit 1; }
+"$ROOT/testdata/sandbox/make-sandbox.sh" "$S" > /dev/null || { ws_close "$WS"; exit 1; }
 cd "$S" || exit 1
 [ -z "${PRETRUST:-}" ] || bash "$ROOT/.claude/skills/test-app/e2e/pretrust.sh" "$S" || exit 1
 S=$(pwd -P)
@@ -40,9 +42,9 @@ echo "out     $OUT"
 
 export TUI_SESSION_SUFFIX="${TUI_SESSION_SUFFIX:-narrow1}"
 export TUI_START_TIMEOUT="${TUI_START_TIMEOUT:-300}" TUI_TTL="${TUI_TTL:-3600}"
-H=$("$TUI" start --geometry 120x40 -- env HERDR_PANE_ID="$P" "$BIN" docs/plan/todo-tiny.md --unattended) || { echo "FAIL start rc=$?"; herdr workspace close "$WS"; exit 1; }
+H=$("$TUI" start --geometry 120x40 -- env $(host_env "$P") "$BIN" docs/plan/todo-tiny.md --unattended) || { echo "FAIL start rc=$?"; ws_close "$WS"; exit 1; }
 POLLER=""
-trap '[ -n "$POLLER" ] && kill "$POLLER" 2>/dev/null; "$TUI" stop "$H" > /dev/null 2>&1; herdr workspace close "$WS" > /dev/null 2>&1' EXIT
+trap '[ -n "$POLLER" ] && kill "$POLLER" 2>/dev/null; "$TUI" stop "$H" > /dev/null 2>&1; ws_close "$WS" > /dev/null 2>&1' EXIT
 echo "handle  $H"
 
 poll() {
@@ -50,7 +52,7 @@ poll() {
   : > "$OUT/seen.txt"
   : > "$OUT/panes.txt"
   while :; do
-    herdr pane list 2>/dev/null | python3 -c '
+    pane_list 2>/dev/null | python3 -c '
 import json, sys, subprocess
 root = sys.argv[1].rstrip("/")
 alt = root[len("/private"):] if root.startswith("/private/") else root
@@ -67,12 +69,12 @@ for p in json.load(sys.stdin)["result"]["panes"]:
     sort -u "$OUT/panes-now.txt" "$OUT/panes.txt" -o "$OUT/panes.txt"
     while read -r pane agent cols rows tab; do
       f=$(mktemp "$OUT/screens/tmp.XXXXXX")
-      herdr agent read "$pane" --source visible > "$f" 2>/dev/null
+      screen "$pane" > "$f" 2>/dev/null
       h=$(md5 -q "$f")
       if [ ! -s "$f" ] || grep -qx "$h" "$OUT/seen.txt"; then rm -f "$f"; continue; fi
       echo "$h" >> "$OUT/seen.txt"
       mv "$f" "$OUT/screens/$(date +%H%M%S)-$(echo "$pane" | tr ':' '_')-$agent-cols$cols.txt"
-      case "$pane" in "$WS":*) herdr agent read "$pane" --source recent-unwrapped --lines 200 > "$OUT/screens/$(date +%H%M%S)-$(echo "$pane" | tr ':' '_')-$agent-cols$cols-history.txt" 2>/dev/null ;; esac
+      case "$pane" in "$WS":*) screen "$pane" 200 > "$OUT/screens/$(date +%H%M%S)-$(echo "$pane" | tr ':' '_')-$agent-cols$cols-history.txt" 2>/dev/null ;; esac
     done < "$OUT/panes-now.txt"
     sleep 0.5
   done
@@ -116,10 +118,10 @@ wpl=${pl%% *}; wpane=${pl#* }
 case "$wpane" in "$WS":*) ok "watchdog pane $wpane is in the driver pane's workspace $WS" ;; *) fail "watchdog pane '$wpane' not in $WS" ;; esac
 wd=$(awk -v p="$wpane" '$1 == p {print $3" "$4" "$5}' "$OUT/panes.txt" | sort -n | head -1)
 if [ -z "$wd" ]; then
-  fail "watchdog pane $wpane never seen in herdr pane list"
+  fail "watchdog pane $wpane never seen in pane_list"
 else
   set -- $wd
-  echo "        watchdog pane $wpane ${1}x${2} tab $3 (driver parent $P tab $(herdr pane list | python3 -c 'import json,sys; print(next(p["tab_id"] for p in json.load(sys.stdin)["result"]["panes"] if p["pane_id"]==sys.argv[1]))' "$P" 2>/dev/null))"
+  echo "        watchdog pane $wpane ${1}x${2} tab $3 (driver parent $P tab $(pane_list | python3 -c 'import json,sys; print(next(p["tab_id"] for p in json.load(sys.stdin)["result"]["panes"] if p["pane_id"]==sys.argv[1]))' "$P" 2>/dev/null))"
   [ "$1" -ge 60 ] && [ "$2" -ge 15 ] && ok "watchdog pane is ${1}x${2} (>= 60x15)" || fail "watchdog pane is ${1}x${2}, below 60x15"
   wp=$(echo "$wpane" | tr ':' '_')
   tr_screen=$(for f in "$OUT"/screens/*-"$wp"-*; do tr -d ' \n' < "$f" | grep -q 'Yes,Itrustthisfolder\|trustthisfolder' && echo "$f"; done | head -1)
@@ -136,7 +138,7 @@ case "$final" in
 esac
 [ "$rc" = 0 ] && ok "app exited, terminal restored" || fail "stop --expect-exited rc=$rc"
 trap - EXIT
-herdr workspace close "$WS" > /dev/null 2>&1
+ws_close "$WS" > /dev/null 2>&1
 
 echo "failures: $fails"
 echo "sandbox $S"

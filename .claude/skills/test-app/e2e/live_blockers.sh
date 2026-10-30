@@ -8,10 +8,10 @@
 set -u
 MODE="${1:-A}"
 case "$MODE" in A|B|C) ;; *) echo "usage: $0 A|B|C"; exit 2 ;; esac
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
 case "$PWD" in */.r-loop/wt/*) echo "NOT RUN: inside an r-loop worktree"; exit 3 ;; esac
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 . "$(dirname "$0")/own_workspace.sh"
 
 ROOT=$(cd "$(dirname "$0")/../../../.." && pwd)
@@ -98,7 +98,7 @@ review_framed=""
 blocker_framed=""
 while :; do
   n=$((n + 1))
-  herdr agent list > "$OUT/agents/list.json" 2>/dev/null
+  agents_json > "$OUT/agents/list.json" 2>/dev/null
   python3 - "$S" "$OUT/agents/list.json" > "$OUT/agents/ours.txt" <<'EOF'
 import json, sys
 root = sys.argv[1].rstrip("/")
@@ -110,7 +110,7 @@ EOF
   while read -r pane agent st; do
     echo "$(date +%T) $n $pane $agent $st" >> "$OUT/agents/timeline.txt"
     f="$OUT/agents/$(echo "$pane" | tr ':' '_')-$n.txt"
-    herdr agent read "$pane" --source recent-unwrapped --lines 200 > "$f" 2>/dev/null
+    screen "$pane" 200 > "$f" 2>/dev/null
     hit=""
     grep -q -e '/review' -e 'Code review' -e 'review-plan' -e 'codex exec review' "$f" && hit=1
     if [ -n "$hit" ]; then

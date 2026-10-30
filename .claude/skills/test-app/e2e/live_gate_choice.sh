@@ -4,10 +4,10 @@
 # While the pick is open the script sends a non-candidate (`app-api`) itself and expects it refused, never a candidate:
 # a candidate would be accepted and race the watchdog's own choice.
 set -u
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
 case "$PWD" in */.r-loop/wt/*) echo "NOT RUN: inside an r-loop worktree"; exit 3 ;; esac
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 . "$(dirname "$0")/own_workspace.sh"
 
 E2E=$(cd "$(dirname "$0")" && pwd)
@@ -53,10 +53,10 @@ while :; do
   fi
   if [ $window = 0 ] && [ $early = 1 ] && ! has gate-chosen; then
     WDPANE=$(grep '"Kind":"watchdog-placed"' "$EV" | head -1 | sed 's/.*"pane":"\([^"]*\)".*/\1/')
-    if herdr pane read "$WDPANE" 2>/dev/null | grep -q 'choose gate phase 1'; then
+    if pane_screen "$WDPANE" 2>/dev/null | grep -q 'choose gate phase 1'; then
       window=1
       wd choose_gate '{"phase":"1","commands":["app-api"]}' > "$OUT/call-noncand.json" 2>&1
-      herdr pane read "$WDPANE" 2>/dev/null | tail -30 > "$OUT/watchdog-pick.txt"
+      pane_screen "$WDPANE" 2>/dev/null | tail -30 > "$OUT/watchdog-pick.txt"
       for g in 160x50 120x40 80x24; do
         "$TUI" resize "$H" "$g" > /dev/null || echo "resize $g rc=$?" >> "$OUT/frames/errors.txt"
         sleep 0.5

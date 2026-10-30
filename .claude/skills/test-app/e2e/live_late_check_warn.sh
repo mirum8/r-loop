@@ -3,9 +3,9 @@
 #   a watchdog signal on phase-1/check after the check closed (plan step live) is rejected with
 #   "phase-1/check is not open", recorded, shown as signal-rejected, and halts nothing: the phase still lands
 set -u
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 . "$(dirname "$0")/own_workspace.sh"
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -30,7 +30,7 @@ echo "sandbox $S"
 echo "out     $OUT"
 
 H=$("$TUI" start --ttl 7200 --geometry 120x40 -- "$BIN" docs/plan/todo-tiny.md --unattended) || { echo "FAIL start"; exit 1; }
-trap '"$TUI" stop "$H" >/dev/null 2>&1; herdr workspace close "$R_LOOP_TEST_WS" > /dev/null 2>&1' EXIT INT TERM
+trap '"$TUI" stop "$H" >/dev/null 2>&1; ws_close "$R_LOOP_TEST_WS" > /dev/null 2>&1' EXIT INT TERM
 echo "handle  $H"
 
 EV() { ls "$S"/.r-loop/runs/*/events.jsonl 2>/dev/null | head -1; }

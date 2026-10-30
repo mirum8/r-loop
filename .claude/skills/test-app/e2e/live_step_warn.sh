@@ -4,9 +4,9 @@
 #   implement pane as "r-loop: watchdog warning: <reason>" (only while the agent works and before its sentinel),
 #   rendered into the implement round-1 reviewer prompt, and halts nothing: the phase still lands
 set -u
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 . "$(dirname "$0")/own_workspace.sh"
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -46,8 +46,8 @@ wait_q() {
 frame() { local p; p=$("$TUI" capture "$H" ${2:-}) && cp "$p" "$OUT/frames/$1" && echo "frame   $OUT/frames/$1"; }
 ev_kind() { printf '.Event.Kind=="%s"' "$1"; }
 width_ok() { python3 -c "import sys; sys.exit(any(len(l.rstrip('\\n')) > int(sys.argv[2]) for l in open(sys.argv[1], encoding='utf-8')))" "$1" "$2"; }
-agent_status() { herdr agent get "$1" 2>/dev/null | jq -r '.result.agent.status // "gone"'; }
-agent_read() { herdr agent read "$1" --source recent-unwrapped --lines "${2:-600}" 2>/dev/null; }
+agent_status() { agent_state "$1"; }
+agent_read() { screen "$1" "${2:-600}" 2>/dev/null; }
 squashed_has() { tr -d ' \n\r' < "$1" | grep -qF "$(printf '%s' "$2" | tr -d ' ')"; }
 dump() {
   local f; f=$(EV)
@@ -62,7 +62,7 @@ dump() {
 }
 finish() { echo "RESULT: $passes passed, $fails failed"; exit "$fails"; }
 H=""
-trap '[ -n "$H" ] && "$TUI" stop "$H" >/dev/null 2>&1; herdr workspace close "$R_LOOP_TEST_WS" > /dev/null 2>&1' EXIT INT TERM
+trap '[ -n "$H" ] && "$TUI" stop "$H" >/dev/null 2>&1; ws_close "$R_LOOP_TEST_WS" > /dev/null 2>&1' EXIT INT TERM
 
 S=$("$ROOT/testdata/sandbox/make-sandbox.sh") || exit 1
 cd "$S" || exit 1

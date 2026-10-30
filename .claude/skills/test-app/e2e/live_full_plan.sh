@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # usage: live_full_plan.sh
-#   The full three-phase docs/plan/todo.md, --unattended, in its own herdr workspace, TUI at 120x40.
+#   The full three-phase docs/plan/todo.md, --unattended, in its own workspace, TUI at 120x40.
 #   Unattended skips the ## Resolve first walk (ADR-72): no unblock/entry-resolved events; the open entry is
 #   recorded as entry-deferred for phase 3, triage and the run list cover phases 1 and 2 only, both land, phase 3
 #   never starts, the entry and phase 3 stay unticked, the run finishes, q quits and the terminal is restored.
 set -u
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
 case "$PWD" in */.r-loop/wt/*) echo "NOT RUN: inside an r-loop worktree"; exit 3 ;; esac
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../../.." && pwd)
@@ -30,12 +30,12 @@ S=$(pwd -P)
 echo "sandbox $S"
 echo "out     $OUT"
 
-WSJ=$(herdr workspace create --cwd "$S" --label full-plan --no-focus) || { echo "FAIL workspace create"; exit 1; }
-WS=$(printf '%s' "$WSJ" | jq -r '.result.workspace.workspace_id')
-PANE=$(printf '%s' "$WSJ" | jq -r '.result.root_pane.pane_id')
-echo "herdr   $WS $PANE"
-H=$("$TUI" start --geometry 120x40 -- env HERDR_PANE_ID="$PANE" "$BIN" docs/plan/todo.md --unattended) || { echo "FAIL start"; herdr workspace close "$WS" > /dev/null 2>&1; exit 1; }
-trap '"$TUI" stop "$H" > /dev/null 2>&1; herdr workspace close "$WS" > /dev/null 2>&1' EXIT
+WSJ=$(ws_open full-plan "$S") || { echo "FAIL workspace create"; exit 1; }
+WS=${WSJ% *}
+PANE=${WSJ#* }
+echo "$HOST   $WS $PANE"
+H=$("$TUI" start --geometry 120x40 -- env $(host_env "$PANE") "$BIN" docs/plan/todo.md --unattended) || { echo "FAIL start"; ws_close "$WS" > /dev/null 2>&1; exit 1; }
+trap '"$TUI" stop "$H" > /dev/null 2>&1; ws_close "$WS" > /dev/null 2>&1' EXIT
 echo "handle  $H"
 
 EV() { ls "$S"/.r-loop/runs/*/events.jsonl 2>/dev/null | head -1; }
@@ -95,7 +95,7 @@ python3 -c 'import sys; bad=[l for l in open(sys.argv[1]).read().split("\n") if 
 sleep 2
 "$TUI" stop "$H" --expect-exited; rc=$?
 [ "$rc" = 0 ] && ok "q quits, terminal restored" || fail "stop --expect-exited rc=$rc"
-herdr workspace close "$WS" > /dev/null 2>&1
+ws_close "$WS" > /dev/null 2>&1
 trap - EXIT
 
 echo "passes: $passes failures: $fails"

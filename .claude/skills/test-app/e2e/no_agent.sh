@@ -477,8 +477,8 @@ printf 'Review {{.Bogus}}\n' > .r-loop/prompts/review.md
 [ "$rc" = 2 ] && grep -q 'map has no entry for key "Bogus"' "$T/err" \
   && ok "dry-run renders the override: an unknown key in it exits 2" || fail "bogus review override rc=$rc: $(cat "$T/err")"
 cd "$ROOT"; rm -rf "$P"
-env -u HERDR_PANE_ID bash "$ROOT/.claude/skills/test-app/e2e/live_step_warn.sh" > "$T/out" 2>&1 < /dev/null; rc=$?
-[ "$rc" = 3 ] && [ "$(cat "$T/out")" = "NOT RUN: no herdr pane (HERDR_PANE_ID unset)" ] && ok "live_step_warn: NOT RUN without HERDR_PANE_ID" || fail "live_step_warn without a pane rc=$rc: $(cat "$T/out")"
+env -u HERDR_PANE_ID -u HC_TERMINAL_ID bash "$ROOT/.claude/skills/test-app/e2e/live_step_warn.sh" > "$T/out" 2>&1 < /dev/null; rc=$?
+[ "$rc" = 3 ] && [ "$(cat "$T/out")" = "NOT RUN: no session host (herdr or herdr-app)" ] && ok "live_step_warn: NOT RUN without a session host" || fail "live_step_warn without a host rc=$rc: $(cat "$T/out")"
 
 . "$ROOT/.claude/skills/test-app/e2e/steering_checkers_test.sh"
 cd "$ROOT"

@@ -1,7 +1,7 @@
 for s in live_background_sleep live_nudge_reply live_evidence_repair; do
   f="$ROOT/.claude/skills/test-app/e2e/$s.sh"
-  out=$(cd "$T" && env -u HERDR_PANE_ID PATH="$T/herdr-down:$PATH" sh "$f" 2>&1); rc=$?
-  [ "$rc" = 3 ] && [ "$out" = "NOT RUN: no herdr pane (HERDR_PANE_ID unset)" ] && ok "$s: NOT RUN without HERDR_PANE_ID" || fail "$s no pane rc=$rc: $out"
+  out=$(cd "$T" && env -u HERDR_PANE_ID -u HC_TERMINAL_ID PATH="$T/herdr-down:$PATH" sh "$f" 2>&1); rc=$?
+  [ "$rc" = 3 ] && [ "$out" = "NOT RUN: no session host (herdr or herdr-app)" ] && ok "$s: NOT RUN without a session host" || fail "$s no host rc=$rc: $out"
   out=$(cd "$T" && HERDR_PANE_ID=x R_LOOP_RUN=x PATH="$T/herdr-down:$PATH" sh "$f" 2>&1); rc=$?
   [ "$rc" = 3 ] && [ "$out" = "NOT RUN: inside an r-loop run (R_LOOP_RUN set)" ] && ok "$s: NOT RUN inside an r-loop run" || fail "$s inside run rc=$rc: $out"
   out=$(mkdir -p "$T/nest/.r-loop/wt/phase-1" && cd "$T/nest/.r-loop/wt/phase-1" && HERDR_PANE_ID=x R_LOOP_RUN= PATH="$T/herdr-down:$PATH" sh "$f" 2>&1); rc=$?

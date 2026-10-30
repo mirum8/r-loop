@@ -7,9 +7,9 @@
 #   plain: the halt flow with --plain piped through cat; `diagnosis: <path>` in stdout
 set -u
 MODE=${1:-halt}
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 . "$(dirname "$0")/own_workspace.sh"
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -36,11 +36,11 @@ H="" PID=""
 if [ "$MODE" = plain ]; then
   ( "$BIN" docs/plan/todo-tiny.md --unattended --plain 2> "$OUT/plain.err" | cat > "$OUT/plain.out"; echo "${PIPESTATUS[0]}" > "$OUT/plain.rc" ) &
   PID=$!
-  trap 'kill $PID 2>/dev/null; herdr workspace close "$R_LOOP_TEST_WS" > /dev/null 2>&1' EXIT INT TERM
+  trap 'kill $PID 2>/dev/null; ws_close "$R_LOOP_TEST_WS" > /dev/null 2>&1' EXIT INT TERM
   alive() { kill -0 "$PID" 2>/dev/null; }
 else
   H=$("$TUI" start --ttl 7200 --geometry 120x40 -- "$BIN" docs/plan/todo-tiny.md --unattended) || { echo "FAIL start"; exit 1; }
-  trap '"$TUI" stop "$H" >/dev/null 2>&1; herdr workspace close "$R_LOOP_TEST_WS" > /dev/null 2>&1' EXIT INT TERM
+  trap '"$TUI" stop "$H" >/dev/null 2>&1; ws_close "$R_LOOP_TEST_WS" > /dev/null 2>&1' EXIT INT TERM
   echo "handle  $H"
   alive() { [ "$("$TUI" status "$H" 2>/dev/null | awk '{print $1}')" = running ]; }
 fi

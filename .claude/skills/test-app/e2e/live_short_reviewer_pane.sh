@@ -1,9 +1,10 @@
 #!/bin/bash
 set -u
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
 case "$PWD" in */.r-loop/wt/*) echo "NOT RUN: inside an r-loop worktree"; exit 3 ;; esac
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
+host_needs_herdr "the short-reviewer-pane check (pane rows and layout)"
 . "$(dirname "$0")/own_workspace.sh"
 
 ROOT=$(git rev-parse --show-toplevel)
@@ -79,7 +80,7 @@ git add .r-loop/config.yaml && git -c user.name=sandbox -c user.email=sandbox@lo
 
 export TUI_SESSION_SUFFIX="${TUI_SESSION_SUFFIX:-shortpane1}"
 export TUI_START_TIMEOUT="${TUI_START_TIMEOUT:-300}" TUI_TTL="${TUI_TTL:-3600}"
-H=$("$TUI" start --geometry 120x40 -- env HERDR_PANE_ID="$HERDR_PANE_ID" "$BIN" docs/plan/todo-tiny.md --unattended) || { echo "FAIL start rc=$?"; exit 1; }
+H=$("$TUI" start --geometry 120x40 -- env $(host_env "$HOST_SELF") "$BIN" docs/plan/todo-tiny.md --unattended) || { echo "FAIL start rc=$?"; exit 1; }
 POLLER=""
 trap '[ -n "$POLLER" ] && kill "$POLLER" 2>/dev/null; "$TUI" stop "$H" > /dev/null 2>&1' EXIT
 echo "handle  $H"
@@ -89,7 +90,7 @@ poll_codex() {
   : > "$OUT/seen.txt"
   : > "$OUT/codex-panes.txt"
   while :; do
-    herdr pane list 2>/dev/null | python3 -c '
+    pane_list 2>/dev/null | python3 -c '
 import json, sys, subprocess
 root = sys.argv[1].rstrip("/")
 alt = root[len("/private"):] if root.startswith("/private/") else root
@@ -109,8 +110,8 @@ for p in json.load(sys.stdin)["result"]["panes"]:
       [ "$agent" = codex ] || continue
       for src in visible recent-unwrapped; do
         f=$(mktemp "$OUT/screens/tmp.XXXXXX")
-        if [ "$src" = visible ]; then herdr agent read "$pane" --source visible > "$f" 2>/dev/null
-        else herdr agent read "$pane" --source recent-unwrapped --lines 200 > "$f" 2>/dev/null; fi
+        if [ "$src" = visible ]; then screen "$pane" > "$f" 2>/dev/null
+        else screen "$pane" 200 > "$f" 2>/dev/null; fi
         h=$(md5 -q "$f")
         if [ ! -s "$f" ] || grep -qx "$h" "$OUT/seen.txt"; then rm -f "$f"; continue; fi
         echo "$h" >> "$OUT/seen.txt"

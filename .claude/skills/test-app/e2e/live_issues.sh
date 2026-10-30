@@ -1,13 +1,13 @@
 #!/bin/sh
 # Live: issues.md --unattended fixes #1 only. #1 ticked, #2 stays ticked, #3 struck and untouched;
 # the land gate's item test is red at base and green after; go test ./... green; tree clean; q quits.
-# The run gets a herdr workspace of its own, so its watchdog never splits the maintainer's pane.
-# Usage (from the repo root, inside a herdr pane): sh .claude/skills/test-app/e2e/live_issues.sh
+# The run gets a workspace of its own, so its watchdog never splits the maintainer's pane.
+# Usage (from the repo root, inside herdr or herdr-app): sh .claude/skills/test-app/e2e/live_issues.sh
 set -u
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
 case "$PWD" in */.r-loop/wt/*) echo "NOT RUN: inside an r-loop worktree"; exit 3 ;; esac
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 
 ROOT=$(git rev-parse --show-toplevel)
 BIN="${TEST_APP_BIN:-$ROOT/bin/r-loop}"
@@ -29,14 +29,14 @@ base=$(git rev-parse HEAD)
 
 export TUI_SESSION_SUFFIX="${TUI_SESSION_SUFFIX:-issues}"
 export TUI_START_TIMEOUT="${TUI_START_TIMEOUT:-300}" TUI_TTL="${TUI_TTL:-3600}"
-WSJ=$(herdr workspace create --cwd "$S" --label "r-loop test issues" --no-focus)
-WS=$(printf '%s' "$WSJ" | jq -r '.result.workspace.workspace_id')
-P=$(printf '%s' "$WSJ" | jq -r '.result.root_pane.pane_id')
+WSJ=$(ws_open "r-loop test issues" "$S")
+WS=${WSJ% *}
+P=${WSJ#* }
 [ -n "$P" ] && [ "$P" != null ] || { echo "FAIL could not create the test workspace"; exit 1; }
 echo "workspace $WS ($P)"
-H=$("$TUI" start --geometry 120x40 -- env HERDR_PANE_ID="$P" "$BIN" issues.md --unattended) \
-  || { echo "FAIL start rc=$?"; herdr workspace close "$WS" > /dev/null 2>&1; exit 1; }
-trap '"$TUI" stop "$H" > /dev/null 2>&1; herdr workspace close "$WS" > /dev/null 2>&1' EXIT
+H=$("$TUI" start --geometry 120x40 -- env $(host_env "$P") "$BIN" issues.md --unattended) \
+  || { echo "FAIL start rc=$?"; ws_close "$WS" > /dev/null 2>&1; exit 1; }
+trap '"$TUI" stop "$H" > /dev/null 2>&1; ws_close "$WS" > /dev/null 2>&1' EXIT
 echo "handle  $H"
 
 start=$(date +%s)
@@ -113,7 +113,7 @@ sleep 2
 "$TUI" status "$H" > "$OUT/tui-status.txt"
 "$TUI" stop "$H" --expect-exited; rc=$?
 [ "$rc" = 0 ] && ok "q quits, terminal restored" || fail "stop --expect-exited rc=$rc ($(cat "$OUT/tui-status.txt"))"
-herdr workspace close "$WS" > /dev/null 2>&1
+ws_close "$WS" > /dev/null 2>&1
 trap - EXIT
 
 echo "failures: $fails"

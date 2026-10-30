@@ -7,9 +7,9 @@
 set -u
 MODE="${1:-A}"
 case "$MODE" in A|B|C|D) ;; *) echo "usage: $0 A|B|C|D"; exit 2 ;; esac
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 . "$(dirname "$0")/own_workspace.sh"
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -203,20 +203,20 @@ C)
   ;;
 D)
   live_step 1 600; check $? "a phase 1 step is running"
-  WDP=$(herdr agent list | jq -r --arg b "/$(basename "$S")" '.result.agents[] | select((tostring|test("rloop-wd-")) and (.cwd|endswith($b))) | .pane_id' | head -1)
+  WDP=$(agents_json | jq -r --arg b "/$(basename "$S")" '.result.agents[] | select((tostring|test("rloop-wd-")) and (.cwd|endswith($b))) | .pane_id' | head -1)
   echo "     watchdog pane: ${WDP:-none}"
-  herdr agent list | jq -c '.result.agents[] | select((tostring|test("rloop-wd-")))' | cut -c1-400 | sed 's/^/     /'
+  agents_json | jq -c '.result.agents[] | select((tostring|test("rloop-wd-")))' | cut -c1-400 | sed 's/^/     /'
   [ -n "$WDP" ] || { fail "watchdog pane found"; finish; }
-  herdr agent prompt "$WDP" "Maintainer here: pause the run after this phase, I want to look at phase 1 first." >/dev/null; check $? "typed pause into the watchdog pane"
+  prompt "$WDP" "Maintainer here: pause the run after this phase, I want to look at phase 1 first." >/dev/null; check $? "typed pause into the watchdog pane"
   wait_q "$(ev_kind watchdog-call) and (.Event.Fields.tool==\"pause_run\")" 300; check $? "watchdog called pause_run itself"
   q "$(ev_kind watchdog-call) and (.Event.Fields|tostring|test(\"pause_run|continue_run|stop_run\"))" | cut -c1-400 | sed 's/^/     /'
   has "$(ev_kind pause-requested)"; check $? "pause-requested from the real watchdog"
   wait_q "$(ev_kind paused)" "$LIMIT"; check $? "paused after phase 1"
   frame d-paused.txt
-  herdr agent prompt "$WDP" "Maintainer here: ok, continue the run." >/dev/null; check $? "typed continue into the watchdog pane"
+  prompt "$WDP" "Maintainer here: ok, continue the run." >/dev/null; check $? "typed continue into the watchdog pane"
   wait_q "$(ev_kind continued)" 300; check $? "watchdog called continue_run (continued event)"
   q "$(ev_kind human) and .Event.Fields.what==\"consent\"" | cut -c1-400 | sed 's/^/     /'
-  herdr agent read "$WDP" 2>/dev/null | tail -40 > "$OUT/watchdog-pane.txt"; echo "wdpane  $OUT/watchdog-pane.txt"
+  screen "$WDP" recent 2>/dev/null | tail -40 > "$OUT/watchdog-pane.txt"; echo "wdpane  $OUT/watchdog-pane.txt"
   wait_q "$(ev_kind finished)" "$LIMIT"; check $? "run finished"
   "$TUI" send "$H" q >/dev/null; sleep 3
   "$TUI" stop "$H" --expect-exited; check $? "terminal restored"

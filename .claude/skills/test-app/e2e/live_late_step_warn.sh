@@ -4,9 +4,9 @@
 #         "phase-1/plan is ok", recorded, shown as signal-rejected, and halts nothing: the phase still lands
 #   halt: a watchdog halt on the same ended step is still rejected and still halts the run (exit 5)
 set -u
-[ -n "${HERDR_PANE_ID:-}" ] || { echo "NOT RUN: no herdr pane (HERDR_PANE_ID unset)"; exit 3; }
+. "$(dirname "$0")/host.sh"
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 . "$(dirname "$0")/own_workspace.sh"
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -58,7 +58,7 @@ dump() {
 }
 finish() { echo "RESULT: $passes passed, $fails failed"; exit "$fails"; }
 H=""
-trap '[ -n "$H" ] && "$TUI" stop "$H" >/dev/null 2>&1; herdr workspace close "$R_LOOP_TEST_WS" > /dev/null 2>&1' EXIT INT TERM
+trap '[ -n "$H" ] && "$TUI" stop "$H" >/dev/null 2>&1; ws_close "$R_LOOP_TEST_WS" > /dev/null 2>&1' EXIT INT TERM
 start_run() {
   S=$("$ROOT/testdata/sandbox/make-sandbox.sh") || exit 1
   cd "$S" || exit 1

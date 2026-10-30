@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # usage: live_workspace_close.sh
-#   docs/plan/todo-tiny.md, --unattended, in its own herdr workspace, TUI at 120x40.
+#   docs/plan/todo-tiny.md, --unattended, in its own workspace, TUI at 120x40.
 #   A step's workspace closes as soon as the step finishes ok: the plan workspace is recorded closed before the
 #   implement step starts and is gone from herdr while implement runs; the implement workspace is closed before
 #   the landing; nothing is closed twice and no close warns. The phase lands and ticks, q quits, terminal restored.
 set -u
 [ -z "${R_LOOP_RUN:-}" ] || { echo "NOT RUN: inside an r-loop run (R_LOOP_RUN set)"; exit 3; }
 case "$PWD" in */.r-loop/wt/*) echo "NOT RUN: inside an r-loop worktree"; exit 3 ;; esac
-herdr status server > /dev/null 2>&1 || { echo "NOT RUN: herdr server down"; exit 3; }
+. "$(dirname "$0")/host.sh"
+host_up || { echo "NOT RUN: no session host (herdr or herdr-app)"; exit 3; }
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../../.." && pwd)
@@ -17,7 +18,7 @@ TUI="${TUI:-/Users/mirum8/.claude/skills/r/skills/test-app-create/scripts/tui-se
 LIMIT="${LIVE_LIMIT:-1800}"
 OUT="${OUT:-$HERE/frames/workspace-close-$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "$OUT"
-export HERDR_SOCKET_PATH="${HERDR_SOCKET_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/herdr.sock}"
+[ "$HOST" != herdr ] || export HERDR_SOCKET_PATH="${HERDR_SOCKET_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/herdr.sock}"
 export TUI_SESSION_SUFFIX="${TUI_SESSION_SUFFIX:-wsclose}"
 export TUI_START_TIMEOUT="${TUI_START_TIMEOUT:-300}" TUI_TTL="${TUI_TTL:-3600}"
 fails=0 passes=0
@@ -30,18 +31,18 @@ S=$(pwd -P)
 echo "sandbox $S"
 echo "out     $OUT"
 
-WSJ=$(herdr workspace create --cwd "$S" --label workspace-close --no-focus) || { echo "FAIL workspace create"; exit 1; }
-WS=$(printf '%s' "$WSJ" | jq -r '.result.workspace.workspace_id')
-PANE=$(printf '%s' "$WSJ" | jq -r '.result.root_pane.pane_id')
-echo "herdr   $WS $PANE"
-H=$("$TUI" start --geometry 120x40 -- env HERDR_PANE_ID="$PANE" "$BIN" docs/plan/todo-tiny.md --unattended) || { echo "FAIL start"; herdr workspace close "$WS" > /dev/null 2>&1; exit 1; }
-trap '"$TUI" stop "$H" > /dev/null 2>&1; herdr workspace close "$WS" > /dev/null 2>&1' EXIT
+WSJ=$(ws_open workspace-close "$S") || { echo "FAIL workspace create"; exit 1; }
+WS=${WSJ% *}
+PANE=${WSJ#* }
+echo "$HOST   $WS $PANE"
+H=$("$TUI" start --geometry 120x40 -- env $(host_env "$PANE") "$BIN" docs/plan/todo-tiny.md --unattended) || { echo "FAIL start"; ws_close "$WS" > /dev/null 2>&1; exit 1; }
+trap '"$TUI" stop "$H" > /dev/null 2>&1; ws_close "$WS" > /dev/null 2>&1' EXIT
 echo "handle  $H"
 
 EV() { ls "$S"/.r-loop/runs/*/events.jsonl 2>/dev/null | head -1; }
 q()  { local f; f=$(EV); [ -n "$f" ] && jq -c "select(.Kind==\"event\" and ($1))" "$f" 2>/dev/null; }
 stepws() { q ".Event.Kind==\"step\" and .Event.Step==\"$1\" and .Event.Fields.workspace!=null and .Event.Fields.workspace!=\"\"" | jq -r '.Event.Fields.workspace' | head -1; }
-alive() { herdr workspace list | jq -e --arg id "$1" '.result.workspaces[] | select(.workspace_id==$id)' > /dev/null; }
+alive() { ws_alive "$1"; }
 
 start=$(date +%s)
 final="" seen_impl=0 plan_alive_during_impl=0
@@ -91,7 +92,7 @@ grep -q '^- \[ \]' docs/plan/todo-tiny.md && fail "todo-tiny box not ticked" || 
 sleep 2
 "$TUI" stop "$H" --expect-exited; rc=$?
 [ "$rc" = 0 ] && ok "q quits, terminal restored" || fail "stop --expect-exited rc=$rc"
-herdr workspace close "$WS" > /dev/null 2>&1
+ws_close "$WS" > /dev/null 2>&1
 trap - EXIT
 
 echo "passes: $passes failures: $fails"
