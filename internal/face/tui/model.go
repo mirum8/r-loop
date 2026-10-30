@@ -116,11 +116,11 @@ type stepID struct {
 }
 
 type phaseInfo struct {
-	summary                                                              string
-	started, landedAt                                                    time.Time
-	sha                                                                  string
-	added, deleted, files, rounds, realFindings, fixed, restarts, nudges int
-	blocker                                                              string
+	summary                                                                     string
+	started, landedAt                                                           time.Time
+	sha                                                                         string
+	added, deleted, files, rounds, realFindings, fixed, minor, restarts, nudges int
+	blocker                                                                     string
 }
 
 type Model struct {
@@ -430,8 +430,11 @@ func (m *Model) record(ev core.Event) {
 		}
 		edit = func(p *phaseInfo) {
 			p.realFindings++
-			if f["fixed"] == "true" {
+			switch {
+			case f["fixed"] == "true":
 				p.fixed++
+			case f["severity"] == "P3" || f["severity"] == "P4":
+				p.minor++
 			}
 		}
 	case "restart":

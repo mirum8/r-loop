@@ -1880,3 +1880,20 @@ func TestTheEndedStatusBarDropsItsHintsInOrder(t *testing.T) {
 		t.Errorf("a live run shows the hint:\n%s", live.View())
 	}
 }
+
+func TestTheReviewStatsCountRealMinorFindingsLeftByDesign(t *testing.T) {
+	m := newModel([]core.Event{
+		{At: at(1), Kind: "phase-start", Phase: "1", Fields: map[string]string{"phase": "1"}},
+		{At: at(2), Kind: "review-round", Phase: "1", Step: "plan", Fields: map[string]string{"round": "1"}},
+		{At: at(3), Kind: "finding", Phase: "1", Step: "plan", Fields: map[string]string{"round": "1", "verdict": "real", "fixed": "true", "severity": "P2"}},
+		{At: at(3), Kind: "finding", Phase: "1", Step: "plan", Fields: map[string]string{"round": "1", "verdict": "real", "fixed": "false", "severity": "P3"}},
+		{At: at(3), Kind: "finding", Phase: "1", Step: "plan", Fields: map[string]string{"round": "1", "verdict": "real", "fixed": "false", "severity": "P4"}},
+		{At: at(3), Kind: "finding", Phase: "1", Step: "plan", Fields: map[string]string{"round": "1", "verdict": "not-real", "fixed": "false", "severity": "P3"}},
+		{At: at(9), Kind: "finished"},
+	})
+	m.Width = 120
+
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "review     1 round · 3 real · 1 fixed · 2 minor left") {
+		t.Fatalf("review stats:\n%s", view)
+	}
+}

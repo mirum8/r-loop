@@ -47,6 +47,7 @@ Write only %s, in markdown:
 ## Summary — what the run built, overall
 ## Problems — what went wrong (retries, restarts, blockers) and why; none when nothing did
 ## Follow-ups
+A review fixes only real P1 and P2 findings; a real P3 or P4 is left by design, so count it as minor and never call it a problem or an unfixed failure.
 Do not edit code, do not commit, do not call signal.`, path, path)
 }
 

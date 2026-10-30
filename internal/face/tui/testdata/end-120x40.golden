@@ -3,7 +3,7 @@
   PHASES 2/4                │  phases     2 landed · 1 blocked · 1 left
   ✓  1 scaffold             │  time       1h30m
   ✓  2 config reader        │  diff       +330 −70 · 14 files
-  ×  3 state store          │  review     1 round · 1 fixed
+  ×  3 state store          │  review     1 round · 1 real · 1 fixed
   ·  4 session manager      │  restarts   0 · nudges 0
                             │  questions  2 · human touches 1
                             │

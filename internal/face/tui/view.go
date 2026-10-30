@@ -614,6 +614,14 @@ func (m Model) hint(status []string, w int) string {
 	}
 }
 
+func reviewStats(p phaseInfo) string {
+	line := fmt.Sprintf("%s · %d real · %d fixed", core.Plural(p.rounds, "round"), p.realFindings, p.fixed)
+	if p.minor > 0 {
+		line += fmt.Sprintf(" · %d minor left", p.minor)
+	}
+	return line
+}
+
 func (m Model) reportWindow(room int) int {
 	tail := 2 + max(1, min(len(m.Feed), endFeed))
 	if m.narration != "" {
@@ -640,7 +648,7 @@ func (m Model) endReport(w int) []string {
 	var sum phaseInfo
 	for _, p := range m.info {
 		sum.added, sum.deleted, sum.files = sum.added+p.added, sum.deleted+p.deleted, sum.files+p.files
-		sum.rounds, sum.fixed = sum.rounds+p.rounds, sum.fixed+p.fixed
+		sum.rounds, sum.realFindings, sum.fixed, sum.minor = sum.rounds+p.rounds, sum.realFindings+p.realFindings, sum.fixed+p.fixed, sum.minor+p.minor
 		sum.restarts, sum.nudges = sum.restarts+p.restarts, sum.nudges+p.nudges
 	}
 	noun := "phases"
@@ -650,7 +658,7 @@ func (m Model) endReport(w int) []string {
 	add(noun, fmt.Sprintf("%d landed · %d blocked · %d left", landed, blocked, left))
 	add("time", minutes(m.clock().Sub(m.Started)))
 	add("diff", fmt.Sprintf("+%d −%d · %s", sum.added, sum.deleted, core.Plural(sum.files, "file")))
-	add("review", fmt.Sprintf("%s · %d fixed", core.Plural(sum.rounds, "round"), sum.fixed))
+	add("review", reviewStats(sum))
 	add("restarts", fmt.Sprintf("%d · nudges %d", sum.restarts, sum.nudges))
 	add("questions", fmt.Sprintf("%d · human touches %d", m.asked, m.touches))
 	var done []string
@@ -746,7 +754,7 @@ func (m Model) detailsPane(w int) []string {
 		add("commit", fmt.Sprintf("%s · +%d −%d · %s", short(p.sha), p.added, p.deleted, core.Plural(p.files, "file")), th.Text)
 	}
 	if p.rounds > 0 || p.realFindings > 0 {
-		add("review", fmt.Sprintf("%s · %d real · %d fixed", core.Plural(p.rounds, "round"), p.realFindings, p.fixed), th.Text)
+		add("review", reviewStats(p), th.Text)
 	}
 	if p.restarts > 0 || p.nudges > 0 {
 		add("restarts", fmt.Sprintf("%d · nudges %d", p.restarts, p.nudges), th.Text)

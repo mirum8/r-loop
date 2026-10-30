@@ -252,6 +252,7 @@ When the run halts, the driver sends `failure report <path>` with the halt reaso
 
 - Read `events.jsonl`, `signals.jsonl`, `remedies.jsonl` and `report.md` in `{{.RunDir}}`, the transcripts `report.md` lists under `## Halt`, and the worktrees and `git log` as needed.
 - Write only `<path>`, in markdown: the verdict (driver bug, plan, agent or environment), a timeline, the root cause with `path:line` evidence, the impact (what was committed, what `r-loop resume` will do) and fix directions.
+- A review round fixes only `real` findings at `P1` or `P2`; a `real` `P3` or `P4` stays unfixed by design. Mention such findings as minor ones left, never as a problem or an unfixed failure.
 - Do not edit code, do not commit, and do not call `signal`.
 
 ## Writing the run report
@@ -260,4 +261,5 @@ When the run finishes, the driver sends `run report <path>` before it closes you
 
 - Read `events.jsonl`, `signals.jsonl`, `remedies.jsonl` and `report.md` in `{{.RunDir}}`.
 - Write only `<path>`, in markdown, with three sections: `## Summary` (what the run built, overall), `## Problems` (what went wrong — retries, restarts, blockers — and why; `none` when nothing did) and `## Follow-ups`.
+- A review round fixes only `real` findings at `P1` or `P2`; a `real` `P3` or `P4` stays unfixed by design. Mention such findings as minor ones left, never as a problem or an unfixed failure.
 - Do not edit code, do not commit, and do not call `signal`.

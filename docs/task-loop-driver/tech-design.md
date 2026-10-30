@@ -1720,7 +1720,7 @@ display-only line, and the TUI can be read back with keys that change nothing.
   when something goes off plan, otherwise at most every few minutes, never a question. A
   `## Writing the run report` section sits beside the failure-report one.
 - **TUI model** — a per-phase record `phaseInfo{summary string; started, landedAt time.Time; sha
-  string; added, deleted, files, rounds, realFindings, fixed, restarts, nudges int; blocker
+  string; added, deleted, files, rounds, realFindings, fixed, minor, restarts, nudges int; blocker
   string}`, keyed by phase, filled from `phase-start`, `phase-summary`, `landed`, `review-round`,
   `finding`, `restart`, `nudge`, `phase-blocked` and `blocked-on`, and rebuilt by `replay()`, so a
   resume keeps the history; `narration` keeps its text and time.
@@ -1747,7 +1747,7 @@ display-only line, and the TUI can be read back with keys that change nothing.
   it. The `ctrl+c` stop prompt and the quit keys are otherwise unchanged.
 - **Details pane** — replaces the panel while open: `PHASE <n> · <title>`, its state (`· live · <step>` for the live phase), the full
   summary wrapped to the panel width; `started`, duration, commit and `+<a> −<d> · <n> files`;
-  review rounds with real and fixed findings, restarts and nudges, the blocker; the plan path
+  review rounds with real, fixed and minor-left findings (`minor` counts a real `P3`/`P4`, which a review leaves by design), restarts and nudges, the blocker; the plan path
   `.task-plans/phase-<N>-*.md` from `core.PhasePlanPath(n, title)` (the loop's own slug rule, exported
   for the face). A field with nothing to show is left out; the blocker shows only while the row is
   blocked or a `blocked-on` for it is open, and the plan path once the phase has started or left

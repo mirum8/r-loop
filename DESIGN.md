@@ -154,13 +154,13 @@ changes the run, answers or consents, and amber keeps its one meaning.
   place, with that phase; `esc` or `enter` puts the panel back, and `esc` with details open closes
   them rather than quitting. Lines, each left out when it has nothing to show: `PHASE <n> · <title>`
   and the phase's state in its row colour; the full summary, wrapped; `started  10:42 · 12m`;
-  `commit  abc1234 · +210 −40 · 8 files`; `review  3 rounds · 5 real · 5 fixed`; `restarts 1 ·
+  `commit  abc1234 · +210 −40 · 8 files`; `review  3 rounds · 5 real · 3 fixed · 2 minor left` (a real `P3`/`P4` is left by design, and `minor left` shows only when there is one); `restarts 1 ·
   nudges 2`; `blocked  <reason>` in `error`; `plan  .task-plans/phase-<N>-<slug>.md`, dim. Labels
   dim, values `on-surface`.
 - **End report pane** — when the run finishes, halts or is aborted, the panel's `no step running`
   gives way to the report, which stays until `q`. First a stats block, labels dim:
   `phases  5 landed · 1 blocked · 0 left`, `time  3h12m`, `diff  +1840 −312 · 46 files`,
-  `review  14 rounds · 22 fixed`, `restarts 2 · nudges 3`, `questions 4 · human touches 1`; then one
+  `review  14 rounds · 30 real · 22 fixed · 8 minor left`, `restarts 2 · nudges 3`, `questions 4 · human touches 1`; then one
   line per landed phase, `✓ 3 state store · 12m · +210 −40 · abc1234`, the `✓` in `tertiary` and
   the rest dim. Below, the watchdog's narrative — `run-report.md` on a finished run,
   `failure-report.md` on a halted one — each `## ` heading drawn as a dim label in capitals, like
