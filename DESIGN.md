@@ -134,13 +134,13 @@ answering it from the code or asking you.
 changes the run, answers or consents, and amber keeps its one meaning.
 
 - **Header ETA** — `~1h40m left` (`~25m left` under an hour) sits before `started …`, dim: the mean
-  time of the phases landed in this run times the phases left. It appears once one phase has
+  time of the phases landed in this run times the phases left, neither landed nor blocked. It appears once one phase has
   landed, goes when the run ends, and is the first part dropped when the header is short — before
   the provider limits.
 - **Panel lines** — under `PHASE <n> · <kind>`, a `summary` line: the live phase's summary, the
   label dim and the text `on-surface`, cut with `…` at the panel's edge. Below the steps a
   `watchdog` line, all dim: the watchdog's latest narration and its age (`watchdog  phase 3 landed
-  clean; 4 is the big one · 2m ago`). It stays when no step runs. It is never `secondary`: a
+  clean; 4 is the big one · 2m ago`, `<1m ago` under a minute). It stays when no step runs. It is never `secondary`: a
   narration is news, never a question, and the watchdog asks only in its own pane.
 - **Selected row** — `↑`/`↓` (`k`/`j`) move a cursor over the rail. It is hidden until the first
   press, so a screen nobody touches has no selection. The row under it is `row-selected`: the row's

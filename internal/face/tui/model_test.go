@@ -52,18 +52,20 @@ func recorded() []core.Event {
 		step(20, 1, "implement", "ok", "codex", "gpt-5", "medium", "ws-2"),
 		phaseState(20, 1, "implemented"),
 		phaseState(21, 1, "landed"),
-		{At: at(21), Kind: "landed", Phase: "1", Fields: map[string]string{"phase": "1", "merge": "abc", "gateSkipped": "false"}},
+		{At: at(21), Kind: "landed", Phase: "1", Fields: map[string]string{"phase": "1", "merge": "abc1234def", "gateSkipped": "false", "added": "120", "deleted": "30", "files": "8"}},
 		{At: at(22), Kind: "phase-start", Phase: "2", Fields: map[string]string{"phase": "2", "title": "config reader"}},
 		step(22, 2, "plan", "running", "claude", "opus", "high", "ws-3"),
 		{At: at(23), Kind: "question", Phase: "2", Step: "plan", Fields: map[string]string{"id": "q1", "text": "Which config format?"}},
 		{At: at(25), Kind: "question-answered", Phase: "2", Step: "plan", Fields: map[string]string{"id": "q1", "answer": "yaml", "by": "watchdog", "citation": "docs/spec.md:12"}},
 		{At: at(25), Kind: "human", Phase: "2", Step: "plan", Fields: map[string]string{"what": "answer", "id": "q1"}},
 		step(30, 2, "plan", "ok", "claude", "opus", "high", "ws-3"),
+		{At: at(30), Kind: "phase-summary", Phase: "2", Step: "plan", Fields: map[string]string{"phase": "2", "text": "Read the layered config with provenance per key and reject flow-style YAML."}},
 		phaseState(30, 2, "planned"),
 		step(31, 2, "implement", "queued", "codex", "gpt-5", "medium", ""),
 		step(31, 2, "implement", "spawned", "codex", "gpt-5", "medium", "ws-4"),
 		step(31, 2, "implement", "running", "codex", "gpt-5", "medium", "ws-4"),
 		{At: at(35), Kind: "warning", Phase: "2", Step: "implement", Fields: map[string]string{"reason": "diff is large"}},
+		{At: at(36), Kind: "narration", Fields: map[string]string{"text": "phase 1 landed clean; 2 is the big one"}},
 		{At: at(40), Kind: "question", Phase: "2", Step: "implement", Fields: map[string]string{"id": "q2", "text": "Which port?"}},
 		step(40, 2, "implement", "waiting-input", "codex", "gpt-5", "medium", "ws-4"),
 	}
@@ -1405,6 +1407,140 @@ func TestMemoryEventsAreLoggedInTheFeed(t *testing.T) {
 	for _, want := range []string{"remembered: port 5432 must be free", "forgot: 20261015-old", "memory compacted, 4 facts before"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func landedAt(min, phase int, fields map[string]string) []core.Event {
+	f := map[string]string{"phase": strconv.Itoa(phase), "merge": "abc1234def", "gateSkipped": "false"}
+	for k, v := range fields {
+		f[k] = v
+	}
+	return []core.Event{phaseState(min, phase, "landed"), {At: at(min), Kind: "landed", Phase: strconv.Itoa(phase), Fields: f}}
+}
+
+func phaseStart(min, phase int) core.Event {
+	return core.Event{At: at(min), Kind: "phase-start", Phase: strconv.Itoa(phase), Fields: map[string]string{"phase": strconv.Itoa(phase)}}
+}
+
+func TestTheETAIsTheMeanLandedPhaseTimesThePhasesLeft(t *testing.T) {
+	events := []core.Event{phaseStart(0, 1)}
+	events = append(events, landedAt(10, 1, nil)...)
+	events = append(events, phaseStart(10, 2))
+	events = append(events, landedAt(40, 2, nil)...)
+	events = append(events, phaseStart(40, 3))
+
+	m := newModel(events)
+
+	if got := m.eta(); got != "~40m left" {
+		t.Fatalf("eta %q", got)
+	}
+	m = m.Apply(core.Event{At: at(41), Kind: "phase-blocked", Phase: "4", Fields: map[string]string{"phase": "4", "reason": "x"}})
+	if got := m.eta(); got != "~20m left" {
+		t.Fatalf("eta with a blocked phase %q", got)
+	}
+}
+
+func TestTheETAReadsHoursAndMinutes(t *testing.T) {
+	events := append([]core.Event{phaseStart(0, 1)}, landedAt(50, 1, nil)...)
+
+	m := newModel(events)
+
+	if got := m.eta(); got != "~2h30m left" {
+		t.Fatalf("eta %q", got)
+	}
+}
+
+func TestThereIsNoETABeforeThePhaseLandsOrForAPhaseLandedBeforeTheRun(t *testing.T) {
+	m := newModel([]core.Event{phaseStart(0, 1), phaseState(5, 1, "landed"), phaseStart(5, 2)})
+
+	if got := m.eta(); got != "" {
+		t.Fatalf("eta %q", got)
+	}
+	if head := header(m, 200); strings.Contains(head, "left") {
+		t.Fatalf("header %q", head)
+	}
+}
+
+func TestTheETAGoesWhenTheRunEnds(t *testing.T) {
+	events := append([]core.Event{phaseStart(0, 1)}, landedAt(10, 1, nil)...)
+	m := newModel(events)
+	if head := header(m, 200); !strings.Contains(head, "watchdog live · ~30m left · started 14:00") {
+		t.Fatalf("live header %q", head)
+	}
+
+	m = m.Apply(core.Event{At: at(11), Kind: "finished"})
+
+	if head := header(m, 200); strings.Contains(head, "left") {
+		t.Fatalf("ended header %q", head)
+	}
+}
+
+func TestAShortHeaderDropsTheETABeforeTheLimits(t *testing.T) {
+	m := newModel(recorded())
+	m.Limits = limits(49, 3)
+	width := 200
+	for strings.Contains(header(m, width), "left") {
+		width--
+	}
+
+	got := header(m, width)
+
+	if !strings.Contains(got, "codex 7d 3% · watchdog live · started 14:00") {
+		t.Fatalf("header at %d %q", width, got)
+	}
+	if head := header(m, width+1); !strings.Contains(head, "codex 7d 3% · watchdog live · ~1h3m left · started") {
+		t.Fatalf("header at %d %q", width+1, head)
+	}
+}
+
+func TestReplayKeepsEachPhasesRecord(t *testing.T) {
+	events := []core.Event{
+		phaseStart(0, 1),
+		{At: at(5), Kind: "phase-summary", Phase: "1", Step: "plan", Fields: map[string]string{"phase": "1", "text": "Scaffold   the\nmodule."}},
+		{At: at(6), Kind: "review-round", Phase: "1", Step: "plan", Fields: map[string]string{"round": "1", "attempt": "1"}},
+		{At: at(7), Kind: "finding", Phase: "1", Step: "plan", Fields: map[string]string{"round": "1", "verdict": "real", "fixed": "true", "severity": "P1"}},
+		{At: at(7), Kind: "finding", Phase: "1", Step: "plan", Fields: map[string]string{"round": "1", "verdict": "real", "fixed": "false", "severity": "P2"}},
+		{At: at(7), Kind: "finding", Phase: "1", Step: "plan", Fields: map[string]string{"round": "1", "verdict": "dismissed"}},
+		{At: at(8), Kind: "review-round", Phase: "1", Step: "implement", Fields: map[string]string{"round": "1", "attempt": "1"}},
+		{At: at(9), Kind: "restart", Phase: "1", Step: "implement", Fields: map[string]string{}},
+		{At: at(9), Kind: "nudge", Phase: "1", Step: "implement"},
+		{At: at(9), Kind: "nudge", Phase: "1", Step: "implement"},
+	}
+	events = append(events, landedAt(20, 1, map[string]string{"added": "120", "deleted": "30", "files": "8"})...)
+	events = append(events, phaseStart(20, 2),
+		core.Event{At: at(21), Kind: "blocked-on", Phase: "2", Step: "plan", Fields: map[string]string{"id": "b1", "source": "step", "reason": "needs a key"}},
+		core.Event{At: at(22), Kind: "narration", Fields: map[string]string{"text": "phase 1 landed"}},
+	)
+
+	m := replay(newModel(nil), events)
+
+	want := map[string]phaseInfo{
+		"1": {summary: "Scaffold the module.", started: at(0), landedAt: at(20), sha: "abc1234def", added: 120, deleted: 30, files: 8, rounds: 2, realFindings: 2, fixed: 1, restarts: 1, nudges: 2},
+		"2": {started: at(20), blocker: "needs a key"},
+	}
+	if !reflect.DeepEqual(m.info, want) {
+		t.Fatalf("records %+v\nwant %+v", m.info, want)
+	}
+	if m.narration != "phase 1 landed" || !m.narratedAt.Equal(at(22)) {
+		t.Fatalf("narration %q at %v", m.narration, m.narratedAt)
+	}
+	if got := m.eta(); got != "~1h0m left" {
+		t.Fatalf("eta after replay %q", got)
+	}
+}
+
+func TestTheLandedLineCarriesTheDiffStats(t *testing.T) {
+	for _, tc := range []struct {
+		fields map[string]string
+		want   string
+	}{
+		{map[string]string{"merge": "abc1234def", "added": "120", "deleted": "30", "files": "8"}, "landed abc1234 · +120 −30 · 8 files"},
+		{map[string]string{"merge": "abc1234def", "added": "2", "deleted": "0", "files": "1", "gateSkipped": "true"}, "landed abc1234 · +2 −0 · 1 file · gate skipped"},
+		{map[string]string{"merge": "abc1234def", "gateSkipped": "false"}, "landed abc1234"},
+	} {
+		if got := landedText(tc.fields); got != tc.want {
+			t.Errorf("landedText(%v) = %q, want %q", tc.fields, got, tc.want)
 		}
 	}
 }

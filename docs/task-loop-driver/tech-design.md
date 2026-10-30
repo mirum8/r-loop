@@ -1725,12 +1725,12 @@ display-only line, and the TUI can be read back with keys that change nothing.
   `finding`, `restart`, `nudge`, `phase-blocked` and `blocked-on`, and rebuilt by `replay()`, so a
   resume keeps the history; `narration` keeps its text and time.
 - **Header ETA** — `~<h>h<m>m left` (`~<m>m left` under an hour) before `started …`: the mean of
-  `landedAt − started` over the phases landed in this run, times the unlanded phases in the run
-  list. Shown once one phase has landed, hidden once the run ends, and the first part dropped when
+  `landedAt − started` over the phases landed in this run, times the phases in the run list
+  neither landed nor blocked, rounded to the minute. Shown once one phase has landed, hidden once the run ends, and the first part dropped when
   the header is short, before the provider limits.
 - **Panel** — under `PHASE <n> · <kind>`, a `summary` line with the live phase's `phase-summary`,
   truncated to the panel width; a dim `watchdog` line with the latest narration and its age
-  (`2m ago`), shown with or without a live step, never in `secondary`. `landedText` reads
+  (`2m ago`, `<1m ago` under a minute), shown with or without a live step, never in `secondary`. `landedText` reads
   `landed <sha> · +<added> −<deleted> · <n> files`.
 - **Keys and the cursor** — `↑`/`k` and `↓`/`j` move a rail cursor over the run's phases, clamped
   at both ends, hidden until the first press; the selected row draws `row-selected` (theme

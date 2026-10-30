@@ -114,9 +114,20 @@ type stepID struct {
 	kind  string
 }
 
+type phaseInfo struct {
+	summary                                                              string
+	started, landedAt                                                    time.Time
+	sha                                                                  string
+	added, deleted, files, rounds, realFindings, fixed, restarts, nudges int
+	blocker                                                              string
+}
+
 type Model struct {
 	Header
 	Phases     []Row
+	info       map[string]phaseInfo
+	narration  string
+	narratedAt time.Time
 	Current    string
 	Live       *Step
 	past       []Step
@@ -184,7 +195,10 @@ func landed(ph core.Phase) bool {
 
 func (m Model) Apply(ev core.Event) Model {
 	ev = displayable(ev)
+	m.record(ev)
 	switch ev.Kind {
+	case "narration":
+		m.narration, m.narratedAt = strings.Join(strings.Fields(ev.Fields["text"]), " "), ev.At
 	case "phase-start":
 		m.landing = ""
 		m.Current = ev.Phase
@@ -366,6 +380,86 @@ func replay(m Model, history []core.Event) Model {
 	m.Questions, m.DogGone, m.DogWaiting, m.Paused = nil, false, false, ""
 	m.activity = nil
 	return m
+}
+
+func (m *Model) record(ev core.Event) {
+	f := ev.Fields
+	var edit func(*phaseInfo)
+	switch ev.Kind {
+	case "phase-start":
+		edit = func(p *phaseInfo) { p.started = ev.At }
+	case "phase-summary":
+		edit = func(p *phaseInfo) { p.summary = strings.Join(strings.Fields(f["text"]), " ") }
+	case "landed":
+		edit = func(p *phaseInfo) {
+			p.landedAt, p.sha = ev.At, f["merge"]
+			p.added, _ = strconv.Atoi(f["added"])
+			p.deleted, _ = strconv.Atoi(f["deleted"])
+			p.files, _ = strconv.Atoi(f["files"])
+		}
+	case "review-round":
+		edit = func(p *phaseInfo) { p.rounds++ }
+	case "finding":
+		if f["verdict"] != "real" {
+			return
+		}
+		edit = func(p *phaseInfo) {
+			p.realFindings++
+			if f["fixed"] == "true" {
+				p.fixed++
+			}
+		}
+	case "restart":
+		edit = func(p *phaseInfo) { p.restarts++ }
+	case "nudge":
+		edit = func(p *phaseInfo) { p.nudges++ }
+	case "phase-blocked", "blocked-on":
+		edit = func(p *phaseInfo) { p.blocker = f["reason"] }
+	default:
+		return
+	}
+	if ev.Phase == "" {
+		return
+	}
+	m.info = maps.Clone(m.info)
+	if m.info == nil {
+		m.info = map[string]phaseInfo{}
+	}
+	p := m.info[ev.Phase]
+	edit(&p)
+	m.info[ev.Phase] = p
+}
+
+func (m Model) eta() string {
+	if m.Status != "" {
+		return ""
+	}
+	var spent time.Duration
+	landed := 0
+	for _, p := range m.info {
+		if !p.started.IsZero() && !p.landedAt.IsZero() && !p.landedAt.Before(p.started) {
+			spent += p.landedAt.Sub(p.started)
+			landed++
+		}
+	}
+	left := 0
+	for _, r := range m.Phases {
+		if r.State != core.PhaseLanded && r.State != core.PhaseBlocked {
+			left++
+		}
+	}
+	if landed == 0 || left == 0 {
+		return ""
+	}
+	return "~" + minutes(max(time.Minute, (spent/time.Duration(landed)*time.Duration(left)).Round(time.Minute))) + " left"
+}
+
+func minutes(d time.Duration) string {
+	d = d.Truncate(time.Minute)
+	if d >= time.Hour {
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	return fmt.Sprintf("%dm", int(d.Minutes()))
 }
 
 func activityKey(phase, step string) string {
@@ -552,6 +646,9 @@ func landedText(f map[string]string) string {
 	text := "landed"
 	if sha := f["merge"]; sha != "" {
 		text += " " + sha[:min(7, len(sha))]
+	}
+	if files, err := strconv.Atoi(f["files"]); err == nil {
+		text += fmt.Sprintf(" · +%s −%s · %s", f["added"], f["deleted"], core.Plural(files, "file"))
 	}
 	if f["gateSkipped"] == "true" {
 		text += " · gate skipped"

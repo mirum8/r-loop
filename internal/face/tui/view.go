@@ -67,6 +67,7 @@ func (m Model) header(w int) string {
 	th := m.theme
 	left := fmt.Sprintf("r-loop  %s  %s", m.RunID, m.Todo)
 	right := fmt.Sprintf("started %s · %s", m.Started.Format("15:04"), m.clock().Sub(m.Started).Truncate(time.Second))
+	eta := m.eta()
 	dog, dogStyle := "", th.Header
 	switch {
 	case m.DogGone:
@@ -75,6 +76,12 @@ func (m Model) header(w int) string {
 		dog, dogStyle = "watchdog waiting for you", th.HeaderWaiting
 	case m.RunID != "" && m.Status == "":
 		dog = "watchdog live"
+	}
+	if eta != "" {
+		_, all := m.limits(w)
+		if w-lipgloss.Width(left)-all-lipgloss.Width(dog+" · "+eta+" · "+right) >= 2 {
+			right = eta + " · " + right
+		}
 	}
 	if dog != "" {
 		right = " · " + right
@@ -169,6 +176,7 @@ func (m Model) panel(w, room int) []string {
 		}
 	} else if s := m.Live; s != nil {
 		add(th.Text, fmt.Sprintf("PHASE %s · %s", s.Phase, stepName(s)))
+		lines = append(lines, m.summary(s.Phase, w)...)
 		label := th.Text.Render(fmt.Sprintf("%-10s ", "steps"))
 		lines = append(lines, ansi.Truncate(label+m.pipeline(s, w-lipgloss.Width(label)), w, "…"))
 		if q := m.waiting(s); q != "" {
@@ -189,9 +197,13 @@ func (m Model) panel(w, room int) []string {
 	} else if i := slices.IndexFunc(m.Questions, func(q Question) bool { return q.Blocker }); i >= 0 {
 		s := &Step{Phase: m.Questions[i].Phase, Kind: m.Questions[i].Step}
 		add(th.Text, fmt.Sprintf("PHASE %s · %s", s.Phase, s.Kind))
+		lines = append(lines, m.summary(s.Phase, w)...)
 		add(th.Text, field("waiting", m.waiting(s)))
 	} else {
 		add(th.Label, "no step running")
+	}
+	if m.narration != "" {
+		add(th.Idle, field("watchdog", m.narration+" · "+age(m.clock().Sub(m.narratedAt))))
 	}
 	if m.Live != nil || m.checking != "" {
 		lines = append(lines, "")
@@ -222,6 +234,22 @@ func (m Model) panel(w, room int) []string {
 		}
 	}
 	return lines
+}
+
+func (m Model) summary(phase string, w int) []string {
+	text := m.info[phase].summary
+	if text == "" {
+		return nil
+	}
+	label := m.theme.Label.Render(fmt.Sprintf("%-10s ", "summary"))
+	return []string{label + m.theme.Text.Render(ansi.Truncate(text, w-lipgloss.Width(label), "…"))}
+}
+
+func age(d time.Duration) string {
+	if d < time.Minute {
+		return "<1m ago"
+	}
+	return minutes(d) + " ago"
 }
 
 const (

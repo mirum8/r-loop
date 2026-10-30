@@ -7,10 +7,12 @@
   ·  4 session manager    
 
   PHASE 2 · implement
+  summary    Read the layered config with provenance per key and re…
   steps      plan ✓ › implement
   waiting    watchdog · q2 · 3m0s
   started    14:31:00   elapsed 12m0s
   backstop   paused (3h51m0s left)
+  watchdog   phase 1 landed clean; 2 is the big one · 7m ago
 
   AGENTS
   ├─ ◆ watchdog         live
@@ -18,7 +20,7 @@
   └─ ● implement        waiting ⇢ q2 3m0s
 
   EVENTS
-     14:21  phase 1: landed abc
+     14:21  phase 1: landed abc1234 · +120 −30 · 8 files
      14:23  phase 2 plan: asked q1
      14:25  phase 2 plan: q1 answered by watchdog
   !  14:35  phase 2 implement: diff is large

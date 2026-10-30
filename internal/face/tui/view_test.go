@@ -29,7 +29,7 @@ func frame(t *testing.T, width, height int) string {
 	m.Report = "/repo/.r-loop/runs/20260918-140000/report.md"
 	next, _ := m.Update(tickMsg(at(43)))
 	m = next.(Model)
-	next, _ = m.Update(usageMsg(limits(42, 3)))
+	next, _ = m.Update(usageMsg(limits(42, 3)[:1]))
 	m = next.(Model)
 	next, _ = m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	return next.(Model).View()
@@ -658,5 +658,73 @@ func TestTheHeadingNamesTheStepAndLeavesTheRoundToTheReviewLine(t *testing.T) {
 	}
 	if row := lineWith(view, "review     "); !strings.Contains(row, "review     r2/2 · fixing") {
 		t.Errorf("review line %q", row)
+	}
+}
+
+func TestThePanelShowsTheLivePhasesSummaryCutToItsWidth(t *testing.T) {
+	m := newModel(recorded())
+	m.Width, m.Height = 80, 24
+
+	got := lineWith(ansi.Strip(m.View()), "summary")
+
+	if !strings.HasSuffix(got, "  summary    Read the layered config with proven…") {
+		t.Fatalf("summary line %q", got)
+	}
+	if lipgloss.Width(got) != 80-margin {
+		t.Fatalf("summary line is %d wide", lipgloss.Width(got))
+	}
+}
+
+func TestTheWatchdogLineShowsTheNarrationAndItsAgeWithoutAStep(t *testing.T) {
+	m := newModel([]core.Event{{At: at(0), Kind: "narration", Fields: map[string]string{"text": "starting with phase 1"}}})
+	m.Now = at(0)
+	if got := lineWith(ansi.Strip(m.View()), "watchdog   "); !strings.Contains(got, "watchdog   starting with phase 1 · <1m ago") {
+		t.Fatalf("watchdog line %q", got)
+	}
+
+	m.Now = at(2)
+	view := ansi.Strip(m.View())
+
+	if !strings.Contains(view, "no step running") {
+		t.Fatalf("view:\n%s", view)
+	}
+	if got := lineWith(view, "watchdog   "); !strings.Contains(got, "watchdog   starting with phase 1 · 2m ago") {
+		t.Fatalf("watchdog line %q", got)
+	}
+}
+
+func TestTheSummaryAndNarrationAreNeverAmber(t *testing.T) {
+	m := coloured(false)
+	for _, ev := range recorded() {
+		if ev.Kind != "warning" {
+			m = m.Apply(ev)
+		}
+	}
+	m.Width, m.Height = 120, 40
+
+	view := m.View()
+
+	if regexp.MustCompile(`\x1b\[38;2;224;16[34];88`).MatchString(view) {
+		t.Fatalf("frame has amber: %q", view)
+	}
+	line := lineWith(view, "phase 1 landed clean")
+	if !regexp.MustCompile(`\x1b\[38;2;138;146;15[89]m[^\x1b]*watchdog   phase 1 landed clean`).MatchString(line) {
+		t.Fatalf("watchdog line is not dim: %q", line)
+	}
+}
+
+func TestTheRecordedRunFitsEachSize(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {70, 30}, {120, 40}} {
+		m := newModel(recorded())
+		m.Now = at(43)
+		m.Limits = limits(42, 3)
+		m.Width, m.Height = size[0], size[1]
+		view := m.View()
+		fits(t, view, size[0], size[1])
+		for _, want := range []string{"summary", "watchdog   phase 1 landed clean", "landed abc1234"} {
+			if !strings.Contains(ansi.Strip(view), want) {
+				t.Errorf("%dx%d lacks %q:\n%s", size[0], size[1], want, ansi.Strip(view))
+			}
+		}
 	}
 }

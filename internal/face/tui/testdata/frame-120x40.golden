@@ -1,10 +1,12 @@
-  r-loop  20260918-140000  docs/x/todo.md   claude 5h 12% 7d 42% · codex 7d 3% · watchdog live · started 14:00 · 43m0s
+  r-loop  20260918-140000  docs/x/todo.md    claude 5h 12% 7d 42% · watchdog live · ~1h3m left · started 14:00 · 43m0s
 
   PHASES 1/4                │  PHASE 2 · implement
-  ✓  1 scaffold             │  steps      plan ✓ › implement
-  p  2 config reader        │  waiting    watchdog · q2 · 3m0s
-  ·  3 state store          │  started    14:31:00   elapsed 12m0s
-  ·  4 session manager      │  backstop   paused (3h51m0s left)
+  ✓  1 scaffold             │  summary    Read the layered config with provenance per key and reject flow-style YAML.
+  p  2 config reader        │  steps      plan ✓ › implement
+  ·  3 state store          │  waiting    watchdog · q2 · 3m0s
+  ·  4 session manager      │  started    14:31:00   elapsed 12m0s
+                            │  backstop   paused (3h51m0s left)
+                            │  watchdog   phase 1 landed clean; 2 is the big one · 7m ago
                             │
                             │  AGENTS
                             │  ├─ ◆ watchdog                                   live
@@ -12,7 +14,7 @@
                             │  └─ ● implement        codex · gpt-5 · ws-4      waiting ⇢ q2 3m0s
                             │
                             │  EVENTS
-                            │     14:21  phase 1: landed abc
+                            │     14:21  phase 1: landed abc1234 · +120 −30 · 8 files
                             │     14:23  phase 2 plan: asked q1
                             │     14:25  phase 2 plan: q1 answered by watchdog
                             │  !  14:35  phase 2 implement: diff is large

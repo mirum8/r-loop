@@ -28,7 +28,7 @@ func TestTheHeaderShowsEachProvidersLimitsBeforeTheWatchdog(t *testing.T) {
 
 	got := header(m, 140)
 
-	if !strings.Contains(got, "claude 5h 12% 7d 49% · codex 7d 3% · watchdog live · started") {
+	if !strings.Contains(got, "claude 5h 12% 7d 49% · codex 7d 3% · watchdog live · ~1h3m left · started") {
 		t.Fatalf("header %q", got)
 	}
 }
