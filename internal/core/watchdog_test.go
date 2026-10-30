@@ -1625,3 +1625,48 @@ func TestTheWatchdogStartingToWaitCallsOnWaitingOncePerWait(t *testing.T) {
 		t.Errorf("OnWaiting got %q, want %q", asked, want)
 	}
 }
+
+func TestNarrateRecordsAndShowsOneLine(t *testing.T) {
+	store := &fakeStore{}
+	face := &fakeFace{}
+	dog := newWatchdog(&fakeSessionHost{}, store, ProviderArgs{Kind: "claude"})
+	dog.Face = face
+
+	ok, reason := dog.Narrate("  phase 3 landed; phase 4 starts on the store  ")
+
+	if !ok || reason != "" {
+		t.Fatalf("Narrate = %v, %q", ok, reason)
+	}
+	st, _ := store.Load(dog.RunID)
+	if len(st.Events) != 1 || st.Events[0].Kind != "narration" || st.Events[0].Fields["text"] != "phase 3 landed; phase 4 starts on the store" {
+		t.Fatalf("recorded %+v", st.Events)
+	}
+	if evs := face.events(); len(evs) != 1 || evs[0].Kind != "narration" {
+		t.Fatalf("shown %+v", evs)
+	}
+}
+
+func TestNarrateRefusesAnythingButOneShortStatement(t *testing.T) {
+	for _, tc := range []struct{ text, reason string }{
+		{"   ", "narration is empty"},
+		{"phase 3 landed\nphase 4 next", "narration is one line"},
+		{strings.Repeat("é", 121), "narration runs past 120 characters"},
+		{"shall I restart phase 4?", "narration is never a question; ask the maintainer in your own pane"},
+	} {
+		store := &fakeStore{}
+		face := &fakeFace{}
+		dog := newWatchdog(&fakeSessionHost{}, store, ProviderArgs{Kind: "claude"})
+		dog.Face = face
+
+		ok, reason := dog.Narrate(tc.text)
+
+		st, _ := store.Load(dog.RunID)
+		if ok || reason != tc.reason || len(st.Events) != 0 || len(face.events()) != 0 {
+			t.Errorf("Narrate(%q) = %v, %q, recorded %+v", tc.text, ok, reason, st.Events)
+		}
+	}
+	dog := newWatchdog(&fakeSessionHost{}, &fakeStore{}, ProviderArgs{Kind: "claude"})
+	if ok, reason := dog.Narrate(strings.Repeat("é", 120)); !ok {
+		t.Errorf("120 characters refused: %q", reason)
+	}
+}

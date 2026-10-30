@@ -321,6 +321,10 @@ func (m Model) Apply(ev core.Event) Model {
 		m.log(ev, toneDim, "diagnosis: "+filepath.Base(ev.Fields["path"]))
 	case core.EventFailureReportMissing:
 		m.log(ev, toneDim, "no diagnosis: "+ev.Fields["reason"])
+	case core.EventRunReport:
+		m.log(ev, toneDim, "run report: "+filepath.Base(ev.Fields["path"]))
+	case core.EventRunReportMissing:
+		m.log(ev, toneDim, "no run report: "+ev.Fields["reason"])
 	case core.EventMemoryRemember:
 		m.log(ev, toneDim, "remembered: "+ev.Fields["description"])
 	case core.EventMemoryForget:
@@ -666,6 +670,7 @@ type Face struct {
 	done      chan struct{}
 	report    string
 	diagnosis string
+	runReport string
 	endKind   string
 	endReason string
 }
@@ -707,6 +712,9 @@ func (f *Face) Emit(ev core.Event) {
 	if ev.Kind == core.EventFailureReport {
 		f.diagnosis = core.Displayable(ev.Fields["path"])
 	}
+	if ev.Kind == core.EventRunReport {
+		f.runReport = core.Displayable(ev.Fields["path"])
+	}
 	if f.prog == nil {
 		f.backlog = append(f.backlog, ev)
 		return
@@ -746,7 +754,7 @@ func (f *Face) Close() {
 		<-done
 	}
 	f.mu.Lock()
-	endKind, endReason, report, diagnosis := f.endKind, f.endReason, f.report, f.diagnosis
+	endKind, endReason, report, runReport, diagnosis := f.endKind, f.endReason, f.report, f.runReport, f.diagnosis
 	f.mu.Unlock()
 	switch endKind {
 	case "halt":
@@ -762,6 +770,9 @@ func (f *Face) Close() {
 	}
 	if report != "" {
 		fmt.Fprintf(f.Out, "report: %s\n", report)
+	}
+	if runReport != "" {
+		fmt.Fprintf(f.Out, "run report: %s\n", runReport)
 	}
 	if diagnosis != "" {
 		fmt.Fprintf(f.Out, "diagnosis: %s\n", diagnosis)

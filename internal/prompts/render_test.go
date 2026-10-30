@@ -1318,7 +1318,7 @@ func TestWatchdogCatchesUpWithRunStatusAndStepInfo(t *testing.T) {
 	for _, want := range []string{
 		"`run_status()` — read the run as the driver holds it now",
 		"`step_info(step)` — read a started step",
-		"your next call of any other tool except `run_status` and `step_info` marks the wait over",
+		"your next call of any other tool except `run_status`, `step_info` and `narrate` marks the wait over",
 		"When you have lost track of a step or an open id",
 	} {
 		if !strings.Contains(text, want) {
@@ -1525,5 +1525,24 @@ func TestTheWatchdogPromptExplainsTheMemoryAndListsItsFacts(t *testing.T) {
 	}
 	if !strings.Contains(withMemory, "The facts kept so far:\n\n"+fact+"\n") {
 		t.Errorf("watchdog prompt with memory:\n%s", withMemory)
+	}
+}
+
+func TestTheWatchdogNarratesAndWritesTheRunReport(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	for _, want := range []string{
+		"- `narrate(text)` — show the maintainer one line about the run, at most 120 characters: after a phase lands, when something goes off plan, otherwise at most every few minutes.",
+		"a narration is never a question",
+		"## Writing the run report",
+		"the driver sends `run report <path>`",
+		"`## Summary` (what the run built, overall), `## Problems` (what went wrong — retries, restarts, blockers — and why; `none` when nothing did) and `## Follow-ups`",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("watchdog missing %q", want)
+		}
+	}
+	if strings.Index(text, "## Writing the run report") < strings.Index(text, "## Writing the failure report") {
+		t.Error("the run report section does not sit after the failure report one")
 	}
 }

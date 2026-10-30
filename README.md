@@ -20,6 +20,9 @@ diff and the review verdict.
 One more agent, the **watchdog**, runs for the whole run. Before the first phase it checks the
 work against the code and shows you a table of what will run. Then it watches the steps, answers
 the agents' questions, and asks you when it cannot answer. It is the only agent that talks to you.
+Along the way it may `narrate` the run in one-line notes the faces show (`watchdog: …`); a note
+never asks anything and changes nothing. When the run ends it writes its account: `run-report.md`
+for a finished run, `failure-report.md` for a halted one.
 
 When something goes off plan — a step, a reviewer, a landing, a gate fix or a milestone report
 fails — r-loop holds the phase and hands the **blocker** to the watchdog, which fixes what it finds:
@@ -332,7 +335,7 @@ The `static` reviewer runs the project's own analyzers in every review round of 
 | `allow` | every class | Remedy classes the watchdog may use without asking you. An empty list makes it ask about every remedy. |
 | `maxRestarts` | `3` | Most retries for one step (`retry`, `switch` and `continue` together). Until they are spent, the watchdog may not block the phase or stop the run without your word. |
 | `blockerTimeout` | `10m` | How long a blocker (a failed step or reviewer, a land error, a failed gate fix or milestone report) waits for the watchdog before it is retried, or, with no retries left, the phase is blocked. The clock stops while the watchdog is asking you. The old name `remedyWindow` still works. |
-| `checkTimeout` | `10m` | Time limit for the watchdog's check of a phase before it starts. |
+| `checkTimeout` | `10m` | Time limit for the watchdog's check of a phase before it starts, and for its run report or failure report when the run ends. |
 | `unblockTimeout` | `2h` | Time limit for the `## Resolve first` walk. Entries still open are deferred. |
 | `triageTimeout` | `2h` | Time limit for the triage: the watchdog's check of the run list and your answer to the table. On timeout the run stops (exit 4) and `r-loop resume` triages again. |
 | `stallGrace` | `2m` | Quiet time before a step counts as stalled and gets one nudge. If it is still quiet after one more `stallGrace`, it fails. |
@@ -430,6 +433,8 @@ Each run lives in `.r-loop/runs/<runID>/`:
 - `events.jsonl`, `questions.jsonl`, `signals.jsonl`, `remedies.jsonl` — append-only run state
 - `config.resolved.yaml` — the config this run used
 - `report.md` — what happened, updated after every change
+- `run-report.md` — the watchdog's account of a finished run: summary, problems, follow-ups
+- `failure-report.md` — the watchdog's diagnosis of a halted run
 - `triage.json`, `triage.md`, `gate.json` — the watchdog's verdicts, the table you saw, and the decision
 - `phase-<N>/` — step logs, sentinels, review findings and verdicts
 

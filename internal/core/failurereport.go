@@ -14,6 +14,8 @@ import (
 const (
 	EventFailureReport        = "failure-report"
 	EventFailureReportMissing = "failure-report-missing"
+	EventRunReport            = "run-report"
+	EventRunReportMissing     = "run-report-missing"
 )
 
 func FailureReportText(path, reason string) string {
@@ -35,20 +37,43 @@ func (d *Watchdog) FailureReport(ctx context.Context, timeout time.Duration) {
 		return
 	}
 	path := filepath.Join(d.RunDir, "failure-report.md")
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		recordEvent(d.Store, d.Face, d.RunID, Event{Kind: EventFailureReportMissing, Fields: map[string]string{"reason": "remove stale " + path + ": " + err.Error()}})
+	d.report(ctx, timeout, path, FailureReportText(path, st.Reason), EventFailureReport, EventFailureReportMissing)
+}
+
+func RunReportText(path string) string {
+	return fmt.Sprintf(`run report %s
+The run finished. Write its account before your session is closed. Read events.jsonl, signals.jsonl, remedies.jsonl and report.md in the run dir.
+Write only %s, in markdown:
+## Summary — what the run built, overall
+## Problems — what went wrong (retries, restarts, blockers) and why; none when nothing did
+## Follow-ups
+Do not edit code, do not commit, do not call signal.`, path, path)
+}
+
+func (d *Watchdog) RunReport(ctx context.Context, timeout time.Duration) {
+	st, err := d.Store.Load(d.RunID)
+	if err != nil || st.Status != RunFinished || aborted(st) || ctx.Err() != nil || !d.live() {
 		return
 	}
-	err = d.NotifyContext(ctx, FailureReportText(path, st.Reason), true, timeout)
+	path := filepath.Join(d.RunDir, "run-report.md")
+	d.report(ctx, timeout, path, RunReportText(path), EventRunReport, EventRunReportMissing)
+}
+
+func (d *Watchdog) report(ctx context.Context, timeout time.Duration, path, text, written, missing string) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		recordEvent(d.Store, d.Face, d.RunID, Event{Kind: missing, Fields: map[string]string{"reason": "remove stale " + path + ": " + err.Error()}})
+		return
+	}
+	err := d.NotifyContext(ctx, text, true, timeout)
 	if info, serr := os.Stat(path); serr == nil && info.Size() > 0 {
-		recordEvent(d.Store, d.Face, d.RunID, Event{Kind: EventFailureReport, Fields: map[string]string{"path": path}})
+		recordEvent(d.Store, d.Face, d.RunID, Event{Kind: written, Fields: map[string]string{"path": path}})
 		return
 	}
 	reason := "watchdog wrote no " + path
 	if err != nil {
 		reason += ": " + err.Error()
 	}
-	recordEvent(d.Store, d.Face, d.RunID, Event{Kind: EventFailureReportMissing, Fields: map[string]string{"reason": reason}})
+	recordEvent(d.Store, d.Face, d.RunID, Event{Kind: missing, Fields: map[string]string{"reason": reason}})
 }
 
 func aborted(st RunState) bool {

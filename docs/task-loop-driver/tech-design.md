@@ -1703,15 +1703,17 @@ display-only line, and the TUI can be read back with keys that change nothing.
   `Event{Kind: "run-report", Fields{path}}` for a non-empty file, else
   `Event{Kind: "run-report-missing", Fields{reason: "watchdog wrote no <path>[: <err>]"}}`.
   `Execute` calls it just before `FailureReport`, both with `watchdog.checkTimeout`; the exit code
-  never changes. `report.md` gains `- run report: <path>` from the latest `run-report` since the
-  last resume, a `run-report-missing` or a resume clearing it, as `diagnosis()` does.
+  never changes. `report.md` gains `- run report: <path>` on the line after `human touches:`, from
+  the latest `run-report` since the last resume, a `run-report-missing` or a resume clearing it, as
+  `diagnosis()` does.
 - **`narrate`** — a watchdog tool in `internal/askmcp/watchdog.go`, added as `remember` is and
   listed in `watchdogTools`: `narrate{text} → {accepted, reason?}`, recorded as `watchdog-call`
   before the handler and `watchdog-result` after it, and the only recorded tool that never calls
   `Resume`, so a `watchdog-waiting` stays open. `WatchdogHandlers` gains
   `Narrate func(text string) (bool, string)`, wired to `Watchdog.Narrate`; a step path serves no
   `narrate` (404). `(d *Watchdog) Narrate(text string) (bool, string)` trims the text and refuses it,
-  with the reason, when it is empty, holds a line break, runs past 120 characters or ends with `?`
+  with the reason, when it is empty (`narration is empty`), holds a line break (`narration is one
+  line`), runs past 120 characters (`narration runs past 120 characters`) or ends with `?`
   (`narration is never a question; ask the maintainer in your own pane`); an accepted one records
   and emits `Event{Kind: "narration", Fields{text}}` through `recordEvent`.
 - **Prompt** — `watchdog.md` lists `narrate` under `## Your tools`: one line, after a phase lands,
@@ -1750,5 +1752,7 @@ display-only line, and the TUI can be read back with keys that change nothing.
   instead. The status bar reads `↑↓ select · enter details · pgup/pgdn scroll · q quit · report:
   <path>`.
 - **Plain face** — `phase-summary` prints `<hh:mm:ss>  phase <N>  summary  <text>`, `narration` prints
-  `watchdog: <text>`, and `Close` prints `run report: <path>` after `report:`, as it prints
-  `diagnosis:`.
+  `<hh:mm:ss>  watchdog: <text>`, and `Close` prints `run report: <path>` after `report:`, as it prints
+  `diagnosis:`. The TUI face logs `run report: <file>` (`no run report: <reason>` on a
+  `run-report-missing`) as it logs `diagnosis:`, and prints `run report: <path>` after `report:` on
+  `Close`.

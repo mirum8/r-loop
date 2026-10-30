@@ -18,6 +18,9 @@ func Report(state RunState, plan Plan) string {
 		}
 	}
 	fmt.Fprintf(&b, "human touches: %d\n", human)
+	if path := runReport(state); path != "" {
+		b.WriteString("- run report: " + path + "\n")
+	}
 	writeSection(&b, "Automatic decisions", decisions(state))
 	writeSection(&b, "Landed", landedLines(state))
 	writeSection(&b, "Blockers", blockerLines(state))
@@ -194,12 +197,20 @@ func haltLines(st RunState) []string {
 }
 
 func diagnosis(st RunState) string {
+	return latestReport(st, EventFailureReport, EventFailureReportMissing)
+}
+
+func runReport(st RunState) string {
+	return latestReport(st, EventRunReport, EventRunReportMissing)
+}
+
+func latestReport(st RunState, written, missing string) string {
 	path := ""
 	for _, ev := range st.Events {
 		switch {
-		case ev.Kind == "human" && ev.Fields["what"] == "resume", ev.Kind == EventFailureReportMissing:
+		case ev.Kind == "human" && ev.Fields["what"] == "resume", ev.Kind == missing:
 			path = ""
-		case ev.Kind == EventFailureReport:
+		case ev.Kind == written:
 			path = ev.Fields["path"]
 		}
 	}

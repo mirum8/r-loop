@@ -1367,6 +1367,30 @@ func TestFaceNamesTheDiagnosisOnClose(t *testing.T) {
 	}
 }
 
+func TestAFinishedRunLogsItsRunReport(t *testing.T) {
+	m := newModel(recorded())
+
+	m = m.Apply(core.Event{At: at(90), Kind: "finished"})
+	m = m.Apply(core.Event{At: at(95), Kind: "run-report", Fields: map[string]string{"path": "/repo/runs/r1/run-report.md"}})
+
+	if view := m.View(); !strings.Contains(view, "run report: run-report.md") {
+		t.Fatalf("view:\n%s", view)
+	}
+}
+
+func TestFaceNamesTheRunReportOnClose(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+	f.Emit(core.Event{At: at(1), Kind: "finished"})
+	f.Emit(core.Event{At: at(2), Kind: "run-report", Fields: map[string]string{"path": "/repo/runs/r1/run-report.md"}})
+
+	f.Close()
+
+	if !strings.Contains(out.String(), "run report: /repo/runs/r1/run-report.md\n") {
+		t.Fatalf("out:\n%s", out.String())
+	}
+}
+
 func TestMemoryEventsAreLoggedInTheFeed(t *testing.T) {
 	// given
 	m := newModel(recorded())

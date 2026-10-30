@@ -223,3 +223,34 @@ func TestReportListsEachLandingWithItsDiffStats(t *testing.T) {
 		t.Fatalf("report missing landings:\n%s", got)
 	}
 }
+
+func TestReportNamesTheRunReportOfAFinishedRun(t *testing.T) {
+	st := RunState{ID: "run-1", Status: RunFinished, Events: []Event{
+		{Kind: "run-report", Fields: map[string]string{"path": "/r/runs/run-1/run-report.md"}},
+	}}
+
+	got := Report(st, threePhasePlan())
+
+	if !strings.HasPrefix(got, "human touches: 0\n- run report: /r/runs/run-1/run-report.md\n") {
+		t.Fatalf("report:\n%s", got)
+	}
+}
+
+func TestReportDropsARunReportFromBeforeAResumeOrOneMissing(t *testing.T) {
+	for name, events := range map[string][]Event{
+		"resume": {
+			{Kind: "run-report", Fields: map[string]string{"path": "/r/old.md"}},
+			{Kind: "human", Fields: map[string]string{"what": "resume"}},
+		},
+		"missing": {
+			{Kind: "run-report", Fields: map[string]string{"path": "/r/old.md"}},
+			{Kind: "run-report-missing", Fields: map[string]string{"reason": "watchdog wrote no /r/new.md"}},
+		},
+	} {
+		st := RunState{ID: "run-1", Status: RunFinished, Events: events}
+
+		if got := Report(st, threePhasePlan()); strings.Contains(got, "run report:") {
+			t.Errorf("%s: report:\n%s", name, got)
+		}
+	}
+}

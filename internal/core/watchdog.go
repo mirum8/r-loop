@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -382,6 +383,22 @@ func (d *Watchdog) AskMaintainer(question string, options []string, recommended 
 
 func (d *Watchdog) Resume() error {
 	return d.markResumed(false)
+}
+
+func (d *Watchdog) Narrate(text string) (bool, string) {
+	text = strings.TrimSpace(text)
+	switch {
+	case text == "":
+		return false, "narration is empty"
+	case strings.ContainsAny(text, "\r\n"):
+		return false, "narration is one line"
+	case utf8.RuneCountInString(text) > 120:
+		return false, "narration runs past 120 characters"
+	case strings.HasSuffix(text, "?"):
+		return false, "narration is never a question; ask the maintainer in your own pane"
+	}
+	recordEvent(d.Store, d.Face, d.RunID, Event{Kind: "narration", Fields: map[string]string{"text": text}})
+	return true, ""
 }
 
 func (d *Watchdog) markWaiting(fields map[string]string, byPrompt bool) error {

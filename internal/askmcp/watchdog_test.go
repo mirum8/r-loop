@@ -441,7 +441,7 @@ func TestWatchdogPathListsNoAskTool(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	if want := []string{"answer_dialog", "answer_question", "ask_maintainer", "choose_gate", "continue_run", "forget", "pause_run", "propose_remedy", "remember", "resolve_blocker", "restart_step", "run_status", "set_config", "signal", "step_info", "stop_run", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
+	if want := []string{"answer_dialog", "answer_question", "ask_maintainer", "choose_gate", "continue_run", "forget", "narrate", "pause_run", "propose_remedy", "remember", "resolve_blocker", "restart_step", "run_status", "set_config", "signal", "step_info", "stop_run", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
 		t.Fatalf("watchdog tools = %v, want %v", names, want)
 	}
 }
@@ -491,7 +491,7 @@ func TestWatchdogToolsOnAStepPathAre404(t *testing.T) {
 	if len(tools.Tools) != 1 || tools.Tools[0].Name != "ask_watchdog" {
 		t.Fatalf("step tools = %+v", tools.Tools)
 	}
-	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info", "stop_run", "pause_run", "continue_run", "choose_gate", "set_config", "remember", "forget"} {
+	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info", "stop_run", "pause_run", "continue_run", "choose_gate", "set_config", "remember", "forget", "narrate"} {
 		_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{"kind": "halt", "step": "phase-3/implement"}})
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not found") {
 			t.Fatalf("%s on a step path: err = %v", name, err)
@@ -1370,5 +1370,47 @@ func TestMemoryToolsWithNoHandlerAreNotAvailable(t *testing.T) {
 
 	if remember["reason"] != notAvailable || forget["reason"] != notAvailable {
 		t.Fatalf("remember = %+v, forget = %+v", remember, forget)
+	}
+}
+
+func TestNarrateIsRecordedBeforeItsHandlerAndLeavesAWaitOpen(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	var calls []string
+	s.Handle(WatchdogHandlers{
+		Resume: func() error {
+			calls = append(calls, "resume")
+			return nil
+		},
+		Narrate: func(text string) (bool, string) {
+			calls = append(calls, fmt.Sprintf("narrate %s records=%d", text, len(st.records())))
+			if strings.HasSuffix(text, "?") {
+				return false, "narration is never a question; ask the maintainer in your own pane"
+			}
+			return true, ""
+		},
+	})
+	cs := connect(t, s.WatchdogURL())
+
+	ok := call(t, cs, "narrate", map[string]any{"text": "phase 3 landed"})
+	refused := call(t, cs, "narrate", map[string]any{"text": "restart phase 4?"})
+
+	if ok["accepted"] != true || refused["accepted"] != false || refused["reason"] != "narration is never a question; ask the maintainer in your own pane" {
+		t.Fatalf("ok = %+v, refused = %+v", ok, refused)
+	}
+	if got, want := strings.Join(calls, ","), "narrate phase 3 landed records=1,narrate restart phase 4? records=3"; got != want {
+		t.Fatalf("calls = %s, want %s", got, want)
+	}
+	recs := st.records()
+	if len(recs) != 4 || recs[0].Event.Kind != "watchdog-call" || recs[0].Event.Fields["tool"] != "narrate" || recs[0].Event.Fields["text"] != "phase 3 landed" || recs[1].Event.Kind != "watchdog-result" {
+		t.Fatalf("records = %+v", recs)
+	}
+}
+
+func TestNarrateWithNoHandlerIsNotAvailable(t *testing.T) {
+	cs := connect(t, serveWatchdog(t, &memStore{}).WatchdogURL())
+
+	if out := call(t, cs, "narrate", map[string]any{"text": "t"}); out["reason"] != notAvailable {
+		t.Fatalf("narrate = %+v", out)
 	}
 }

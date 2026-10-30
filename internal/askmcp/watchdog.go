@@ -44,6 +44,8 @@ type WatchdogHandlers struct {
 
 	Remember func(scope, description, body, why string) (bool, string)
 	Forget   func(id, why string) (bool, string)
+
+	Narrate func(text string) (bool, string)
 }
 
 type stopRunInput struct {
@@ -66,6 +68,10 @@ type rememberInput struct {
 	Description string `json:"description"`
 	Body        string `json:"body,omitempty"`
 	Why         string `json:"why"`
+}
+
+type narrateInput struct {
+	Text string `json:"text"`
 }
 
 type forgetInput struct {
@@ -270,7 +276,7 @@ func watchdogTool[In any, Out toolOutput[Out]](s *Server, h mcp.ToolHandlerFor[I
 	})
 }
 
-var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true, "stop_run": true, "pause_run": true, "continue_run": true, "choose_gate": true, "set_config": true, "remember": true, "forget": true}
+var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true, "stop_run": true, "pause_run": true, "continue_run": true, "choose_gate": true, "set_config": true, "remember": true, "forget": true, "narrate": true}
 
 func (s *Server) Handle(h WatchdogHandlers) {
 	s.mu.Lock()
@@ -444,6 +450,20 @@ func (s *Server) watchdogServer() *mcp.Server {
 			return nil, acceptedOutput{Reason: notAvailable}, nil
 		}
 		ok, reason := h(in.ID, in.Why)
+		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "narrate",
+		Description: "Show the maintainer one display-only line about the run, at most 120 characters: after a phase lands, when something goes off plan, otherwise at most every few minutes. Never a question; it changes nothing and does not end a wait for the maintainer.",
+	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in narrateInput) (*mcp.CallToolResult, acceptedOutput, error) {
+		if err := s.record("narrate", "", map[string]string{"text": in.Text}); err != nil {
+			return nil, acceptedOutput{Reason: err.Error()}, nil
+		}
+		h := s.handlersNow().Narrate
+		if h == nil {
+			return nil, acceptedOutput{Reason: notAvailable}, nil
+		}
+		ok, reason := h(in.Text)
 		return nil, acceptedOutput{Accepted: ok, Reason: reason}, nil
 	}))
 	mcp.AddTool(srv, &mcp.Tool{

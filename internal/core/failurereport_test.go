@@ -15,13 +15,22 @@ type reportingHost struct {
 }
 
 func (h *reportingHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
-	if h.write != "" && strings.HasPrefix(text, "failure report ") {
-		path := strings.Fields(strings.TrimPrefix(text, "failure report "))[0]
+	if prefix := reportPrefix(text); h.write != "" && prefix != "" {
+		path := strings.Fields(strings.TrimPrefix(text, prefix))[0]
 		if err := os.WriteFile(path, []byte(h.write), 0o644); err != nil {
 			return err
 		}
 	}
 	return h.fakeSessionHost.Prompt(agent, text, wait, timeout)
+}
+
+func reportPrefix(text string) string {
+	for _, prefix := range []string{"failure report ", "run report "} {
+		if strings.HasPrefix(text, prefix) {
+			return prefix
+		}
+	}
+	return ""
 }
 
 func haltedDog(t *testing.T, status RunStatus) (*Watchdog, *reportingHost, *fakeStore, *fakeFace) {
@@ -42,6 +51,16 @@ func failurePrompts(host *reportingHost) []string {
 	var out []string
 	for _, c := range host.Calls() {
 		if strings.HasPrefix(c, "SessionHost.Prompt") && strings.Contains(c, "failure report ") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func runReportPrompts(host *reportingHost) []string {
+	var out []string
+	for _, c := range host.Calls() {
+		if strings.HasPrefix(c, "SessionHost.Prompt") && strings.Contains(c, "run report ") {
 			out = append(out, c)
 		}
 	}
@@ -219,5 +238,137 @@ func TestReportDropsADiagnosisFromBeforeAResume(t *testing.T) {
 
 	if got := Report(st, threePhasePlan()); strings.Contains(got, "diagnosis:") {
 		t.Fatalf("report:\n%s", got)
+	}
+}
+
+func TestRunReportTextNamesThePathTheLogsAndTheSections(t *testing.T) {
+	got := RunReportText("/repo/.r-loop/runs/run-1/run-report.md")
+
+	if !strings.HasPrefix(got, "run report /repo/.r-loop/runs/run-1/run-report.md\nThe run finished.") {
+		t.Errorf("run report text opens:\n%s", got)
+	}
+	for _, want := range []string{"events.jsonl", "signals.jsonl", "remedies.jsonl", "report.md", "Write only /repo/.r-loop/runs/run-1/run-report.md", "## Summary", "## Problems", "none when nothing did", "## Follow-ups", "Do not edit code, do not commit, do not call signal."} {
+		if !strings.Contains(got, want) {
+			t.Errorf("run report text missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestAFinishedRunAsksTheWatchdogForARunReportAndRecordsIt(t *testing.T) {
+	dog, host, store, face := haltedDog(t, RunFinished)
+	host.write = "## Summary\n\nbuilt it\n"
+	path := filepath.Join(dog.RunDir, "run-report.md")
+
+	dog.RunReport(context.Background(), 7*time.Minute)
+
+	prompts := runReportPrompts(host)
+	if len(prompts) != 1 || !strings.Contains(prompts[0], "run report "+path) || !strings.HasSuffix(prompts[0], " true 7m0s") {
+		t.Fatalf("run report prompts %q", prompts)
+	}
+	if ev := lastEvent(face); ev.Kind != "run-report" || ev.Fields["path"] != path {
+		t.Errorf("last event %+v", ev)
+	}
+	st, _ := store.Load(dog.RunID)
+	if ev := st.Events[len(st.Events)-1]; ev.Kind != "run-report" || ev.Fields["path"] != path {
+		t.Errorf("recorded event %+v", ev)
+	}
+}
+
+func TestAWatchdogThatWritesNoRunReportIsRecordedAsMissing(t *testing.T) {
+	dog, host, store, face := haltedDog(t, RunFinished)
+	path := filepath.Join(dog.RunDir, "run-report.md")
+
+	dog.RunReport(context.Background(), time.Minute)
+
+	if len(runReportPrompts(host)) != 1 {
+		t.Fatalf("calls %q", host.Calls())
+	}
+	if ev := lastEvent(face); ev.Kind != "run-report-missing" || ev.Fields["reason"] != "watchdog wrote no "+path {
+		t.Errorf("last event %+v", ev)
+	}
+	st, _ := store.Load(dog.RunID)
+	if ev := st.Events[len(st.Events)-1]; ev.Kind != "run-report-missing" {
+		t.Errorf("recorded event %+v", ev)
+	}
+}
+
+func TestARunReportLeftFromAnEarlierRunIsRemovedFirst(t *testing.T) {
+	dog, _, _, face := haltedDog(t, RunFinished)
+	path := filepath.Join(dog.RunDir, "run-report.md")
+	if err := os.WriteFile(path, []byte("## Summary\n\nthe earlier finish\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dog.RunReport(context.Background(), time.Minute)
+
+	if ev := lastEvent(face); ev.Kind != "run-report-missing" {
+		t.Errorf("last event %+v", ev)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("stale run report still there: %v", err)
+	}
+}
+
+func TestAnEmptyRunReportIsRecordedAsMissing(t *testing.T) {
+	dog, host, _, face := haltedDog(t, RunFinished)
+	host.write = ""
+	if err := os.WriteFile(filepath.Join(dog.RunDir, "run-report.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dog.RunReport(context.Background(), time.Minute)
+
+	if ev := lastEvent(face); ev.Kind != "run-report-missing" {
+		t.Errorf("last event %+v", ev)
+	}
+}
+
+func TestAHaltedRunAsksForNoRunReport(t *testing.T) {
+	dog, host, _, face := haltedDog(t, RunHalted)
+	host.write = "x"
+
+	dog.RunReport(context.Background(), time.Minute)
+
+	if p := runReportPrompts(host); len(p) != 0 || len(face.events()) != 0 {
+		t.Errorf("prompts %q, events %+v", p, face.events())
+	}
+}
+
+func TestAnInterruptedRunAsksForNoRunReport(t *testing.T) {
+	dog, host, _, face := haltedDog(t, RunFinished)
+	host.write = "x"
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	dog.RunReport(ctx, time.Minute)
+
+	if p := runReportPrompts(host); len(p) != 0 || len(face.events()) != 0 {
+		t.Errorf("prompts %q, events %+v", p, face.events())
+	}
+}
+
+func TestAnAbortedRunAsksForNoRunReport(t *testing.T) {
+	dog, host, store, face := haltedDog(t, RunFinished)
+	host.write = "x"
+	if err := store.Append(dog.RunID, Record{Kind: RecordEvent, Event: &Event{Kind: "aborted", Phase: "1", Step: "plan"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	dog.RunReport(context.Background(), time.Minute)
+
+	if p := runReportPrompts(host); len(p) != 0 || len(face.events()) != 0 {
+		t.Errorf("prompts %q, events %+v", p, face.events())
+	}
+}
+
+func TestAGoneWatchdogIsAskedForNoRunReport(t *testing.T) {
+	dog, host, _, face := haltedDog(t, RunFinished)
+	host.write = "x"
+	dog.gone = true
+
+	dog.RunReport(context.Background(), time.Minute)
+
+	if p := runReportPrompts(host); len(p) != 0 || len(face.events()) != 0 {
+		t.Errorf("prompts %q, events %+v", p, face.events())
 	}
 }

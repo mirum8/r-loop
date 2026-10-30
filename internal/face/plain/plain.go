@@ -18,6 +18,7 @@ type Face struct {
 	mu        sync.Mutex
 	gate      *core.Event
 	diagnosis string
+	runReport string
 }
 
 func (f *Face) Emit(ev core.Event) {
@@ -27,6 +28,9 @@ func (f *Face) Emit(ev core.Event) {
 	f.closeGate(&b, ev)
 	if ev.Kind == core.EventFailureReport {
 		f.diagnosis = ev.Fields["path"]
+	}
+	if ev.Kind == core.EventRunReport {
+		f.runReport = ev.Fields["path"]
 	}
 	f.emit(&b, ev)
 	io.WriteString(f.Out, core.Displayable(b.String()))
@@ -100,6 +104,8 @@ func (f *Face) emit(w io.Writer, ev core.Event) {
 		fmt.Fprintf(w, "%s  phase %s  %s  skipped: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["reason"])
 	case "phase-summary":
 		fmt.Fprintf(w, "%s  phase %s  summary  %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["text"])
+	case "narration":
+		fmt.Fprintf(w, "%s  watchdog: %s\n", ev.At.Format("15:04:05"), ev.Fields["text"])
 	case "design":
 		fmt.Fprintf(w, "%s  phase %s  design: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["intent"])
 	case "design-skipped":
@@ -144,6 +150,9 @@ func (f *Face) Close() {
 	defer f.mu.Unlock()
 	if f.Report != "" {
 		fmt.Fprintf(f.Out, "report: %s\n", f.Report)
+	}
+	if f.runReport != "" {
+		fmt.Fprintf(f.Out, "run report: %s\n", f.runReport)
 	}
 	if f.diagnosis != "" {
 		fmt.Fprintf(f.Out, "diagnosis: %s\n", f.diagnosis)

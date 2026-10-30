@@ -367,6 +367,43 @@ func TestCloseNamesTheDiagnosisAfterTheReport(t *testing.T) {
 	}
 }
 
+func TestCloseNamesTheRunReportAfterTheReport(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out, Report: "/repo/.r-loop/runs/r1/report.md"}
+	f.Emit(core.Event{At: at, Kind: "run-report", Fields: map[string]string{"path": "/repo/.r-loop/runs/r1/run-report.md"}})
+	out.Reset()
+
+	f.Close()
+
+	if want := "report: /repo/.r-loop/runs/r1/report.md\nrun report: /repo/.r-loop/runs/r1/run-report.md\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
+func TestAMissingRunReportNamesNoRunReportOnClose(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out, Report: "/repo/.r-loop/runs/r1/report.md"}
+	f.Emit(core.Event{At: at, Kind: "run-report-missing", Fields: map[string]string{"reason": "watchdog wrote no /repo/.r-loop/runs/r1/run-report.md"}})
+	out.Reset()
+
+	f.Close()
+
+	if want := "report: /repo/.r-loop/runs/r1/report.md\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
+func TestANarrationReadsAsAWatchdogLine(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	f.Emit(core.Event{At: at, Kind: "narration", Fields: map[string]string{"text": "phase 3 landed; phase 4 starts on the store"}})
+
+	if want := "14:03:09  watchdog: phase 3 landed; phase 4 starts on the store\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
 func TestTheWatchdogsConfigChangesAndPlanCorrectionsReadAsLines(t *testing.T) {
 	var out bytes.Buffer
 	f := &Face{Out: &out}

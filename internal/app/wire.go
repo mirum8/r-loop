@@ -479,6 +479,7 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 	} else {
 		w.startTUI(ctx)
 		code = w.run(ctx, opts)
+		w.Dog.RunReport(ctx, w.Config.Watchdog.CheckTimeout)
 		w.Dog.FailureReport(ctx, w.Config.Watchdog.CheckTimeout)
 		w.Dog.CompactMemory(ctx, w.Config.Watchdog.CheckTimeout)
 	}
@@ -838,7 +839,7 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	w.Gate.Picker = w.Dog
 	w.Router.Dog = w.Dog
 	w.Watch.Router = w.Router
-	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, ChooseGate: w.Gate.ChooseGate, SetConfig: w.ConfigSet.Set, RunStatus: w.runStatus, StepInfo: w.stepInfo, StopRun: w.Loop.StopRun, PauseRun: w.Loop.PauseRun, ContinueRun: w.Loop.ContinueRun, Remember: w.Memory.Remember, Forget: w.Memory.Forget})
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, ChooseGate: w.Gate.ChooseGate, SetConfig: w.ConfigSet.Set, RunStatus: w.runStatus, StepInfo: w.stepInfo, StopRun: w.Loop.StopRun, PauseRun: w.Loop.PauseRun, ContinueRun: w.Loop.ContinueRun, Remember: w.Memory.Remember, Forget: w.Memory.Forget, Narrate: w.Dog.Narrate})
 	return w.startDog(ctx, wd.Provider, wd.Model, wd.Effort)
 }
 
