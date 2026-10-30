@@ -10,6 +10,10 @@ var ErrMergeConflict = errors.New("merge conflict")
 
 var ErrPromptStalled = errors.New("prompt stalled")
 
+var ErrNotFound = errors.New("not found")
+
+var ErrAgentBlocked = errors.New("agent blocked")
+
 type PlanSource interface {
 	Read(path string) (Plan, error)
 	Tick(path string, ph Phase) error

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"slices"
@@ -496,7 +497,7 @@ func (h *blockedHost) Prompt(agent, text string, wait bool, timeout time.Duratio
 	h.mu.Lock()
 	h.prompts++
 	h.mu.Unlock()
-	return errors.New("herdr agent prompt: herdr: agent_blocked: waiting on a permission")
+	return fmt.Errorf("herdr agent prompt: herdr: agent_blocked: waiting on a permission: %w", ErrAgentBlocked)
 }
 
 func TestNotifyRecordsWatchdogUnreachableWhenABlockedWatchdogIsGone(t *testing.T) {
@@ -763,7 +764,7 @@ func (h *askingHost) Prompt(agent, text string, wait bool, timeout time.Duration
 	defer h.mu.Unlock()
 	h.prompts++
 	if h.prompts <= h.blockedFor {
-		return errors.New("herdr agent prompt: herdr: agent_blocked: agent " + dogName + " is blocked and requires interactive input")
+		return fmt.Errorf("herdr agent prompt: herdr: agent_blocked: agent %s is blocked and requires interactive input: %w", dogName, ErrAgentBlocked)
 	}
 	return nil
 }
@@ -964,7 +965,7 @@ type goneHost struct {
 
 func (h *goneHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
 	if h.gone.Load() {
-		return errors.New("herdr agent prompt: herdr: agent_blocked: waiting on a permission")
+		return fmt.Errorf("herdr agent prompt: herdr: agent_blocked: waiting on a permission: %w", ErrAgentBlocked)
 	}
 	return h.fakeSessionHost.Prompt(agent, text, wait, timeout)
 }

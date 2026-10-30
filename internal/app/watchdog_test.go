@@ -343,7 +343,7 @@ func (h *dogHost) startConfig() (path, data string, perm os.FileMode) {
 func (h *dogHost) Prompt(agent, text string, wait bool, timeout time.Duration) error {
 	h.record("Prompt %s %s", agent, text)
 	if h.blocked != "" && strings.HasPrefix(text, h.blocked) {
-		return errors.New("herdr: agent_blocked")
+		return fmt.Errorf("herdr: agent_blocked: %w", core.ErrAgentBlocked)
 	}
 	if h.onPrompt != nil {
 		h.onPrompt(text)

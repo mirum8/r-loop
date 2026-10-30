@@ -524,5 +524,5 @@ func (d *Watchdog) sleep(t time.Duration) {
 }
 
 func blocked(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "agent_blocked")
+	return errors.Is(err, ErrAgentBlocked)
 }

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -307,7 +308,7 @@ func (h *eventsHost) Prompt(agent, text string, wait bool, timeout time.Duration
 		if h.refuse[key] > 0 {
 			h.refuse[key]--
 			h.record("SessionHost.Refused %s", agent)
-			return errors.New("herdr agent prompt: agent_blocked")
+			return fmt.Errorf("herdr agent prompt: agent_blocked: %w", ErrAgentBlocked)
 		}
 		h.typed[key] = true
 		h.record("SessionHost.Typed %s %q", agent, text)

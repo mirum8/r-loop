@@ -1,0 +1,50 @@
+{
+  "spaces": [
+    {
+      "id": "spUSER",
+      "name": "work",
+      "folder": "/Users/me",
+      "machine": "local",
+      "active": true,
+      "tabs": [
+        {
+          "id": "tbUSER",
+          "name": "1",
+          "active": true,
+          "settled": true,
+          "terminals": [
+            {"terminal": "t1", "pane": "pUSER", "status": "working", "app": "claude-code", "name": null, "sub_agents": []}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "spRUN",
+      "name": "phase-3",
+      "folder": "/repo/wt",
+      "machine": "local",
+      "active": false,
+      "tabs": [
+        {
+          "id": "tbRUN1",
+          "name": "run",
+          "active": true,
+          "settled": true,
+          "terminals": [
+            {"terminal": "t1b", "pane": "pROOT", "status": "idle", "app": "claude-code", "name": null, "sub_agents": []},
+            {"terminal": "t1d", "pane": "pSPLIT", "status": null, "app": null, "name": null, "sub_agents": []}
+          ]
+        },
+        {
+          "id": "tbRUN2",
+          "name": "review",
+          "active": false,
+          "settled": true,
+          "terminals": [
+            {"terminal": "t1c", "pane": "pTAB", "status": null, "app": null, "name": null, "sub_agents": []}
+          ]
+        }
+      ]
+    }
+  ]
+}
