@@ -57,6 +57,11 @@ key it sets with `set_config`, a plan line it corrects before `continue` — no 
 ADR-98 added Milestone 22, Phases 57–58: the project keeps a memory across runs in
 `.r-loop/memory/`, one fact to a file, that only the watchdog writes with `remember` and `forget`,
 every session reads by an index in its prompt, and the watchdog compacts when a run ends.
+ADR-99 added Milestone 23, Phases 59–62: the sessions run on the herdr CLI or on herdr-app,
+recognised from r-loop's own environment by `internal/sessionhost`, which picks `internal/herdr`
+or the new `internal/hc` adapter and routes a call for an agent the chosen host does not know to
+the other one; the core keeps talking to `SessionHost` only, and an `rloop` mod draws the
+sidebar line in herdr-app; the project's `/test-app` runs its live checks on either host.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -103,6 +108,9 @@ every session reads by an index in its prompt, and the watchdog compacts when a 
 - Wave 40: Phase 56
 - Wave 41: Phase 57
 - Wave 42: Phase 58
+- Wave 43: Phase 59
+- Wave 44: Phase 60, Phase 61
+- Wave 45: Phase 62
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -971,6 +979,59 @@ Contracts: `tech-design.md#milestone-22-project-memory`
 - [x] the TUI logs a feed line for each memory event; `README.md` and `CLAUDE.md` describe the memory
 - [x] tests prove the section in each template with and without memory, the index each role gets, the compaction's skips and prompt, and the feed lines
 **Done when:** `go test -race ./...` is green and `go run ./cmd/r-loop docs/task-loop-driver/todo.md --dry-run --plain` exits 0.
+
+## Milestone 23 — herdr or herdr-app
+Contracts: `tech-design.md#milestone-23-herdr-or-herdr-app`
+
+### Phase 59 — The hc adapter
+**Implements:** Run every remaining phase of a plan · Review each phase with every configured reviewer
+**Depends on:** Phase 58
+**Files:** `internal/core/ports.go` (modify) · `internal/herdr/client.go` (modify) · `internal/herdr/client_test.go` (modify) · `internal/hc/client.go` (create) · `internal/hc/client_test.go` (create) · `internal/hc/live_test.go` (create) · `internal/hc/testdata/*.json` (create)
+- [ ] `core.ErrNotFound` in `ports.go`; the herdr adapter wraps it on every error whose code ends `not_found`, and `State`, `StateSeq` and `AgentPane` keep returning `gone` and `""` for an unknown agent
+- [ ] `hc.Client{HC, App string}` implements `core.SessionHost` over `hc` and `herdr-app do`; every call runs with r-loop's environment minus `HC_TERMINAL_ID`, in its own process group with a 30 s timeout (a waiting prompt gets its wait on top), parses `--json`, and surfaces `{error: {kind, message}}` as `hc: <kind>: <message>`, wrapping `core.ErrNotFound` on exit 3 and on a pane or space missing from `herdr-app ls`
+- [ ] `Open` and `OpenTab` read `space`, `tab` and `focused_pane` from `herdr-app status`, run `space.new --name --folder --argv` or `tab.new --name --space --argv`, then `space.select`, `tab.select` and `pane.focus` back to what they read, and return the new space and its pane from `herdr-app ls`
+- [ ] the shell argv is `["env", "K=V"…, "/bin/sh", "-c", "cd \"$1\" && exec \"$SHELL\" -l", "sh", <cwd>]` with keys sorted; `Split` runs `pane.split --direction --pane --argv` with it, an empty pane meaning `focused_pane`, and ignores `ratio`
+- [ ] `Start` finds the pane's terminal, labels it `rloop.agent=<name>`, types `exec <kind> <args…>` with each word quoted for a POSIX shell through `hc send --force`, waits for a foreground program other than the shell, then runs the same trust-dialog and readiness loop as the herdr adapter — claude's "Yes, I trust this folder" (`down`, `enter`), codex's "Trust this folder?" or "Do you trust the contents of this directory?" (`enter`), ready once no dialog shows and the state is `idle` or `done`, after a trust answer idle with an unchanged sequence for 1.5 s; a name already on a live terminal fails `hc: agent <name> already exists`
+- [ ] an agent is the one live terminal `hc ls --json --label rloop.agent=<name>` lists: none is not found, more than one an error naming them; `State` and `StateSeq` map `hc get`'s `status.state` `idle`, `working`, `blocked`, `done` one to one, `error` or a null status to `unknown`, a finished terminal to `gone`, with `status_ms` as the sequence
+- [ ] `Prompt` is `hc send [--wait --timeout]`, retrying `started: false` or `not_started` once with `hc keys enter` then `hc wait`; `Submit` returns an error wrapping `core.ErrPromptStalled` on `started: false`; `Screen` is `hc read`, `Read` `hc read --lines`; `SendKeys` is one `hc keys` per key; `Interrupt` is `hc interrupt` then `ctrl+c`; `ClosePane` is `pane.close`, `Close` `space.close --confirmed true`; `PaneInfo` takes the space from `herdr-app ls` and `Cols`, `Rows` from `hc get`; `AgentPane` is the agent's pane, `""` when not found
+- [ ] `Tag` runs `hc label <t> k=v…`, an empty value written `k=`, on every live terminal of the space carrying `rloop.agent`; its error is the caller's warning, as on herdr
+- [ ] tests over a fake `hc` and `herdr-app` (recorded argv, canned JSON from `testdata/`) prove each call's argv, the stripped `HC_TERMINAL_ID`, the focus restore, the shell argv and its quoting, the lookup's three outcomes, the state map, the stalled-prompt retry, the trust loop with each dialog, the not-found wrapping and the `Tag` removal; `live_test.go`, skipped unless `HC_TERMINAL_ID` is set, opens a space, splits it, starts a shell agent, reads its screen, tags it and closes the space
+**Done when:** `go test -race ./internal/hc/... ./internal/herdr/... ./internal/core/...` is green and `grep -n "func (c Client) Start" internal/hc/client.go` prints the method.
+
+### Phase 60 — `internal/sessionhost`: recognise the host, route, wire
+**Implements:** Run every remaining phase of a plan · Resume a run that stopped · Choose the agent for each step
+**Depends on:** Phase 59
+**Files:** `internal/sessionhost/connect.go` (create) · `internal/sessionhost/router.go` (create) · `internal/sessionhost/connect_test.go` (create) · `internal/sessionhost/router_test.go` (create) · `internal/config/defaults.yaml` (modify) · `internal/config/reader.go` (modify) · `internal/config/reader_test.go` (modify) · `internal/providers/shipped/codex.yaml` (modify) · `internal/providers/registry_test.go` (modify) · `internal/app/wire.go` (modify) · `internal/app/intake.go` (modify) · `internal/app/cleanup.go` (modify) · `internal/app/preflight.go` (modify) · `internal/app/resume.go` (modify) · `internal/app/status.go` (modify) · `internal/app/app_test.go` (modify) · `internal/app/resume_test.go` (modify) · `cmd/r-loop/main.go` (modify) · `CLAUDE.md` (modify)
+- [ ] `sessionhost.Connect(Env{HerdrPane, HCTerminal, Herdr, HC, App, LookPath}, choice)` returns `Conn{SessionHost, Self, Name, Source, Preflight}`; `auto` picks herdr when `HerdrPane` is set, else the app when `HCTerminal` is set, else probes each host on the path with `Reachable`: one reachable is used, both exit 2 `both herdr and herdr-app are running; set host: herdr or host: app`, neither exit 4 naming each error; `herdr` or `app` skips detection and exits 4 on that host's `Reachable` error; a missing binary exits 127
+- [ ] `Self` is `HerdrPane` on herdr and the pane of terminal `HCTerminal` in `herdr-app ls` on the app, `""` outside the window; `Source` is `--host`, the config layer, or `auto: HERDR_PANE_ID`, `auto: HC_TERMINAL_ID` or `auto: probe`
+- [ ] `Preflight(kinds)` is a no-op on herdr; on the app, with `codex` in `kinds`, it runs `codex --version` and below 0.166.0 exits 2 `codex <v> reports no status to hc; 0.166 or later is needed — run codex update`
+- [ ] the router sends `Reachable`, `Open`, `OpenTab`, `Split` and `Start` to the chosen host only, and every other call to it first, repeating the call on the other host when the answer is not found (`gone`, an `AgentPane` of `""`, or an error wrapping `core.ErrNotFound`) and that host is on the path and reachable, probed once per process
+- [ ] a top-level `host: auto | herdr | app` key ships as `auto`, any other value exits 2, and `--host <value>` overrides it with provenance; `main` passes `HERDR_PANE_ID` and `HC_TERMINAL_ID`, and `app.Env` drops `Pane` and gains both
+- [ ] `wire`, `intake`, `cleanup`, `preflight` and `resume` take their host and `Self` from one `Connect` and import neither `internal/herdr` nor `internal/hc`; preflight calls `Preflight` with the configured providers' kinds; `--dry-run` and `r-loop status` print `host: <Name> (<Source>)`
+- [ ] the shipped codex block's `flags` start with `--no-daemon`
+- [ ] `CLAUDE.md` names herdr-app with hc beside herdr in the stack and `internal/hc` and `internal/sessionhost` among the adapters
+- [ ] tests prove each detection branch and exit, the explicit choice, `Self` on both hosts, the codex version gate at 0.165.9 and 0.166.0, the router's fall-through on each not-found shape and its single probe, creating calls never falling through, the config key's validation and flag, the codex flags, the status line, and a resume whose stale agent lives only on the other host being interrupted there
+**Done when:** `go test -race ./...` is green and `go run ./cmd/r-loop docs/task-loop-driver/todo.md --dry-run --plain` prints a `host:` line and exits 0.
+
+### Phase 61 — The `rloop` mod and the install
+**Implements:** See where a run is
+**Depends on:** Phase 59
+**Files:** `herdr-app/rloop/main.js` (create) · `herdr-app/rloop/mod.json` (create) · `install.sh` (modify) · `README.md` (modify)
+- [ ] `herdr-app/rloop/mod.json` is `{"place": "left", "size": 120, "title": "r-loop"}`; `main.js` lists, on render from `spaces()` and `terminals()`, each space that has a terminal labelled `rloop.agent`: its name, then its `rloop_wait` label in `#E0A458` bold when set, else its `rloop` label in `#6E9FC4`; clicking a row runs `space.select {id}`; it uses theme colours for everything else and polls nothing
+- [ ] `install.sh` copies the mod to `${HERDR_APP_HOME:-$HOME/.config/herdr-app}/mods/rloop/` and runs `herdr-app check` on it when `herdr-app` is on the path, failing the install on a failed check; it keeps writing the herdr sidebar block only when `herdr` is on the path, and needs at least one of the two
+- [ ] `README.md` says r-loop runs in herdr or herdr-app, how the host is recognised, the `host` key and `--host`, codex 0.166 on herdr-app, and what the `rloop` mod shows
+**Done when:** `herdr-app check herdr-app/rloop` exits 0 and `sh -n install.sh` exits 0.
+
+### Phase 62 — `/test-app` runs live on herdr-app
+**Implements:** Run every remaining phase of a plan · See where a run is
+**Depends on:** Phase 60
+**Files:** `.claude/skills/test-app/e2e/host.sh` (create) · `.claude/skills/test-app/e2e/own_workspace.sh` (modify) · `.claude/skills/test-app/e2e/live_*.sh` (modify) · `.claude/skills/test-app/SKILL.md` (modify) · `.claude/skills/test-app/references/subagent-prompt.md` (modify)
+- [ ] `e2e/host.sh`, sourced by every live script, picks the host as r-loop does — `HERDR_PANE_ID` set → herdr, else `HC_TERMINAL_ID` set → app, else none — and defines `host_up` (`herdr status server` / `herdr-app status`), `ws_open <label>` printing the new workspace and the id the run reads as its own pane (`herdr workspace create --no-focus` → workspace and root pane / `herdr-app do space.new --name --folder` → space and its terminal), `ws_close <id>` (`herdr workspace close` / `herdr-app do space.close --confirmed true`), `screen <agent> [lines]` (`herdr agent read` / `hc read`, the agent found by its `rloop.agent` label), `keys <agent> <key>…` (`herdr pane send-keys` / `hc keys`), `prompt <agent> <text>` (`herdr agent prompt` / `hc send`) and `shot <file>` (`herdr-app shot` on the app, a no-op printing `no shot on herdr` on herdr); every `hc` call runs without `HC_TERMINAL_ID`
+- [ ] `own_workspace.sh` opens the test's workspace with `ws_open` and re-runs the script with `HERDR_PANE_ID` on herdr or `HC_TERMINAL_ID` on the app set to what `ws_open` printed, closing it with `ws_close` on exit, interrupt or termination
+- [ ] every `live_*.sh` sources `host.sh`, guards with `host_up` instead of `herdr status server`, and reads, presses and prompts through `screen`, `keys` and `prompt`; the guard's skip line reads `NOT RUN: no session host (herdr or herdr-app)`; `no_agent.sh`, `pretrust.sh` and `steering_checkers_test.sh` keep their stub `herdr`
+- [ ] `SKILL.md` and `references/subagent-prompt.md` say the live tier needs either host — a herdr pane with its server up, or a herdr-app terminal with the window open — that a live run on the app uses the maintainer's own core and window, not an isolated `HC_SESSION`, because structural commands need the window, that a TUI check on the app also saves a `herdr-app shot` PNG beside its frames, and that the rule against a live run inside an r-loop run is unchanged
+- [ ] a live `todo-tiny.md` run started from a herdr-app terminal lands and ticks in its own space, with `hc read` frames and one `herdr-app shot` PNG of the TUI saved under `e2e/frames/`, and `e2e/live_nudge_reply.sh` passes or prints its `NOT RUN: the agent ignored the steering` line from the same terminal
+**Done when:** `grep -lE 'herdr (status|workspace|agent|pane) ' .claude/skills/test-app/e2e/live_*.sh` prints nothing and `sh -n .claude/skills/test-app/e2e/host.sh` exits 0.
 
 ## Open questions
 

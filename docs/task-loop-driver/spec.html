@@ -188,7 +188,7 @@ section:target > h2 { color: var(--clay); }
   <dt>Driving characteristics</dt><dd>zero loop approvals made by a model · two signals before a step is done · five extension seams, none of which edits the loop</dd>
   <dt>Style</dt><dd>Supervisor over out-of-process workers, with a hexagonal core — one self-contained binary in a herdr pane, serving two MCP surfaces</dd>
   <dt>Components</dt><dd>13 — <code>RunLoop</code>, <code>PlanReader</code>, <code>StepKinds</code>, <code>SessionManager</code>, <code>ProviderRegistry</code>, <code>PromptRenderer</code>, <code>LandGate</code>, <code>StateStore</code>, <code>ConfigReader</code>, <code>AskServer</code>, <code>Watch</code>, <code>Remedies</code>, <code>Ui</code></dd>
-  <dt>Stack</dt><dd>Go 1.25 · Bubble Tea 1.3 · MCP go-sdk 1.8 · yaml.v3 · herdr 0.9.0 · git 2.50 — nothing from the skill-pack at run time</dd>
+  <dt>Stack</dt><dd>Go 1.25 · Bubble Tea 1.3 · MCP go-sdk 1.8 · yaml.v3 · herdr 0.9.0 or herdr-app with hc 0.1.14 (<a href="#adr-99">ADR-99</a>) · git 2.50 — nothing from the skill-pack at run time</dd>
   <dt>v1</dt><dd>20 of 22 stories; concurrent phases, drift-watching, a non-<code>todo.md</code> source and provider-side fan-out deferred</dd>
 </dl>
 
@@ -1606,7 +1606,7 @@ a different release cadence or a different blast radius; it is one sequence over
   <tr><th>Pair</th><th>How</th><th>Why</th></tr>
   <tr><td><code>RunLoop</code> → every other component</td><td>synchronous, in-process</td>
       <td>one sequence; nothing here is concurrent in v1</td></tr>
-  <tr><td><code>SessionManager</code> → herdr</td><td>synchronous CLI calls over herdr's socket API</td>
+  <tr><td><code>SessionManager</code> → herdr or herdr-app</td><td>synchronous CLI calls over herdr's socket API, or over <code>hc</code> and <code>herdr-app do</code> (<a href="#adr-99">ADR-99</a>)</td>
       <td>errors arrive as JSON with a code the caller branches on, which is the determinism rule
           applied to the one external dependency that reports state</td></tr>
   <tr><td><code>SessionManager</code> → an agent</td><td>asynchronous — spawn, then poll state and
@@ -1703,13 +1703,13 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Ninety-eight decisions, each with the alternative that was live at the time; twelve are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and fifty-five carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, ADR-90 keeps an agent's pane size from ever failing a run, ADR-91, since superseded, handed a blocker a retry will not clear to a fixer session that proposed a fix the driver applied on the maintainer's confirmation, ADR-92 adds a design step that a claude session with <code>frontend-design</code> runs before the plan step on the phases the watchdog's triage flags as changing what a user sees, ADR-93 has claude sessions report through hooks, ADR-94 has the watchdog retry a minor failure without asking, ADR-95 has it choose the gate's commands from the <code>Done when:</code> line's spans, ADR-96 lets a blocker be continued as a resume would, and ADR-97 replaces the fixer with a watchdog that fixes what it finds — remedies, a config key, a corrected plan line — skips nothing, and blocks only once the retries are spent, and ADR-98 gives the project a memory across runs, one fact to a file, that only the watchdog writes and every session reads by an index in its prompt.</p>
+<p class="lede">Ninety-nine decisions, each with the alternative that was live at the time; twelve are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and fifty-five carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, ADR-90 keeps an agent's pane size from ever failing a run, ADR-91, since superseded, handed a blocker a retry will not clear to a fixer session that proposed a fix the driver applied on the maintainer's confirmation, ADR-92 adds a design step that a claude session with <code>frontend-design</code> runs before the plan step on the phases the watchdog's triage flags as changing what a user sees, ADR-93 has claude sessions report through hooks, ADR-94 has the watchdog retry a minor failure without asking, ADR-95 has it choose the gate's commands from the <code>Done when:</code> line's spans, ADR-96 lets a blocker be continued as a resume would, and ADR-97 replaces the fixer with a watchdog that fixes what it finds — remedies, a config key, a corrected plan line — skips nothing, and blocks only once the retries are spent, and ADR-98 gives the project a memory across runs, one fact to a file, that only the watchdog writes and every session reads by an index in its prompt, and ADR-99 runs the sessions on the herdr CLI or on herdr-app, whichever r-loop's environment names, behind the same port.</p>
 
 <div id="adr-index">
 
 <div class="adr">
 <h3 id="adr-1">ADR-1 — The loop runs as a terminal CLI, outside every agent session</h3>
-<p><span class="f">Status</span> accepted · amended 2026-09-23 — the sessions' trust the driver arranges covers claude's first-run trust dialog as well as codex's: herdr reports a claude blocked on "Quick safety check" as <code>agent_not_ready</code>, so the herdr adapter reads the screen and, when it shows "Yes, I trust this folder", presses <code>down</code> then <code>enter</code> and waits for it to clear; any other not-ready screen still fails the start</p>
+<p><span class="f">Status</span> accepted · amended 2026-09-23 — the sessions' trust the driver arranges covers claude's first-run trust dialog as well as codex's: herdr reports a claude blocked on "Quick safety check" as <code>agent_not_ready</code>, so the herdr adapter reads the screen and, when it shows "Yes, I trust this folder", presses <code>down</code> then <code>enter</code> and waits for it to clear; any other not-ready screen still fails the start · amended by <a href="#adr-99">ADR-99</a> (2026-10-30) — the sessions run on the herdr CLI or on herdr-app, whichever r-loop's own environment names; the trust dialogs are answered the same way on both</p>
 <p><span class="f">Context</span> <em>Determinism</em> (Part 3) asks that no loop decision be made
 by a model. A loop hosted inside an agent session is executed by that model by construction, and
 the harness caps a single blocking call at 600 s — shorter than one implement step.</p>
@@ -1808,7 +1808,7 @@ every provider must now declare a fan-out capability — which creates the failu
 
 <div class="adr">
 <h3 id="adr-6">ADR-6 — A provider is a config block, not driver code</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-54">ADR-54</a> — the block declares a native review command where it has one, and no fan-out capability · amended 2026-09-23 — the block may carry <code>flags</code>, fixed flags passed first on every start, because codex's startup update prompt blocks herdr's <code>agent start</code> and the shipped codex block turns it off with <code>-c check_for_update_on_startup=false</code> · amended 2026-09-23 — the completion signal, the sentinel, is <code>{"outcome":"ok"|"failed","reason":"&lt;text&gt;"}</code> and no longer carries <code>at</code>, because a mistyped, never-read timestamp failed a finished step as <code>sentinel unreadable</code>; the driver timestamps every record itself, and a sentinel that still carries <code>at</code> is read with it ignored · amended by <a href="#adr-79">ADR-79</a> — the block may carry <code>dirFlag</code>, a <code>{dir}</code> template passed last, which lets a session in a phase worktree write its phase's run folder; <code>flags</code> may not carry <code>{dir}</code> · amended 2026-10-08 — the block may carry <code>version</code>, a subcommand that prints the provider's version, recorded at run start and added to each blocker; made with <a href="#adr-91">ADR-91</a> and kept when <a href="#adr-97">ADR-97</a> superseded it</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-54">ADR-54</a> — the block declares a native review command where it has one, and no fan-out capability · amended 2026-09-23 — the block may carry <code>flags</code>, fixed flags passed first on every start, because codex's startup update prompt blocks herdr's <code>agent start</code> and the shipped codex block turns it off with <code>-c check_for_update_on_startup=false</code> · amended 2026-09-23 — the completion signal, the sentinel, is <code>{"outcome":"ok"|"failed","reason":"&lt;text&gt;"}</code> and no longer carries <code>at</code>, because a mistyped, never-read timestamp failed a finished step as <code>sentinel unreadable</code>; the driver timestamps every record itself, and a sentinel that still carries <code>at</code> is read with it ignored · amended by <a href="#adr-79">ADR-79</a> — the block may carry <code>dirFlag</code>, a <code>{dir}</code> template passed last, which lets a session in a phase worktree write its phase's run folder; <code>flags</code> may not carry <code>{dir}</code> · amended 2026-10-08 — the block may carry <code>version</code>, a subcommand that prints the provider's version, recorded at run start and added to each blocker; made with <a href="#adr-91">ADR-91</a> and kept when <a href="#adr-97">ADR-97</a> superseded it · amended by <a href="#adr-99">ADR-99</a> (2026-10-30) — the shipped codex block's <code>flags</code> add <code>--no-daemon</code></p>
 <p><span class="f">Context</span> <em>Portability across agents</em> sets the target at one config
 block and zero driver lines. herdr already supports 23 agent kinds, so the driver cannot ship a
 branch per agent and stay honest about the claim.</p>
@@ -1968,7 +1968,7 @@ workspaces accumulate until they are cleaned up.</p>
 
 <div class="adr">
 <h3 id="adr-15">ADR-15 — A stall is detected from herdr's agent state, with a timer as backstop</h3>
-<p><span class="f">Status</span> accepted ·
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-99">ADR-99</a> (2026-10-30) — on the herdr-app host the agent state is hc's, reported by the agent through OSC 7501 ·
 amended 2026-09-19 — <code>done</code> counts as quiet too: herdr reports an idle agent whose
 output nobody has seen as <code>done</code> until a client focuses its pane, which r-loop never
 does, so a step that finished without its sentinel was never nudged</p>
@@ -4381,6 +4381,73 @@ maintainer forgets it.</p>
 as useful, or the cap is reached on every run.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-99">ADR-99 — The session host is herdr or herdr-app, recognised from the environment</h3>
+<p><span class="f">Status</span> accepted 2026-10-30 · amends <a href="#adr-1">ADR-1</a>,
+<a href="#adr-6">ADR-6</a> and <a href="#adr-15">ADR-15</a></p>
+<p><span class="f">Context</span> herdr now ships as two products: the herdr CLI and TUI the driver
+was built on, and herdr-app, a desktop window over herdr-core (<code>hc</code>), which runs every
+terminal and keeps it alive when the window closes. The maintainer runs r-loop in either. Inside
+herdr-app nothing of the herdr CLI is present — no <code>HERDR_PANE_ID</code>, no herdr server —
+and herdr-app's spaces, tabs and panes do not show herdr's workspaces. Probed live on 2026-10-30
+(hc 0.1.14): every <code>SessionHost</code> call has an equivalent in <code>hc</code> plus
+<code>herdr-app do</code>; claude and codex report <code>idle</code>, <code>working</code>,
+<code>blocked</code> and <code>done</code> to hc through OSC 7501, codex from 0.166 (0.162.1
+reported nothing); <code>space.new</code> and <code>tab.new</code> take the focus with no option
+not to; <code>pane.split</code> has no <code>--cwd</code>, <code>--env</code> or
+<code>--ratio</code>; hc names a terminal only when it starts one; and <code>hc send</code> from
+inside an hc terminal wraps the text as <code>&lt;hc from="…"&gt;…&lt;/hc&gt;</code> unless the call
+runs without <code>HC_TERMINAL_ID</code>.</p>
+<p><span class="f">Decision</span> <em>Recognising the host is an adapter's job; the core talks to
+the <code>SessionHost</code> port only.</em> A new adapter package,
+<code>internal/sessionhost</code>, is the one place that knows hosts exist:
+<code>Connect(env, choice) → Conn{SessionHost, Self, Name, Preflight}</code>. With
+<code>host: auto</code>, the default, <code>HERDR_PANE_ID</code> in r-loop's own environment picks
+herdr (it wins when both are set: herdr running inside an app terminal is the nearer host);
+<code>HC_TERMINAL_ID</code> alone picks the app; with neither, both are probed and the one
+reachable is used — both reachable exits 2 asking for <code>host:</code>, neither exits 4.
+<code>host: herdr | app</code>, a config key and the <code>--host</code> flag, skips the
+detection. <code>Self</code> is r-loop's own pane, from <code>HERDR_PANE_ID</code> or from
+<code>HC_TERMINAL_ID</code> through <code>herdr-app ls</code>. <em>The app adapter,
+<code>internal/hc</code>,</em> keeps r-loop's layout: <code>Split</code> runs
+<code>herdr-app do pane.split</code> with an argv that sets the pane's environment and folder and
+execs the login shell; <code>Start</code> types <code>exec &lt;agent argv&gt;</code> into that
+shell and labels the terminal <code>rloop.agent=&lt;name&gt;</code>, by which every later call
+finds it; <code>space.new</code> and <code>tab.new</code> are followed by putting the focus back
+where it was; <code>StateSeq</code>'s sequence is hc's <code>status_ms</code>; <code>Tag</code>
+sets <code>rloop</code> and <code>rloop_wait</code> as labels on the space's r-loop terminals; and
+every <code>hc</code> call runs without <code>HC_TERMINAL_ID</code>. <em>Stale sessions on the
+other host</em> are found inside the adapter too: <code>Connect</code> returns a router that sends
+every creating call to the recognised host and every call naming an agent, pane or workspace to
+it first, then, on not found, to the other host when that one's server is running — agent names
+are unique per run, so a resume from the other environment still interrupts an orphaned step.
+Nothing about the host is recorded in the run, and a run may move between hosts from one attempt
+to the next. The shipped codex block adds <code>--no-daemon</code>, without which codex runs its
+commands in a shared daemon outside the terminal; on the app host <code>Preflight</code> exits 2
+on a codex older than 0.166. The sidebar's <code>rloop</code> line on the app host is drawn by a
+small <code>rloop</code> mod r-loop installs, which reads the labels; it is not a clone of
+herdr-app's <code>spaces</code> mod.</p>
+<p><span class="f">Alternatives</span> Replace the herdr adapter with the app one — rejected: the
+herdr CLI still runs and is where every run so far was proven; the old adapter goes once the app
+host has carried full runs. The host recorded per run, and a resume from the other environment
+refused — rejected: the core holds nothing host-specific, and the one live-host need of a resume,
+interrupting a stale session, is met by the router. Starting each agent with
+<code>hc run --label herdr.space=… --label herdr.tab=…</code> — rejected: the app then chooses
+where the pane goes, and the reviewer column of <a href="#adr-56">ADR-56</a> is lost. hc's global
+<code>notes = false</code> to drop the wrapper — rejected: it changes the maintainer's own agents
+as well. A clone of the <code>spaces</code> mod for the sidebar line — rejected: it freezes a copy
+of shipped code that every herdr-app update replaces underneath it.</p>
+<p><span class="f">Consequences</span> A step's stall detection (<a href="#adr-15">ADR-15</a>)
+inherits hc's status instead of herdr's on the app host, and a provider that does not report
+OSC 7501 falls back to the backstop timer there. Opening a phase's workspace on the app host
+flickers the window to the new space and back. A sidebar token is a label on the space's
+terminals, not on the space. The app host needs the herdr-app window open: <code>hc</code> keeps
+running without it, but structural commands fail, so preflight exits 4.</p>
+<p><span class="f">Revisit when</span> herdr-app's commands gain a no-focus option, a pane folder
+or environment, or a terminal rename; or the app host has carried a full run with the herdr
+adapter unused, which retires that adapter.</p>
+</div>
+
 
 
 
@@ -4399,6 +4466,9 @@ as useful, or the cap is reached on every run.</p>
   <tr><td>herdr</td><td>0.9.0</td>
       <td>Hosts every step session: workspace, pane, agent start, agent state, prompt delivery</td>
       <td>the only component that can start 23 different agents behind one interface</td></tr>
+  <tr><td>herdr-app · herdr-core (<code>hc</code>)</td><td>hc 0.1.14</td>
+      <td>The other session host: <code>herdr-app do</code> for spaces, tabs and panes, <code>hc</code> for agents, their state, prompts, keys and screens; the <code>rloop</code> mod draws the sidebar line</td>
+      <td><a href="#adr-99">ADR-99</a></td></tr>
   <tr><td>git</td><td>2.50.1</td>
       <td>Phase branches, detached worktrees, the merge, and the evidence every step is checked
           against</td>
@@ -4420,7 +4490,7 @@ as useful, or the cap is reached on every run.</p>
   <tr><td>Claude Code</td><td>2.1.274</td>
       <td>One provider — herdr kind <code>claude</code></td>
       <td>the pack's existing agent, and the reference implementation of the adapter</td></tr>
-  <tr><td>Codex CLI</td><td>0.156.1</td>
+  <tr><td>Codex CLI</td><td>0.156.1 · 0.166.0 on herdr-app (<a href="#adr-99">ADR-99</a>)</td>
       <td>One provider — herdr kind <code>codex</code>; its <code>codex review --uncommitted</code>,
           run by the driver in the step worktree, is the native reviewer (<a href="#adr-81">ADR-81</a>)</td>
       <td>a second vendor is what proves <a href="#adr-6">ADR-6</a> rather than asserting it</td></tr>
