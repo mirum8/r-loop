@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -620,6 +621,24 @@ func TestNullGateTimeoutWiresTheDefaultIntoTheGate(t *testing.T) {
 	}
 	if !strings.Contains(f.out.String(), "land gateTimeout 30m  ← default\n") {
 		t.Errorf("banner:\n%s", f.out.String())
+	}
+}
+
+func TestConnectedHostKeepsCancellablePrompts(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.commit()
+
+	w, err := f.preflight(f.todo, "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { w.lock.Release("", 0) })
+
+	if _, ok := w.Host.SessionHost.(interface {
+		PromptContext(context.Context, string, string, bool, time.Duration) error
+	}); !ok {
+		t.Fatalf("connected host %T has no PromptContext", w.Host.SessionHost)
 	}
 }
 

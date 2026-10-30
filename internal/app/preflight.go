@@ -383,7 +383,7 @@ func (w *Wiring) connectHost(kinds []string) error {
 		}
 	}
 	w.Conn = conn
-	w.Host.SessionHost = conn
+	w.Host.SessionHost = conn.SessionHost
 	if w.Dog != nil {
 		w.Dog.Pane = conn.Self
 	}

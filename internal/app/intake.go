@@ -88,7 +88,7 @@ func newIntake(args []string, given Options, env Env) (*intake, error) {
 	}
 	return &intake{
 		env: env, root: root, text: strings.Join(args, " "), given: given, cfg: cfg.Intake, label: cfg.Label, provider: p,
-		host: conn, conn: conn, prompts: prompts.New(root), poll: time.Second, accepted: make(chan []string, 1),
+		host: conn.SessionHost, conn: conn, prompts: prompts.New(root), poll: time.Second, accepted: make(chan []string, 1),
 	}, nil
 }
 
