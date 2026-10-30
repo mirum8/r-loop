@@ -62,6 +62,11 @@ recognised from r-loop's own environment by `internal/sessionhost`, which picks 
 or the new `internal/hc` adapter and routes a call for an agent the chosen host does not know to
 the other one; the core keeps talking to `SessionHost` only, and an `rloop` mod draws the
 sidebar line in herdr-app; the project's `/test-app` runs its live checks on either host.
+ADR-100 added Milestone 24, Phases 63–66: a plan step's summary and each landing's diff size reach
+the event stream; the watchdog writes `run-report.md` when a run finishes, as it writes
+`failure-report.md` when one halts, and may `narrate` one display-only line that never asks and
+never ends a wait; the TUI shows an ETA, the phase's summary and the narration, and takes read-only
+keys — a rail cursor, a phase's details pane and an end report shown until `q`.
 
 ## Waves
 <!-- generated from the Depends on edges — regenerate, never hand-edit -->
@@ -111,6 +116,10 @@ sidebar line in herdr-app; the project's `/test-app` runs its live checks on eit
 - Wave 43: Phase 59
 - Wave 44: Phase 60, Phase 61
 - Wave 45: Phase 62
+- Wave 46: Phase 63
+- Wave 47: Phase 64
+- Wave 48: Phase 65
+- Wave 49: Phase 66
 
 ## Milestone 1 — Core, plan file, config and state
 Contracts: `tech-design.md#milestone-1-core-plan-file-config-and-state`
@@ -1032,6 +1041,58 @@ Contracts: `tech-design.md#milestone-23-herdr-or-herdr-app`
 - [x] `SKILL.md` and `references/subagent-prompt.md` say the live tier needs either host — a herdr pane with its server up, or a herdr-app terminal with the window open — that a live run on the app uses the maintainer's own core and window, not an isolated `HC_SESSION`, because structural commands need the window, that a TUI check on the app also saves a `herdr-app shot` PNG beside its frames, and that the rule against a live run inside an r-loop run is unchanged
 - [x] a live `todo-tiny.md` run started from a herdr-app terminal lands and ticks in its own space, with `hc read` frames and one `herdr-app shot` PNG of the TUI saved under `e2e/frames/`, and `e2e/live_nudge_reply.sh` passes or prints its `NOT RUN: the agent ignored the steering` line from the same terminal
 **Done when:** `grep -lE 'herdr (status|workspace|agent|pane) ' .claude/skills/test-app/e2e/live_*.sh` prints nothing and `sh -n .claude/skills/test-app/e2e/host.sh` exits 0.
+
+## Milestone 24 — Run report and TUI detail
+Contracts: `tech-design.md#milestone-24-run-report-and-tui-detail`
+
+### Phase 63 — Phase summary and diff stats in the event stream
+**Implements:** See where a run is
+**Depends on:** Phase 62
+**Files:** `internal/core/evidence.go` (modify) · `internal/core/evidence_test.go` (modify) · `internal/core/types.go` (modify) · `internal/core/land.go` (modify) · `internal/core/loop.go` (modify) · `internal/core/loop_events_test.go` (modify) · `internal/core/report.go` (modify) · `internal/core/report_test.go` (modify) · `internal/face/plain/plain.go` (modify) · `internal/face/plain/plain_test.go` (modify)
+- [ ] `core.PlanSummary(path, fsys) string` beside `PlanAssumptions`: the `## Summary` body through `section()`, whitespace collapsed to single spaces, cut after the first `. `; `""` when the file or the heading is missing or the section is empty
+- [ ] after a plan step ends `ok`, beside the `assumption` events, the loop emits `phase-summary{phase, text}` with `Step: "plan"` when the summary is not empty
+- [ ] `Landing` gains `Files int`, which `LandGate.attempt` sets to the paths `CommitTouches` returned for the merge less the committed todo file; `landed` carries `added`, `deleted` and `files` beside `phase`, `merge` and `gateSkipped`
+- [ ] a `Landed` line in `report.md` reads `phase <N> <sha> · +<added> −<deleted> · <n> files` (`1 file`), then ` gate skipped` when it was
+- [ ] the plain face prints `phase <N> summary: <text>` for `phase-summary`; `landed` keeps the generic field line
+- [ ] tests prove a multi-sentence summary cut to its first sentence and collapsed to one line, an empty section and a missing heading giving `""`; `phase-summary` emitted after a plan step and absent without a summary; `landed`'s three new fields, `files` excluding the todo; the new `Landed` line; the plain `phase-summary` line
+**Done when:** `go test -race ./internal/core/... ./internal/face/plain/...` is green and `grep -n 'func PlanSummary' internal/core/evidence.go` prints the function.
+
+### Phase 64 — The watchdog's run report and `narrate`
+**Implements:** See where a run is · Leave a run to finish on its own
+**Depends on:** Phase 63
+**Files:** `internal/core/failurereport.go` (modify) · `internal/core/failurereport_test.go` (modify) · `internal/core/watchdog.go` (modify) · `internal/core/watchdog_test.go` (modify) · `internal/core/report.go` (modify) · `internal/core/report_test.go` (modify) · `internal/askmcp/watchdog.go` (modify) · `internal/askmcp/watchdog_test.go` (modify) · `internal/app/wire.go` (modify) · `internal/prompts/templates/watchdog.md` (modify) · `internal/prompts/render_test.go` (modify) · `internal/face/plain/plain.go` (modify) · `internal/face/plain/plain_test.go` (modify) · `README.md` (modify) · `CLAUDE.md` (modify)
+- [ ] `EventRunReport = "run-report"`, `EventRunReportMissing = "run-report-missing"` and `core.RunReportText(path)`: `run report <path>`, the run finished, the run dir's `events.jsonl`, `signals.jsonl`, `remedies.jsonl` and `report.md` to read, only that file to write in markdown with `## Summary` (what the run built, overall), `## Problems` (what went wrong — retries, restarts, blockers — and why, `none` when nothing did) and `## Follow-ups`; no code edits, no commit, no `signal`
+- [ ] `(d *Watchdog) RunReport(ctx, timeout)` mirrors `FailureReport`: it returns unless the loaded status is `RunFinished`, the run is not aborted, `ctx` is live and `d.live()`; removes a stale `run-report.md` (a failure records `run-report-missing` with the reason); calls `NotifyContext(…, true, timeout)`; records `run-report{path}` for a non-empty file, else `run-report-missing{reason: "watchdog wrote no <path>[: <err>]"}`
+- [ ] `wire.go` calls `RunReport` just before `FailureReport`, both with `watchdog.checkTimeout`; the exit code never changes; `report.md` gains `- run report: <path>` from the latest `run-report` since the last resume, cleared by a `run-report-missing` or a resume, as `diagnosis()` is
+- [ ] the watchdog surface gains `narrate{text} → {accepted, reason?}` in `watchdogTools`, added as `remember` is, recorded as `watchdog-call` before its handler and `watchdog-result` after it, calling no `Resume`; `WatchdogHandlers.Narrate func(text string) (bool, string)` is wired to `Watchdog.Narrate`
+- [ ] `(d *Watchdog) Narrate(text)` trims the text and refuses it with the reason when it is empty, holds a line break, runs past 120 characters or ends with `?` (`narration is never a question; ask the maintainer in your own pane`); an accepted one records and emits `narration{text}` through `recordEvent`
+- [ ] `watchdog.md` lists `narrate` under `## Your tools` — one line, after a phase lands, when something goes off plan, otherwise at most every few minutes, never a question — and gains a `## Writing the run report` section beside the failure-report one
+- [ ] the plain face prints `watchdog: <text>` for `narration` and `run report: <path>` on `Close` after `report:`, as it prints `diagnosis:`; `README.md` and `CLAUDE.md` name the run report and `narrate`
+- [ ] tests prove the run report on a finished run, its skips on a halted, aborted or interrupted run and a watchdog not live, a missing and an empty file recorded as missing, a stale file removed first, and the `run report:` line in `report.md` and its clearing on resume; `narrate` recorded before its handler, leaving a `watchdog-waiting` open, refusing an empty text, a second line, 121 characters and a trailing `?`, and served 404 on a step path; the template's tool list and section; the plain lines
+**Done when:** `go test -race ./...` is green and `grep -n '"narrate"' internal/askmcp/watchdog.go` prints the tool.
+
+### Phase 65 — TUI live info: ETA, diff stats, summary and narration
+**Implements:** See where a run is
+**Depends on:** Phase 64
+**Files:** `internal/face/tui/model.go` (modify) · `internal/face/tui/view.go` (modify) · `internal/face/tui/model_test.go` (modify) · `internal/face/tui/view_test.go` (modify) · `internal/face/tui/testdata/frame-120x40.golden` (modify) · `internal/face/tui/testdata/frame-70x30.golden` (modify) · `DESIGN.md` (modify)
+- [ ] the model keeps `phaseInfo{summary; started, landedAt; sha; added, deleted, files, rounds, realFindings, fixed, restarts, nudges; blocker}` per phase, filled from `phase-start`, `phase-summary`, `landed`, `review-round`, `finding`, `restart`, `nudge`, `phase-blocked` and `blocked-on`, and rebuilt by `replay()`; `narration` keeps its text and time
+- [ ] the header shows `~<h>h<m>m left` (`~<m>m left` under an hour) before `started …`: the mean of `landedAt − started` over the phases landed in this run times the unlanded phases in the run list, shown once one has landed, hidden once the run ends, dropped first when the header is short; `PHASES n/m` stays on the rail title
+- [ ] `landedText` reads `landed <sha> · +<added> −<deleted> · <n> files`
+- [ ] the panel shows a `summary` line with the live phase's summary under `PHASE <n> · <kind>`, truncated to the panel width, and a dim `watchdog` line with the latest narration and its age (`2m ago`), shown with or without a live step, never in `secondary`
+- [ ] tests prove the ETA's mean and remaining count, its absence before the first landing and after the end, its drop on a short header; the phase records surviving `replay()`; the summary and narration lines; 80×24 and 70×30 frames fitting; no `secondary` escape in a frame with a narration; regenerated `frame-120x40` and `frame-70x30` goldens
+**Done when:** `go test -race ./internal/face/...` is green and `grep -n 'left' internal/face/tui/testdata/frame-120x40.golden` prints the header ETA.
+
+### Phase 66 — TUI selection, details pane and end report
+**Implements:** See where a run is
+**Depends on:** Phase 65
+**Files:** `internal/face/tui/model.go` (modify) · `internal/face/tui/view.go` (modify) · `internal/face/tui/theme.go` (modify) · `internal/face/tui/model_test.go` (modify) · `internal/face/tui/view_test.go` (modify) · `internal/face/tui/testdata/end-120x40.golden` (create) · `internal/face/tui/testdata/details-120x40.golden` (create) · `internal/face/plain/plain_test.go` (modify) · `DESIGN.md` (modify)
+- [ ] `Update` moves a rail cursor with `↑`/`k` and `↓`/`j`, clamped at both ends and hidden until the first press; `enter` opens the details pane for the selected phase; `esc` or `enter` closes it, and `esc` with details open never quits; `pgup`, `pgdn` and `space` scroll the end report; the `ctrl+c` stop prompt and the quit keys are otherwise unchanged
+- [ ] `theme.go` gains `Selected`, `on-primary` on `primary` and reverse under `NO_COLOR`; the selected row draws it and the live row keeps bold
+- [ ] the details pane replaces the panel while open: `PHASE <n> · <title>`, its state and the full summary wrapped to the panel width; started, duration, commit and `+<a> −<d> · <n> files`; review rounds with real and fixed findings, restarts and nudges, the blocker; the plan path `.task-plans/phase-<N>-*.md`; a field with nothing to show is left out
+- [ ] on `finished`, `halt` or `aborted` the end report replaces `no step running` until quit: phases landed, blocked and remaining, total time, total `+/−` and files, review rounds and findings fixed, restarts and nudges, questions and human touches, one `✓ <n> <title> · <duration> · +<a> −<d> · <sha>` line per landed phase, then `run-report.md` on finish or `failure-report.md` on halt, read with `os.ReadFile` when its event arrives, `## ` headings as labels and the body wrapped; a dim `watchdog is writing the summary…` until then, the reason on a `*-missing` event
+- [ ] the status bar reads `↑↓ select · enter details · pgup/pgdn scroll · q quit · report: <path>` once the run ends, cut in `DESIGN.md`'s order at 80 columns
+- [ ] tests prove the cursor's bounds and hidden start, `enter` and `esc`, `esc` not quitting with details open, quit still working, scrolling, the report pane filling on `run-report` and `failure-report` and showing a `*-missing` reason, 80×24 fitting; new `end-120x40` and `details-120x40` goldens; `TestAFinishedRunStopsTheClocks` and the end-state tests updated off `no step running`; the plain/TUI parity test covering `landed`'s new fields
+**Done when:** `go test -race ./...` is green and `ls internal/face/tui/testdata/end-120x40.golden internal/face/tui/testdata/details-120x40.golden` lists both.
 
 ## Open questions
 

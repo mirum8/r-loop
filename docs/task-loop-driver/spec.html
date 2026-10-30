@@ -339,7 +339,9 @@ so that I can tell a working run from a stuck one at a glance.</p>
 <p><em>Given</em> a run in progress, <em>when</em> I look at the TUI, <em>then</em> it shows every
 phase and its state, the live step with its provider and elapsed time, and any warning the watchdog
 has raised; <em>and</em> <code>r-loop status --plain</code> prints the same
-facts as lines for a script.</p>
+facts as lines for a script; <em>and</em> when the run ends, the TUI shows what it did — the phases
+landed, their time and size, and the watchdog's account of the run — until I quit, and any phase on
+the rail opens to its summary and how its review went (<a href="#adr-100">ADR-100</a>).</p>
 
 <h3>Choose the agent for each step</h3>
 <p>As the <strong>maintainer</strong>, I want planning, implementation and review — and every other
@@ -1270,8 +1272,10 @@ characteristic constrains the direction a model may push, not whether one is pre
       <td><em>Fix what is blocking a step</em>; <em>Pre-authorise the blockers worth fixing
           automatically</em></td></tr>
   <tr><td><code>Ui</code></td>
-      <td>Renders the run — phases, the live step, warnings — and takes the stop key; it never asks
-          a question (<a href="#adr-73">ADR-73</a>). <code>--plain</code> writes the same event
+      <td>Renders the run — phases, the live step, warnings, the watchdog's narration — and takes the
+          stop key and read-only navigation keys: a rail cursor, a phase's details, and the end
+          report it shows once the run ends (<a href="#adr-100">ADR-100</a>); it never asks a
+          question (<a href="#adr-73">ADR-73</a>). <code>--plain</code> writes the same event
           stream as lines</td>
       <td>nothing</td>
       <td>the maintainer</td>
@@ -1703,7 +1707,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">Ninety-nine decisions, each with the alternative that was live at the time; twelve are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and fifty-five carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, ADR-90 keeps an agent's pane size from ever failing a run, ADR-91, since superseded, handed a blocker a retry will not clear to a fixer session that proposed a fix the driver applied on the maintainer's confirmation, ADR-92 adds a design step that a claude session with <code>frontend-design</code> runs before the plan step on the phases the watchdog's triage flags as changing what a user sees, ADR-93 has claude sessions report through hooks, ADR-94 has the watchdog retry a minor failure without asking, ADR-95 has it choose the gate's commands from the <code>Done when:</code> line's spans, ADR-96 lets a blocker be continued as a resume would, and ADR-97 replaces the fixer with a watchdog that fixes what it finds — remedies, a config key, a corrected plan line — skips nothing, and blocks only once the retries are spent, and ADR-98 gives the project a memory across runs, one fact to a file, that only the watchdog writes and every session reads by an index in its prompt, and ADR-99 runs the sessions on the herdr CLI or on herdr-app, whichever r-loop's environment names, behind the same port.</p>
+<p class="lede">One hundred decisions, each with the alternative that was live at the time; twelve are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and fifty-five carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, ADR-90 keeps an agent's pane size from ever failing a run, ADR-91, since superseded, handed a blocker a retry will not clear to a fixer session that proposed a fix the driver applied on the maintainer's confirmation, ADR-92 adds a design step that a claude session with <code>frontend-design</code> runs before the plan step on the phases the watchdog's triage flags as changing what a user sees, ADR-93 has claude sessions report through hooks, ADR-94 has the watchdog retry a minor failure without asking, ADR-95 has it choose the gate's commands from the <code>Done when:</code> line's spans, ADR-96 lets a blocker be continued as a resume would, and ADR-97 replaces the fixer with a watchdog that fixes what it finds — remedies, a config key, a corrected plan line — skips nothing, and blocks only once the retries are spent, and ADR-98 gives the project a memory across runs, one fact to a file, that only the watchdog writes and every session reads by an index in its prompt, ADR-99 runs the sessions on the herdr CLI or on herdr-app, whichever r-loop's environment names, behind the same port, and ADR-100 has the watchdog write an account of every run that ends and narrate the run in one-line, display-only notes, and lets the TUI be read back — a phase's details and an end report — with keys that change nothing.</p>
 
 <div id="adr-index">
 
@@ -3165,7 +3169,7 @@ refuses tests a human would accept.</p>
 
 <div class="adr">
 <h3 id="adr-71">ADR-71 — The driver is deterministic; the watchdog is the run's LLM</h3>
-<p><span class="f">Status</span> accepted · supersedes the "never approve" tier of <a href="#adr-32">ADR-32</a> and the invariant "The watchdog never approves" · amends <a href="#adr-53">ADR-53</a> · amended by <a href="#adr-73">ADR-73</a> — its one-channel paragraph is replaced: step agents ask the watchdog, and the watchdog asks the maintainer in its own session; <code>watchdog.fallback</code> is removed · amended by <a href="#adr-75">ADR-75</a> — before a run started from free text, a short intake session turns the text into a command line, which the driver validates · amended by <a href="#adr-77">ADR-77</a> — the watchdog also verifies the run list before the first phase, through <code>submit_triage</code> and <code>submit_gate</code>; the driver checks both and still keeps the run list · amended by <a href="#adr-98">ADR-98</a> (2026-10-16) — the watchdog keeps the project memory across runs with <code>remember</code> and <code>forget</code>, and compacts it when a run ends</p>
+<p><span class="f">Status</span> accepted · supersedes the "never approve" tier of <a href="#adr-32">ADR-32</a> and the invariant "The watchdog never approves" · amends <a href="#adr-53">ADR-53</a> · amended by <a href="#adr-73">ADR-73</a> — its one-channel paragraph is replaced: step agents ask the watchdog, and the watchdog asks the maintainer in its own session; <code>watchdog.fallback</code> is removed · amended by <a href="#adr-75">ADR-75</a> — before a run started from free text, a short intake session turns the text into a command line, which the driver validates · amended by <a href="#adr-77">ADR-77</a> — the watchdog also verifies the run list before the first phase, through <code>submit_triage</code> and <code>submit_gate</code>; the driver checks both and still keeps the run list · amended by <a href="#adr-98">ADR-98</a> (2026-10-16) — the watchdog keeps the project memory across runs with <code>remember</code> and <code>forget</code>, and compacts it when a run ends · amended by <a href="#adr-100">ADR-100</a> (2026-10-30) — the watchdog writes <code>run-report.md</code> when a run finishes, as it writes <code>failure-report.md</code> when one halts, and may <code>narrate</code> one display-only line; neither moves the run</p>
 <p><span class="f">Context</span> Some run-wide work cannot be done by rule: briefing a blocker, judging
 whether a plan drifted, answering an agent's question. The watchdog is the one session that is open
 for the whole run and holds the plan, the spec and what it watched. The three-tier rule kept it to
@@ -3224,7 +3228,7 @@ phases.</p>
 
 <div class="adr">
 <h3 id="adr-73">ADR-73 — Step agents ask the watchdog; only the watchdog asks the maintainer, in its own session</h3>
-<p><span class="f">Status</span> accepted · supersedes <a href="#adr-63">ADR-63</a>, <a href="#adr-67">ADR-67</a> and the one-channel paragraph of <a href="#adr-71">ADR-71</a> · amends <a href="#adr-28">ADR-28</a>, <a href="#adr-29">ADR-29</a>, <a href="#adr-38">ADR-38</a>, <a href="#adr-39">ADR-39</a> and <a href="#adr-62">ADR-62</a> · amended by <a href="#adr-76">ADR-76</a> — <code>ask_watchdog</code> returns at once, the agent ends its turn, and the driver types the answer into the pane that asked · amended 2026-09-23 — the watchdog's surface gains <code>ask_maintainer(question, options?, recommended?)</code>, which returns at once and records and shows <code>watchdog-waiting</code> with the question: a watchdog asking in plain text is reported <code>done</code> by herdr, not <code>blocked</code>, so nothing showed the run waiting for the maintainer. The watchdog calls it before it asks in its own session; a <code>propose_remedy</code> or <code>restart_step</code> that comes back <code>ask</code> marks the same wait from the driver, and the watchdog's next call of any other tool ends it with <code>watchdog-resumed</code>, sharing one waiting state with a watchdog herdr reports blocked · amended by <a href="#adr-80">ADR-80</a> — a dialog in a step's or reviewer's pane reaches the watchdog as a question of kind <code>dialog</code>, pausing the step the same way, and is answered with <code>answer_dialog</code></p>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-63">ADR-63</a>, <a href="#adr-67">ADR-67</a> and the one-channel paragraph of <a href="#adr-71">ADR-71</a> · amends <a href="#adr-28">ADR-28</a>, <a href="#adr-29">ADR-29</a>, <a href="#adr-38">ADR-38</a>, <a href="#adr-39">ADR-39</a> and <a href="#adr-62">ADR-62</a> · amended by <a href="#adr-76">ADR-76</a> — <code>ask_watchdog</code> returns at once, the agent ends its turn, and the driver types the answer into the pane that asked · amended 2026-09-23 — the watchdog's surface gains <code>ask_maintainer(question, options?, recommended?)</code>, which returns at once and records and shows <code>watchdog-waiting</code> with the question: a watchdog asking in plain text is reported <code>done</code> by herdr, not <code>blocked</code>, so nothing showed the run waiting for the maintainer. The watchdog calls it before it asks in its own session; a <code>propose_remedy</code> or <code>restart_step</code> that comes back <code>ask</code> marks the same wait from the driver, and the watchdog's next call of any other tool ends it with <code>watchdog-resumed</code>, sharing one waiting state with a watchdog herdr reports blocked · amended by <a href="#adr-80">ADR-80</a> — a dialog in a step's or reviewer's pane reaches the watchdog as a question of kind <code>dialog</code>, pausing the step the same way, and is answered with <code>answer_dialog</code> · amended by <a href="#adr-100">ADR-100</a> (2026-10-30) — <code>narrate</code>, like the two read-only tools, does not end the wait, and a narration is never a question; the TUI takes navigation keys for a read-only details pane and end report, and still asks nothing</p>
 <p><span class="f">Context</span> The maintainer talks to the watchdog in its pane, and the watchdog
 asked them through <code>ask_user</code>, which put the question in the TUI's questions panel — a
 second place to answer, beside the conversation the question came from. A question the watchdog
@@ -4448,6 +4452,74 @@ or environment, or a terminal rename; or the app host has carried a full run wit
 adapter unused, which retires that adapter.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-100">ADR-100 — Every ended run gets the watchdog's account, the watchdog may narrate, and the TUI can be read back</h3>
+<p><span class="f">Status</span> accepted 2026-10-30 · amends <a href="#adr-71">ADR-71</a> and
+<a href="#adr-73">ADR-73</a></p>
+<p><span class="f">Context</span> A run ends on <code>finished · q quit · report: &lt;path&gt;</code>.
+<code>report.md</code> is the driver's record — counts, automatic decisions, transcripts — and the
+TUI never shows it. A halted run already gets a narrative: the driver types <code>failure report
+&lt;path&gt;</code> into the watchdog, which writes <code>failure-report.md</code>, and
+<code>report.md</code>'s Halt ends <code>diagnosis: &lt;path&gt;</code>; that shipped without an ADR
+of its own. A finished run gets nothing of the kind. While a run goes, the screen shows the live
+step but not what its phase is for, how long the rest will take, how large each landing was or
+what the watchdog makes of the run between questions, and a phase whose row has gone grey cannot be
+looked at again.</p>
+<p><span class="f">Decision</span> <em>The watchdog writes an account of every run that
+ends.</em> When the run's recorded status is <code>finished</code>, after the run returns and before
+the watchdog closes, the driver removes a stale <code>run-report.md</code> from the run folder,
+types <code>run report &lt;path&gt;</code> with what to write into the watchdog and waits until it is
+idle, at most <code>watchdog.checkTimeout</code>. The watchdog reads the run's logs and
+<code>report.md</code> and writes only that file: <code>## Summary</code> (what the run built,
+overall), <code>## Problems</code> (what went wrong — retries, restarts, blockers — and why) and
+<code>## Follow-ups</code>. A non-empty file records <code>run-report{path}</code>, anything else
+<code>run-report-missing{reason}</code>, and <code>report.md</code> gains <code>run report:
+&lt;path&gt;</code>. On a <code>halted</code> run the same path writes
+<code>failure-report.md</code> — verdict, timeline, root cause with <code>path:line</code> evidence,
+impact and fix directions — recording <code>failure-report{path}</code> or
+<code>failure-report-missing{reason}</code>, and Halt ends <code>diagnosis: &lt;path&gt;</code>;
+this ADR records both. Either is skipped on an abort, an interrupt or a gone watchdog; neither
+edits code, commits or signals, and the exit code never changes. <em>The watchdog may
+narrate.</em> Its surface gains <code>narrate(text) → {accepted, reason?}</code>, display only:
+one line of at most 120 characters that does not end with <code>?</code>, else refused with the
+reason. It is recorded as <code>watchdog-call</code> before it acts and records
+<code>narration{text}</code>; like <code>run_status</code> and <code>step_info</code> it does not
+end a <code>watchdog-waiting</code>, so a wait for the maintainer stays amber. Narration is never a
+question: the maintainer is asked only in the watchdog's own pane, after
+<code>ask_maintainer</code> (<a href="#adr-73">ADR-73</a>), and the TUI stays a place that shows,
+never a second place to answer (<a href="#adr-77">ADR-77</a>). It moves nothing: no state, no
+step, no run list (<a href="#adr-71">ADR-71</a>). The prompt has it narrate after a phase lands,
+when something goes off plan, and otherwise at most every few minutes. <em>The TUI can be read
+back.</em> After a plan step the driver records <code>phase-summary{phase, text}</code>, the first
+sentence of the plan file's <code>## Summary</code> on one line, and <code>landed</code> gains
+<code>added</code>, <code>deleted</code> and <code>files</code>. The header shows <code>~&lt;h&gt;h&lt;m&gt;m
+left</code>, the mean time of the phases landed in this run times the phases left, once one has
+landed and until the run ends. The live-step panel gains the phase's summary and a dim
+<code>watchdog</code> line with the latest narration and its age. The TUI takes navigation keys:
+<code>↑</code>/<code>↓</code> (<code>k</code>/<code>j</code>) move a rail cursor, hidden until the
+first press; <code>enter</code> opens a details pane for the selected phase in place of the panel;
+<code>esc</code> or <code>enter</code> closes it, and <code>esc</code> closes it before it quits.
+When the run finishes, halts or is aborted, the panel becomes an end report until <code>q</code>:
+stats counted by rule from the event stream, one line per landed phase, then the watchdog's
+<code>run-report.md</code> or <code>failure-report.md</code>, scrolled with <code>pgup</code>,
+<code>pgdn</code> and <code>space</code>. No key changes the run, answers or consents; the
+<code>ctrl+c</code> stop prompt is unchanged. The plain face prints <code>phase-summary</code> and
+<code>narration</code> lines, and <code>run report: &lt;path&gt;</code> on close.</p>
+<p><span class="f">Alternatives</span> A separate cheap model, or <code>claude -p</code> over the
+logs, to summarise — rejected: the watchdog is the run's LLM and already holds the run
+(<a href="#adr-71">ADR-71</a>), and the driver runs no <code>claude -p</code>. A summary line under
+every rail row — rejected: a row is one line, and twenty phases must fit at 40 lines. Narration as
+a <code>note</code> event — rejected: a note is the driver's record of what it told a step's agent,
+drawn with that step, and the watchdog's voice does not belong in a step's channel.</p>
+<p><span class="f">Consequences</span> A finished run spends one more watchdog turn, at most
+<code>watchdog.checkTimeout</code>, before it exits. The run report is the watchdog's reading, not
+evidence: <code>report.md</code> stays the record. The TUI is interactive for the first time, read
+only, so amber still means one thing. The ETA is a mean and reads wrong early on a plan whose phases
+differ in size. A run that ends with the TUI open stays on screen until <code>q</code>.</p>
+<p><span class="f">Revisit when</span> run reports are routinely missing or go unread, narration is
+noise more often than news, or the maintainer needs to act on the run from the TUI.</p>
+</div>
+
 
 
 
@@ -4725,14 +4797,16 @@ commits it as <code>chore(r-loop): set &lt;key&gt;</code>, and refuses any key u
 <code>watchdog.</code> or <code>unattended.</code> (<a href="#adr-97">ADR-97</a>), and
 <code>remember(scope, description, body, why) → {accepted, reason?}</code> and
 <code>forget(id, why) → {accepted, reason?}</code>, which write and delete one fact of the project
-memory in <code>.r-loop/memory/</code>, recorded before the file changes (<a href="#adr-98">ADR-98</a>), and
+memory in <code>.r-loop/memory/</code>, recorded before the file changes (<a href="#adr-98">ADR-98</a>),
+<code>narrate(text) → {accepted, reason?}</code>, one display-only line of at most 120 characters
+not ending with <code>?</code>, recorded as <code>narration</code> (<a href="#adr-100">ADR-100</a>), and
 <code>answer_question(id, answer, citation)</code>, whose citation is a <code>path:line</code> in
 the primary tree or <code>maintainer</code>; an empty or invalid one is refused and the question
 stays open, and
 <code>ask_maintainer(question, options?, recommended?) → {accepted, reason?}</code>, which the
 watchdog calls before it asks the maintainer in its own session: it returns at once, and records
 and shows <code>watchdog-waiting</code> with the question until the watchdog's next call of any
-other tool but the two read-only ones records <code>watchdog-resumed</code>. A <code>propose_remedy</code> or
+other tool but the two read-only ones and <code>narrate</code> records <code>watchdog-resumed</code>. A <code>propose_remedy</code> or
 <code>restart_step</code> that needs the maintainer's word marks the same wait itself. Before the
 first phase, <code>submit_triage(phases?, items?, groups?) → {accepted, reason?, table?}</code>
 carries the watchdog's verdicts and returns the table the driver built, and

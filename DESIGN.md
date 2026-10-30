@@ -100,7 +100,7 @@ carrying the watchdog's health (`watchdog live` dim, `watchdog waiting for you` 
 while it asks you in its own pane — from its `ask_maintainer` call, a remedy that needs your word,
 or herdr reporting it blocked — until its next call, `watchdog gone` in `error`), preceded by the
 usage limits of the providers the run uses (`claude 5h 12% 7d 49% · codex 7d 3%`, dim, a window at
-90% or more in `error`, never `secondary`; dropped a provider at a time, before anything else, when the line is short), the phase rail
+90% or more in `error`, never `secondary`; dropped a provider at a time, before anything but the ETA, when the line is short), the phase rail
 beside the live-step panel (stacked below 80 columns), and a status line for a notice or a finished
 run. The rail lists only the phases (or, for an issues file, the items) chosen for this run — the
 launch selection, or the recorded run list on resume — under a `PHASES <landed>/<total>` (`ITEMS …`)
@@ -129,6 +129,45 @@ the TUI** (spec ADR-73), only the watchdog's own question to you: step agents as
 pane, so the TUI never waits on an answer. A step waiting on one shows a dim `waiting  watchdog ·
 <id> · <age>` line — a pointer, not amber, because the driver cannot tell whether the watchdog is
 answering it from the code or asking you.
+
+**What is built, read-back (spec ADR-100).** The TUI takes keys that only move the eye; none
+changes the run, answers or consents, and amber keeps its one meaning.
+
+- **Header ETA** — `~1h40m left` (`~25m left` under an hour) sits before `started …`, dim: the mean
+  time of the phases landed in this run times the phases left. It appears once one phase has
+  landed, goes when the run ends, and is the first part dropped when the header is short — before
+  the provider limits.
+- **Panel lines** — under `PHASE <n> · <kind>`, a `summary` line: the live phase's summary, the
+  label dim and the text `on-surface`, cut with `…` at the panel's edge. Below the steps a
+  `watchdog` line, all dim: the watchdog's latest narration and its age (`watchdog  phase 3 landed
+  clean; 4 is the big one · 2m ago`). It stays when no step runs. It is never `secondary`: a
+  narration is news, never a question, and the watchdog asks only in its own pane.
+- **Selected row** — `↑`/`↓` (`k`/`j`) move a cursor over the rail. It is hidden until the first
+  press, so a screen nobody touches has no selection. The row under it is `row-selected`: the row's
+  text in `on-primary` on `primary`, full rail width; under `NO_COLOR`, reverse. The live row keeps
+  its bold when selected, so bold still marks exactly the live phase. A landed `✓` row loses its
+  `tertiary` while selected and regains it when the cursor leaves.
+- **Details pane** — `enter` on the selected row replaces the panel, at the panel's width and
+  place, with that phase; `esc` or `enter` puts the panel back, and `esc` with details open closes
+  them rather than quitting. Lines, each left out when it has nothing to show: `PHASE <n> · <title>`
+  and the phase's state in its row colour; the full summary, wrapped; `started  10:42 · 12m`;
+  `commit  abc1234 · +210 −40 · 8 files`; `review  3 rounds · 5 real · 5 fixed`; `restarts 1 ·
+  nudges 2`; `blocked  <reason>` in `error`; `plan  .task-plans/phase-<N>-<slug>.md`, dim. Labels
+  dim, values `on-surface`.
+- **End report pane** — when the run finishes, halts or is aborted, the panel's `no step running`
+  gives way to the report, which stays until `q`. First a stats block, labels dim:
+  `phases  5 landed · 1 blocked · 0 left`, `time  3h12m`, `diff  +1840 −312 · 46 files`,
+  `review  14 rounds · 22 fixed`, `restarts 2 · nudges 3`, `questions 4 · human touches 1`; then one
+  line per landed phase, `✓ 3 state store · 12m · +210 −40 · abc1234`, the `✓` in `tertiary` and
+  the rest dim. Below, the watchdog's narrative — `run-report.md` on a finished run,
+  `failure-report.md` on a halted one — each `## ` heading drawn as a dim label in capitals, like
+  `AGENTS`, and its body wrapped to the panel in `on-surface`. Until the watchdog has written it a
+  dim `watchdog is writing the summary…` holds its place; when it wrote nothing, the reason, dim.
+  `pgup`, `pgdn` and `space` scroll it a page; the halt banner stays above it, unscrolled.
+- **Status bar hint** — once the run has ended it reads `↑↓ select · enter details · pgup/pgdn
+  scroll · q quit · report: <path>`, dim on `surface-raised`. When it does not fit, at 80 columns or
+  less, parts drop in this order: `pgup/pgdn scroll`, `enter details`, `↑↓ select`; then the report
+  path is cut from its left with `…`. `q quit` never drops.
 
 ## Colors
 
@@ -215,7 +254,7 @@ The state vocabulary is small on purpose — five row states, three banners:
 |---|---|
 | `row-idle` | a phase not yet started, or already landed and scrolled past |
 | `row-running` | the phase currently being built — `primary`, and the only bold row |
-| `row-selected` | the row under the cursor — inverse against `primary` |
+| `row-selected` | the row under the cursor — `on-primary` on `primary`, reverse under `NO_COLOR`; hidden until the first arrow press |
 | `row-landed` | merged and ticked — `tertiary` |
 | `row-failed` | a failed step or a watchdog halt — `error` |
 | `banner-question` | reserved, not drawn: questions are asked in the watchdog's pane (ADR-73) |

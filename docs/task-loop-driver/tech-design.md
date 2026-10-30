@@ -564,7 +564,8 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   file appends `Event{Kind: "failure-report", Fields{path}}`, anything else
   `Event{Kind: "failure-report-missing", Fields{reason}}`; the exit code never changes. **Halt**
   in `report.md` ends `diagnosis: <path>` from the latest `failure-report` since the last resume;
-  both faces print `diagnosis: <path>` after `report:` on close.
+  both faces print `diagnosis: <path>` after `report:` on close. A `finished` run gets the
+  sibling, `Watchdog.RunReport` writing `run-report.md`, called just before it (Milestone 24).
 - **Banner** — one line per pipeline row and the milestone row, `<step> <provider> <model>
   <effort> <timeout> <check> ← <provenance>`; under a row with a review half, `review rounds <n>
   <reviewTimeout>` and one `reviewer <provider> <model> <effort>` line per reviewer and
@@ -692,10 +693,11 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   `--plain` and with a terminal on both stdin and stdout. `error` events and the halt banner draw
   in `error`, warnings in `secondary`; with `NO_COLOR` the loud states (a blocked phase, the halt
   banner) fall back to inverse. The TUI shows no questions: the maintainer answers in the
-  watchdog's pane (ADR-73).
+  watchdog's pane (ADR-73). Its other keys only navigate — a rail cursor, a phase's details pane,
+  the end report's scroll (Milestone 24).
 - **Stop** — `ctrl+c` on a live run asks `stop the run? … [y/n]`; `y` marks the run aborted,
   exactly as `r-loop abort` does (the live step's session and worktree are left for resume); any
-  other key cancels. A second ctrl+c while the prompt is up, or any ctrl+c after `y` (even once the run shows halted), force-quits: it marks the run aborted if that was not yet done, quits the program and restores the terminal; the run exits 1. The driver owns SIGINT/SIGTERM/SIGHUP — the TUI installs no signal handler of its own. Before a run exists `y` only says `stopping before the run starts`. Once the run has finished or halted, `q`, `й` (either case), `esc` or `ctrl+c` quits.
+  other key cancels. A second ctrl+c while the prompt is up, or any ctrl+c after `y` (even once the run shows halted), force-quits: it marks the run aborted if that was not yet done, quits the program and restores the terminal; the run exits 1. The driver owns SIGINT/SIGTERM/SIGHUP — the TUI installs no signal handler of its own. Before a run exists `y` only says `stopping before the run starts`. Once the run has finished or halted, the panel shows the end report (Milestone 24) and `q`, `й` (either case), `esc` or `ctrl+c` quits; with the details pane open, `esc` closes it instead.
 - **Dry run** — `--dry-run` always prints plain lines and starts no session. After the banner and
   `run list:` (one line per phase and its pipeline), a backlog item with no criteria gets
   `warning: phase N has no acceptance criteria…`, and each open `## Resolve first` entry that
@@ -743,6 +745,7 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   `resolve_blocker(id, action, rule?, addendum?, keys?, provider?, model?, effort?, maintainer_said?)
   → {decision: authorised|refused|ask, reason?}` (Milestone 17) ·
   `set_config(key, value, why) → {decision: authorised|refused, reason?}` (Milestone 21) ·
+  `narrate(text) → {accepted, reason?}` (Milestone 24) ·
   `ask_maintainer(question, options?, recommended?) → {accepted, reason?}` ·
   `stop_run(when: after-phase|now, reason, maintainer_said) → {accepted, reason?}` ·
   `pause_run(reason, maintainer_said) → {accepted, reason?}` ·
@@ -761,7 +764,7 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   `Event{Kind: "watchdog-waiting", Fields: {question, options?, recommended?}}` (`options` joined
   with `; `). `Remedies.Propose` returning `ask`, and `Remedies.Restart` refusing a provider that
   is not the row's fallback without `maintainer_said`, mark the same wait with the remedy as the
-  question. Every other watchdog tool first calls `Watchdog.Resume`, which records and emits
+  question. Every other watchdog tool but `run_status`, `step_info` and `narrate` first calls `Watchdog.Resume`, which records and emits
   `watchdog-resumed` once; a resume that cannot be recorded refuses the call. The wait is one
   flag shared with the `agent_blocked` wait above, so neither path double-emits; an accepted
   prompt ends it only when herdr reported the watchdog blocked during it, since a codex watchdog
@@ -1669,3 +1672,83 @@ core keeps talking to `SessionHost`, and nothing host-specific is recorded in a 
   row runs `space.select {id}`. `install.sh` copies it to
   `${HERDR_APP_HOME:-$HOME/.config/herdr-app}/mods/rloop/` when `herdr-app` is on the path and
   runs `herdr-app check` on it, and keeps writing the herdr sidebar block when `herdr` is.
+
+## Milestone 24 — Run report and TUI detail
+
+ADR-100. Every run that ends gets the watchdog's account, the watchdog may narrate in one
+display-only line, and the TUI can be read back with keys that change nothing.
+
+- **`core.PlanSummary(path string, fsys fs.FS) string`** — in `evidence.go` beside
+  `PlanAssumptions`: the body of the plan file's `## Summary` through `section()`, whitespace
+  collapsed to single spaces, cut after the first `. `; `""` when the file or the heading is missing
+  or the section is empty.
+- **`phase-summary`** — after a plan step ends `ok`, beside the `assumption` events, the loop emits
+  `Event{Kind: "phase-summary", Phase, Step: "plan", Fields{phase, text}}` when `PlanSummary` is not
+  empty.
+- **Diff stats** — `Landing` gains `Files int`: `LandGate.attempt` sets it to the paths
+  `CommitTouches` returned for the merge, less the committed todo file; `Added` and `Deleted` are the
+  ones it already counts. `landed` is `Fields{phase, merge, gateSkipped, added, deleted, files}`,
+  the three new values decimal. A `Landed` line in `report.md` is
+  `phase <N> <sha> · +<added> −<deleted> · <n> files` (`1 file`), then ` gate skipped` when it was.
+- **Run report** — in `failurereport.go`, `EventRunReport = "run-report"`,
+  `EventRunReportMissing = "run-report-missing"`, and `core.RunReportText(path string) string`,
+  which opens `run report <path>`, says the run finished, names the run dir's `events.jsonl`,
+  `signals.jsonl`, `remedies.jsonl` and `report.md`, and asks for only that file in markdown with
+  `## Summary` (what the run built, overall), `## Problems` (what went wrong — retries, restarts,
+  blockers — and why; `none` when nothing did) and `## Follow-ups`; no code edits, no commit, no
+  `signal`. `(d *Watchdog) RunReport(ctx, timeout)` mirrors `FailureReport`: it returns unless the
+  loaded status is `RunFinished`, the run is not `aborted`, `ctx` is live and `d.live()`; removes a
+  stale `<runDir>/run-report.md` (a failure is `run-report-missing{reason: "remove stale <path>:
+  <err>"}`); calls `NotifyContext(ctx, RunReportText(path), true, timeout)`; then records
+  `Event{Kind: "run-report", Fields{path}}` for a non-empty file, else
+  `Event{Kind: "run-report-missing", Fields{reason: "watchdog wrote no <path>[: <err>]"}}`.
+  `Execute` calls it just before `FailureReport`, both with `watchdog.checkTimeout`; the exit code
+  never changes. `report.md` gains `- run report: <path>` from the latest `run-report` since the
+  last resume, a `run-report-missing` or a resume clearing it, as `diagnosis()` does.
+- **`narrate`** — a watchdog tool in `internal/askmcp/watchdog.go`, added as `remember` is and
+  listed in `watchdogTools`: `narrate{text} → {accepted, reason?}`, recorded as `watchdog-call`
+  before the handler and `watchdog-result` after it, and the only recorded tool that never calls
+  `Resume`, so a `watchdog-waiting` stays open. `WatchdogHandlers` gains
+  `Narrate func(text string) (bool, string)`, wired to `Watchdog.Narrate`; a step path serves no
+  `narrate` (404). `(d *Watchdog) Narrate(text string) (bool, string)` trims the text and refuses it,
+  with the reason, when it is empty, holds a line break, runs past 120 characters or ends with `?`
+  (`narration is never a question; ask the maintainer in your own pane`); an accepted one records
+  and emits `Event{Kind: "narration", Fields{text}}` through `recordEvent`.
+- **Prompt** — `watchdog.md` lists `narrate` under `## Your tools`: one line, after a phase lands,
+  when something goes off plan, otherwise at most every few minutes, never a question. A
+  `## Writing the run report` section sits beside the failure-report one.
+- **TUI model** — a per-phase record `phaseInfo{summary string; started, landedAt time.Time; sha
+  string; added, deleted, files, rounds, realFindings, fixed, restarts, nudges int; blocker
+  string}`, keyed by phase, filled from `phase-start`, `phase-summary`, `landed`, `review-round`,
+  `finding`, `restart`, `nudge`, `phase-blocked` and `blocked-on`, and rebuilt by `replay()`, so a
+  resume keeps the history; `narration` keeps its text and time.
+- **Header ETA** — `~<h>h<m>m left` (`~<m>m left` under an hour) before `started …`: the mean of
+  `landedAt − started` over the phases landed in this run, times the unlanded phases in the run
+  list. Shown once one phase has landed, hidden once the run ends, and the first part dropped when
+  the header is short, before the provider limits.
+- **Panel** — under `PHASE <n> · <kind>`, a `summary` line with the live phase's `phase-summary`,
+  truncated to the panel width; a dim `watchdog` line with the latest narration and its age
+  (`2m ago`), shown with or without a live step, never in `secondary`. `landedText` reads
+  `landed <sha> · +<added> −<deleted> · <n> files`.
+- **Keys and the cursor** — `↑`/`k` and `↓`/`j` move a rail cursor over the run's phases, clamped
+  at both ends, hidden until the first press; the selected row draws `row-selected` (theme
+  `Selected`: `on-primary` on `primary`, reverse under `NO_COLOR`), and the live row keeps bold.
+  `enter` opens the details pane for the selected phase; `esc` or `enter` closes it, and `esc`
+  with details open never quits. `pgup`, `pgdn` and `space` scroll the end report. The `ctrl+c`
+  stop prompt and the quit keys are otherwise unchanged.
+- **Details pane** — replaces the panel while open: `PHASE <n> · <title>`, its state, the full
+  summary wrapped to the panel width; `started`, duration, commit and `+<a> −<d> · <n> files`;
+  review rounds with real and fixed findings, restarts and nudges, the blocker; the plan path
+  `.task-plans/phase-<N>-*.md`. A field with nothing to show is left out.
+- **End report pane** — on `finished`, `halt` or `aborted` it replaces `no step running` and stays
+  until quit: first the stats from the `phaseInfo`s — phases landed, blocked and remaining, total
+  time, total `+/−` and files, review rounds and findings fixed, restarts and nudges, questions
+  and human touches — and one line per landed phase, `✓ <n> <title> · <duration> · +<a> −<d> ·
+  <sha>`; then the narrative, read with `os.ReadFile` when `run-report` (on finish) or
+  `failure-report` (on halt) arrives, each `## ` heading drawn as a label and the body wrapped.
+  Until then a dim `watchdog is writing the summary…`; a `*-missing` event shows its reason
+  instead. The status bar reads `↑↓ select · enter details · pgup/pgdn scroll · q quit · report:
+  <path>`.
+- **Plain face** — `phase-summary` prints `phase <N> summary: <text>`, `narration` prints
+  `watchdog: <text>`, and `Close` prints `run report: <path>` after `report:`, as it prints
+  `diagnosis:`.
