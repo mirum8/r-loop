@@ -473,6 +473,32 @@ func TestPlanAssumptionsOfAnAbsentPlanIsNone(t *testing.T) {
 	}
 }
 
+func TestPlanSummary(t *testing.T) {
+	for name, tc := range map[string]struct {
+		plan string
+		want string
+	}{
+		"one sentence":    {goodPlan, "Reads the plan."},
+		"many sentences":  {strings.Replace(goodPlan, "Reads the plan.", "Reads the plan. Then ticks it. Then lands it.", 1), "Reads the plan."},
+		"many lines":      {strings.Replace(goodPlan, "Reads the plan.", "Reads the plan\nfrom disk\n\nand ticks it. Then lands.", 1), "Reads the plan from disk and ticks it."},
+		"no full stop":    {strings.Replace(goodPlan, "Reads the plan.", "Reads the plan", 1), "Reads the plan"},
+		"empty section":   {strings.Replace(goodPlan, "Reads the plan.\n", "", 1), ""},
+		"missing heading": {strings.Replace(goodPlan, "## Summary\nReads the plan.\n", "", 1), ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := PlanSummary(planPath, fstest.MapFS{planPath: {Data: []byte(tc.plan)}}); got != tc.want {
+				t.Fatalf("got = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPlanSummaryOfAnAbsentPlanIsEmpty(t *testing.T) {
+	if got := PlanSummary(planPath, fstest.MapFS{}); got != "" {
+		t.Fatalf("got = %q", got)
+	}
+}
+
 func writeSentinel(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "plan-a1.sentinel")

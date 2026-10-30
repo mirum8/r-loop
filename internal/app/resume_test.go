@@ -1233,7 +1233,7 @@ func TestResumeCompletesAMergeWhoseCommitWasIntended(t *testing.T) {
 		t.Fatalf("code=%d err=%v landed=%v out=%s", code, err, lander, f.out)
 	}
 	sha := git(t, f.root, "rev-parse", "HEAD")
-	if sha == base || git(t, f.root, "log", "-1", "--format=%s") != "phase 1: one" || len(strings.Fields(git(t, f.root, "rev-list", "--parents", "-n", "1", "HEAD"))) != 3 || !strings.Contains(f.out.String(), "completed phase 1's merge") || len(f.load(id).Landed) != 1 || f.load(id).Landed[0].MergeSHA != sha {
+	if sha == base || git(t, f.root, "log", "-1", "--format=%s") != "phase 1: one" || len(strings.Fields(git(t, f.root, "rev-list", "--parents", "-n", "1", "HEAD"))) != 3 || !strings.Contains(f.out.String(), "completed phase 1's merge") || len(f.load(id).Landed) != 1 || f.load(id).Landed[0].MergeSHA != sha || f.load(id).Landed[0].Files != 1 {
 		t.Fatalf("head=%s landed=%+v out=%s", sha, f.load(id).Landed, f.out)
 	}
 }

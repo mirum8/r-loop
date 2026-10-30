@@ -596,7 +596,7 @@ func TestLandGatePassesOnlyBecauseItRunsAfterTheMerge(t *testing.T) {
 		t.Fatalf("Land: %v", err)
 	}
 	head := e.head()
-	if landing.MergeSHA != head || landing.Phase != "1" || landing.GateSkipped {
+	if landing.MergeSHA != head || landing.Phase != "1" || landing.GateSkipped || landing.Files != 1 {
 		t.Errorf("landing = %+v, head %s", landing, head)
 	}
 	if !strings.Contains(landing.GateOutput, "gate green") {
@@ -805,6 +805,9 @@ func TestLandGateLandsCodeOnlyWhenTheTodoIsGitignored(t *testing.T) {
 	touched := strings.Fields(gitCmd(t, e.root, "show", "--name-only", "--format=", "--diff-merges=first-parent", "HEAD"))
 	if !slices.Equal(touched, []string{"feature.txt"}) {
 		t.Errorf("landing commit touches %v, want only feature.txt", touched)
+	}
+	if landing.Files != 1 {
+		t.Errorf("landing files = %d, want 1", landing.Files)
 	}
 	if todo := readFile(t, e.todo); !strings.Contains(todo, "- [x] p1 item") || !strings.Contains(todo, "- [ ] p2 item") {
 		t.Errorf("ignored todo not ticked on disk:\n%s", todo)

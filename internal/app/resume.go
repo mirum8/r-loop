@@ -142,7 +142,9 @@ func reconcileLand(repo *gitrepo.Repo, st *store.Store, run core.RunState, todoA
 		}
 		added, _ := strconv.Atoi(ci.Fields["added"])
 		deleted, _ := strconv.Atoi(ci.Fields["deleted"])
-		l := core.Landing{Phase: mi.Phase, MergeSHA: sha, GateSkipped: ci.Fields["gateSkipped"] == "true", Added: added, Deleted: deleted}
+		touched, _ := repo.CommitTouches(sha)
+		files := len(slices.DeleteFunc(touched, func(p string) bool { return slices.Contains(todoPaths, p) }))
+		l := core.Landing{Phase: mi.Phase, MergeSHA: sha, GateSkipped: ci.Fields["gateSkipped"] == "true", Added: added, Deleted: deleted, Files: files}
 		if err := st.Append(run.ID, core.Record{Kind: core.RecordLanding, At: time.Now(), Landing: &l}); err != nil {
 			return exit(2, "%v", err)
 		}

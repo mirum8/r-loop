@@ -536,6 +536,7 @@ func (g *LandGate) attempt(ctx context.Context, phase Phase, gate chosenGate) (_
 		return Landing{}, "", "", errors.Join(reason, err, g.Repo.ResetKeep("HEAD~1"))
 	}
 	landing.MergeSHA = sha
+	landing.Files = len(touched) - len(g.committedTodo())
 	return landing, "", "", nil
 }
 

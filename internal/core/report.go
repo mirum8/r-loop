@@ -159,7 +159,7 @@ func phaseCheckLines(st RunState) []string {
 func landedLines(st RunState) []string {
 	var out []string
 	for _, l := range st.Landed {
-		line := fmt.Sprintf("phase %s %s", l.Phase, l.MergeSHA)
+		line := fmt.Sprintf("phase %s %s · +%d −%d · %s", l.Phase, l.MergeSHA, l.Added, l.Deleted, Plural(l.Files, "file"))
 		if l.GateSkipped {
 			line += " gate skipped"
 		}

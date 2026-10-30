@@ -1048,13 +1048,13 @@ Contracts: `tech-design.md#milestone-24-run-report-and-tui-detail`
 ### Phase 63 — Phase summary and diff stats in the event stream
 **Implements:** See where a run is
 **Depends on:** Phase 62
-**Files:** `internal/core/evidence.go` (modify) · `internal/core/evidence_test.go` (modify) · `internal/core/types.go` (modify) · `internal/core/land.go` (modify) · `internal/core/loop.go` (modify) · `internal/core/loop_events_test.go` (modify) · `internal/core/report.go` (modify) · `internal/core/report_test.go` (modify) · `internal/face/plain/plain.go` (modify) · `internal/face/plain/plain_test.go` (modify)
-- [ ] `core.PlanSummary(path, fsys) string` beside `PlanAssumptions`: the `## Summary` body through `section()`, whitespace collapsed to single spaces, cut after the first `. `; `""` when the file or the heading is missing or the section is empty
-- [ ] after a plan step ends `ok`, beside the `assumption` events, the loop emits `phase-summary{phase, text}` with `Step: "plan"` when the summary is not empty
-- [ ] `Landing` gains `Files int`, which `LandGate.attempt` sets to the paths `CommitTouches` returned for the merge less the committed todo file; `landed` carries `added`, `deleted` and `files` beside `phase`, `merge` and `gateSkipped`
-- [ ] a `Landed` line in `report.md` reads `phase <N> <sha> · +<added> −<deleted> · <n> files` (`1 file`), then ` gate skipped` when it was
-- [ ] the plain face prints `phase <N> summary: <text>` for `phase-summary`; `landed` keeps the generic field line
-- [ ] tests prove a multi-sentence summary cut to its first sentence and collapsed to one line, an empty section and a missing heading giving `""`; `phase-summary` emitted after a plan step and absent without a summary; `landed`'s three new fields, `files` excluding the todo; the new `Landed` line; the plain `phase-summary` line
+**Files:** `internal/core/evidence.go` (modify) · `internal/core/evidence_test.go` (modify) · `internal/core/types.go` (modify) · `internal/core/land.go` (modify) · `internal/core/loop.go` (modify) · `internal/core/loop_test.go` (modify) · `internal/core/land_test.go` (modify) · `internal/app/resume.go` (modify) · `internal/app/resume_test.go` (modify) · `internal/core/report.go` (modify) · `internal/core/report_test.go` (modify) · `internal/face/plain/plain.go` (modify) · `internal/face/plain/plain_test.go` (modify)
+- [x] `core.PlanSummary(path, fsys) string` beside `PlanAssumptions`: the `## Summary` body through `section()`, whitespace collapsed to single spaces, cut after the first `. `; `""` when the file or the heading is missing or the section is empty
+- [x] after a plan step ends `ok`, beside the `assumption` events, the loop emits `phase-summary{phase, text}` with `Step: "plan"` when the summary is not empty
+- [x] `Landing` gains `Files int`, which `LandGate.attempt` sets to the paths `CommitTouches` returned for the merge less the committed todo file; `landed` carries `added`, `deleted` and `files` beside `phase`, `merge` and `gateSkipped`
+- [x] a `Landed` line in `report.md` reads `phase <N> <sha> · +<added> −<deleted> · <n> files` (`1 file`), then ` gate skipped` when it was
+- [x] the plain face prints `<hh:mm:ss>  phase <N>  summary  <text>` for `phase-summary`; `landed` keeps the generic field line
+- [x] tests prove a multi-sentence summary cut to its first sentence and collapsed to one line, an empty section and a missing heading giving `""`; `phase-summary` emitted after a plan step and absent without a summary; `landed`'s three new fields, `files` excluding the todo; the new `Landed` line; the plain `phase-summary` line
 **Done when:** `go test -race ./internal/core/... ./internal/face/plain/...` is green and `grep -n 'func PlanSummary' internal/core/evidence.go` prints the function.
 
 ### Phase 64 — The watchdog's run report and `narrate`

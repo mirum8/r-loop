@@ -1749,6 +1749,6 @@ display-only line, and the TUI can be read back with keys that change nothing.
   Until then a dim `watchdog is writing the summary…`; a `*-missing` event shows its reason
   instead. The status bar reads `↑↓ select · enter details · pgup/pgdn scroll · q quit · report:
   <path>`.
-- **Plain face** — `phase-summary` prints `phase <N> summary: <text>`, `narration` prints
+- **Plain face** — `phase-summary` prints `<hh:mm:ss>  phase <N>  summary  <text>`, `narration` prints
   `watchdog: <text>`, and `Close` prints `run report: <path>` after `report:`, as it prints
   `diagnosis:`.

@@ -57,7 +57,7 @@ func (h *agentSim) Prompt(agent, text string, wait bool, timeout time.Duration) 
 		switch spec.Env["R_LOOP_STEP"] {
 		case "plan":
 			changed = text
-			writeFile(filepath.Join(spec.CWD, text), "status: planned\n\n## Summary\nx\n## Changes\nx\n## Tests\n- a test\n## Assumptions\n- phase "+spec.Env["R_LOOP_PHASE"]+" keeps state in memory\n")
+			writeFile(filepath.Join(spec.CWD, text), "status: planned\n\n## Summary\nphase "+spec.Env["R_LOOP_PHASE"]+" keeps state.\nIn memory.\n## Changes\nx\n## Tests\n- a test\n## Assumptions\n- phase "+spec.Env["R_LOOP_PHASE"]+" keeps state in memory\n")
 		case "design":
 			changed = strings.TrimSuffix(text, ".md") + ".design.md"
 			writeFile(filepath.Join(spec.CWD, changed), designFile(spec.Env["R_LOOP_PHASE"]))
@@ -128,7 +128,7 @@ func (f *fakeLander) Land(ctx context.Context, ph Phase) (Landing, error) {
 	if ph.ID == f.failOn {
 		return Landing{}, errors.New("gate red")
 	}
-	l := Landing{Phase: ph.ID, MergeSHA: "merge-" + ph.Title}
+	l := Landing{Phase: ph.ID, MergeSHA: "merge-" + ph.Title, Added: 12, Deleted: 3, Files: 2}
 	f.store.Append("run-1", Record{Kind: RecordLanding, Landing: &l})
 	return l, nil
 }
@@ -916,7 +916,7 @@ func TestCleanRunLandsEveryUntickedPhaseInOrder(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, want 0", code)
 	}
-	wantPhase := []string{"phase-start", "phase-state", "workspace-closed", "assumption", "phase-state", "workspace-closed", "phase-state", "landed", "worktree-removed"}
+	wantPhase := []string{"phase-start", "phase-state", "workspace-closed", "phase-summary", "assumption", "phase-state", "workspace-closed", "phase-state", "landed", "worktree-removed"}
 	var want []string
 	for range 3 {
 		want = append(want, wantPhase...)
@@ -1251,6 +1251,28 @@ func TestAssumptionsAreEmittedAfterThePlanStepAndReported(t *testing.T) {
 	}
 }
 
+func TestThePhaseSummaryIsEmittedAfterThePlanStep(t *testing.T) {
+	r := newLoopRig(t)
+
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	got := r.events("phase-summary")
+	if len(got) != 1 || got[0].Phase != "2" || got[0].Step != "plan" || got[0].Fields["phase"] != "2" || got[0].Fields["text"] != "phase 2 keeps state." {
+		t.Fatalf("summaries %+v", got)
+	}
+}
+
+func TestTheLandedEventCarriesTheDiffStats(t *testing.T) {
+	r := newLoopRig(t)
+
+	r.run(RunOptions{Phases: []string{"2"}})
+
+	got := r.events("landed")
+	if len(got) != 1 || got[0].Fields["added"] != "12" || got[0].Fields["deleted"] != "3" || got[0].Fields["files"] != "2" {
+		t.Fatalf("landed %+v", got)
+	}
+}
+
 func TestResumeSkipsLandedPhasesAndOkStepsAndRerunsTheStoppedStep(t *testing.T) {
 	r := newLoopRig(t)
 	r.store.Append("run-1", Record{Kind: RecordStep, Step: &StepKey{Run: "run-1", Phase: "1", Kind: "plan", Attempt: 1}, State: StepOK})
@@ -1436,7 +1458,7 @@ func TestReportSectionsOfAFailedRun(t *testing.T) {
 	for _, want := range []string{
 		"human touches: 0\n",
 		"## Automatic decisions\n\n- phase 1 blocked: tests red\n- phase 3 skipped: depends on blocked phase 1\n",
-		"## Landed\n\n- phase 2 merge-Store\n",
+		"## Landed\n\n- phase 2 merge-Store · +12 −3 · 2 files\n",
 		"## Halt\n\n- phase 1 implement: tests red — workspace ws-2, worktree " + wantWT + "\n- phase 3 skipped: depends on blocked phase 1\n\nr-loop resume\n",
 		"## Assumptions\n\n### Phase 1\n\n- phase 1 keeps state in memory\n\n### Phase 2\n\n- phase 2 keeps state in memory\n",
 	} {
@@ -1478,7 +1500,7 @@ func TestReportCountsHumanTouchesAndListsAutomaticDecisions(t *testing.T) {
 		},
 		Signals:  []Signal{{Kind: SignalWarn, Source: SourceWatchdog, Step: StepKey{Phase: "1", Kind: "implement"}, Reason: "drifting"}},
 		Remedies: []Remedy{{Step: StepKey{Phase: "1", Kind: "implement"}, Class: "lock", Command: "rm lock", Consent: "authorised"}},
-		Landed:   []Landing{{Phase: "2", MergeSHA: "abc", GateSkipped: true}},
+		Landed:   []Landing{{Phase: "2", MergeSHA: "abc", GateSkipped: true, Added: 5, Deleted: 1, Files: 1}},
 	}
 
 	rep := Report(st, threePhasePlan())
@@ -1490,7 +1512,7 @@ func TestReportCountsHumanTouchesAndListsAutomaticDecisions(t *testing.T) {
 			"- phase 1 implement: restart as attempt 2 on claude model sonnet effort provider default — use the fake (remedy: rm lock)\n" +
 			"- phase 1: gate-fix round 1\n" +
 			"- phase 1 implement: review round limit reached; round 3 fixes unreviewed\n",
-		"## Landed\n\n- phase 2 abc gate skipped\n",
+		"## Landed\n\n- phase 2 abc · +5 −1 · 1 file gate skipped\n",
 		"## Questions\n\n- q1 phase 1 implement: which db? → sqlite (watchdog, cites docs/spec.html:4, waited 0s)\n- q2 phase 1 implement: keep api? → yes (maintainer, waited 0s)\n",
 		"## Signals\n\n- warn from watchdog, phase 1 implement: drifting\n",
 		"## Remedies\n\n- phase 1 implement: lock `rm lock` — authorised; no restart\n",

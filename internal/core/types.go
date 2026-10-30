@@ -145,6 +145,7 @@ type Landing struct {
 	GateOutput  string
 	Added       int
 	Deleted     int
+	Files       int
 }
 
 type Event struct {

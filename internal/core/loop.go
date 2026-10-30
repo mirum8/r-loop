@@ -419,6 +419,9 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 		}
 		if kind.Name == "plan" && out.Session != nil {
 			planPath, _ := ref.Vars["PlanPath"].(string)
+			if s := PlanSummary(planPath, os.DirFS(out.Session.Dir)); s != "" {
+				l.emit(Event{Kind: "phase-summary", Phase: n, Step: kind.Name, Fields: map[string]string{"phase": n, "text": s}})
+			}
 			for _, a := range PlanAssumptions(planPath, os.DirFS(out.Session.Dir)) {
 				l.emit(Event{Kind: "assumption", Phase: n, Step: kind.Name, Fields: map[string]string{"phase": n, "text": a}})
 			}
@@ -496,7 +499,7 @@ func (l *RunLoop) runPhase(ctx context.Context, ph Phase, prior RunState, base s
 		}
 	}
 	l.emit(Event{Kind: "phase-state", Phase: n, Fields: map[string]string{"phase": n, "state": string(PhaseLanded)}})
-	l.emit(Event{Kind: "landed", Phase: n, Fields: map[string]string{"phase": n, "merge": landing.MergeSHA, "gateSkipped": strconv.FormatBool(landing.GateSkipped)}})
+	l.emit(Event{Kind: "landed", Phase: n, Fields: map[string]string{"phase": n, "merge": landing.MergeSHA, "gateSkipped": strconv.FormatBool(landing.GateSkipped), "added": strconv.Itoa(landing.Added), "deleted": strconv.Itoa(landing.Deleted), "files": strconv.Itoa(landing.Files)}})
 	l.closeWorkspaces(n, EveryWorkspace)
 	_ = l.removeWorktree(n, false)
 	return "", Outcome{State: StepOK}, false

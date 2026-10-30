@@ -294,6 +294,17 @@ func TestDesignLinesNameTheSkipTheIntentAndTheNoVisualChange(t *testing.T) {
 	}
 }
 
+func TestAPhaseSummaryReadsAsALine(t *testing.T) {
+	var out bytes.Buffer
+	f := &Face{Out: &out}
+
+	f.Emit(core.Event{At: at, Kind: "phase-summary", Phase: "2", Step: "plan", Fields: map[string]string{"phase": "2", "text": "Reads the plan."}})
+
+	if want := "14:03:09  phase 2  summary  Reads the plan.\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
 func TestAgentTextCannotDriveTheTerminal(t *testing.T) {
 	bad := "x\x1b[2J\x1b[Hy\x1b]0;PWNED\x07z\rw"
 	var out bytes.Buffer

@@ -264,6 +264,19 @@ func PlanAssumptions(path string, fsys fs.FS) []string {
 	return out
 }
 
+func PlanSummary(path string, fsys fs.FS) string {
+	data, err := fs.ReadFile(fsys, path)
+	if err != nil {
+		return ""
+	}
+	body, _ := section(splitLines(string(data)), "## Summary")
+	text := strings.Join(strings.Fields(strings.Join(body, " ")), " ")
+	if i := strings.Index(text, ". "); i >= 0 {
+		text = text[:i+1]
+	}
+	return text
+}
+
 func splitLines(s string) []string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {

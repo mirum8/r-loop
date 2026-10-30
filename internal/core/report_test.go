@@ -212,3 +212,14 @@ func TestReportListsTheWatchdogsConfigChangesAndPlanCorrectionsAsAutomaticDecisi
 		t.Fatalf("report:\n%s", got)
 	}
 }
+
+func TestReportListsEachLandingWithItsDiffStats(t *testing.T) {
+	st := RunState{ID: "run-1", Landed: []Landing{
+		{Phase: "1", MergeSHA: "abc", Added: 40, Deleted: 7, Files: 3},
+		{Phase: "2", MergeSHA: "def", Added: 1, Deleted: 0, Files: 1, GateSkipped: true},
+	}}
+	want := "## Landed\n\n- phase 1 abc · +40 −7 · 3 files\n- phase 2 def · +1 −0 · 1 file gate skipped\n"
+	if got := Report(st, threePhasePlan()); !strings.Contains(got, want) {
+		t.Fatalf("report missing landings:\n%s", got)
+	}
+}

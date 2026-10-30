@@ -98,6 +98,8 @@ func (f *Face) emit(w io.Writer, ev core.Event) {
 		fmt.Fprintf(w, "%s  phase %s  %s  blocker %s → %s (%s)\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["id"], ev.Fields["action"], ev.Fields["by"])
 	case "step-skipped":
 		fmt.Fprintf(w, "%s  phase %s  %s  skipped: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Step, ev.Fields["reason"])
+	case "phase-summary":
+		fmt.Fprintf(w, "%s  phase %s  summary  %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["text"])
 	case "design":
 		fmt.Fprintf(w, "%s  phase %s  design: %s\n", ev.At.Format("15:04:05"), ev.Phase, ev.Fields["intent"])
 	case "design-skipped":
