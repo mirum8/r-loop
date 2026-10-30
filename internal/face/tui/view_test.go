@@ -836,3 +836,33 @@ func TestNoColorDrawsTheSelectedRowReversed(t *testing.T) {
 		t.Fatalf("view %q", view)
 	}
 }
+
+func TestAWrappedListItemIndentsUnderItsText(t *testing.T) {
+	got := wrapItem(lipgloss.NewStyle(), "- resolve the custom delimiter entry, then run phase 3", 20)
+
+	want := []string{"- resolve the custom", "  delimiter entry,", "  then run phase 3"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestANumberedListItemIndentsUnderItsText(t *testing.T) {
+	got := wrapItem(lipgloss.NewStyle(), "12. start the database and resume", 16)
+
+	want := []string{"12. start the", "    database and", "    resume"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestTheStatusBarShowsTheReportPathFromTheRepoRoot(t *testing.T) {
+	m := newModel(recorded()).Apply(core.Event{At: at(90), Kind: "finished"})
+	m.Report = "/Users/me/projects/app/.r-loop/runs/20260918-140000/report.md"
+	m.Root = "/Users/me/projects/app"
+	m.Width = 140
+
+	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	if got := strings.TrimSpace(lines[len(lines)-1]); !strings.HasSuffix(got, "report: .r-loop/runs/20260918-140000/report.md") {
+		t.Fatalf("status bar %q", got)
+	}
+}

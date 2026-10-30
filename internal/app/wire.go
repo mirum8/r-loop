@@ -1129,10 +1129,15 @@ func (w *Wiring) startTUI(ctx context.Context) {
 	for i, k := range w.Loop.Kinds {
 		steps[i] = k.Name
 	}
+	todo := w.Opts.Todo
+	if rel, err := planRel(w.Repo.Root(), todo); err == nil {
+		todo = rel
+	}
 	w.TUI.Start(tui.Header{
 		RunID:   w.Loop.RunID,
-		Todo:    w.Opts.Todo,
+		Todo:    todo,
 		Report:  w.Plain.Report,
+		Root:    w.Repo.Root(),
 		Started: started,
 		Steps:   steps,
 		Backlog: w.Plan.Backlog,

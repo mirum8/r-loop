@@ -23,10 +23,10 @@ import (
 const keptFeed = 6
 
 type Header struct {
-	RunID, Todo, Report string
-	Started             time.Time
-	Steps               []string
-	Backlog             bool
+	RunID, Todo, Report, Root string
+	Started                   time.Time
+	Steps                     []string
+	Backlog                   bool
 }
 
 type Row struct {

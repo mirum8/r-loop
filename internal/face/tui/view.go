@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -11,6 +13,8 @@ import (
 
 	"r-loop/internal/core"
 )
+
+var listMarker = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s+`)
 
 const (
 	limitHot      = 90
@@ -590,17 +594,23 @@ func (m Model) footer(w int) []string {
 }
 
 func (m Model) hint(status []string, w int) string {
+	report := m.Report
+	if m.Root != "" {
+		if rel, err := filepath.Rel(m.Root, report); err == nil && !strings.HasPrefix(rel, "..") {
+			report = rel
+		}
+	}
 	keys := []string{"↑↓ select", "enter details", "pgup/pgdn scroll"}
 	for n := len(keys); ; n-- {
 		line := strings.Join(slices.Concat(status, keys[:n], []string{"q quit"}), " · ")
-		if m.Report == "" {
+		if report == "" {
 			if lipgloss.Width(line) <= w || n == 0 {
 				return line
 			}
 			continue
 		}
 		line += " · report: "
-		if full := line + m.Report; lipgloss.Width(full) <= w {
+		if full := line + report; lipgloss.Width(full) <= w {
 			return full
 		}
 		keep := w - lipgloss.Width(line) - 1
@@ -608,7 +618,7 @@ func (m Model) hint(status []string, w int) string {
 			continue
 		}
 		if keep > 0 {
-			return line + "…" + ansi.TruncateLeft(m.Report, lipgloss.Width(m.Report)-keep, "")
+			return line + "…" + ansi.TruncateLeft(report, lipgloss.Width(report)-keep, "")
 		}
 		return strings.TrimSuffix(line, " · report: ")
 	}
@@ -708,7 +718,7 @@ func (m Model) storyLines(w int) []string {
 				lines = append(lines, "")
 			}
 		default:
-			lines = append(lines, wrap(th.Text, line, w)...)
+			lines = append(lines, wrapItem(th.Text, line, w)...)
 		}
 		heading = false
 	}
@@ -788,6 +798,22 @@ func wrap(style lipgloss.Style, text string, w int) []string {
 		lines = append(lines, style.Render(strings.TrimRight(l, " ")))
 	}
 	return lines
+}
+
+func wrapItem(style lipgloss.Style, line string, w int) []string {
+	marker := listMarker.FindString(line)
+	if marker == "" || len(marker) >= w {
+		return wrap(style, line, w)
+	}
+	body := wrap(style, line[len(marker):], w-len(marker))
+	for i := range body {
+		prefix := strings.Repeat(" ", len(marker))
+		if i == 0 {
+			prefix = marker
+		}
+		body[i] = style.Render(prefix) + body[i]
+	}
+	return body
 }
 
 func short(sha string) string {
