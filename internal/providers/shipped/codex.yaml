@@ -1,5 +1,5 @@
 kind: codex
-flags: "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true"
+flags: "--no-daemon -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true"
 modelFlag: "-c model={model}"
 models: "debug models"
 version: "--version"

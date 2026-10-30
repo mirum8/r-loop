@@ -80,7 +80,7 @@ func newFixtureIn(t *testing.T, root string) *fixture {
 	f.write("docs/topic/todo.md", string(data))
 	f.herdr = filepath.Join(t.TempDir(), "herdr")
 	f.fakeHerdr(0)
-	f.env = Env{Dir: root, Home: t.TempDir(), Herdr: f.herdr, Git: "git", PID: 4242, Stdout: f.out, Stderr: f.err, Path: fakeProviders(t)}
+	f.env = Env{Dir: root, Home: t.TempDir(), Herdr: f.herdr, HerdrPane: "w0:p1", Git: "git", PID: 4242, Stdout: f.out, Stderr: f.err, Path: fakeProviders(t)}
 	return f
 }
 
@@ -551,7 +551,7 @@ func TestWireBuildsTheGateFixKindAndTheMilestoneBoundary(t *testing.T) {
 		t.Fatalf("loop kinds=%+v", w.Loop.Kinds)
 	}
 	args, err := w.Loop.Sessions.Resolve("codex", "gpt-x", "high", "", "", "")
-	if err != nil || args.Kind != "codex" || strings.Join(args.Args, " ") != "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -c model=gpt-x -c model_reasoning_effort=high" {
+	if err != nil || args.Kind != "codex" || strings.Join(args.Args, " ") != "--no-daemon -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true -c model=gpt-x -c model_reasoning_effort=high" {
 		t.Fatalf("args=%+v err=%v", args, err)
 	}
 }
@@ -620,6 +620,48 @@ func TestNullGateTimeoutWiresTheDefaultIntoTheGate(t *testing.T) {
 	}
 	if !strings.Contains(f.out.String(), "land gateTimeout 30m  ← default\n") {
 		t.Errorf("banner:\n%s", f.out.String())
+	}
+}
+
+func TestDryRunPrintsTheHostAndWhereItCameFrom(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		config string
+		args   []string
+		want   string
+	}{
+		{"auto from the pane", "", nil, "host: herdr (auto: HERDR_PANE_ID)\n"},
+		{"flag", "host: app\n", []string{"--host", "herdr"}, "host: herdr (--host)\n"},
+		{"config layer", "host: herdr\n", nil, "host: herdr (.r-loop/config.yaml:host)\n"},
+		{"unreachable host", "host: app\n", nil, "host: none (herdr-app binary not set)\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			if tc.config != "" {
+				f.write(".r-loop/config.yaml", tc.config)
+			}
+			f.commit()
+
+			code := f.main(append([]string{f.todo, "--dry-run", "--plain"}, tc.args...)...)
+
+			if code != 0 || !strings.Contains(f.out.String(), "face: plain\n"+tc.want) {
+				t.Fatalf("code=%d stderr=%q out:\n%s", code, f.err.String(), f.out.String())
+			}
+		})
+	}
+}
+
+func TestHostFlagWithABadValueExits2(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.commit()
+
+	code := f.main(f.todo, "--dry-run", "--plain", "--host", "tmux")
+
+	if code != 2 || !strings.Contains(f.err.String(), `--host "tmux": want auto, herdr or app`) {
+		t.Fatalf("code=%d stderr=%q", code, f.err.String())
 	}
 }
 

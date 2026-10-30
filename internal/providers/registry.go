@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -207,7 +208,7 @@ func writeSettings(path string, settings map[string]any) error {
 }
 
 func ToCore(p Provider, model, effort, askURL, mcpConfigPath, dir string) core.ProviderArgs {
-	reviewArgs := Args(p, model, effort, "", "", "")
+	reviewArgs := slices.DeleteFunc(Args(p, model, effort, "", "", ""), func(arg string) bool { return arg == "--no-daemon" })
 	for i, arg := range reviewArgs {
 		reviewArgs[i] = shellWord(arg)
 	}

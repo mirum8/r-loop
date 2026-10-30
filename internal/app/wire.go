@@ -27,7 +27,6 @@ import (
 	"r-loop/internal/face/plain"
 	"r-loop/internal/face/tui"
 	"r-loop/internal/gitrepo"
-	"r-loop/internal/herdr"
 	"r-loop/internal/hooktap"
 	"r-loop/internal/memory"
 	"r-loop/internal/notify"
@@ -37,6 +36,7 @@ import (
 	"r-loop/internal/quota"
 	"r-loop/internal/reviewexec"
 	"r-loop/internal/rollout"
+	"r-loop/internal/sessionhost"
 	"r-loop/internal/store"
 )
 
@@ -52,7 +52,8 @@ type Options struct {
 
 type Env struct {
 	Dir, Home, Herdr, Git, Path string
-	Pane                        string
+	HC, App                     string
+	HerdrPane, HCTerminal       string
 	PID                         int
 	Stdin                       io.Reader
 	Stdout, Stderr              io.Writer
@@ -105,7 +106,9 @@ type Wiring struct {
 	Store     *store.Store
 	records   *core.RecordGuard
 	Prompts   *prompts.Renderer
-	Host      herdr.Client
+	Host      *hostSlot
+	Conn      sessionhost.Conn
+	hostErr   error
 	Repo      *gitrepo.Repo
 	Face      core.Face
 	Plain     *plain.Face
@@ -151,6 +154,54 @@ func (o overrides) Set(arg string) error {
 	return nil
 }
 
+type hostFlag struct{ dst *[]config.Override }
+
+func (h hostFlag) String() string { return "" }
+
+func (h hostFlag) Set(arg string) error {
+	*h.dst = append(*h.dst, config.Override{Key: "host", Value: arg})
+	return nil
+}
+
+type hostSlot struct{ core.SessionHost }
+
+func (h *hostSlot) PromptContext(ctx context.Context, agent, text string, wait bool, timeout time.Duration) error {
+	if p, ok := h.SessionHost.(interface {
+		PromptContext(context.Context, string, string, bool, time.Duration) error
+	}); ok {
+		return p.PromptContext(ctx, agent, text, wait, timeout)
+	}
+	return h.SessionHost.Prompt(agent, text, wait, timeout)
+}
+
+func (e Env) connect(cfg config.LoopConfig) (sessionhost.Conn, error) {
+	conn, err := sessionhost.Connect(sessionhost.Env{
+		HerdrPane: e.HerdrPane, HCTerminal: e.HCTerminal, Herdr: e.Herdr, HC: e.HC, App: e.App, LookPath: e.lookPath,
+	}, cfg.Host)
+	if err != nil {
+		return conn, hostExit(err)
+	}
+	if cfg.Host != sessionhost.Auto {
+		conn.Source = strings.TrimPrefix(cfg.Provenance["host"], "flag:")
+	}
+	return conn, nil
+}
+
+func hostExit(err error) error {
+	var x *sessionhost.ExitError
+	if errors.As(err, &x) {
+		return exit(x.Code, "%s", x.Msg)
+	}
+	return err
+}
+
+func unreachable(conn sessionhost.Conn, err error) error {
+	if conn.Name == sessionhost.Herdr {
+		return exit(4, "herdr server unreachable: %v", err)
+	}
+	return exit(4, "herdr-app unreachable: %v", err)
+}
+
 type phaseList struct{ dst *[]string }
 
 func (p phaseList) String() string { return "" }
@@ -187,6 +238,7 @@ func flagSet(o *Options) *flag.FlagSet {
 	for _, key := range []string{"provider", "model", "effort"} {
 		fs.Var(overrides{key, &o.Overrides}, key, "set one row's "+key+" for this run, `<step>=<"+key+">`; repeatable")
 	}
+	fs.Var(hostFlag{&o.Overrides}, "host", "run the sessions on this host, `auto|herdr|app`, over the config's host")
 	fs.BoolVar(&o.Unattended, "unattended", false, "never ask the maintainer; the watchdog decides from the repository")
 	fs.BoolVar(&o.Yes, "yes", false, "start after triage without asking the maintainer; verification still runs")
 	fs.BoolVar(&o.Plain, "plain", false, "plain line output instead of the TUI")
@@ -532,7 +584,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		Registry: newRegistry(cfg, env.Home),
 		Store:    store.New(root),
 		Prompts:  prompts.New(root),
-		Host:     herdr.Client{Bin: env.Herdr},
+		Host:     &hostSlot{},
 		Repo:     repo,
 		Plain:    &plain.Face{Out: env.Stdout},
 	}
@@ -649,7 +701,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		fallbacks[k.Name] = k.Row.Fallback
 	}
 	w.Remedies = &core.Remedies{Allow: allow, Store: w.records, Face: w.Face, Now: time.Now, Watch: w.Watch, MaxRestarts: cfg.Watchdog.MaxRestarts, Fallbacks: fallbacks, Asks: w.asks}
-	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.records, Face: w.Face, Root: root, Pane: env.Pane, Label: cfg.Label, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow, Dialogs: cfg.Watchdog.Dialogs, Unattended: opts.Unattended, Memory: w.Memory}
+	w.Dog = &core.Watchdog{Host: w.Host, Prompts: w.Prompts, Store: w.records, Face: w.Face, Root: root, Label: cfg.Label, TodoPath: todo, SpecDir: filepath.Dir(todo), Allow: allow, Dialogs: cfg.Watchdog.Dialogs, Unattended: opts.Unattended, Memory: w.Memory}
 	w.Remedies.Dog = w.Dog
 	w.Remedies.Blockers = w.Loop
 	w.Router = &core.QuestionRouter{Deliver: w.Loop.Deliver, Keys: w.Loop.DeliverKeys, Rules: cfg.Watchdog.Dialogs, Repo: repo, Remedies: w.Remedies, Blocker: w.Loop.OpenBlocker, Settle: w.Loop.SettleBlocker}

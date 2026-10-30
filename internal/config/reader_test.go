@@ -1234,3 +1234,48 @@ func TestTheAskHookIsReadFromTheMachineFile(t *testing.T) {
 		t.Errorf("provenance = %q", got)
 	}
 }
+
+func TestHostShipsAsAuto(t *testing.T) {
+	cfg := newDirs(t).load(t)
+
+	if cfg.Host != "auto" || cfg.Provenance["host"] != "default" {
+		t.Fatalf("host = %q from %q", cfg.Host, cfg.Provenance["host"])
+	}
+}
+
+func TestHostFromTheProjectFileWithProvenance(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "host: app\n")
+
+	cfg := d.load(t)
+
+	if cfg.Host != "app" || cfg.Provenance["host"] != ".r-loop/config.yaml:host" {
+		t.Fatalf("host = %q from %q", cfg.Host, cfg.Provenance["host"])
+	}
+}
+
+func TestHostOtherThanAutoHerdrOrAppRejected(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "host: tmux\n")
+
+	d.loadErr(t, "host must be auto, herdr or app")
+}
+
+func TestHostFlagOverridesTheFileWithProvenance(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "host: app\n")
+
+	cfg, err := Load(d.project, d.home, []Override{{Key: "host", Value: "herdr"}})
+
+	if err != nil || cfg.Host != "herdr" || cfg.Provenance["host"] != "flag:--host" {
+		t.Fatalf("host = %q from %q, err = %v", cfg.Host, cfg.Provenance["host"], err)
+	}
+}
+
+func TestHostFlagWithABadValueRejected(t *testing.T) {
+	_, err := Load(t.TempDir(), t.TempDir(), []Override{{Key: "host", Value: "tmux"}})
+
+	if !errors.Is(err, ErrConfig) || !strings.Contains(err.Error(), `--host "tmux"`) {
+		t.Fatalf("err = %v", err)
+	}
+}

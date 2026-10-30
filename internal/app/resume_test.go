@@ -214,7 +214,7 @@ func newResumeFixture(t *testing.T, config string) *fixture {
 	f.write(".r-loop/config.yaml", config)
 	f.commit()
 	f.env.PID = os.Getpid()
-	f.env.Pane = "driver-pane"
+	f.env.HerdrPane = "driver-pane"
 	return f
 }
 
@@ -1603,6 +1603,46 @@ func TestResumeInterruptsTheRecordedStepAgent(t *testing.T) {
 	stale := stepEvents(f.load(id), "stale-interrupted")
 	if !strings.Contains(string(calls), "agent send-keys "+agent+" esc") || len(stale) != 1 || stale[0].Fields["agent"] != agent || !strings.Contains(f.out.String(), "interrupted previous session "+agent+": still working") || !strings.Contains(f.out.String(), "previous session "+agent+" left in workspace w2") {
 		t.Fatalf("calls %s; stale %+v; out %s", calls, stale, f.out.String())
+	}
+}
+
+func TestResumeInterruptsAStaleAgentThatLivesOnlyOnTheOtherHost(t *testing.T) {
+	t.Parallel()
+	f := newResumeFixture(t, noReviewConfig)
+	id, _ := f.seedKilledImplement()
+	agent := "rloop-k3x9q-p1-implement"
+	f.appendRunEvent(id, ev(t0, "agent-named", 1, "implement", map[string]string{"attempt": "1", "agent": agent}))
+	notFound := `echo '{"error":{"code":"agent_not_found","message":"no such agent"}}' >&2; exit 1`
+	f.writeScript(t, f.herdr, `echo "$@" >> "$0.calls"
+case "$*" in *`+agent+`*) `+notFound+` ;; esac
+echo '{}'`)
+	dir := t.TempDir()
+	f.env.HC = filepath.Join(dir, "hc")
+	f.env.App = filepath.Join(dir, "herdr-app")
+	f.writeScript(t, f.env.HC, `echo "$@" >> "$0.calls"
+case "$1" in
+  ls) echo '{"terminals":[{"address":"t1d","state":"live"}]}' ;;
+  get) echo '{"address":"t1d","state":"live","labels":{"rloop.agent":"`+agent+`"},"status":{"app":"claude-code","state":"working"},"status_ms":5}' ;;
+  *) echo '{}' ;;
+esac`)
+	f.writeScript(t, f.env.App, `echo '{}'`)
+
+	code, _, err := f.resume(newSim())
+
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v stderr=%s stdout=%s", code, err, f.err.String(), f.out.String())
+	}
+	calls, _ := os.ReadFile(f.env.HC + ".calls")
+	if !strings.Contains(string(calls), "interrupt --json t1d") || !strings.Contains(string(calls), "keys --json t1d ctrl+c") ||
+		!strings.Contains(f.out.String(), "interrupted previous session "+agent+": still working") {
+		t.Fatalf("hc calls %s; out %s", calls, f.out.String())
+	}
+}
+
+func (f *fixture) writeScript(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`r-loop` is a Go supervisor binary that runs a phased implementation plan (`todo.md`, the format written by `/r:spec-design`) or an issues file (the backlog `/r:issues-draft` writes and `/r:issues-fix` reads) to completion: for each phase it drives fresh, provider-agnostic agent sessions (claude, codex) in herdr panes through `plan → implement → land`, each step reviewed in rounds by reviewer panes beside it, with disk as the only hand-off between steps. It is run by one maintainer, usually in a herdr pane on a second screen.
+`r-loop` is a Go supervisor binary that runs a phased implementation plan (`todo.md`, the format written by `/r:spec-design`) or an issues file (the backlog `/r:issues-draft` writes and `/r:issues-fix` reads) to completion: for each phase it drives fresh, provider-agnostic agent sessions (claude, codex) in herdr or herdr-app panes through `plan → implement → land`, each step reviewed in rounds by reviewer panes beside it, with disk as the only hand-off between steps. It is run by one maintainer, usually in a herdr or herdr-app pane on a second screen.
 
 **The repository has no code yet.** Everything is in the design docs; build it phase by phase from the plan.
 
@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Stack (fixed by the spec)
 
-Go 1.25.14 · module `r-loop` (no host in the path) · Bubble Tea v1.3.10 · Lip Gloss v1.1.0 · MCP go-sdk v1.8.0 (`github.com/modelcontextprotocol/go-sdk`) · yaml.v3 v3.0.1 · herdr 0.9.0 · git 2.50.1. No Python, no `claude -p`, nothing read from the skill-pack at run time.
+Go 1.25.14 · module `r-loop` (no host in the path) · Bubble Tea v1.3.10 · Lip Gloss v1.1.0 · MCP go-sdk v1.8.0 (`github.com/modelcontextprotocol/go-sdk`) · yaml.v3 v3.0.1 · herdr 0.9.0 or herdr-app 0.1.9 with hc 0.1.14 · git 2.50.1. No Python, no `claude -p`, nothing read from the skill-pack at run time.
 
 ## Commands
 
@@ -36,7 +36,7 @@ go run ./cmd/r-loop docs/task-loop-driver/todo.md --dry-run --plain
 Hexagonal core inside one self-contained binary, supervising out-of-process agent workers.
 
 - `internal/core` — loop, state machines, step kinds, evidence checks, session manager, review half, land gate, watch, remedies. **Imports only the standard library and itself**; a boundary test (`go list -deps`) fails on any other `r-loop/internal/` import. All ports are interfaces here, with in-memory fakes in `internal/core/fakes_test.go` so core tests need no herdr, git or terminal.
-- Adapters, one package per port: `plan` (PlanSource), `config` (LoopConfig), `store` (Store), `providers`, `prompts`, `herdr` (SessionHost), `gitrepo` (Repo), `askmcp` (AskChannel: the steps' `ask_watchdog` tool + the watchdog MCP surface), `face/plain` and `face/tui` (Face), `notify`, `memory` (Memory). `internal/app` does wiring, preflight, status and resume; `cmd/r-loop` is main.
+- Adapters, one package per port: `plan` (PlanSource), `config` (LoopConfig), `store` (Store), `providers`, `prompts`, `herdr` and `hc` (SessionHost, on herdr and on herdr-app), `sessionhost` (picks the host from r-loop's environment and routes a call for an agent it does not know to the other one; the only package that knows there are two), `gitrepo` (Repo), `askmcp` (AskChannel: the steps' `ask_watchdog` tool + the watchdog MCP surface), `face/plain` and `face/tui` (Face), `notify`, `memory` (Memory). `internal/app` does wiring, preflight, status and resume; `cmd/r-loop` is main.
 - State machines: `StepState` queued→spawned→running→{ok|failed|stalled|waiting-input}; `ok`/`failed` are terminal. A re-run (resume or watchdog restart) is a new `StepKey` with `Attempt+1`, never a transition out of `failed`.
 - A step signals completion via a JSON sentinel in `.r-loop/runs/<runID>/phase-<N>/`; the driver judges it against evidence (diff, plan file, verdict), never on the agent's word. After a step's work half, reviewer panes split beside it report findings and the step's own session verifies and fixes real P1/P2, in configurable rounds. The driver commits a step's work itself, once, after its last review round; nothing is committed before that.
 - Run state is append-only JSONL under `.r-loop/runs/<runID>/`; a transition is appended **before** the action it describes. `.r-loop/runs/` and `.r-loop/wt/` go in `.git/info/exclude`, never `.gitignore`.

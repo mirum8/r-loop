@@ -89,6 +89,7 @@ type Notify struct {
 
 type LoopConfig struct {
 	Label      string
+	Host       string
 	Pipeline   []string
 	Steps      map[string]StepRow
 	Providers  map[string]yaml.Node
@@ -119,6 +120,8 @@ var remedyClasses = []string{"deps", "ports", "containers", "locks", "restart", 
 
 var reviewerName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
+var hosts = []string{"auto", "herdr", "app"}
+
 var checks = []string{"plan-file", "design-file", "diff", "report"}
 
 type schema map[string]schema
@@ -127,6 +130,7 @@ var roleSchema = schema{"provider": nil, "model": nil, "effort": nil}
 
 var topSchema = schema{
 	"label":    nil,
+	"host":     nil,
 	"pipeline": nil,
 	"steps": schema{"*": schema{
 		"prompt": nil, "check": nil, "provider": nil, "model": nil, "effort": nil, "timeout": nil,
@@ -530,6 +534,14 @@ func (r *resolver) resolve() (LoopConfig, error) {
 		return cfg, errAt(l.file, n, "label must be lowercase letters, digits and dashes, got %q", label)
 	}
 	cfg.Label = label
+	host, n, l, err := r.scalar("host")
+	if err != nil {
+		return cfg, err
+	}
+	if !slices.Contains(hosts, host) {
+		return cfg, errAt(l.file, n, "host must be auto, herdr or app, got %q", host)
+	}
+	cfg.Host = host
 	if cfg.Pipeline, err = r.names("pipeline"); err != nil {
 		return cfg, err
 	}
@@ -743,6 +755,14 @@ func (cfg *LoopConfig) applyOverrides(overrides []Override) error {
 	seen := map[Override]bool{}
 	for _, o := range overrides {
 		flag := "--" + o.Key
+		if o.Key == "host" {
+			if !slices.Contains(hosts, o.Value) {
+				return configError(fmt.Sprintf("--host %q: want auto, herdr or app", o.Value))
+			}
+			cfg.Host = o.Value
+			cfg.Provenance["host"] = "flag:--host"
+			continue
+		}
 		row, ok := cfg.Steps[o.Step]
 		if !ok && o.Step != IntakeRow {
 			return configError(fmt.Sprintf("%s: unknown step %q", flag, o.Step))

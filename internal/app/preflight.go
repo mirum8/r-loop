@@ -43,7 +43,7 @@ func Preflight(w *Wiring) (err error) {
 		return nil
 	}
 	if err := w.Host.Reachable(); err != nil {
-		return exit(4, "herdr server unreachable: %v", err)
+		return unreachable(w.Conn, err)
 	}
 	lock, lerr := w.Store.Lock()
 	var live *store.LockedError
@@ -165,13 +165,9 @@ func (w *Wiring) commitHint(dirty []string) string {
 }
 
 func (w *Wiring) checks() ([]core.Phase, []string, error) {
-	opts, env := w.Opts, w.Env
-	if !opts.DryRun {
-		if _, err := env.lookPath(env.Herdr); err != nil {
-			return nil, nil, exit(127, "herdr binary %s not found", env.Herdr)
-		}
-	}
-	if err := w.validateProviders(); err != nil {
+	opts := w.Opts
+	kinds, err := w.validateProviders()
+	if err != nil {
 		return nil, nil, err
 	}
 	w.Findings = core.CheckPlan(w.Plan)
@@ -192,6 +188,9 @@ func (w *Wiring) checks() ([]core.Phase, []string, error) {
 			return nil, nil, err
 		}
 		prompts = append(prompts, line)
+	}
+	if err := w.connectHost(kinds); err != nil {
+		return nil, nil, err
 	}
 	return list, prompts, nil
 }
@@ -336,30 +335,66 @@ type role struct {
 	review                 bool
 }
 
-func (w *Wiring) validateProviders() error {
+func (w *Wiring) validateProviders() ([]string, error) {
 	roles := w.roles(w.Config)
 	resolved := make([]providers.Provider, len(roles))
+	var kinds []string
 	for i, r := range roles {
 		p, err := checkRole(w.registry(), r)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		resolved[i] = p
+		if !slices.Contains(kinds, p.Kind) {
+			kinds = append(kinds, p.Kind)
+		}
 	}
 	if w.Opts.DryRun {
-		return nil
+		return kinds, nil
 	}
 	for i, r := range roles {
 		if err := checkBinary(w.Env, r, resolved[i].Kind); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	for i, r := range roles {
 		if _, err := w.models.resolve(w.Env, resolved[i], r.model); err != nil {
-			return exit(2, "%s: %v", r.field, err)
+			return nil, exit(2, "%s: %v", r.field, err)
 		}
 	}
+	return kinds, nil
+}
+
+func (w *Wiring) connectHost(kinds []string) error {
+	if w.Host.SessionHost != nil {
+		return nil
+	}
+	conn, err := w.Env.connect(w.Config)
+	if err != nil {
+		if w.Opts.DryRun {
+			w.hostErr = err
+			return nil
+		}
+		return err
+	}
+	if !w.Opts.DryRun {
+		if err := conn.Preflight(kinds); err != nil {
+			return hostExit(err)
+		}
+	}
+	w.Conn = conn
+	w.Host.SessionHost = conn
+	if w.Dog != nil {
+		w.Dog.Pane = conn.Self
+	}
 	return nil
+}
+
+func (w *Wiring) hostLine() string {
+	if w.Conn.SessionHost == nil {
+		return fmt.Sprintf("host: none (%v)", w.hostErr)
+	}
+	return fmt.Sprintf("host: %s (%s)", w.Conn.Name, w.Conn.Source)
 }
 
 func (w *Wiring) roles(cfg config.LoopConfig) []role {
@@ -459,6 +494,7 @@ func (w *Wiring) promptSources() ([]string, error) {
 
 func (w *Wiring) banner(out io.Writer, prompts []string) {
 	fmt.Fprintf(out, "face: %s\n", w.faceName())
+	fmt.Fprintln(out, w.hostLine())
 	fmt.Fprint(out, config.Banner(w.Config, w.extraSteps()...))
 	for _, l := range w.models.lines {
 		fmt.Fprintln(out, l)

@@ -17,10 +17,10 @@ import (
 	"r-loop/internal/config"
 	"r-loop/internal/core"
 	"r-loop/internal/gitrepo"
-	"r-loop/internal/herdr"
 	"r-loop/internal/plan"
 	"r-loop/internal/prompts"
 	"r-loop/internal/providers"
+	"r-loop/internal/sessionhost"
 )
 
 type intake struct {
@@ -32,6 +32,7 @@ type intake struct {
 	label    string
 	provider providers.Provider
 	host     core.SessionHost
+	conn     sessionhost.Conn
 	prompts  core.Prompts
 	poll     time.Duration
 	accepted chan []string
@@ -46,7 +47,7 @@ func Intake(args []string, given Options, env Env) (Options, error) {
 		return Options{}, err
 	}
 	if err := in.host.Reachable(); err != nil {
-		return Options{}, exit(4, "herdr server unreachable: %v", err)
+		return Options{}, unreachable(in.conn, err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -78,12 +79,16 @@ func newIntake(args []string, given Options, env Env) (*intake, error) {
 	if cfg.Intake.Model, err = providers.ResolveModel(p, cfg.Intake.Model, env.runCatalog); err != nil {
 		return nil, exit(2, "%s: %v", r.field, err)
 	}
-	if _, err := env.lookPath(env.Herdr); err != nil {
-		return nil, exit(127, "herdr binary %s not found", env.Herdr)
+	conn, err := env.connect(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := conn.Preflight([]string{p.Kind}); err != nil {
+		return nil, hostExit(err)
 	}
 	return &intake{
 		env: env, root: root, text: strings.Join(args, " "), given: given, cfg: cfg.Intake, label: cfg.Label, provider: p,
-		host: herdr.Client{Bin: env.Herdr}, prompts: prompts.New(root), poll: time.Second, accepted: make(chan []string, 1),
+		host: conn, conn: conn, prompts: prompts.New(root), poll: time.Second, accepted: make(chan []string, 1),
 	}, nil
 }
 
@@ -115,7 +120,7 @@ func (in *intake) run(ctx context.Context) (Options, error) {
 	}
 	session := &core.Intake{
 		Host: in.host, Prompts: in.prompts, Provider: args, Poll: in.poll,
-		Name: "rloop-intake-" + strconv.Itoa(in.env.PID), Root: in.root, Pane: in.env.Pane, Label: in.label,
+		Name: "rloop-intake-" + strconv.Itoa(in.env.PID), Root: in.root, Pane: in.conn.Self, Label: in.label,
 		Vars: map[string]any{"Text": in.text, "Dir": in.env.Dir, "Root": in.root, "Usage": usage(), "Unattended": in.given.Unattended},
 	}
 	argv, err := session.Run(ctx, in.accepted)

@@ -102,7 +102,7 @@ func TestAWatchdogAndAStepSessionWriteTheirMCPConfigUnderARepoRootWithASpace(t *
 	f.write("docs/topic/todo.md", resumeTodo)
 	f.write(".r-loop/config.yaml", noReviewConfig)
 	f.commit()
-	f.env.PID, f.env.Pane = os.Getpid(), "driver-pane"
+	f.env.PID, f.env.HerdrPane = os.Getpid(), "driver-pane"
 	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
 	if err != nil {
 		t.Fatal(err)

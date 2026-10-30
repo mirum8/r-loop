@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"r-loop/internal/config"
 	"r-loop/internal/core"
 	"r-loop/internal/gitrepo"
-	"r-loop/internal/herdr"
 	"r-loop/internal/store"
 )
 
@@ -104,8 +104,16 @@ func (c *cleaner) loadRuns() error {
 	return nil
 }
 
+func (c *cleaner) host() (core.SessionHost, error) {
+	cfg, err := config.Load(c.repo.Root(), c.env.Home, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.env.connect(cfg)
+}
+
 func (c *cleaner) closeWorkspaces() {
-	host := herdr.Client{Bin: c.env.Herdr}
+	var host core.SessionHost
 	closed := map[string]bool{}
 	for _, run := range c.runs {
 		var phases []string
@@ -120,6 +128,14 @@ func (c *cleaner) closeWorkspaces() {
 					continue
 				}
 				closed[ws.ID] = true
+				if host == nil {
+					h, err := c.host()
+					if err != nil {
+						c.fail("session host: %v", err)
+						return
+					}
+					host = h
+				}
 				fields := map[string]string{"workspace": ws.ID}
 				if err := c.record(run.ID, core.Event{Kind: "workspace-closing", Phase: phase, Step: ws.Kind, Fields: fields}); err != nil {
 					c.fail("record run %s: %v", run.ID, err)

@@ -182,7 +182,7 @@ func (f *fixture) intake(host *intakeHost, args ...string) (Options, error) {
 	if err != nil {
 		return Options{}, err
 	}
-	in.host, in.poll = host, time.Millisecond
+	in.host, in.poll, in.conn.Self = host, time.Millisecond, ""
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return in.run(ctx)

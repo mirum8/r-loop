@@ -812,3 +812,12 @@ func (c Client) Submit(agent, text string) error {
 	}
 	return nil
 }
+
+func (c Client) TerminalPane(t string) (string, error) {
+	l, err := c.layout()
+	if err != nil {
+		return "", err
+	}
+	pane, _ := l.terminal(t)
+	return pane, nil
+}

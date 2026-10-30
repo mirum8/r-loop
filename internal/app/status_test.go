@@ -144,6 +144,7 @@ func TestStatusPlainPrintsRunPhasesLiveStepQuestionAndWarning(t *testing.T) {
 		"live implement codex w7 11m5s",
 		"question q1 which db?",
 		"warning diff grew past 3x the estimate",
+		"host: herdr (auto: HERDR_PANE_ID)",
 	}, "\n") + "\n"
 	if code != 0 || f.out.String() != want {
 		t.Fatalf("code=%d stderr=%q\ngot:\n%s\nwant:\n%s", code, f.err.String(), f.out.String(), want)

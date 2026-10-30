@@ -413,7 +413,7 @@ func (w *Wiring) resume(run core.RunState, replan bool) (core.RunOptions, error)
 		return core.RunOptions{}, err
 	}
 	if err := w.Host.Reachable(); err != nil {
-		return core.RunOptions{}, exit(4, "herdr server unreachable: %v", err)
+		return core.RunOptions{}, unreachable(w.Conn, err)
 	}
 	if err := w.clean(); err != nil {
 		return core.RunOptions{}, err

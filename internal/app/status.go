@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"r-loop/internal/config"
 	"r-loop/internal/core"
 	"r-loop/internal/gitrepo"
 	"r-loop/internal/plan"
@@ -64,7 +65,20 @@ func Status(args []string, env Env) int {
 	for _, line := range StatusLines(run, pl, now(), deadPID) {
 		fmt.Fprintln(env.Stdout, line)
 	}
+	fmt.Fprintln(env.Stdout, statusHost(repo.Root(), env))
 	return 0
+}
+
+func statusHost(root string, env Env) string {
+	cfg, err := config.Load(root, env.Home, nil)
+	if err != nil {
+		return fmt.Sprintf("host: none (%v)", err)
+	}
+	conn, err := env.connect(cfg)
+	if err != nil {
+		return fmt.Sprintf("host: none (%v)", err)
+	}
+	return fmt.Sprintf("host: %s (%s)", conn.Name, conn.Source)
 }
 
 var runIDRe = regexp.MustCompile(`^\d{8}-\d{6}(-\d+)?$`)

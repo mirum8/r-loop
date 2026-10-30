@@ -83,7 +83,7 @@ func TestShippedCodexBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Provider{Name: "codex", Kind: "codex", Flags: "-c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
+	want := Provider{Name: "codex", Kind: "codex", Flags: "--no-daemon -c check_for_update_on_startup=false -c sandbox_workspace_write.network_access=true", ModelFlag: "-c model={model}", EffortFlag: "-c model_reasoning_effort={effort}",
 		AskFlag: "-c mcp_servers.r-loop.url={url} -c mcp_servers.r-loop.default_tools_approval_mode=approve", DirFlag: `-c sandbox_workspace_write.writable_roots=["{dir}"]`, DoneSignal: "sentinel", Ask: "mcp", Models: "debug models", Version: "--version",
 		ReviewExec: "codex review --uncommitted {args}", Source: "shipped"}
 	if p != want {
@@ -132,7 +132,7 @@ func TestShippedCodexFlagsLetACodexSandboxOpenALocalListener(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := append([]string{"sandbox", "-c", "sandbox_mode=workspace-write"}, strings.Fields(codex.Flags)...)
+	args := append(strings.Fields(codex.Flags), "sandbox", "-c", "sandbox_mode=workspace-write")
 	args = append(args, "--", os.Args[0], "-test.run=^TestShippedCodexFlagsLetACodexSandboxOpenALocalListener$", "-test.count=1")
 	cmd := exec.Command(codexBin, args...)
 	cmd.Env = append(os.Environ(), "R_LOOP_LISTEN_HELPER=1")
@@ -291,9 +291,9 @@ func TestArgsOfShippedBlocks(t *testing.T) {
 		{"claude without model and effort", claude, "", "",
 			[]string{"--mcp-config", "/run/mcp.json"}},
 		{"codex with model and effort", codex, "gpt-5", "high",
-			[]string{"-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "model=gpt-5", "-c", "model_reasoning_effort=high", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask", "-c", "mcp_servers.r-loop.default_tools_approval_mode=approve"}},
+			[]string{"--no-daemon", "-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "model=gpt-5", "-c", "model_reasoning_effort=high", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask", "-c", "mcp_servers.r-loop.default_tools_approval_mode=approve"}},
 		{"codex without model and effort", codex, "", "",
-			[]string{"-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask", "-c", "mcp_servers.r-loop.default_tools_approval_mode=approve"}},
+			[]string{"--no-daemon", "-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask", "-c", "mcp_servers.r-loop.default_tools_approval_mode=approve"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -314,7 +314,7 @@ func TestArgsOmitAskFlagWithoutItsValue(t *testing.T) {
 	if got := Args(claude, "opus", "", "http://x", "", ""); !reflect.DeepEqual(got, []string{"--model", "opus"}) {
 		t.Errorf("claude: %q", got)
 	}
-	if got := Args(codex, "", "low", "", "/run/mcp.json", ""); !reflect.DeepEqual(got, []string{"-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "model_reasoning_effort=low"}) {
+	if got := Args(codex, "", "low", "", "/run/mcp.json", ""); !reflect.DeepEqual(got, []string{"--no-daemon", "-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "model_reasoning_effort=low"}) {
 		t.Errorf("codex: %q", got)
 	}
 }
@@ -526,7 +526,7 @@ func TestShippedCodexDirFlagNamesTheWritableRoot(t *testing.T) {
 
 	got := Args(codex, "gpt-5", "", "http://127.0.0.1:9/ask", "", "/run/r1/phase-3")
 
-	want := []string{"-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "model=gpt-5",
+	want := []string{"--no-daemon", "-c", "check_for_update_on_startup=false", "-c", "sandbox_workspace_write.network_access=true", "-c", "model=gpt-5",
 		"-c", "mcp_servers.r-loop.url=http://127.0.0.1:9/ask", "-c", "mcp_servers.r-loop.default_tools_approval_mode=approve", "-c", `sandbox_workspace_write.writable_roots=["/run/r1/phase-3"]`}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q\nwant %q", got, want)
