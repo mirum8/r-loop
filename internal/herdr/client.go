@@ -36,6 +36,16 @@ func (e Error) Error() string {
 	return "herdr: " + e.Code + ": " + e.Message
 }
 
+func (e Error) Unwrap() error {
+	switch {
+	case strings.HasSuffix(e.Code, "not_found"):
+		return core.ErrNotFound
+	case e.Code == "agent_blocked":
+		return core.ErrAgentBlocked
+	}
+	return nil
+}
+
 type Client struct {
 	Bin string
 }
@@ -421,8 +431,7 @@ func (c Client) State(agent string) (core.AgentState, error) {
 func (c Client) StateSeq(agent string) (core.AgentState, int64, error) {
 	var out agentResult
 	err := c.call(&out, "agent", "get", agent)
-	var herr Error
-	if errors.As(err, &herr) && strings.HasSuffix(herr.Code, "not_found") {
+	if errors.Is(err, core.ErrNotFound) {
 		return core.AgentGone, 0, nil
 	}
 	if err != nil {
@@ -439,8 +448,7 @@ func (c Client) StateSeq(agent string) (core.AgentState, int64, error) {
 func (c Client) AgentPane(agent string) (string, error) {
 	var out agentResult
 	err := c.call(&out, "agent", "get", agent)
-	var herr Error
-	if errors.As(err, &herr) && strings.HasSuffix(herr.Code, "not_found") {
+	if errors.Is(err, core.ErrNotFound) {
 		return "", nil
 	}
 	if err != nil {

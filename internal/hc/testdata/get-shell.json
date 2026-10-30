@@ -1,0 +1,1 @@
+{"address":"t1d","state":"live","cwd":"/repo/wt","labels":{"herdr.space":"spRUN","herdr.tab":"tbRUN1","rloop.agent":"rl-p1-plan"},"foreground":{"argv":["/bin/zsh","-l"],"cwd":"/repo/wt","name":"zsh","pid":19860},"status":null,"status_ms":null,"turn":0,"cols":120,"rows":40}

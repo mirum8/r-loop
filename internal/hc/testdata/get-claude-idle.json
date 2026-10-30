@@ -1,0 +1,1 @@
+{"address":"t1d","state":"live","cwd":"/repo/wt","labels":{"herdr.space":"spRUN","herdr.tab":"tbRUN1","rloop.agent":"rl-p1-plan"},"foreground":{"argv":["claude","--model","haiku"],"cwd":"/repo/wt","name":"2.1.314","pid":19860},"status":{"app":"claude-code","state":"idle"},"status_ms":1793345420081,"turn":0,"cols":120,"rows":40}

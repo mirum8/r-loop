@@ -1315,3 +1315,50 @@ func TestSubmitReturnsAnAgentBlockedErrorAsHerdrReportsIt(t *testing.T) {
 		t.Errorf("an agent_blocked error reads as a stall: %v", err)
 	}
 }
+
+func TestErrorCodesEndingNotFoundWrapErrNotFound(t *testing.T) {
+	cases := []struct {
+		code     string
+		expected bool
+	}{
+		{"workspace_not_found", true},
+		{"pane_not_found", true},
+		{"agent_not_found", true},
+		{"server_unreachable", false},
+		{"agent_blocked", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			// given
+			c, _ := fakeExit(t, "", `{"error":{"code":"`+tc.code+`","message":"m"}}`, 1)
+
+			// when
+			err := c.Close("w1")
+
+			// then
+			actualWraps := errors.Is(err, core.ErrNotFound)
+			if actualWraps != tc.expected {
+				t.Fatalf("errors.Is(%v, ErrNotFound) = %v, expected %v", err, actualWraps, tc.expected)
+			}
+			if actualText, expectedText := err.Error(), "herdr: "+tc.code+": m"; actualText != expectedText {
+				t.Fatalf("error %q, expected %q", actualText, expectedText)
+			}
+		})
+	}
+}
+
+func TestAgentBlockedWrapsErrAgentBlocked(t *testing.T) {
+	// given
+	c, _ := fakeExit(t, "", `{"error":{"code":"agent_blocked","message":"m"}}`, 1)
+
+	// when
+	err := c.Prompt("a1", "go", true, time.Second)
+
+	// then
+	if !errors.Is(err, core.ErrAgentBlocked) {
+		t.Fatalf("expected %v to wrap ErrAgentBlocked", err)
+	}
+	if errors.Is(err, core.ErrPromptStalled) {
+		t.Fatalf("expected %v not to wrap ErrPromptStalled", err)
+	}
+}
