@@ -151,6 +151,7 @@ func (h *simHost) State(agent string) (core.AgentState, error) {
 }
 func (h *simHost) AgentPane(agent string) (string, error)                 { return "", nil }
 func (h *simHost) Screen(agent string) (string, error)                    { return "", nil }
+func (h *simHost) Read(agent string, lines int) (string, error)           { return "", nil }
 func (h *simHost) SendKeys(agent string, keys ...string) error            { return nil }
 func (h *simHost) Interrupt(agent string) error                           { return nil }
 func (h *simHost) Tag(workspaceID string, tokens map[string]string) error { return nil }

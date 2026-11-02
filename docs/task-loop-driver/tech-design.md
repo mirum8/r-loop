@@ -127,7 +127,8 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
     error wrapping `core.ErrPromptStalled`; core uses it for sessions that have reported a hook,
     spec ADR-93) · `State(agent) (AgentState, error)` with `AgentState ∈
     {idle, working, blocked, done, unknown, gone}` · `Read(agent string, lines int) (string,
-    error)` · `Interrupt(agent) error` · `Close(workspaceID) error` · `Split(pane, direction,
+    error)` (herdr `agent read --source recent-unwrapped --lines <n>`; backs the watchdog's
+    `read_agent`) · `Interrupt(agent) error` · `Close(workspaceID) error` · `Split(pane, direction,
     cwd string, ratio float64, env map[string]string) (pane string, error)` (an empty `pane` splits the pane herdr calls current; `ratio` is the share the split pane keeps, `--ratio`, 0 for herdr's half; `env` becomes `--env K=V` on the split pane's shell, `nil` for none) ·
     `Screen(agent) (string, error)` (herdr `agent read --source visible`, unnormalised) ·
     `SendKeys(agent string, keys ...string) error` (one `agent send-keys` per key, in order,
@@ -746,6 +747,10 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   → {decision: authorised|refused|ask, reason?}` (Milestone 17) ·
   `set_config(key, value, why) → {decision: authorised|refused, reason?}` (Milestone 21) ·
   `narrate(text) → {accepted, reason?}` (Milestone 24) ·
+  `read_agent(name, lines?) → {found, reason?, text?}` (ADR-34: `SessionHost.Read` on whichever
+  host runs the agent, `lines` 200 when absent or not positive and only a hint, since herdr refuses
+  a long read of a working agent and the adapter returns its screen, and `hc read --lines` counts
+  history above the screen; read-only) ·
   `ask_maintainer(question, options?, recommended?) → {accepted, reason?}` ·
   `stop_run(when: after-phase|now, reason, maintainer_said) → {accepted, reason?}` ·
   `pause_run(reason, maintainer_said) → {accepted, reason?}` ·
@@ -753,8 +758,8 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   `PauseRun`, `ContinueRun`, read only between phases; a pause records `RunPaused` and waits) ·
   `choose_gate(phase, commands) → {accepted, reason?}` (ADR-95: handled by `LandGate.ChooseGate`); `step` is `phase-<N>/<kind>`,
   resolved to the latest attempt. None of these is reachable from a step path, and this path
-  serves no `ask_watchdog`. Every call is recorded as `watchdog-call` before its handler runs.
-  Every call but `run_status` and `step_info` also records `watchdog-result` after its handler
+  serves no `ask_watchdog`. Every call but `run_status`, `step_info` and `read_agent` is recorded
+  as `watchdog-call` before its handler runs, and records `watchdog-result` after its handler
   returns, with `tool`, `accepted` or `decision`, and `reason` when there is one: a refusal,
   `no triage is open`, `not available` or a failed `Resume` is recorded as the call's result. A
   result that cannot be recorded leaves the outcome as it is and adds `record <tool> result: <err>`
@@ -764,7 +769,7 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   `Event{Kind: "watchdog-waiting", Fields: {question, options?, recommended?}}` (`options` joined
   with `; `). `Remedies.Propose` returning `ask`, and `Remedies.Restart` refusing a provider that
   is not the row's fallback without `maintainer_said`, mark the same wait with the remedy as the
-  question. Every other watchdog tool but `run_status`, `step_info` and `narrate` first calls `Watchdog.Resume`, which records and emits
+  question. Every other watchdog tool but `run_status`, `step_info`, `read_agent` and `narrate` first calls `Watchdog.Resume`, which records and emits
   `watchdog-resumed` once; a resume that cannot be recorded refuses the call. The wait is one
   flag shared with the `agent_blocked` wait above, so neither path double-emits; an accepted
   prompt ends it only when herdr reported the watchdog blocked during it, since a codex watchdog

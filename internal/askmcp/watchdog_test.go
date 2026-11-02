@@ -441,7 +441,7 @@ func TestWatchdogPathListsNoAskTool(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	if want := []string{"answer_dialog", "answer_question", "ask_maintainer", "choose_gate", "continue_run", "forget", "narrate", "pause_run", "propose_remedy", "remember", "resolve_blocker", "restart_step", "run_status", "set_config", "signal", "step_info", "stop_run", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
+	if want := []string{"answer_dialog", "answer_question", "ask_maintainer", "choose_gate", "continue_run", "forget", "narrate", "pause_run", "propose_remedy", "read_agent", "remember", "resolve_blocker", "restart_step", "run_status", "set_config", "signal", "step_info", "stop_run", "submit_gate", "submit_triage"}; !slices.Equal(names, want) {
 		t.Fatalf("watchdog tools = %v, want %v", names, want)
 	}
 }
@@ -491,7 +491,7 @@ func TestWatchdogToolsOnAStepPathAre404(t *testing.T) {
 	if len(tools.Tools) != 1 || tools.Tools[0].Name != "ask_watchdog" {
 		t.Fatalf("step tools = %+v", tools.Tools)
 	}
-	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info", "stop_run", "pause_run", "continue_run", "choose_gate", "set_config", "remember", "forget", "narrate"} {
+	for _, name := range []string{"signal", "propose_remedy", "restart_step", "answer_question", "answer_dialog", "resolve_blocker", "ask_maintainer", "submit_triage", "submit_gate", "run_status", "step_info", "read_agent", "stop_run", "pause_run", "continue_run", "choose_gate", "set_config", "remember", "forget", "narrate"} {
 		_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{"kind": "halt", "step": "phase-3/implement"}})
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not found") {
 			t.Fatalf("%s on a step path: err = %v", name, err)
@@ -983,6 +983,55 @@ func TestStepInfoReturnsTheStepsAgentWorktreeAndBaseWithoutRecordingOrResuming(t
 	}
 	if resumed || len(st.records()) != 0 {
 		t.Fatalf("resumed %v, records %+v", resumed, st.records())
+	}
+}
+
+func TestReadAgentReturnsThePaneWithoutRecordingOrResuming(t *testing.T) {
+	st := &memStore{}
+	s := serveWatchdog(t, st)
+	resumed := false
+	var asked []string
+	s.Handle(WatchdogHandlers{
+		Resume: func() error {
+			resumed = true
+			return nil
+		},
+		ReadAgent: func(name string, lines int) (string, error) {
+			asked = append(asked, fmt.Sprintf("%s %d", name, lines))
+			if name != "rl-3-implement" {
+				return "", fmt.Errorf("agent %s: %w", name, core.ErrNotFound)
+			}
+			return "pane text", nil
+		},
+	})
+	cs := connect(t, s.WatchdogURL())
+
+	out := call(t, cs, "read_agent", map[string]any{"name": "rl-3-implement", "lines": 40})
+	byDefault := call(t, cs, "read_agent", map[string]any{"name": "rl-3-implement"})
+	unknown := call(t, cs, "read_agent", map[string]any{"name": "gone"})
+
+	if want := map[string]any{"found": true, "text": "pane text"}; !reflect.DeepEqual(out, want) {
+		t.Fatalf("read_agent\n got %+v\nwant %+v", out, want)
+	}
+	if byDefault["text"] != "pane text" {
+		t.Fatalf("default lines = %+v", byDefault)
+	}
+	if unknown["found"] != false || !strings.Contains(unknown["reason"].(string), "agent gone") {
+		t.Fatalf("unknown agent = %+v", unknown)
+	}
+	if want := []string{"rl-3-implement 40", "rl-3-implement 200", "gone 200"}; !slices.Equal(asked, want) {
+		t.Fatalf("handler asked for %v, want %v", asked, want)
+	}
+	if resumed || len(st.records()) != 0 {
+		t.Fatalf("resumed %v, records %+v", resumed, st.records())
+	}
+}
+
+func TestReadAgentWithNoHandlerIsNotAvailable(t *testing.T) {
+	cs := connect(t, serveWatchdog(t, &memStore{}).WatchdogURL())
+
+	if out := call(t, cs, "read_agent", map[string]any{"name": "a"}); out["found"] != false || out["reason"] != notAvailable {
+		t.Fatalf("read_agent = %+v", out)
 	}
 }
 

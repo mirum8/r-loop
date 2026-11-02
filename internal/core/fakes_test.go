@@ -137,6 +137,11 @@ func (f *fakeSessionHost) Screen(agent string) (string, error) {
 	return f.Screens[agent], f.Err
 }
 
+func (f *fakeSessionHost) Read(agent string, lines int) (string, error) {
+	f.record("SessionHost.Read %s %d", agent, lines)
+	return "", f.Err
+}
+
 func (f *fakeSessionHost) SendKeys(agent string, keys ...string) error {
 	f.record("SessionHost.SendKeys %s %s", agent, strings.Join(keys, " "))
 	return f.Err

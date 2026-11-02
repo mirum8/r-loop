@@ -97,6 +97,12 @@ func (r *router) Screen(agent string) (string, error) {
 	return out, err
 }
 
+func (r *router) Read(agent string, lines int) (string, error) {
+	var out string
+	err := fallErr(r, func(h core.SessionHost) (err error) { out, err = h.Read(agent, lines); return })
+	return out, err
+}
+
 func (r *router) SendKeys(agent string, keys ...string) error {
 	return fallErr(r, func(h core.SessionHost) error { return h.SendKeys(agent, keys...) })
 }

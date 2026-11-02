@@ -348,7 +348,7 @@ func TestWatchdogCarriesTheStepWatchingRuleAndTheAllowList(t *testing.T) {
 
 	for _, want := range []string{
 		"step started",
-		"herdr agent read <name> --source recent-unwrapped --lines 200",
+		"read the agent every few minutes with `read_agent`",
 		"git -C <worktree> diff <base>",
 		"`warn` for anything short of that",
 		"step ended",
@@ -356,6 +356,19 @@ func TestWatchdogCarriesTheStepWatchingRuleAndTheAllowList(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("watchdog missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestWatchdogNeverNamesAHostCommandToReadAnAgent(t *testing.T) {
+	text := render(t, New(t.TempDir()), "watchdog", fullVars())
+
+	if !strings.Contains(text, "`read_agent(name, lines?)`") {
+		t.Errorf("watchdog does not list read_agent:\n%s", text)
+	}
+	for _, host := range []string{"herdr", "hc read"} {
+		if strings.Contains(text, host) {
+			t.Errorf("watchdog names the host through %q:\n%s", host, text)
 		}
 	}
 }
@@ -1318,7 +1331,7 @@ func TestWatchdogCatchesUpWithRunStatusAndStepInfo(t *testing.T) {
 	for _, want := range []string{
 		"`run_status()` — read the run as the driver holds it now",
 		"`step_info(step)` — read a started step",
-		"your next call of any other tool except `run_status`, `step_info` and `narrate` marks the wait over",
+		"your next call of any other tool except `run_status`, `step_info`, `read_agent` and `narrate` marks the wait over",
 		"When you have lost track of a step or an open id",
 	} {
 		if !strings.Contains(text, want) {

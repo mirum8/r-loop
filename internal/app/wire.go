@@ -839,7 +839,7 @@ func (w *Wiring) startWatchdog(ctx context.Context) error {
 	w.Gate.Picker = w.Dog
 	w.Router.Dog = w.Dog
 	w.Watch.Router = w.Router
-	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, ChooseGate: w.Gate.ChooseGate, SetConfig: w.ConfigSet.Set, RunStatus: w.runStatus, StepInfo: w.stepInfo, StopRun: w.Loop.StopRun, PauseRun: w.Loop.PauseRun, ContinueRun: w.Loop.ContinueRun, Remember: w.Memory.Remember, Forget: w.Memory.Forget, Narrate: w.Dog.Narrate})
+	w.Ask.Handle(askmcp.WatchdogHandlers{Signal: w.Watch.Handle, Propose: w.Remedies.Propose, Restart: w.Remedies.Restart, Answer: w.Router.Answer, AnswerDialog: w.Router.AnswerDialog, ResolveBlocker: w.Router.ResolveBlocker, AskMaintainer: w.Dog.AskMaintainer, Resume: w.Dog.Resume, SubmitTriage: w.submitTriage, SubmitGate: w.submitGate, ChooseGate: w.Gate.ChooseGate, SetConfig: w.ConfigSet.Set, RunStatus: w.runStatus, StepInfo: w.stepInfo, StopRun: w.Loop.StopRun, PauseRun: w.Loop.PauseRun, ContinueRun: w.Loop.ContinueRun, Remember: w.Memory.Remember, Forget: w.Memory.Forget, Narrate: w.Dog.Narrate, ReadAgent: w.readAgent})
 	return w.startDog(ctx, wd.Provider, wd.Model, wd.Effort)
 }
 
@@ -867,6 +867,10 @@ func (w *Wiring) stepInfo(step string) (core.StepInfo, bool) {
 		return core.StepInfo{}, false
 	}
 	return core.StepInfoFromEvents(st.Events, step)
+}
+
+func (w *Wiring) readAgent(name string, lines int) (string, error) {
+	return w.Host.Read(name, lines)
 }
 
 func (w *Wiring) startDog(ctx context.Context, provider, model, effort string) error {

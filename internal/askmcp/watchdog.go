@@ -14,7 +14,10 @@ import (
 	"r-loop/internal/core"
 )
 
-const notAvailable = "not available"
+const (
+	notAvailable     = "not available"
+	defaultReadLines = 200
+)
 
 var errMalformedStep = errors.New("not phase-<N>/<kind>")
 
@@ -37,6 +40,7 @@ type WatchdogHandlers struct {
 
 	RunStatus func() (core.RunStatusView, error)
 	StepInfo  func(step string) (core.StepInfo, bool)
+	ReadAgent func(name string, lines int) (string, error)
 
 	StopRun     func(when, reason, maintainerSaid string) (bool, string)
 	PauseRun    func(reason, maintainerSaid string) (bool, string)
@@ -240,6 +244,17 @@ type stepInfoOutput struct {
 	StartSHA string `json:"start_sha,omitempty"`
 }
 
+type readAgentInput struct {
+	Name  string `json:"name"`
+	Lines int    `json:"lines,omitempty"`
+}
+
+type readAgentOutput struct {
+	Found  bool   `json:"found"`
+	Reason string `json:"reason,omitempty"`
+	Text   string `json:"text,omitempty"`
+}
+
 type decisionOutput struct {
 	Decision string `json:"decision"`
 	Reason   string `json:"reason,omitempty"`
@@ -276,7 +291,7 @@ func watchdogTool[In any, Out toolOutput[Out]](s *Server, h mcp.ToolHandlerFor[I
 	})
 }
 
-var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true, "stop_run": true, "pause_run": true, "continue_run": true, "choose_gate": true, "set_config": true, "remember": true, "forget": true, "narrate": true}
+var watchdogTools = map[string]bool{"signal": true, "propose_remedy": true, "restart_step": true, "answer_question": true, "answer_dialog": true, "resolve_blocker": true, "ask_maintainer": true, "submit_triage": true, "submit_gate": true, "run_status": true, "step_info": true, "read_agent": true, "stop_run": true, "pause_run": true, "continue_run": true, "choose_gate": true, "set_config": true, "remember": true, "forget": true, "narrate": true}
 
 func (s *Server) Handle(h WatchdogHandlers) {
 	s.mu.Lock()
@@ -536,7 +551,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "ask_maintainer",
-		Description: "Call this first whenever you need the maintainer: it shows them that you are waiting for them, with the question, and returns at once. Then ask them in your own session and wait for the reply. Your next call of any other tool except run_status and step_info marks the wait over.",
+		Description: "Call this first whenever you need the maintainer: it shows them that you are waiting for them, with the question, and returns at once. Then ask them in your own session and wait for the reply. Your next call of any other tool except run_status, step_info, read_agent and narrate marks the wait over.",
 	}, watchdogTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in askMaintainerInput) (*mcp.CallToolResult, acceptedOutput, error) {
 		if err := s.record("ask_maintainer", "", map[string]string{"question": in.Question, "options": strings.Join(in.Options, "; "), "recommended": in.Recommended}); err != nil {
 			return nil, acceptedOutput{Reason: err.Error()}, nil
@@ -603,7 +618,7 @@ func (s *Server) watchdogServer() *mcp.Server {
 	}))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "step_info",
-		Description: "Read a started step phase-<N>/<kind>: its latest attempt, the herdr agent that runs it, its worktree, the base branch and the commit it started from. It changes nothing.",
+		Description: "Read a started step phase-<N>/<kind>: its latest attempt, the agent that runs it, its worktree, the base branch and the commit it started from. It changes nothing.",
 	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in stepInfoInput) (*mcp.CallToolResult, stepInfoOutput, error) {
 		if _, _, ok := core.ParseStepName(in.Step); !ok {
 			return nil, stepInfoOutput{Reason: fmt.Sprintf("step %q: %v", in.Step, errMalformedStep)}, nil
@@ -617,6 +632,24 @@ func (s *Server) watchdogServer() *mcp.Server {
 			return nil, stepInfoOutput{Reason: in.Step + " has not started"}, nil
 		}
 		return nil, stepInfoOutput{Found: true, Step: info.Step, Attempt: info.Attempt, Agent: info.Agent, Worktree: info.Worktree, Base: info.Base, StartSHA: info.StartSHA}, nil
+	}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "read_agent",
+		Description: "Read a running agent's recent output by its name, on whichever host runs it: about the last lines of its pane, 200 by default, or only its screen while it works. It changes nothing.",
+	}, trackTool(s, func(_ context.Context, _ *mcp.CallToolRequest, in readAgentInput) (*mcp.CallToolResult, readAgentOutput, error) {
+		h := s.handlersNow().ReadAgent
+		if h == nil {
+			return nil, readAgentOutput{Reason: notAvailable}, nil
+		}
+		lines := in.Lines
+		if lines <= 0 {
+			lines = defaultReadLines
+		}
+		text, err := h(in.Name, lines)
+		if err != nil {
+			return nil, readAgentOutput{Reason: err.Error()}, nil
+		}
+		return nil, readAgentOutput{Found: true, Text: text}, nil
 	}))
 	return srv
 }

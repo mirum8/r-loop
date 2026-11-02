@@ -60,6 +60,10 @@ func (f *fakeHost) Screen(agent string) (string, error) {
 	f.record("Screen " + agent)
 	return f.name + " screen", f.known(agent)
 }
+func (f *fakeHost) Read(agent string, lines int) (string, error) {
+	f.record("Read " + agent)
+	return fmt.Sprintf("%s history %d", f.name, lines), f.known(agent)
+}
 func (f *fakeHost) SendKeys(agent string, _ ...string) error {
 	f.record("SendKeys " + agent)
 	return f.known(agent)
@@ -111,6 +115,9 @@ func TestRouterFallsThroughOnEachNotFoundShape(t *testing.T) {
 	}
 	if screen, err := r.Screen("a"); err != nil || screen != "app screen" {
 		t.Fatalf("Screen = %q, %v", screen, err)
+	}
+	if history, err := r.Read("a", 200); err != nil || history != "app history 200" {
+		t.Fatalf("Read = %q, %v", history, err)
 	}
 	if info, err := r.PaneInfo("pn1"); err != nil || info.Workspace != "app" {
 		t.Fatalf("PaneInfo = %+v, %v", info, err)

@@ -364,6 +364,34 @@ func TestReadReturnsRecentUnwrappedOutput(t *testing.T) {
 	assertArgv(t, argv(), []string{"agent", "read", "a1", "--source", "recent-unwrapped", "--lines", "40"})
 }
 
+func TestReadOfAWorkingAgentFallsBackToItsScreen(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "herdr")
+	script := "#!/bin/sh\n" +
+		"case \"$5\" in\n" +
+		"visible) printf 'the screen\\n' ;;\n" +
+		"*) printf '%s' '{\"error\":{\"code\":\"agent_not_idle\",\"message\":\"cannot read 200 lines while a1 is working\"}}' >&2; exit 1 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Client{Bin: bin}.Read("a1", 200)
+
+	if err != nil || out != "the screen\n" {
+		t.Fatalf("got %q, %v", out, err)
+	}
+}
+
+func TestReadKeepsAnyOtherError(t *testing.T) {
+	c, _ := fakeExit(t, "", `{"error":{"code":"agent_not_found","message":"agent target a1 not found"}}`, 1)
+
+	_, err := c.Read("a1", 200)
+
+	if !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestInterruptSendsEscThenCtrlC(t *testing.T) {
 	bin, err := filepath.Abs("testdata/herdr")
 	if err != nil {

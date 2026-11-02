@@ -374,6 +374,7 @@ func (h *dogHost) State(agent string) (core.AgentState, error) {
 }
 func (h *dogHost) AgentPane(agent string) (string, error)                 { return h.stale[agent], nil }
 func (h *dogHost) Screen(agent string) (string, error)                    { return "", nil }
+func (h *dogHost) Read(agent string, lines int) (string, error)           { return "", nil }
 func (h *dogHost) SendKeys(agent string, keys ...string) error            { return nil }
 func (h *dogHost) Interrupt(agent string) error                           { return nil }
 func (h *dogHost) Tag(workspaceID string, tokens map[string]string) error { return nil }
@@ -1320,6 +1321,55 @@ func TestAHaltedRunHasTheWatchdogWriteAFailureReportBeforeItCloses(t *testing.T)
 	}
 	if !strings.Contains(f.out.String(), "diagnosis: "+path+"\n") {
 		t.Errorf("plain output:\n%s", f.out)
+	}
+}
+
+type readableHost struct{ core.SessionHost }
+
+func (readableHost) Read(agent string, lines int) (string, error) {
+	return fmt.Sprintf("%s history %d", agent, lines), nil
+}
+
+func TestReadAgentReachesTheSessionHost(t *testing.T) {
+	t.Parallel()
+	// given
+	f := newResumeFixture(t, noReviewConfig)
+	sim := newSim()
+	w, err := f.preflight(f.todo, "--plain", "--phases", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim(w, sim)
+	w.Host.SessionHost = readableHost{w.Host.SessionHost}
+	var text string
+	dog := &dogHost{}
+	dog.onPrompt = func(prompt string) {
+		if !strings.HasPrefix(prompt, "# Watchdog") || text != "" {
+			return
+		}
+		client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+		cs, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: w.Ask.WatchdogURL(), MaxRetries: -1}, nil)
+		if err != nil {
+			text = "connect: " + err.Error()
+			return
+		}
+		defer cs.Close()
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "read_agent", Arguments: map[string]any{"name": "rl-1-plan", "lines": 40}})
+		if err != nil {
+			text = "call: " + err.Error()
+			return
+		}
+		out, _ := res.StructuredContent.(map[string]any)
+		text, _ = out["text"].(string)
+	}
+	w.Dog.Host = dog
+
+	// when
+	w.Execute(core.RunOptions{Phases: []string{"1"}})
+
+	// then
+	if want := "rl-1-plan history 40"; text != want {
+		t.Fatalf("read_agent = %q, want %q", text, want)
 	}
 }
 

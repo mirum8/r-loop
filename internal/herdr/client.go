@@ -459,6 +459,10 @@ func (c Client) AgentPane(agent string) (string, error) {
 
 func (c Client) Read(agent string, lines int) (string, error) {
 	data, err := c.exec("agent", "read", agent, "--source", "recent-unwrapped", "--lines", strconv.Itoa(lines))
+	var herr Error
+	if errors.As(err, &herr) && herr.Code == "agent_not_idle" {
+		return c.Screen(agent)
+	}
 	return string(data), err
 }
 
