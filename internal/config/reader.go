@@ -834,7 +834,27 @@ func (r *resolver) resolveFix(cfg *LoopConfig) error {
 }
 
 func Create(homeDir string) (string, error) {
-	path := filepath.Join(homeDir, ".config", "r-loop", "config.yaml")
+	return createFile(machineFile(homeDir), defaultsYAML)
+}
+
+func CreateProject(projectDir, homeDir string) (string, string, error) {
+	data, from := defaultsYAML, "the built-in defaults"
+	machine, err := os.ReadFile(machineFile(homeDir))
+	switch {
+	case err == nil:
+		data, from = machine, machineFile(homeDir)
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", "", err
+	}
+	path, err := createFile(filepath.Join(projectDir, ".r-loop", "config.yaml"), data)
+	return path, from, err
+}
+
+func machineFile(homeDir string) string {
+	return filepath.Join(homeDir, ".config", "r-loop", "config.yaml")
+}
+
+func createFile(path string, data []byte) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
@@ -845,7 +865,7 @@ func Create(homeDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := f.Write(defaultsYAML); err != nil {
+	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return "", err
 	}

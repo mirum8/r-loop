@@ -153,7 +153,7 @@ r-loop <free text> [flags]
 r-loop status [--plain] [<run-id>]
 r-loop resume [--replan] [--unattended] [--yes] [--plain] [<run-id>]
 r-loop abort
-r-loop --create-config
+r-loop --create-config [--project]
 r-loop --migrate-config
 r-loop --cleanup
 r-loop --version
@@ -237,6 +237,12 @@ go back to the built-in defaults, `land.fix` is removed, a `pipeline` that has `
 empty `watchdog.dialogs` gets the built-in rules, a `watchdog.maxRestarts` below 3 becomes 3, a
 `review-ui` reviewer on codex moves to claude, and every other key stays. It prints each
 change; the original is kept as `config.yaml.bak`.
+
+`r-loop --create-config --project` writes `.r-loop/config.yaml` at the root of the current
+repository: a copy of `~/.config/r-loop/config.yaml`, or the built-in defaults when there is no
+machine file, so the next run behaves as before until you edit it. Delete the keys you do not
+want to pin: a key the project file keeps no longer follows the machine file. An existing
+project file is left alone (exit 2).
 
 Every agent session names its provider, model and effort; nothing runs on a provider's own
 defaults. A config that is missing one of the three is an error (exit 2).

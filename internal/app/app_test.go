@@ -1112,6 +1112,34 @@ func TestCreateConfigOverAFileAtTheDefaultsSaysSo(t *testing.T) {
 	}
 }
 
+func TestCreateProjectConfigWritesTheProjectFile(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+
+	code := f.main("--create-config", "--project")
+
+	path := filepath.Join(f.root, ".r-loop", "config.yaml")
+	if code != 0 || f.out.String() != "wrote "+path+" from the built-in defaults\n" {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, f.out.String(), f.err.String())
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateProjectConfigRefusesAnExistingFile(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.write(".r-loop/config.yaml", "pipeline:\n  - plan\n")
+
+	code := f.main("--create-config", "--project")
+
+	data, _ := os.ReadFile(filepath.Join(f.root, ".r-loop", "config.yaml"))
+	if code != 2 || !strings.Contains(f.err.String(), "already exists") || string(data) != "pipeline:\n  - plan\n" {
+		t.Fatalf("code=%d stderr=%q data=%q", code, f.err.String(), data)
+	}
+}
+
 func TestMigrateConfigRewritesTheMachineAndProjectFiles(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

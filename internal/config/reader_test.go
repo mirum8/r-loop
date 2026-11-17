@@ -857,6 +857,47 @@ func TestCreateRefusesToOverwrite(t *testing.T) {
 	}
 }
 
+func TestCreateProjectCopiesTheMachineFile(t *testing.T) {
+	d := newDirs(t)
+	d.writeHome(t, "steps:\n  plan:\n    model: sonnet\n")
+
+	path, from, err := CreateProject(d.project, d.home)
+
+	if err != nil || path != filepath.Join(d.project, ".r-loop", "config.yaml") || from != filepath.Join(d.home, ".config", "r-loop", "config.yaml") {
+		t.Fatalf("path=%q from=%q err=%v", path, from, err)
+	}
+	cfg, err := Load(d.project, d.home, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Steps["plan"].Model != "sonnet" || cfg.Provenance["steps.plan.model"] != ".r-loop/config.yaml:steps.plan.model" {
+		t.Fatalf("model=%q provenance=%q", cfg.Steps["plan"].Model, cfg.Provenance["steps.plan.model"])
+	}
+}
+
+func TestCreateProjectWritesTheDefaultsWithoutAMachineFile(t *testing.T) {
+	d := newDirs(t)
+
+	path, from, err := CreateProject(d.project, d.home)
+
+	data, _ := os.ReadFile(path)
+	if err != nil || from != "the built-in defaults" || string(data) != string(defaultsYAML) {
+		t.Fatalf("from=%q err=%v", from, err)
+	}
+}
+
+func TestCreateProjectRefusesToOverwrite(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "pipeline:\n  - plan\n")
+
+	_, _, err := CreateProject(d.project, d.home)
+
+	data, _ := os.ReadFile(filepath.Join(d.project, ".r-loop", "config.yaml"))
+	if !errors.Is(err, fs.ErrExist) || string(data) != "pipeline:\n  - plan\n" {
+		t.Fatalf("err=%v data=%q", err, data)
+	}
+}
+
 func TestResetModelsPutsTheDefaultModelsBackAndKeepsTheRest(t *testing.T) {
 	d := newDirs(t)
 	old := "# mine\nsteps:\n  plan:\n    model: fable\n    timeout: 2h\n  implement:\n    provider: codex\n    model: gpt-5.6-sol\n    effort: medium\n    fallback:\n      provider: claude\n      model: opus\n      effort: medium\n    reviewers:\n      - provider: claude\n        model: opus\n        effort: medium\n  milestone:\n    reviewers:\n      - provider: codex\n        model: gpt-5.6-sol\n        effort: medium\n  docs:\n    prompt: docs\n    check: diff\n    provider: claude\n    model: sonnet\n    effort: low\n    timeout: 30m\nland:\n  fixRounds: 2\n  fix:\n    effort: high\nwatchdog:\n  effort: high\n  maxRestarts: 5\n"

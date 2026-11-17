@@ -305,6 +305,9 @@ func Main(args []string, env Env) int {
 			if len(args) == 1 {
 				return CreateConfig(env)
 			}
+			if len(args) == 2 && args[1] == "--project" {
+				return CreateProjectConfig(env)
+			}
 		case "--migrate-config":
 			if len(args) == 1 {
 				return MigrateConfig(env)
@@ -359,6 +362,19 @@ func CreateConfig(env Env) int {
 	for _, c := range reset {
 		fmt.Fprintf(env.Stdout, "%s: %s\n", path, c)
 	}
+	return 0
+}
+
+func CreateProjectConfig(env Env) int {
+	repo, err := gitrepo.Open(env.Dir)
+	if err != nil {
+		return fail(env, err)
+	}
+	path, from, err := config.CreateProject(repo.Root(), env.Home)
+	if err != nil {
+		return fail(env, err)
+	}
+	fmt.Fprintf(env.Stdout, "wrote %s from %s\n", path, from)
 	return 0
 }
 
