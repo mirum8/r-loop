@@ -19,6 +19,7 @@ type View struct {
 }
 
 type Row struct {
+	ID    string
 	Repo  string
 	Label string
 }
@@ -36,7 +37,7 @@ func Aggregate(snaps []Snapshot, alive func(pid int) bool) View {
 		}
 		v.Done += s.Done
 		v.Total += s.Total
-		v.Rows = append(v.Rows, Row{Repo: s.Repo, Label: label(s)})
+		v.Rows = append(v.Rows, Row{ID: s.id, Repo: s.Repo, Label: label(s)})
 	}
 	sort.Slice(v.Rows, func(i, j int) bool { return v.Rows[i].Label < v.Rows[j].Label })
 	v.Visible = len(v.Rows) > 0
@@ -67,7 +68,7 @@ func Read(dir string) []Snapshot {
 		if err != nil {
 			continue
 		}
-		var s Snapshot
+		s := Snapshot{id: strings.TrimSuffix(filepath.Base(p), ".json")}
 		if json.Unmarshal(data, &s) == nil {
 			snaps = append(snaps, s)
 		}

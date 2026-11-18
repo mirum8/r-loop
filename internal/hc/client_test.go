@@ -1559,3 +1559,27 @@ func TestTagReturnsTheLabelError(t *testing.T) {
 	// then
 	assertErrorText(t, err, "hc: invalid_params: bad label")
 }
+
+func TestRevealSelectsTheTerminalsSpaceTabAndPane(t *testing.T) {
+	c, calls := fakeHosts(t, with(restores(), map[string][]reply{
+		"herdr-app ls": {ok(fixture(t, "app-ls.json"))},
+	}))
+
+	err := c.Reveal("t1d")
+
+	assertEqual(t, "error", err, nil)
+	assertCalls(t, calls(), [][]string{
+		{"herdr-app", "ls"},
+		{"herdr-app", "do", "space.select", "--id", "spRUN"},
+		{"herdr-app", "do", "tab.select", "--id", "tbRUN1"},
+		{"herdr-app", "do", "pane.focus", "--pane", "pSPLIT"},
+	})
+}
+
+func TestRevealOfAnUnknownTerminalFails(t *testing.T) {
+	c, _ := fakeHosts(t, map[string][]reply{"herdr-app ls": {ok(fixture(t, "app-ls.json"))}})
+
+	if err := c.Reveal("t9"); err == nil {
+		t.Fatal("no error")
+	}
+}

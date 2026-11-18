@@ -4547,8 +4547,14 @@ rest it draws a ring that fills with <code>done/total</code>, summed over the li
 text <code>&lt;done&gt;/&lt;total&gt;</code>. The ring is a template image in the menu bar's own colour;
 when any run is <code>waiting</code> the arc and the text turn amber, and a <code>paused</code> run
 with none waiting adds a ‖ inside the ring. A menu has one row per run,
-<code>&lt;repo&gt; · &lt;done&gt;/&lt;total&gt; · phase &lt;n&gt; &lt;step&gt; · &lt;state&gt;</code>, and opens
-the repository in Finder. With nothing live the icon is removed: no icon when no r-loop runs, after a
+<code>&lt;repo&gt; · &lt;done&gt;/&lt;total&gt; · phase &lt;n&gt; &lt;step&gt; · &lt;state&gt;</code>. Clicking a row writes
+<code>&lt;id&gt;.focus</code> beside that run's beacon; the driver of that run watches for it, removes it
+and shows its own pane through its own host (herdr: <code>workspace focus</code> and <code>tab focus</code>
+from <code>HERDR_WORKSPACE_ID</code> and <code>HERDR_TAB_ID</code>; herdr-app: <code>space.select</code>,
+<code>tab.select</code>, <code>pane.focus</code> for its <code>HC_TERMINAL_ID</code>), then brings forward
+the first <code>.app</code> among its ancestor processes, or the app named by
+<code>__CFBundleIdentifier</code>. A request nobody takes within 3 s opens the repository in Finder.
+With nothing live the icon is removed: no icon when no r-loop runs, after a
 run finishes or halts, or for a beacon a killed driver left. A driver that does not hold the lock
 retries every 5 s, so another takes over when the owner exits. Elsewhere, and in a build without
 cgo, the icon is a no-op and the beacon is still written.</p>

@@ -28,6 +28,7 @@ type Snapshot struct {
 	Total int       `json:"total"`
 	At    time.Time `json:"at"`
 
+	id              string
 	paused, waiting bool
 	list, landed    []string
 }

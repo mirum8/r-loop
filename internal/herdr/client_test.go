@@ -1390,3 +1390,12 @@ func TestAgentBlockedWrapsErrAgentBlocked(t *testing.T) {
 		t.Fatalf("expected %v not to wrap ErrPromptStalled", err)
 	}
 }
+
+func TestRevealFocusesTheWorkspaceThenTheTab(t *testing.T) {
+	c, argv := fake(t, `{"result":{"type":"ok"}}`)
+
+	if err := c.Reveal("w3A", "w3A:t2"); err != nil {
+		t.Fatalf("Reveal: %v", err)
+	}
+	assertArgv(t, argv(), []string{"tab", "focus", "w3A:t2"})
+}

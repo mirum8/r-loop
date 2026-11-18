@@ -382,7 +382,7 @@ The command gets these environment variables: `R_LOOP_RUN`, `R_LOOP_STATUS` (`ha
 
 | Key | Default | Meaning |
 |---|---|---|
-| `enabled` | `true` | Show a progress ring and `<landed>/<phases>` (for example `2/5`) in the macOS menu bar while any r-loop on the machine runs. With several runs going, the counts are added together. The ring is in the menu bar's own colour, turns amber when the watchdog is waiting for you, and shows ‖ when paused. Its menu lists each run as `<repo> · 2/5 · phase <n> <step> · <state>`, and clicking a row opens that repo in Finder. The icon goes away when no run is going, including after a run finishes or halts. |
+| `enabled` | `true` | Show a progress ring and `<landed>/<phases>` (for example `2/5`) in the macOS menu bar while any r-loop on the machine runs. With several runs going, the counts are added together. The ring is in the menu bar's own colour, turns amber when the watchdog is waiting for you, and shows ‖ when paused. Its menu lists each run as `<repo> · 2/5 · phase <n> <step> · <state>`, and clicking a row switches herdr or herdr-app to that run's pane and brings its window forward (if the run does not answer within 3 s, the repo opens in Finder instead). The icon goes away when no run is going, including after a run finishes or halts. |
 
 Each running driver writes its state to `~/.local/state/r-loop/runs/<hash>.json` and removes the file
 when the run ends. Only one driver draws the icon. When it exits, another running driver takes over within

@@ -8,6 +8,8 @@ package tray
 #include <stdlib.h>
 #import <Cocoa/Cocoa.h>
 
+extern void trayClicked(char *id);
+
 static NSStatusItem *item;
 
 @interface TrayTarget : NSObject
@@ -16,7 +18,7 @@ static NSStatusItem *item;
 
 @implementation TrayTarget
 - (void)open:(NSMenuItem *)sender {
-	[[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:sender.representedObject]];
+	trayClicked((char *)[sender.representedObject UTF8String]);
 }
 @end
 
@@ -100,6 +102,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"unsafe"
 )
 
@@ -116,14 +119,35 @@ func Main(run func() int) {
 		os.Exit(code)
 	case dir := <-startCh:
 		go func() { os.Exit(<-done) }()
-		go watch(dir, show)
+		go watch(dir, func(v View) { show(dir, v) })
 		C.trayRun()
 	}
 }
 
 var codes = map[State]C.int{Running: 0, Waiting: 1, Paused: 2}
 
-func show(v View) {
+var shown struct {
+	sync.Mutex
+	dir  string
+	rows []Row
+}
+
+func clicked(id string) {
+	shown.Lock()
+	dir, rows := shown.dir, shown.rows
+	shown.Unlock()
+	for _, r := range rows {
+		if r.ID == id {
+			Reveal(dir, r)
+			return
+		}
+	}
+}
+
+func show(dir string, v View) {
+	shown.Lock()
+	shown.dir, shown.rows = dir, v.Rows
+	shown.Unlock()
 	title, progress := "", -1.0
 	if v.Total > 0 {
 		title = " " + strconv.Itoa(v.Done) + "/" + strconv.Itoa(v.Total)
@@ -131,7 +155,7 @@ func show(v View) {
 	}
 	var rows []string
 	for _, r := range v.Rows {
-		rows = append(rows, r.Repo+"\t"+r.Label)
+		rows = append(rows, r.ID+"\t"+r.Label)
 	}
 	ct, cr := C.CString(title), C.CString(strings.Join(rows, "\n"))
 	defer C.free(unsafe.Pointer(ct))

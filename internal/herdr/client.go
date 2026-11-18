@@ -512,6 +512,17 @@ func (c Client) Tag(workspaceID string, tokens map[string]string) error {
 	return err
 }
 
+func (c Client) Reveal(workspace, tab string) error {
+	if _, err := c.exec("workspace", "focus", workspace); err != nil {
+		return err
+	}
+	if tab == "" {
+		return nil
+	}
+	_, err := c.exec("tab", "focus", tab)
+	return err
+}
+
 func (c Client) Close(workspaceID string) error {
 	var out struct{}
 	return c.call(&out, "workspace", "close", workspaceID)

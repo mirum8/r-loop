@@ -27,6 +27,8 @@ import (
 	"r-loop/internal/face/plain"
 	"r-loop/internal/face/tui"
 	"r-loop/internal/gitrepo"
+	"r-loop/internal/hc"
+	"r-loop/internal/herdr"
 	"r-loop/internal/hooktap"
 	"r-loop/internal/memory"
 	"r-loop/internal/notify"
@@ -55,6 +57,7 @@ type Env struct {
 	Dir, Home, Herdr, Git, Path string
 	HC, App                     string
 	HerdrPane, HCTerminal       string
+	HerdrWorkspace, HerdrTab    string
 	PID                         int
 	Stdin                       io.Reader
 	Stdout, Stderr              io.Writer
@@ -535,6 +538,28 @@ func (w *Wiring) panicked(v any) int {
 	return 2
 }
 
+func (w *Wiring) reveal() {
+	env := w.Env
+	var err error
+	switch {
+	case env.HerdrPane != "":
+		ws := env.HerdrWorkspace
+		if ws == "" {
+			info, perr := herdr.Client{Bin: env.Herdr}.PaneInfo(env.HerdrPane)
+			ws, err = info.Workspace, perr
+		}
+		if err == nil {
+			err = herdr.Client{Bin: env.Herdr}.Reveal(ws, env.HerdrTab)
+		}
+	case env.HCTerminal != "":
+		err = hc.Client{HC: env.HC, App: env.App}.Reveal(env.HCTerminal)
+	}
+	if err != nil {
+		w.Face.Emit(core.Event{At: time.Now(), Kind: "warning", Fields: map[string]string{"reason": "menu bar: show the run's pane: " + err.Error()}})
+	}
+	tray.Activate(env.PID)
+}
+
 func (w *Wiring) pastEvents() []core.Event {
 	run, err := w.Store.Load(w.Loop.RunID)
 	if err != nil {
@@ -637,7 +662,7 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		w.TUI.Abort = func() error { return w.Store.MarkAbort(w.Loop.RunID) }
 		w.Face = w.TUI
 	}
-	w.Beacon = &tray.Beacon{Dir: tray.Dir(env.Home), Repo: root, Now: time.Now}
+	w.Beacon = &tray.Beacon{Dir: tray.Dir(env.Home), Repo: root, Now: time.Now, Focus: w.reveal}
 	w.Face = faces{w.Face, w.Beacon}
 	w.Ask = &askmcp.Server{Store: w.records}
 	mem := memory.New(root)

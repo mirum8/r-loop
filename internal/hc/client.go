@@ -152,6 +152,7 @@ type layout struct {
 	Spaces []struct {
 		ID   string `json:"id"`
 		Tabs []struct {
+			ID        string `json:"id"`
 			Terminals []struct {
 				Terminal string `json:"terminal"`
 				Pane     string `json:"pane"`
@@ -242,6 +243,23 @@ func shellArgv(cwd string, env map[string]string) string {
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(argv)
 	return strings.TrimSuffix(buf.String(), "\n")
+}
+
+func (c Client) Reveal(terminal string) error {
+	l, err := c.layout()
+	if err != nil {
+		return err
+	}
+	for _, s := range l.Spaces {
+		for _, tab := range s.Tabs {
+			for _, t := range tab.Terminals {
+				if t.Terminal == terminal {
+					return c.restore(focus{Space: s.ID, Tab: tab.ID, Pane: t.Pane})
+				}
+			}
+		}
+	}
+	return terminalNotFound(terminal)
 }
 
 func (c Client) restore(f focus) error {

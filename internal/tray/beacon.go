@@ -21,18 +21,42 @@ func runsDir(dir string) string {
 }
 
 type Beacon struct {
-	Dir  string
-	Repo string
-	Now  func() time.Time
+	Dir   string
+	Repo  string
+	Now   func() time.Time
+	Focus func()
 
 	mu     sync.Mutex
 	snap   Snapshot
 	active bool
+	quit   chan struct{}
+}
+
+func (b *Beacon) id() string {
+	sum := sha1.Sum([]byte(b.Repo))
+	return hex.EncodeToString(sum[:6])
 }
 
 func (b *Beacon) path() string {
-	sum := sha1.Sum([]byte(b.Repo))
-	return filepath.Join(runsDir(b.Dir), hex.EncodeToString(sum[:6])+".json")
+	return filepath.Join(runsDir(b.Dir), b.id()+".json")
+}
+
+func requestPath(dir, id string) string {
+	return filepath.Join(runsDir(dir), id+".focus")
+}
+
+func (b *Beacon) answer(quit chan struct{}) {
+	req := requestPath(b.Dir, b.id())
+	for {
+		select {
+		case <-quit:
+			return
+		case <-time.After(300 * time.Millisecond):
+		}
+		if os.Remove(req) == nil {
+			b.Focus()
+		}
+	}
 }
 
 func (b *Beacon) Start(run string, pid int, past []core.Event) {
@@ -46,6 +70,11 @@ func (b *Beacon) Start(run string, pid int, past []core.Event) {
 	}
 	b.active = true
 	b.write()
+	if b.Focus != nil {
+		_ = os.Remove(requestPath(b.Dir, b.id()))
+		b.quit = make(chan struct{})
+		go b.answer(b.quit)
+	}
 }
 
 func (b *Beacon) Emit(ev core.Event) {
@@ -68,6 +97,10 @@ func (b *Beacon) Close() {
 		return
 	}
 	b.active = false
+	if b.quit != nil {
+		close(b.quit)
+		b.quit = nil
+	}
 	data, err := os.ReadFile(b.path())
 	if err != nil {
 		return
