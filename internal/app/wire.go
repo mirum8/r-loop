@@ -38,6 +38,7 @@ import (
 	"r-loop/internal/rollout"
 	"r-loop/internal/sessionhost"
 	"r-loop/internal/store"
+	"r-loop/internal/tray"
 )
 
 type Options struct {
@@ -113,6 +114,7 @@ type Wiring struct {
 	Face      core.Face
 	Plain     *plain.Face
 	TUI       *tui.Face
+	Beacon    *tray.Beacon
 	Notify    *notify.Shell
 	Gate      *core.LandGate
 	Probe     *core.GateProbe
@@ -463,6 +465,12 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 	if w.TUI != nil {
 		w.TUI.OnExit = func(err error) { cancel(displayExit(err)) }
 	}
+	if w.Beacon != nil {
+		w.Beacon.Start(w.Loop.RunID, w.Env.PID)
+		if w.Config.Tray.Enabled {
+			defer tray.Serve(tray.Dir(w.Env.Home))()
+		}
+	}
 	defer func() {
 		if err := os.RemoveAll(w.dogDir); err != nil {
 			Stderrf(w.Env.Stderr, "r-loop: remove watchdog config: %v", err)
@@ -478,6 +486,9 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 		cancel(nil)
 		w.Ask.Wait()
 		w.Loop.WriteReport()
+		if w.Beacon != nil {
+			w.Beacon.Close()
+		}
 		w.release()
 		w.Face.Close()
 		if err := w.records.Failed(); err != nil {
@@ -618,6 +629,8 @@ func Wire(opts Options, env Env) (*Wiring, error) {
 		w.TUI.Abort = func() error { return w.Store.MarkAbort(w.Loop.RunID) }
 		w.Face = w.TUI
 	}
+	w.Beacon = &tray.Beacon{Dir: tray.Dir(env.Home), Repo: root, Now: time.Now}
+	w.Face = faces{w.Face, w.Beacon}
 	w.Ask = &askmcp.Server{Store: w.records}
 	mem := memory.New(root)
 	mem.Warn = func(msg string) {

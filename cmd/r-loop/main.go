@@ -10,12 +10,13 @@ import (
 	"r-loop/internal/app"
 	"r-loop/internal/hooktap"
 	"r-loop/internal/quota"
+	"r-loop/internal/tray"
 )
 
 var version = "dev"
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Getwd))
+	tray.Main(func() int { return run(os.Args[1:], os.Stdout, os.Stderr, os.Getwd) })
 }
 
 func run(args []string, stdout, stderr io.Writer, getwd func() (string, error)) int {

@@ -1276,6 +1276,18 @@ func TestTheAskHookIsReadFromTheMachineFile(t *testing.T) {
 	}
 }
 
+func TestTheTrayShipsOnAndTurnsOffInTheProjectFile(t *testing.T) {
+	if !newDirs(t).load(t).Tray.Enabled {
+		t.Fatal("tray off by default")
+	}
+	d := newDirs(t)
+	d.writeProject(t, "tray:\n  enabled: false\n")
+
+	if d.load(t).Tray.Enabled {
+		t.Fatal("tray still on")
+	}
+}
+
 func TestHostShipsAsAuto(t *testing.T) {
 	cfg := newDirs(t).load(t)
 

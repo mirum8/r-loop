@@ -887,7 +887,7 @@ func TestWithoutATerminalOnStdoutTheFaceIsPlainEvenWithoutPlainFlag(t *testing.T
 
 	w, err := Wire(Options{Todo: f.todo}, f.env)
 
-	if err != nil || w.TUI != nil || w.Face != core.Face(w.Plain) {
+	if err != nil || w.TUI != nil || w.Face.(faces)[0] != core.Face(w.Plain) {
 		t.Fatalf("err %v tui %v face %T", err, w.TUI, w.Face)
 	}
 }

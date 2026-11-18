@@ -378,6 +378,17 @@ The command gets these environment variables: `R_LOOP_RUN`, `R_LOOP_STATUS` (`ha
 `finished`, `warning`, `blocked` or `asking`), `R_LOOP_PHASE`, `R_LOOP_STEP`, `R_LOOP_REASON`,
 `R_LOOP_TODO`, `R_LOOP_REPORT`.
 
+### `tray`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Show a dot in the macOS menu bar while any r-loop on the machine runs: steel blue while running, grey when paused, amber when the watchdog is waiting for you. With more than one run going, it also shows how many. Its menu lists each run as `<repo> · phase <n> <step> · <state>`, and clicking a row opens that repo in Finder. The icon goes away when no run is going, including after a run finishes or halts. |
+
+Each running driver writes its state to `~/.local/state/r-loop/runs/<hash>.json` and removes the file
+when the run ends. Only one driver draws the icon. When it exits, another running driver takes over within
+5 s. The icon needs a darwin build with cgo, which is the default when the Xcode command-line tools are
+installed. A `CGO_ENABLED=0` or non-macOS build runs without it.
+
 ### `providers.<name>`
 
 Tells r-loop how to start an agent CLI. `claude` and `codex` are built in. To change one or add a

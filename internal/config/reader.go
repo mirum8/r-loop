@@ -87,6 +87,10 @@ type Notify struct {
 	OnHalt, OnWarn, OnDone, OnAsk string
 }
 
+type Tray struct {
+	Enabled bool
+}
+
 type LoopConfig struct {
 	Label      string
 	Host       string
@@ -99,6 +103,7 @@ type LoopConfig struct {
 	Analyze    Analyze
 	Unattended Unattended
 	Notify     Notify
+	Tray       Tray
 	Provenance map[string]string
 
 	overrides []appliedOverride
@@ -142,6 +147,7 @@ var topSchema = schema{
 	"analyze":    schema{"enabled": nil, "timeout": nil},
 	"unattended": schema{"allow": nil},
 	"notify":     schema{"onHalt": nil, "onWarn": nil, "onDone": nil, "onAsk": nil},
+	"tray":       schema{"enabled": nil},
 	"watchdog": schema{
 		"provider": nil, "model": nil, "effort": nil, "allow": nil, "dialogs": nil, "maxRestarts": nil,
 		"blockerTimeout": nil, "remedyWindow": nil, "checkTimeout": nil, "stallGrace": nil, "unblockTimeout": nil, "triageTimeout": nil,
@@ -715,6 +721,9 @@ func (r *resolver) sections(cfg *LoopConfig) error {
 		return err
 	}
 	if cfg.Analyze.Timeout, err = r.duration("analyze.timeout"); err != nil {
+		return err
+	}
+	if cfg.Tray.Enabled, err = r.boolean("tray.enabled"); err != nil {
 		return err
 	}
 	if w.BlockerTimeout, err = r.aliased("watchdog.blockerTimeout", "watchdog.remedyWindow"); err != nil {

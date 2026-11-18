@@ -124,3 +124,6 @@ notify:
   onWarn: ""
   onDone: ""
   onAsk: ""
+
+tray:
+  enabled: true
