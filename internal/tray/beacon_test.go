@@ -2,6 +2,7 @@ package tray
 
 import (
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ func TestTheBeaconWritesTheRunStateAndRemovesItOnClose(t *testing.T) {
 	if got := Read(dir); len(got) != 0 {
 		t.Fatalf("before start: %+v", got)
 	}
-	b.Start("20261118-101500", 42)
+	b.Start("20261118-101500", 42, nil)
 	b.Emit(core.Event{Kind: "step", Phase: "3", Step: "land"})
 	b.Emit(core.Event{Kind: "watchdog-waiting"})
 
@@ -26,7 +27,7 @@ func TestTheBeaconWritesTheRunStateAndRemovesItOnClose(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 	got[0].At = want.At
-	if got[0] != want {
+	if !reflect.DeepEqual(got[0], want) {
 		t.Fatalf("got %+v, want %+v", got[0], want)
 	}
 
@@ -64,14 +65,31 @@ func TestClosingAnOldRunKeepsTheNextRunsBeacon(t *testing.T) {
 	dir := t.TempDir()
 	now := func() time.Time { return time.Unix(0, 0) }
 	old := &Beacon{Dir: dir, Repo: "/r/app", Now: now}
-	old.Start("20261118-101500", 41)
+	old.Start("20261118-101500", 41, nil)
 	fresh := &Beacon{Dir: dir, Repo: "/r/app", Now: now}
-	fresh.Start("20261118-111500", 42)
+	fresh.Start("20261118-111500", 42, nil)
 
 	old.Close()
 
 	got := Read(dir)
 	if len(got) != 1 || got[0].Run != "20261118-111500" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestAResumedRunStartsFromItsRecordedProgress(t *testing.T) {
+	dir := t.TempDir()
+	b := &Beacon{Dir: dir, Repo: "/r/app", Now: time.Now}
+
+	b.Start("20261118-101500", 42, []core.Event{
+		{Kind: "run-list", Fields: map[string]string{"phases": "1,2,3"}},
+		{Kind: "landed", Phase: "1"},
+		{Kind: "watchdog-waiting"},
+		{Kind: "halt"},
+	})
+
+	got := Read(dir)
+	if len(got) != 1 || got[0].State != Running || got[0].Done != 1 || got[0].Total != 3 {
 		t.Fatalf("got %+v", got)
 	}
 }

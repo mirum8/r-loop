@@ -29,15 +29,35 @@ static void trayRun(void) {
 	[NSApp run];
 }
 
-static NSImage *dot(CGFloat r, CGFloat g, CGFloat b) {
-	return [NSImage imageWithSize:NSMakeSize(16, 16) flipped:NO drawingHandler:^BOOL(NSRect rect) {
-		[[NSColor colorWithSRGBRed:r green:g blue:b alpha:1] setFill];
-		[[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(3, 3, 10, 10)] fill];
+static NSImage *ring(int state, double progress) {
+	BOOL waiting = state == 1;
+	NSImage *img = [NSImage imageWithSize:NSMakeSize(18, 18) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+		NSColor *ink = waiting ? [NSColor labelColor] : [NSColor blackColor];
+		NSColor *fill = waiting ? [NSColor colorWithSRGBRed:0xE0/255.0 green:0xA4/255.0 blue:0x58/255.0 alpha:1] : ink;
+		NSBezierPath *track = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(3, 3, 12, 12)];
+		track.lineWidth = 2.2;
+		[[ink colorWithAlphaComponent:0.3] setStroke];
+		[track stroke];
+		if (progress > 0) {
+			NSBezierPath *arc = [NSBezierPath bezierPath];
+			[arc appendBezierPathWithArcWithCenter:NSMakePoint(9, 9) radius:6 startAngle:90 endAngle:90 - 360 * fmin(progress, 1) clockwise:YES];
+			arc.lineWidth = 2.2;
+			arc.lineCapStyle = NSLineCapStyleRound;
+			[fill setStroke];
+			[arc stroke];
+		}
+		if (state == 2) {
+			[ink setFill];
+			NSRectFill(NSMakeRect(7, 6.5, 1.5, 5));
+			NSRectFill(NSMakeRect(9.5, 6.5, 1.5, 5));
+		}
 		return YES;
 	}];
+	img.template = !waiting;
+	return img;
 }
 
-static void trayUpdate(int visible, double r, double g, double b, const char *title, const char *rows) {
+static void trayUpdate(int visible, int state, double progress, const char *title, const char *rows) {
 	NSString *t = [NSString stringWithUTF8String:title];
 	NSString *rs = [NSString stringWithUTF8String:rows];
 	dispatch_async(dispatch_get_main_queue(), ^{
@@ -51,9 +71,13 @@ static void trayUpdate(int visible, double r, double g, double b, const char *ti
 		if (item == nil) {
 			item = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
 		}
-		item.button.image = dot(r, g, b);
-		item.button.title = t;
+		item.button.image = ring(state, progress);
 		item.button.imagePosition = NSImageLeft;
+		NSMutableDictionary *attrs = [NSMutableDictionary dictionaryWithObject:[NSFont menuBarFontOfSize:0] forKey:NSFontAttributeName];
+		if (state == 1) {
+			attrs[NSForegroundColorAttributeName] = [NSColor colorWithSRGBRed:0xE0/255.0 green:0xA4/255.0 blue:0x58/255.0 alpha:1];
+		}
+		item.button.attributedTitle = [[NSAttributedString alloc] initWithString:t attributes:attrs];
 		NSMenu *menu = [NSMenu new];
 		for (NSString *line in [rs componentsSeparatedByString:@"\n"]) {
 			NSArray *f = [line componentsSeparatedByString:@"\t"];
@@ -97,16 +121,13 @@ func Main(run func() int) {
 	}
 }
 
-var colours = map[State][3]float64{
-	Running: {0x6E / 255.0, 0x9F / 255.0, 0xC4 / 255.0},
-	Waiting: {0xE0 / 255.0, 0xA4 / 255.0, 0x58 / 255.0},
-	Paused:  {0x8A / 255.0, 0x92 / 255.0, 0x9E / 255.0},
-}
+var codes = map[State]C.int{Running: 0, Waiting: 1, Paused: 2}
 
 func show(v View) {
-	title := ""
-	if len(v.Rows) > 1 {
-		title = " " + strconv.Itoa(len(v.Rows))
+	title, progress := "", -1.0
+	if v.Total > 0 {
+		title = " " + strconv.Itoa(v.Done) + "/" + strconv.Itoa(v.Total)
+		progress = float64(v.Done) / float64(v.Total)
 	}
 	var rows []string
 	for _, r := range v.Rows {
@@ -115,10 +136,9 @@ func show(v View) {
 	ct, cr := C.CString(title), C.CString(strings.Join(rows, "\n"))
 	defer C.free(unsafe.Pointer(ct))
 	defer C.free(unsafe.Pointer(cr))
-	c := colours[v.State]
 	vis := C.int(0)
 	if v.Visible {
 		vis = 1
 	}
-	C.trayUpdate(vis, C.double(c[0]), C.double(c[1]), C.double(c[2]), ct, cr)
+	C.trayUpdate(vis, codes[v.State], C.double(progress), ct, cr)
 }

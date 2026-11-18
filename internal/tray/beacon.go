@@ -35,10 +35,15 @@ func (b *Beacon) path() string {
 	return filepath.Join(runsDir(b.Dir), hex.EncodeToString(sum[:6])+".json")
 }
 
-func (b *Beacon) Start(run string, pid int) {
+func (b *Beacon) Start(run string, pid int, past []core.Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.snap = Snapshot{Repo: b.Repo, Run: run, PID: pid, State: Running}
+	for _, ev := range past {
+		if ev.Kind == "run-list" || ev.Kind == "landed" {
+			b.snap, _ = next(b.snap, ev)
+		}
+	}
 	b.active = true
 	b.write()
 }

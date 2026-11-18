@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -63,7 +64,7 @@ func watch(dir string, show func(View)) {
 }
 
 func (v View) key() string {
-	k := string(v.State)
+	k := fmt.Sprintf("%s %d/%d", v.State, v.Done, v.Total)
 	for _, r := range v.Rows {
 		k += "\n" + r.Repo + "\t" + r.Label
 	}

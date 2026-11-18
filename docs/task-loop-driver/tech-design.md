@@ -251,7 +251,7 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   `watchdog.overtimeFactor 2`, `watchdog.diffFactor 3`, `watchdog.dialogs` (a block list of
   non-empty strings, ADR-80; two shipped rules, Milestone 21); `notify.onHalt/onWarn/onDone/onAsk ""`;
   `tray.enabled true` (ADR-101: beacon `~/.local/state/r-loop/runs/<sha1(root)[:12]>.json`,
-  `{repo, run, pid, state, phase, step, at}`, state `running|waiting|paused|halted|finished`). A
+  `{repo, run, pid, state, phase, step, done, total, at}`, state `running|waiting|paused|halted|finished`). A
   flow-style YAML node is rejected naming the line; an unknown key is rejected naming the key and
   file; a negative `rounds` is rejected. A written duration that is empty, zero or negative is
   rejected naming the file, line and key. A row whose `timeout` no layer sets is rejected, and so

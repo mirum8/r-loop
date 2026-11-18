@@ -466,7 +466,7 @@ func (w *Wiring) Execute(opts core.RunOptions) (code int) {
 		w.TUI.OnExit = func(err error) { cancel(displayExit(err)) }
 	}
 	if w.Beacon != nil {
-		w.Beacon.Start(w.Loop.RunID, w.Env.PID)
+		w.Beacon.Start(w.Loop.RunID, w.Env.PID, w.pastEvents())
 		if w.Config.Tray.Enabled {
 			defer tray.Serve(tray.Dir(w.Env.Home))()
 		}
@@ -533,6 +533,14 @@ func (w *Wiring) panicked(v any) int {
 	Stderrf(w.Env.Stderr, "r-loop: %s", reason)
 	fmt.Fprint(w.Env.Stderr, string(stack))
 	return 2
+}
+
+func (w *Wiring) pastEvents() []core.Event {
+	run, err := w.Store.Load(w.Loop.RunID)
+	if err != nil {
+		return nil
+	}
+	return run.Events
 }
 
 func (w *Wiring) release() {

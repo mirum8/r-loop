@@ -85,3 +85,14 @@ func TestALandStageShowsTheLandStep(t *testing.T) {
 		t.Fatalf("got %+v moved %v", s, moved)
 	}
 }
+
+func TestLandedPhasesCountAgainstTheRunList(t *testing.T) {
+	s := Snapshot{State: Running}
+	s, _ = next(s, core.Event{Kind: "run-list", Fields: map[string]string{"phases": "2,3,4,5,6"}})
+	s, _ = next(s, core.Event{Kind: "landed", Phase: "2"})
+	s, moved := next(s, core.Event{Kind: "landed", Phase: "3"})
+
+	if s.Done != 2 || s.Total != 5 || !moved {
+		t.Fatalf("got %d/%d moved %v", s.Done, s.Total, moved)
+	}
+}

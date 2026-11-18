@@ -3,6 +3,7 @@ package tray
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,9 +12,10 @@ import (
 )
 
 type View struct {
-	Visible bool
-	State   State
-	Rows    []Row
+	Visible     bool
+	State       State
+	Done, Total int
+	Rows        []Row
 }
 
 type Row struct {
@@ -32,6 +34,8 @@ func Aggregate(snaps []Snapshot, alive func(pid int) bool) View {
 		if rank[s.State] > rank[v.State] {
 			v.State = s.State
 		}
+		v.Done += s.Done
+		v.Total += s.Total
 		v.Rows = append(v.Rows, Row{Repo: s.Repo, Label: label(s)})
 	}
 	sort.Slice(v.Rows, func(i, j int) bool { return v.Rows[i].Label < v.Rows[j].Label })
@@ -41,6 +45,9 @@ func Aggregate(snaps []Snapshot, alive func(pid int) bool) View {
 
 func label(s Snapshot) string {
 	parts := []string{filepath.Base(s.Repo)}
+	if s.Total > 0 {
+		parts = append(parts, fmt.Sprintf("%d/%d", s.Done, s.Total))
+	}
 	if s.Phase != "" {
 		where := "phase " + s.Phase
 		if s.Step != "" {

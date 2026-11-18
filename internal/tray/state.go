@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"strings"
 	"time"
 
 	"r-loop/internal/core"
@@ -23,9 +24,12 @@ type Snapshot struct {
 	State State     `json:"state"`
 	Phase string    `json:"phase,omitempty"`
 	Step  string    `json:"step,omitempty"`
+	Done  int       `json:"done"`
+	Total int       `json:"total"`
 	At    time.Time `json:"at"`
 
 	paused, waiting bool
+	list, landed    []string
 }
 
 func (s Snapshot) ended() bool {
@@ -52,6 +56,10 @@ func next(s Snapshot, ev core.Event) (Snapshot, bool) {
 		n.paused = false
 	case "phase-start":
 		n.Phase, n.Step = ev.Phase, ""
+	case "run-list":
+		n.list = strings.Split(ev.Fields["phases"], ",")
+	case "landed":
+		n.landed = append(append([]string(nil), s.landed...), ev.Phase)
 	case "step", "land-stage":
 		if ev.Phase != "" {
 			n.Phase = ev.Phase
@@ -68,5 +76,22 @@ func next(s Snapshot, ev core.Event) (Snapshot, bool) {
 			n.State = Running
 		}
 	}
-	return n, n.State != s.State || n.Phase != s.Phase || n.Step != s.Step
+	n.Done, n.Total = progress(n.list, n.landed)
+	return n, n.State != s.State || n.Phase != s.Phase || n.Step != s.Step || n.Done != s.Done || n.Total != s.Total
+}
+
+func progress(list, landed []string) (done, total int) {
+	for _, id := range list {
+		if id == "" {
+			continue
+		}
+		total++
+		for _, l := range landed {
+			if l == id {
+				done++
+				break
+			}
+		}
+	}
+	return done, total
 }

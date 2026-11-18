@@ -57,3 +57,16 @@ func TestPausedOutranksRunning(t *testing.T) {
 		t.Fatalf("got %s", v.State)
 	}
 }
+
+func TestProgressAddsUpAcrossRuns(t *testing.T) {
+	snaps := []Snapshot{
+		{Repo: "/r/a", PID: 1, State: Running, Phase: "3", Step: "implement", Done: 2, Total: 5},
+		{Repo: "/r/b", PID: 2, State: Waiting, Done: 1, Total: 7},
+	}
+
+	v := Aggregate(snaps, alive(1, 2))
+
+	if v.Done != 3 || v.Total != 12 || v.Rows[0].Label != "a · 2/5 · phase 3 implement · running" {
+		t.Fatalf("got %+v", v)
+	}
+}

@@ -4532,18 +4532,22 @@ can be seen only by looking at that pane; <code>notify.onAsk</code> fires once p
 <p><span class="f">Decision</span> <em>Every driver keeps a beacon.</em> A display-only face beside
 the TUI or the plain face writes the run's state to
 <code>~/.local/state/r-loop/runs/&lt;sha1(repo root)[:12]&gt;.json</code> — <code>{repo, run, pid,
-state, phase, step, at}</code>, rewritten atomically when it changes and removed when the run releases
+state, phase, step, done, total, at}</code>, rewritten atomically when it changes and removed when the run releases
 its lock. <code>state</code> is <code>running</code> from the run's start; <code>waiting</code> from
 <code>watchdog-waiting</code> to <code>watchdog-resumed</code>; <code>paused</code> from
 <code>paused</code> to <code>continued</code>; <code>halted</code> on <code>halt</code> or
-<code>aborted</code> and <code>finished</code> on <code>finished</code>, both final. A write that fails
+<code>aborted</code> and <code>finished</code> on <code>finished</code>, both final. <code>total</code> counts the phases of
+the latest <code>run-list</code> and <code>done</code> those of them with a <code>landed</code>; a resumed
+run seeds both from its recorded events. A write that fails
 changes nothing. <em>One driver draws the icon.</em> On darwin with cgo, a driver whose
 <code>tray.enabled</code> is true (the default) takes a non-blocking lock on
 <code>~/.local/state/r-loop/tray.lock</code>; the one that holds it runs AppKit on the main thread and
 every 2 s reads all beacons. It ignores a beacon whose pid is not alive or whose run has ended. Of the
-rest it shows the worst, <code>waiting</code> (amber) over <code>paused</code> (dim) over
-<code>running</code> (steel blue), as a dot with a count when more than one run is live, and a menu of
-one row per run, <code>&lt;repo&gt; · phase &lt;n&gt; &lt;step&gt; · &lt;state&gt;</code>, that opens
+rest it draws a ring that fills with <code>done/total</code>, summed over the live runs, beside the
+text <code>&lt;done&gt;/&lt;total&gt;</code>. The ring is a template image in the menu bar's own colour;
+when any run is <code>waiting</code> the arc and the text turn amber, and a <code>paused</code> run
+with none waiting adds a ‖ inside the ring. A menu has one row per run,
+<code>&lt;repo&gt; · &lt;done&gt;/&lt;total&gt; · phase &lt;n&gt; &lt;step&gt; · &lt;state&gt;</code>, and opens
 the repository in Finder. With nothing live the icon is removed: no icon when no r-loop runs, after a
 run finishes or halts, or for a beacon a killed driver left. A driver that does not hold the lock
 retries every 5 s, so another takes over when the owner exits. Elsewhere, and in a build without
