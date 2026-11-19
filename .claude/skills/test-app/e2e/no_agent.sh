@@ -126,6 +126,30 @@ watchdog_keys '  blockerTimeout: 5m\n  remedyWindow: 5m\n'
 watchdog_keys '  blockerTimeout: 0s\n'
 [ "$rc" = 2 ] && ok "blockerTimeout: 0s exits 2: $(head -1 "$T/err")" || fail "blockerTimeout 0s rc=$rc"
 
+run docs/plan/todo-tiny.md --dry-run --plain
+[ "$rc" = 0 ] && [ "$(grep -c '^  review fixes possible and likelier  ← default$' "$T/out")" = 2 ] \
+  && grep -A1 '^  review rounds .*steps.plan.rounds$' "$T/out" | grep -q '^  review fixes possible' \
+  && grep -A1 '^  review rounds .*steps.implement.rounds$' "$T/out" | grep -q '^  review fixes possible' \
+  && ok "banner: review fixes possible and likelier under plan and implement" || fail "review fixes default rc=$rc"
+
+min_likelihood() {
+  perl -0pi -e "s/(  implement:\n)/\${1}    $1\n/" .r-loop/config.yaml
+  git commit -qam likelihood
+  run docs/plan/todo-tiny.md --dry-run --plain
+  git reset -q --hard HEAD~1
+}
+min_likelihood 'minLikelihood: rare'
+[ "$rc" = 0 ] && grep -qx '  review fixes rare and likelier  ← .r-loop/config.yaml:steps.implement.minLikelihood' "$T/out" \
+  && [ "$(grep -c '^  review fixes possible and likelier  ← default$' "$T/out")" = 1 ] \
+  && ok "minLikelihood: rare shown with its provenance" || fail "minLikelihood rare rc=$rc: $(head -1 "$T/err")"
+min_likelihood 'minLikelihood: sometimes'
+[ "$rc" = 2 ] && grep -q '^r-loop: .r-loop/config.yaml:[0-9]*: steps.implement.minLikelihood: "sometimes" is not one of likely, possible, rare$' "$T/err" \
+  && ok "minLikelihood: sometimes exits 2 with file:line" || fail "minLikelihood sometimes rc=$rc: $(head -1 "$T/err")"
+min_likelihood 'minLikelihood: [rare]'
+[ "$rc" = 2 ] && grep -q 'config.yaml:[0-9]*: flow style' "$T/err" && ok "minLikelihood flow style exits 2" || fail "minLikelihood flow rc=$rc: $(head -1 "$T/err")"
+min_likelihood 'minLikelyhood: rare'
+[ "$rc" = 2 ] && grep -q 'unknown key "steps.implement.minLikelyhood"' "$T/err" && ok "misspelt minLikelyhood exits 2" || fail "minLikelyhood rc=$rc: $(head -1 "$T/err")"
+
 claude2() {
   perl -0pi -e 's/(  implement:\n    provider: )claude/${1}claude2/' .r-loop/config.yaml
   printf "providers:\n  claude2:\n    kind: claude\n    doneSignal: sentinel\n    ask: mcp\n$1" >> .r-loop/config.yaml

@@ -23,7 +23,7 @@ sent()  { : > "$D/phase-1/implement-a1.sentinel"; TZ=UTC touch -t "$(printf '202
 verdict() { printf '{"findings":[{"id":"codex-r1-1","reviewer":"codex","title":"Subtract returns b - a instead of a - b","verdict":"not-real","severity":"P4","fixed":false,"files":[],"evidence":"%s"}]}' "$1" > "$D/phase-1/implement-verdict-r1.json"; }
 check() { actual_out=$(python3 "$ROOT/.claude/skills/test-app/e2e/check_$1.py" "$D" 2>&1); actual_rc=$?; }
 expect() { [ "$actual_rc" = "$1" ] && printf '%s\n' "$actual_out" | grep -qF "$2" && ok "$3" || fail "$3: rc=$actual_rc $(printf '%s' "$actual_out" | tail -3 | tr '\n' ' ')"; }
-PLANT='{"reviewer":"codex","findings":[{"id":"codex-r1-1","title":"Subtract returns b - a instead of a - b","detail":"d","files":["subtract.go"]}]}'
+PLANT='{"reviewer":"codex","findings":[{"id":"codex-r1-1","title":"Subtract returns b - a instead of a - b","detail":"d","scenario":"s","files":["subtract.go"]}]}'
 FIXP="# Verify and fix review findings — phase 1"
 
 # given

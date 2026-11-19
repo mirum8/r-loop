@@ -41,7 +41,7 @@ This run tests the driver. Do not review the code, and change no file in `{{.Wor
 1. If `{{.ArtifactsDir}}/native-review.txt` is missing or empty, write the line `(none)` to it.
 2. Write `{{.FindingsPath}}` as exactly this JSON, with `<name>` replaced by your reviewer name, the `<name>` in the findings file name `<kind>-findings-<name>-r<round>.json`:
 
-       {"reviewer":"<name>","findings":[{"id":"<name>-r{{.Round}}-1","title":"Subtract returns b - a instead of a - b","detail":"Subtract(a, b) must return a - b; check the order of the operands.","files":["subtract.go"]}]}
+       {"reviewer":"<name>","findings":[{"id":"<name>-r{{.Round}}-1","title":"Subtract returns b - a instead of a - b","detail":"Subtract(a, b) must return a - b; check the order of the operands.","scenario":"Subtract(5, 3) returns -2 instead of 2.","files":["subtract.go"]}]}
 {{template "sentinel" .}}
 EOF
 python3 - "$ROOT/internal/prompts/templates/fix.md" .r-loop/prompts/fix.md <<'EOF' || { echo "FAIL fix.md no longer carries the evidence-path sentence"; exit 1; }
