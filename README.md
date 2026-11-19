@@ -286,7 +286,7 @@ milestone closes) and `gate` (finds the test suite command for an issues file).
 | `reviewers` | Review agents. See below. |
 | `rounds` | Maximum review rounds. `0` turns review off. |
 | `reviewTimeout` | Time limit for one review round. |
-| `minLikelihood` | The least likely real P1/P2 finding that gets fixed: `likely`, `possible` (default) or `rare` (fix them all). Every finding names how it fails, and the step's session judges how likely that is; a `rare` one cites the code that keeps it off the usual paths. |
+| `minLikelihood` | The least likely real P2 finding that gets fixed: `likely`, `possible` (default) or `rare` (fix them all). A real P1 — data loss, a security hole, a run wrongly landed, halted or hung — is fixed however unlikely. Every finding names how it fails, and the step's session judges how likely that is; a `rare` one cites the code that keeps it off the usual paths. |
 
 A **reviewer** is a block:
 

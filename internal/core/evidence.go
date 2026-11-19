@@ -491,7 +491,7 @@ func (e VerdictEntry) likelihood() string {
 }
 
 func (e VerdictEntry) blocking(min string) bool {
-	return e.Verdict == "real" && (e.Severity == "P1" || e.Severity == "P2") && likelyEnough(e.likelihood(), min)
+	return e.Verdict == "real" && (e.Severity == "P1" || e.Severity == "P2" && likelyEnough(e.likelihood(), min))
 }
 
 func likelyEnough(l, min string) bool {
@@ -622,7 +622,7 @@ func checkEntry(ctx EvidenceContext, e VerdictEntry, changed *[]string) ([]strin
 		return nil, ""
 	}
 	if !blocking {
-		return nil, "fixed finding " + e.ID + " is not real at P1 or P2 and " + minLikelihood(ctx.MinLikelihood) + " or likelier"
+		return nil, "fixed finding " + e.ID + " is not real at P1, or at P2 and " + minLikelihood(ctx.MinLikelihood) + " or likelier"
 	}
 	if len(e.Files) == 0 {
 		return nil, "fixed finding " + e.ID + " names no files"

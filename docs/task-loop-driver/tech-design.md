@@ -616,7 +616,7 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   `TreeDiff(RoundTree, Snapshot(worktree))` must be empty, else `failed(reviewer modified the
   tree: <paths>)`; (4) no findings in any file → the review half ends clean; (5) prompt the author
   with the `fix` template; join on its sentinel; run the `verdict` check against `RoundTree`, then
-  the step's own evidence check again; (6) no blocking verdict (`real` at P1/P2, at least `minLikelihood`) → the review half ends
+  the step's own evidence check again; (6) no blocking verdict (`real` at P1, or at P2 and at least `minLikelihood`) → the review half ends
   clean; otherwise the next round.
 - **Clocks** — while reviewers run, the author's stall clock and backstop are suspended; each
   round's reviewers and the author's fix half share `Row.ReviewTimeout`. An open question
@@ -642,13 +642,13 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   every entry has a verdict and a severity; a `real` entry's likelihood is one of the three, and
   a missing one is read as `likely` with a warning; every `not-real` and every `real` `rare` entry
   carries `evidence` matching `^[^\s:]+:\d+(-\d+)?$` whose path exists in the worktree. An entry
-  *blocks* when it is `real` at P1/P2 and its likelihood is at least the row's `minLikelihood`
+  *blocks* when it is `real` at P1, or `real` at P2 with a likelihood at least the row's `minLikelihood`
   (`likely` > `possible` > `rare`; empty = `possible`); every `fixed: true` entry blocks and each of
   its `files` is in `TreeDiff(RoundTree, Snapshot(worktree))`; every blocking entry is
   `fixed: true`, and a round with none is clean. Every finding is emitted as
   `Event{Kind: "finding", Fields{step, round, reviewer, id, title, verdict, severity, likelihood,
   blocking, fixed, evidence}}`; the report lists dismissals with their evidence, and the real
-  P1/P2 left below the threshold.
+  P2 left below the threshold.
 
 ## Milestone 5 — The ask channel
 

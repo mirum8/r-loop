@@ -863,7 +863,7 @@ func TestFixAsksForVerdicts(t *testing.T) {
 		"- claude: `/runs/r1/phase-7/implement-findings-claude-r1.json`",
 		"- codex: `/runs/r1/phase-7/implement-findings-codex-r1.json`",
 		`{"findings":[{"id":"<id>","reviewer":"<name>","title":"…","verdict":"real|not-real|out-of-scope","severity":"P1|P2|P3|P4","likelihood":"likely|possible|rare","fixed":true|false,"files":["…"],"evidence":"<path:line>"}]}`,
-		"Only a finding that is `real` at `P1` or `P2` and `possible` or likelier, in the order `likely`, `possible`, `rare`, may be fixed",
+		"Only a finding that is `real` at `P1`, whatever its likelihood, or `real` at `P2` and `possible` or likelier, in the order `likely`, `possible`, `rare`, may be fixed",
 		"Excess that adds a type, interface, config key, dependency or layer no obligation needs is `P2`",
 		"An excess finding is `real` only when its replacement still meets every obligation",
 		"a `path:line` or `path:line-line` you have read",

@@ -109,7 +109,7 @@ func TestVerdictCheckFails(t *testing.T) {
 		},
 		"fixed entry that is not real P1 or P2": {
 			`"severity":"P1"`, `"severity":"P3"`,
-			"fixed finding codex-r2-1 is not real at P1 or P2 and possible or likelier",
+			"fixed finding codex-r2-1 is not real at P1, or at P2 and possible or likelier",
 		},
 		"real P1 left unfixed": {
 			`"fixed":true,"files":["a.go"]`, `"fixed":false,"files":[]`,
@@ -581,15 +581,22 @@ func TestVerdictCheckLikelihoodThreshold(t *testing.T) {
 		entry, min, missing string
 		repairs             []string
 	}{
-		"rare P1 below possible left unfixed": {
-			`"verdict":"real","severity":"P1","likelihood":"rare","fixed":false,"files":[],"evidence":"b.go:3"`, "", "", nil,
+		"rare P1 must be fixed whatever the threshold": {
+			`"verdict":"real","severity":"P1","likelihood":"rare","fixed":false,"files":[],"evidence":"b.go:3"`, "likely",
+			"real P1 finding codex-r2-1 is not fixed", nil,
 		},
-		"rare P1 below possible fixed anyway": {
-			`"verdict":"real","severity":"P1","likelihood":"rare","fixed":true,"files":["a.go"],"evidence":"b.go:3"`, "",
-			"fixed finding codex-r2-1 is not real at P1 or P2 and possible or likelier", nil,
+		"rare P1 fixed": {
+			`"verdict":"real","severity":"P1","likelihood":"rare","fixed":true,"files":["a.go"],"evidence":"b.go:3"`, "", "", nil,
+		},
+		"rare P2 below possible left unfixed": {
+			`"verdict":"real","severity":"P2","likelihood":"rare","fixed":false,"files":[],"evidence":"b.go:3"`, "", "", nil,
+		},
+		"rare P2 below possible fixed anyway": {
+			`"verdict":"real","severity":"P2","likelihood":"rare","fixed":true,"files":["a.go"],"evidence":"b.go:3"`, "",
+			"fixed finding codex-r2-1 is not real at P1, or at P2 and possible or likelier", nil,
 		},
 		"rare without evidence": {
-			`"verdict":"real","severity":"P1","likelihood":"rare","fixed":false,"files":[],"evidence":""`, "",
+			`"verdict":"real","severity":"P2","likelihood":"rare","fixed":false,"files":[],"evidence":""`, "",
 			"rare finding codex-r2-1 has no path:line evidence", nil,
 		},
 		"possible P2 at possible left unfixed": {
@@ -599,13 +606,13 @@ func TestVerdictCheckLikelihoodThreshold(t *testing.T) {
 		"possible P2 below likely left unfixed": {
 			`"verdict":"real","severity":"P2","likelihood":"possible","fixed":false,"files":[],"evidence":""`, "likely", "", nil,
 		},
-		"rare P1 at rare left unfixed": {
-			`"verdict":"real","severity":"P1","likelihood":"rare","fixed":false,"files":[],"evidence":"b.go:3"`, "rare",
-			"real P1 finding codex-r2-1 is not fixed", nil,
+		"rare P2 at rare left unfixed": {
+			`"verdict":"real","severity":"P2","likelihood":"rare","fixed":false,"files":[],"evidence":"b.go:3"`, "rare",
+			"real P2 finding codex-r2-1 is not fixed", nil,
 		},
 		"missing likelihood read as likely": {
-			`"verdict":"real","severity":"P1","fixed":false,"files":[],"evidence":""`, "likely",
-			"real P1 finding codex-r2-1 is not fixed", nil,
+			`"verdict":"real","severity":"P2","fixed":false,"files":[],"evidence":""`, "likely",
+			"real P2 finding codex-r2-1 is not fixed", nil,
 		},
 		"missing likelihood on a fixed entry is a repair": {
 			`"verdict":"real","severity":"P1","fixed":true,"files":["a.go"],"evidence":""`, "",
@@ -626,7 +633,7 @@ func TestVerdictCheckLikelihoodThreshold(t *testing.T) {
 	}
 }
 
-func TestARoundWhoseOnlyRealP1IsRareIsCleanAndRecordedAsNotBlocking(t *testing.T) {
+func TestARoundWhoseOnlyRealP2IsRareIsCleanAndRecordedAsNotBlocking(t *testing.T) {
 	r := newReviewRig(t, Reviewer{Provider: "codex"})
 	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 1) }
 	r.repo.TreeChanges = nil
@@ -634,7 +641,7 @@ func TestARoundWhoseOnlyRealP1IsRareIsCleanAndRecordedAsNotBlocking(t *testing.T
 	os.WriteFile(filepath.Join(r.worker.Dir, "guard.go"), []byte("package x\n"), 0o644)
 	r.onFix = func(vars map[string]any) {
 		r.repo.TreeChanges = []string{"a.go"}
-		writeVerdict(t, vars, `{"id":"codex-r1-1","reviewer":"codex","title":"t","verdict":"real","severity":"P1","likelihood":"rare","fixed":false,"files":[],"evidence":"guard.go:1"}`)
+		writeVerdict(t, vars, `{"id":"codex-r1-1","reviewer":"codex","title":"t","verdict":"real","severity":"P2","likelihood":"rare","fixed":false,"files":[],"evidence":"guard.go:1"}`)
 	}
 
 	out := r.run()

@@ -253,8 +253,8 @@ noticing needs the whole run in view and every context in the design is delibera
   <tr><td>Every phase is read by every reviewer you configure</td>
       <td>1 pane per entry in a step's <code>reviewers</code>, beside the step's own session, in
           every round up to the step's limit; every finding gets a verdict from the agent that did
-          the work, a dismissal cites the code, and only those judged real at P1 or P2, and at least as likely
-          as the row's <code>minLikelihood</code>, are fixed</td></tr>
+          the work, a dismissal cites the code, and only those judged real at P1, or real at P2 and at least as
+          likely as the row's <code>minLikelihood</code>, are fixed</td></tr>
   <tr><td>A phase whose own fields are wrong is flagged before it runs</td>
       <td>the watchdog compares each phase's <code>Files:</code> and <code>Risk:</code> with what it
           derives from the tree, and a disagreement is a warning in the TUI and the report before the
@@ -1063,8 +1063,8 @@ on codex's code, and for a <code>codex</code> reviewer of code the driver runs <
 writing the findings file the driver named. While they work, the step's session waits and its
 clocks stand still. The driver then checks that no reviewer changed the tree and prompts the step's
 own session, which still holds everything it did: check each finding against the code, give it a
-verdict, a severity and a likelihood, dismiss one only with a <code>path:line</code>, fix only those real at P1 or
-P2 and likely enough for the row, write the verdict record. A fresh reviewer then looks again, handed the earlier findings and
+verdict, a severity and a likelihood, dismiss one only with a <code>path:line</code>, fix those real at P1 and
+those real at P2 likely enough for the row, write the verdict record. A fresh reviewer then looks again, handed the earlier findings and
 verdicts, until a round finds nothing real or the step's round limit is reached — the limit is a
 warning, never a halt. Only then does the driver commit the step, once
 (<a href="#adr-56">ADR-56</a>, <a href="#adr-57">ADR-57</a>, <a href="#adr-58">ADR-58</a>).</p>
@@ -2778,7 +2778,7 @@ findings across three runs, or a dismissed finding is later confirmed real.</p>
 
 <div class="adr">
 <h3 id="adr-57">ADR-57 — Review runs in rounds up to a configurable limit, with a fresh reviewer each round</h3>
-<p><span class="f">Status</span> accepted · amended by <a href="#adr-102">ADR-102</a> (2026-11-18) — a round is clean when its verdicts hold no real P1 or P2 at least as likely as the row's <code>minLikelihood</code></p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-102">ADR-102</a> (2026-11-18) — a round is clean when its verdicts hold no real P1, and no real P2 at least as likely as the row's <code>minLikelihood</code></p>
 <p><span class="f">Context</span> The maintainer asked for rounds with configurable limits. A fix can
 introduce what a second look would catch, and a reviewer that has read its own findings tends to
 confirm they were fixed rather than look again.</p>
@@ -4573,7 +4573,7 @@ answers nothing, and is not a notification.</p>
 
 <div class="adr">
 <h3 id="adr-102">ADR-102 — A finding names how it fails and how likely that is, and only a likely enough one is fixed</h3>
-<p><span class="f">Status</span> accepted 2026-11-18 · amends <a href="#adr-56">ADR-56</a> and <a href="#adr-57">ADR-57</a></p>
+<p><span class="f">Status</span> accepted 2026-11-18 · amends <a href="#adr-56">ADR-56</a> and <a href="#adr-57">ADR-57</a> · amended 2026-11-19 — a real P1 blocks at any likelihood, and P1 is defined by impact: the threshold applies to P2 alone, after the maintainer asked that rare but dangerous bugs still be fixed</p>
 <p><span class="f">Context</span> The maintainer found that review rounds spend most of their fixes
 on failures that will not happen: the fix rubric made every reachable edge case or error path
 P1 or P2, so a case that needs a combination no caller makes was fixed like one every run meets.
@@ -4586,7 +4586,9 @@ missing obligation, the obligation. A reviewer reports nothing it cannot write a
 driver refuses a findings file with an entry that has none, as it does one without a title. The
 <code>static</code> reviewer's entries carry the analyzer's message as their scenario.
 <em>The verifier judges likelihood apart from severity.</em> Severity, <code>P1</code> to
-<code>P4</code>, is how bad the failure is when it happens; every verdict entry judged
+<code>P4</code>, is how bad the failure is when it happens: <code>P1</code> loses or corrupts data
+or state, opens a security hole, or wrongly lands, halts or hangs a run; <code>P2</code> is wrong
+behaviour a user meets; <code>P3</code> and <code>P4</code> are minor. Every verdict entry judged
 <code>real</code> also carries <code>likelihood</code>: <code>likely</code> — it happens in normal
 use, on an input or a path a usual run takes; <code>possible</code> — it needs a less common input or
 state the system does meet, such as an empty list, a retry, a resume or a network error;
@@ -4598,16 +4600,17 @@ guard that keeps the case off the paths callers take, checked like a dismissal's
 likelihood is read as <code>likely</code> with a driver warning. <em>A threshold per row.</em>
 A step row with reviewers takes <code>minLikelihood</code>: <code>likely</code>,
 <code>possible</code> (the default) or <code>rare</code>, which keeps today's behaviour. A finding
-blocks — must be fixed, and only it may be — when it is real at P1 or P2 and at least as likely as
-the row's <code>minLikelihood</code>; a round with no blocking finding is clean. Every finding is
-still recorded with its likelihood, and the run report lists the real P1 and P2 findings left
-below the threshold.</p>
+blocks — must be fixed, and only it may be — when it is real at P1, whatever its likelihood, or real
+at P2 and at least as likely as the row's <code>minLikelihood</code>; a round with no blocking
+finding is clean. Every finding is still recorded with its likelihood, and the run report lists the
+real P2 findings left below the threshold.</p>
 <p><span class="f">Alternatives</span> The reviewer scores likelihood and the driver drops the
 unlikely ones before the fix — rejected: the reviewer is the worst-calibrated judge of its own
 finding, and a finding dropped before its verdict leaves no record. A numeric probability — rejected:
-a model's numbers are not calibrated, while it sorts three named buckets consistently. A matrix of
-severity by likelihood, so a rare P1 still blocks — not taken now: one threshold is the simpler
-rule, and the record shows whether rare P1s are being left. The rubric change alone — rejected:
+a model's numbers are not calibrated, while it sorts three named buckets consistently. One threshold
+over P1 and P2 alike — rejected by the maintainer: a rare failure that loses data or opens a
+security hole still has to be fixed. A full matrix of severity by likelihood — rejected: P1 at any
+likelihood and P2 above the threshold is the only cut that matters. The rubric change alone — rejected:
 nothing the driver checks, and no knob.</p>
 <p><span class="f">Consequences</span> The findings and verdict files each gain a field, and the
 driver's judgement of a blocking finding takes the row's threshold. The agent judging the findings
@@ -4615,8 +4618,7 @@ did the work, so it has a stake in calling them <code>rare</code>: a <code>rare<
 evidence that exists, and every one is in the run report. Fewer fixes per round end more reviews in
 their first clean round.</p>
 <p><span class="f">Revisit when</span> a finding left as <code>rare</code> is later confirmed as a
-defect in landed work, or the left findings include data loss or a security hole — then the
-severity-by-likelihood matrix.</p>
+defect in landed work, or a P2 left below the threshold should have been a P1.</p>
 </div>
 
 
@@ -4755,7 +4757,7 @@ steps:
     reviewers:                # one pane per entry beside the step's session (ADR-56)
       - codex
     rounds: 2                 # a fresh reviewer each round; 0 turns review off (ADR-57)
-    minLikelihood: possible   # likely | possible | rare: the least likely real P1/P2 that is fixed (ADR-102)
+    minLikelihood: possible   # likely | possible | rare: the least likely real P2 that is fixed; a real P1 always is (ADR-102)
     reviewTimeout: 20m        # per round: the reviewers and the fix pass
   implement:
     prompt: implement
