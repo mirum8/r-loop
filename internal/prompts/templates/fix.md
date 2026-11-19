@@ -12,18 +12,21 @@ Reviewers reported findings on your work in `{{.Worktree}}`. The findings files,
 Check every finding against the code and give it:
 
 - a verdict: `real`, `not-real` or `out-of-scope`;
-- a severity: `P1`, `P2`, `P3` or `P4`.
+- a severity: `P1`, `P2`, `P3` or `P4`;
+- for a `real` finding, a likelihood: `likely`, `possible` or `rare`.
 
-A finding that an obligation — an open item, a spec invariant, a reachable edge case or error path — is missing or untested is `P1` or `P2`. Excess that adds a type, interface, config key, dependency or layer no obligation needs is `P2`; excess inside one function is `P3`. A test that breaks a rule under `## Writing tests` is `P2` when it would still pass with the behaviour it names broken, and `P3` otherwise. An excess finding is `real` only when its replacement still meets every obligation; otherwise it is `not-real`, with the `path:line` of the obligation it would break as evidence.
+Severity is how bad the failure is when it happens; likelihood is how often it happens. `likely`: it happens in normal use, on an input or a path a usual run takes. `possible`: it needs a less common input or state the system does meet, such as an empty list, a retry, a resume or a network error. `rare`: it needs misuse, a combination no caller makes, or a caller that does not exist yet. Judge the finding's `scenario` against the code: whether that input or state reaches it on the paths its callers take. A finding that is not about a failure — a missing or untested obligation, an open criterion, a watchdog warning, excess, a test that breaks a rule under `## Writing tests` — is `likely`. A `rare` verdict carries `evidence` like a dismissal: the `path:line` that keeps the case off the paths callers take.
+
+A finding that an obligation — an open item, a spec invariant, an edge case or error path — is missing or untested is `P1` or `P2`. Excess that adds a type, interface, config key, dependency or layer no obligation needs is `P2`; excess inside one function is `P3`. A test that breaks a rule under `## Writing tests` is `P2` when it would still pass with the behaviour it names broken, and `P3` otherwise. An excess finding is `real` only when its replacement still meets every obligation; otherwise it is `not-real`, with the `path:line` of the obligation it would break as evidence.
 
 A `not-real` verdict is a dismissal and carries `evidence`: a `path:line` or `path:line-line` you have read in the worktree that shows the finding is wrong. Your current directory is the worktree root: write the path relative to it, such as `calc_test.go:75`, never with the worktree's own path in front.
 
-Only a finding that is `real` at `P1` or `P2` may be fixed, and every such finding must be fixed: mark it `"fixed": true` and list in `files` every file you changed for it in this round. Every other finding stays `"fixed": false` and you leave its code as it is. A fix that adds or changes a test follows the rules under `## Writing tests` below.
+Only a finding that is `real` at `P1` or `P2` and `{{.MinLikelihood}}` or likelier, in the order `likely`, `possible`, `rare`, may be fixed, and every such finding must be fixed: mark it `"fixed": true` and list in `files` every file you changed for it in this round. Every other finding stays `"fixed": false` and you leave its code as it is. A fix that adds or changes a test follows the rules under `## Writing tests` below.
 
 Write `{{.VerdictPath}}` as:
 
 ```
-{"findings":[{"id":"<id>","reviewer":"<name>","title":"…","verdict":"real|not-real|out-of-scope","severity":"P1|P2|P3|P4","fixed":true|false,"files":["…"],"evidence":"<path:line>"}]}
+{"findings":[{"id":"<id>","reviewer":"<name>","title":"…","verdict":"real|not-real|out-of-scope","severity":"P1|P2|P3|P4","likelihood":"likely|possible|rare","fixed":true|false,"files":["…"],"evidence":"<path:line>"}]}
 ```
 
 with one entry per finding, answering every finding id across every findings file exactly once, the `id`, `reviewer` and `title` copied from the findings file. The driver checks this file against the findings and the worktree before it accepts the round.

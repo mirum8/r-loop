@@ -2213,6 +2213,7 @@ func StepVars(ref StepRef, plan Plan, todoPath, runDir string) map[string]any {
 		"PriorVerdicts":    "",
 		"RoundTree":        "",
 		"VerdictPath":      "",
+		"MinLikelihood":    "possible",
 		"ReportPath":       "",
 		"MilestoneName":    msName,
 		"MilestonePhases":  msPhases,

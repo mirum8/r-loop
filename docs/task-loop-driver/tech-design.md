@@ -616,7 +616,7 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   `TreeDiff(RoundTree, Snapshot(worktree))` must be empty, else `failed(reviewer modified the
   tree: <paths>)`; (4) no findings in any file → the review half ends clean; (5) prompt the author
   with the `fix` template; join on its sentinel; run the `verdict` check against `RoundTree`, then
-  the step's own evidence check again; (6) no verdict `real` at P1 or P2 → the review half ends
+  the step's own evidence check again; (6) no blocking verdict (`real` at P1/P2, at least `minLikelihood`) → the review half ends
   clean; otherwise the next round.
 - **Clocks** — while reviewers run, the author's stall clock and backstop are suspended; each
   round's reviewers and the author's fix half share `Row.ReviewTimeout`. An open question
@@ -632,17 +632,23 @@ Milestone 21 holds the contract; Milestone 17's tables already carry its actions
   and receive every earlier round's findings and verdicts — a finding dismissed with evidence is
   not raised again without new evidence.
 - **Findings file** — fixed JSON, written by the reviewer from its native output:
-  `{"reviewer":"<provider>","findings":[{"id":"<provider>-r<round>-<n>","title":"…","detail":"…","files":["…"]}]}`.
+  `{"reviewer":"<provider>","findings":[{"id":"<provider>-r<round>-<n>","title":"…","detail":"…","scenario":"…","files":["…"]}]}`;
+  `scenario` (the input or state and the wrong result, or the unmet obligation) is required
+  (ADR-102), and the `static` reviewer's is the analyzer's message.
 - **Verdict file** — written by the author: `{"findings":[{"id":"<provider>-r<round>-<n>",
   "reviewer":"<provider>","title":"…","verdict":"real"|"not-real"|"out-of-scope",
-  "severity":"P1"|"P2"|"P3"|"P4","fixed":true|false,"files":["…"],"evidence":"<path:line>"}]}`.
+  "severity":"P1"|"P2"|"P3"|"P4","likelihood":"likely"|"possible"|"rare","fixed":true|false,"files":["…"],"evidence":"<path:line>"}]}`.
 - **`verdict` check** — verdict ids equal the round's finding ids across every findings file;
-  every entry has a verdict and a severity; every `not-real` entry carries `evidence` matching
-  `^[^\s:]+:\d+$` whose path exists in the worktree; every `fixed: true` entry is `real` at P1/P2
-  and each of its `files` is in `TreeDiff(RoundTree, Snapshot(worktree))`; every `real` P1/P2 is
-  `fixed: true`. Every finding is emitted as `Event{Kind: "finding", Fields{step, round,
-  reviewer, id, title, verdict, severity, fixed, evidence}}`; the report lists dismissals with
-  their evidence.
+  every entry has a verdict and a severity; a `real` entry's likelihood is one of the three, and
+  a missing one is read as `likely` with a warning; every `not-real` and every `real` `rare` entry
+  carries `evidence` matching `^[^\s:]+:\d+(-\d+)?$` whose path exists in the worktree. An entry
+  *blocks* when it is `real` at P1/P2 and its likelihood is at least the row's `minLikelihood`
+  (`likely` > `possible` > `rare`; empty = `possible`); every `fixed: true` entry blocks and each of
+  its `files` is in `TreeDiff(RoundTree, Snapshot(worktree))`; every blocking entry is
+  `fixed: true`, and a round with none is clean. Every finding is emitted as
+  `Event{Kind: "finding", Fields{step, round, reviewer, id, title, verdict, severity, likelihood,
+  blocking, fixed, evidence}}`; the report lists dismissals with their evidence, and the real
+  P1/P2 left below the threshold.
 
 ## Milestone 5 — The ask channel
 
@@ -855,7 +861,7 @@ reviewer.
   `reviewer <name> requires <path>: found | missing, reviewer skipped`, resolved against the
   primary tree.
 - **Rounds** — unchanged: the `ui` reviewer runs every round beside the code reviewer, both
-  findings files go to the one fix half, a real P1/P2 from either opens the next round, and real
+  findings files go to the one fix half, a blocking P1/P2 from either opens the next round, and real
   P3/P4 UI findings are reported only (`finding` events). `gatefix` inherits the implement row's
   reviewers, the `ui` reviewer with them.
 - **Security reviewer (ADR-85, amended)**:

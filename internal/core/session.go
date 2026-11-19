@@ -895,18 +895,19 @@ func (m *SessionManager) evidence(s *Session) EvidenceContext {
 		return v
 	}
 	ctx := EvidenceContext{
-		Repo:        m.Repo,
-		Worktree:    s.Dir,
-		StartSHA:    s.StartSHA,
-		StartTree:   s.StartTree,
-		PlanPath:    str("PlanPath"),
-		DesignPath:  str("DesignPath"),
-		TodoPath:    repoRel(m.Repo.Root(), str("TodoPath")),
-		VerdictPath: str("VerdictPath"),
-		RoundTree:   str("RoundTree"),
-		ReportPath:  str("ReportPath"),
-		NeedGate:    m.ItemGates && s.Ref.Phase.DoneWhen == "",
-		FS:          os.DirFS(s.Dir),
+		Repo:          m.Repo,
+		Worktree:      s.Dir,
+		StartSHA:      s.StartSHA,
+		StartTree:     s.StartTree,
+		PlanPath:      str("PlanPath"),
+		DesignPath:    str("DesignPath"),
+		TodoPath:      repoRel(m.Repo.Root(), str("TodoPath")),
+		VerdictPath:   str("VerdictPath"),
+		RoundTree:     str("RoundTree"),
+		ReportPath:    str("ReportPath"),
+		NeedGate:      m.ItemGates && s.Ref.Phase.DoneWhen == "",
+		MinLikelihood: s.Ref.Kind.Row.MinLikelihood,
+		FS:            os.DirFS(s.Dir),
 	}
 	if s.Reviewer != "" {
 		p := str("FindingsPath")

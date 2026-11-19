@@ -224,7 +224,7 @@ func writeFindings(t *testing.T, vars map[string]any, outcome string, findings i
 	provider := findingsName.FindStringSubmatch(filepath.Base(vars["FindingsPath"].(string)))[1]
 	var items []string
 	for i := 1; i <= findings; i++ {
-		items = append(items, fmt.Sprintf(`{"id":"%s-r%d-%d","title":"t","detail":"d","files":["a.go"]}`, provider, vars["Round"], i))
+		items = append(items, fmt.Sprintf(`{"id":"%s-r%d-%d","title":"t","detail":"d","scenario":"s","files":["a.go"]}`, provider, vars["Round"], i))
 	}
 	body := fmt.Sprintf(`{"reviewer":%q,"findings":[%s]}`, provider, strings.Join(items, ","))
 	if err := os.WriteFile(vars["FindingsPath"].(string), []byte(body), 0o644); err != nil {
@@ -882,7 +882,7 @@ func TestAResumedReviewRoundDoesNotUseFindingsLeftByTheAbortedAttempt(t *testing
 	r.worker.Ref.Key.Attempt = 2
 	r.worker.Ref.ReviewFrom = 1
 	stale := filepath.Join(r.runDir, "phase-3", "implement-findings-codex-r1.json")
-	os.WriteFile(stale, []byte(`{"reviewer":"codex","findings":[{"id":"codex-r1-1","title":"stale","detail":"d","files":["a.go"]}]}`), 0o644)
+	os.WriteFile(stale, []byte(`{"reviewer":"codex","findings":[{"id":"codex-r1-1","title":"stale","detail":"d","scenario":"s","files":["a.go"]}]}`), 0o644)
 	r.behave = func(vars map[string]any) {
 		os.WriteFile(vars["Sentinel"].(string), []byte(`{"outcome":"ok","reason":""}`), 0o644)
 	}
@@ -1995,7 +1995,7 @@ func (r *reviewRig) phaseFile(name string) string {
 }
 
 func uncheckedError() Analysis {
-	return Analysis{Command: "golangci-lint", Findings: []Finding{{ID: "s1", Title: "golangci-lint/errcheck: unchecked error", Detail: "error\nunchecked error\na.go:3", Files: []string{"a.go"}}}}
+	return Analysis{Command: "golangci-lint", Findings: []Finding{{ID: "s1", Title: "golangci-lint/errcheck: unchecked error", Detail: "error\nunchecked error\na.go:3", Scenario: "s", Files: []string{"a.go"}}}}
 }
 
 func errAnalyze() error { return errors.New("golangci-lint: exit status 3") }
@@ -2023,7 +2023,7 @@ func TestTheAnalysisIsWrittenAsStaticsFindingsFileWithRoundPrefixedIDs(t *testin
 
 	// then
 	actual := readFile(t, r.phaseFile("implement-findings-static-r1.json"))
-	expected := `{"reviewer":"static","findings":[{"id":"static-r1-s1","title":"golangci-lint/errcheck: unchecked error","detail":"error\nunchecked error\na.go:3","files":["a.go"]}]}`
+	expected := `{"reviewer":"static","findings":[{"id":"static-r1-s1","title":"golangci-lint/errcheck: unchecked error","detail":"error\nunchecked error\na.go:3","scenario":"s","files":["a.go"]}]}`
 	if actual != expected {
 		t.Fatalf("static findings = %s", actual)
 	}

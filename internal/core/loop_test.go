@@ -1596,7 +1596,7 @@ func TestStepVarsFillsEveryTemplateVariable(t *testing.T) {
 		"Branch":   "r-loop/phase-3", "Base": "main", "Worktree": ".r-loop/wt/phase-3", "Sentinel": "",
 		"RunDir": "/runs/run-1", "AskURL": "", "PhaseWarnings": "", "ItemGate": false, "ReviewedKind": "", "Round": 0, "Rounds": 0,
 		"ReviewCommand": "", "ReviewRan": false, "FindingsPath": "", "ArtifactsDir": "", "RequiredPath": "", "FindingsFiles": []FindingsFile(nil), "PriorFindings": "", "PriorVerdicts": "", "WatchdogWarnings": "",
-		"RoundTree": "", "VerdictPath": "", "ReportPath": "", "MilestoneName": "Core", "MilestonePhases": "1, 2, 3, 4",
+		"RoundTree": "", "VerdictPath": "", "MinLikelihood": "possible", "ReportPath": "", "MilestoneName": "Core", "MilestonePhases": "1, 2, 3, 4",
 		"Addendum": "", "GroupItems": "", "Reworks": "1, 2", "TriageNotes": "",
 		"DesignPath": ".task-plans/phase-3-runloop-phases-steps-halts-and-the-re.design.md", "DesignNote": "", "Design": "", "DesignIntent": "", "Memory": "",
 	}

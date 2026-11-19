@@ -259,10 +259,11 @@ func finding(n int, k kept) core.Finding {
 		}
 	}
 	return core.Finding{
-		ID:     "s" + strconv.Itoa(n),
-		Title:  k.Tool + "/" + k.Rule + ": " + strings.TrimSpace(strings.TrimRight(first, "\r")),
-		Detail: detail,
-		Files:  files,
+		ID:       "s" + strconv.Itoa(n),
+		Title:    k.Tool + "/" + k.Rule + ": " + strings.TrimSpace(strings.TrimRight(first, "\r")),
+		Detail:   detail,
+		Scenario: k.Tool + "/" + k.Rule + " reports: " + strings.TrimSpace(strings.TrimRight(first, "\r")),
+		Files:    files,
 	}
 }
 
@@ -295,9 +296,10 @@ func overflow(rest []kept) core.Finding {
 	}
 	sort.Strings(files)
 	return core.Finding{
-		ID:     "s" + strconv.Itoa(maxFindings+1),
-		Title:  "static: " + strconv.Itoa(len(rest)) + " more findings",
-		Detail: strings.Join(lines, "\n"),
-		Files:  files,
+		ID:       "s" + strconv.Itoa(maxFindings+1),
+		Title:    "static: " + strconv.Itoa(len(rest)) + " more findings",
+		Detail:   strings.Join(lines, "\n"),
+		Scenario: strconv.Itoa(len(rest)) + " more analyzer hits, counted by rule in detail",
+		Files:    files,
 	}
 }

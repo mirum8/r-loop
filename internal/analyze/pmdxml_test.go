@@ -113,10 +113,11 @@ func TestPMDViolationsPassTheChangedLineFilter(t *testing.T) {
 
 	// then
 	expected := []core.Finding{{
-		ID:     "s1",
-		Title:  "pmd/UnusedLocalVariable: Avoid unused local variables such as 'x'.",
-		Detail: "warning\nAvoid unused local variables such as 'x'.\nA.java:7",
-		Files:  []string{"A.java"},
+		ID:       "s1",
+		Title:    "pmd/UnusedLocalVariable: Avoid unused local variables such as 'x'.",
+		Detail:   "warning\nAvoid unused local variables such as 'x'.\nA.java:7",
+		Scenario: "pmd/UnusedLocalVariable reports: Avoid unused local variables such as 'x'.",
+		Files:    []string{"A.java"},
 	}}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("actual %+v, expected %+v", actual, expected)

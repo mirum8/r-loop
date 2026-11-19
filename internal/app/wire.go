@@ -823,7 +823,7 @@ func kindsOf(cfg config.LoopConfig) (stepKinds, error) {
 		pipeline: pipeline,
 		fix: core.StepKind{Name: "gatefix", Prompt: "gatefix", Check: "diff", Row: core.StepRow{
 			Provider: fix.Provider, Model: fix.Model, Effort: fix.Effort,
-			Timeout: impl.Timeout, Reviewers: impl.Reviewers, Rounds: 1, ReviewTimeout: impl.ReviewTimeout,
+			Timeout: impl.Timeout, Reviewers: impl.Reviewers, Rounds: 1, ReviewTimeout: impl.ReviewTimeout, MinLikelihood: impl.MinLikelihood,
 		}},
 		gate:      core.StepKind{Name: "gate", Prompt: gs.Prompt, Check: gs.Check, Row: rows["gate"]},
 		milestone: core.StepKind{Name: "milestone", Prompt: ms.Prompt, Check: ms.Check, Row: rows["milestone"]},
@@ -1296,7 +1296,7 @@ func coreRow(r config.StepRow) core.StepRow {
 	row := core.StepRow{
 		Provider: r.Provider, Model: r.Model, Effort: r.Effort,
 		Fallback: core.Fallback(r.Fallback),
-		Timeout:  r.Timeout, Rounds: r.Rounds, ReviewTimeout: r.ReviewTimeout,
+		Timeout:  r.Timeout, Rounds: r.Rounds, ReviewTimeout: r.ReviewTimeout, MinLikelihood: r.MinLikelihood,
 	}
 	for _, rv := range r.Reviewers {
 		row.Reviewers = append(row.Reviewers, core.Reviewer(rv))

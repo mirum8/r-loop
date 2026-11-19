@@ -21,6 +21,7 @@ type EvidenceContext struct {
 	FindingsFiles                      []string
 	NativeOutput, ReviewCommand        string
 	VerdictPath, RoundTree, ReportPath string
+	MinLikelihood                      string
 	NeedGate                           bool
 	FS                                 fs.FS
 }
@@ -360,10 +361,11 @@ type Findings struct {
 }
 
 type Finding struct {
-	ID     string   `json:"id"`
-	Title  string   `json:"title"`
-	Detail string   `json:"detail"`
-	Files  []string `json:"files"`
+	ID       string   `json:"id"`
+	Title    string   `json:"title"`
+	Detail   string   `json:"detail"`
+	Scenario string   `json:"scenario"`
+	Files    []string `json:"files"`
 }
 
 func ReadFindings(path string) (Findings, error) {
@@ -378,10 +380,11 @@ func parseFindings(data []byte) (Findings, error) {
 	var raw struct {
 		Reviewer string `json:"reviewer"`
 		Findings []struct {
-			ID     string   `json:"id"`
-			Title  string   `json:"title"`
-			Detail *string  `json:"detail"`
-			Files  []string `json:"files"`
+			ID       string   `json:"id"`
+			Title    string   `json:"title"`
+			Detail   *string  `json:"detail"`
+			Scenario string   `json:"scenario"`
+			Files    []string `json:"files"`
 		} `json:"findings"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -401,8 +404,10 @@ func parseFindings(data []byte) (Findings, error) {
 			return Findings{}, fmt.Errorf("finding %s has no detail", r.ID)
 		case r.Files == nil:
 			return Findings{}, fmt.Errorf("finding %s has no files list", r.ID)
+		case strings.TrimSpace(r.Scenario) == "":
+			return Findings{}, fmt.Errorf("finding %s has no scenario", r.ID)
 		}
-		f.Findings = append(f.Findings, Finding{ID: r.ID, Title: r.Title, Detail: *r.Detail, Files: r.Files})
+		f.Findings = append(f.Findings, Finding{ID: r.ID, Title: r.Title, Detail: *r.Detail, Scenario: r.Scenario, Files: r.Files})
 	}
 	return f, nil
 }
@@ -467,24 +472,37 @@ type Verdict struct {
 }
 
 type VerdictEntry struct {
-	ID       string   `json:"id"`
-	Reviewer string   `json:"reviewer"`
-	Title    string   `json:"title"`
-	Verdict  string   `json:"verdict"`
-	Severity string   `json:"severity"`
-	Fixed    bool     `json:"fixed"`
-	Files    []string `json:"files"`
-	Evidence string   `json:"evidence"`
+	ID         string   `json:"id"`
+	Reviewer   string   `json:"reviewer"`
+	Title      string   `json:"title"`
+	Verdict    string   `json:"verdict"`
+	Severity   string   `json:"severity"`
+	Likelihood string   `json:"likelihood"`
+	Fixed      bool     `json:"fixed"`
+	Files      []string `json:"files"`
+	Evidence   string   `json:"evidence"`
 }
 
-func (e VerdictEntry) blocking() bool {
-	return e.Verdict == "real" && (e.Severity == "P1" || e.Severity == "P2")
+func (e VerdictEntry) likelihood() string {
+	if e.Likelihood == "" {
+		return "likely"
+	}
+	return e.Likelihood
+}
+
+func (e VerdictEntry) blocking(min string) bool {
+	return e.Verdict == "real" && (e.Severity == "P1" || e.Severity == "P2") && likelyEnough(e.likelihood(), min)
+}
+
+func likelyEnough(l, min string) bool {
+	return slices.Index(likelihoods, l) <= slices.Index(likelihoods, minLikelihood(min))
 }
 
 var (
-	verdicts   = []string{"real", "not-real", "out-of-scope"}
-	severities = []string{"P1", "P2", "P3", "P4"}
-	pathLine   = regexp.MustCompile(`^[^\s:]+:\d+(-\d+)?$`)
+	verdicts    = []string{"real", "not-real", "out-of-scope"}
+	severities  = []string{"P1", "P2", "P3", "P4"}
+	likelihoods = []string{"likely", "possible", "rare"}
+	pathLine    = regexp.MustCompile(`^[^\s:]+:\d+(-\d+)?$`)
 )
 
 func ReadVerdict(path string) (Verdict, error) {
@@ -508,6 +526,8 @@ func ReadVerdict(path string) (Verdict, error) {
 			return Verdict{}, fmt.Errorf("entry %s has no severity", e.ID)
 		case !slices.Contains(severities, e.Severity):
 			return Verdict{}, fmt.Errorf("entry %s has severity %q", e.ID, e.Severity)
+		case e.Likelihood != "" && !slices.Contains(likelihoods, e.Likelihood):
+			return Verdict{}, fmt.Errorf("entry %s has likelihood %q", e.ID, e.Likelihood)
 		}
 	}
 	return v, nil
@@ -557,6 +577,9 @@ func checkVerdict(ctx EvidenceContext) (bool, string, []string) {
 			repairs = append(repairs, "verdict "+e.ID+": evidence "+e.Evidence+" read as "+rel)
 			e.Evidence = rel
 		}
+		if e.Verdict == "real" && e.Likelihood == "" {
+			repairs = append(repairs, "verdict "+e.ID+": no likelihood, read as likely")
+		}
 		dropped, missing := checkEntry(ctx, e, &changed)
 		if missing != "" {
 			return false, missing, nil
@@ -582,22 +605,24 @@ func worktreeRel(worktree, evidence string) (string, bool) {
 
 func checkEntry(ctx EvidenceContext, e VerdictEntry, changed *[]string) ([]string, string) {
 	if e.Verdict == "not-real" {
-		if !pathLine.MatchString(e.Evidence) {
-			return nil, "not-real finding " + e.ID + " has no path:line evidence"
-		}
-		p := e.Evidence[:strings.LastIndex(e.Evidence, ":")]
-		if _, err := fs.Stat(ctx.FS, p); err != nil {
-			return nil, "evidence " + e.Evidence + " of " + e.ID + " is not in the worktree"
+		if missing := checkEvidence(ctx, e, "not-real"); missing != "" {
+			return nil, missing
 		}
 	}
+	if e.Verdict == "real" && e.likelihood() == "rare" {
+		if missing := checkEvidence(ctx, e, "rare"); missing != "" {
+			return nil, missing
+		}
+	}
+	blocking := e.blocking(ctx.MinLikelihood)
 	if !e.Fixed {
-		if e.blocking() {
+		if blocking {
 			return nil, fmt.Sprintf("real %s finding %s is not fixed", e.Severity, e.ID)
 		}
 		return nil, ""
 	}
-	if !e.blocking() {
-		return nil, "fixed finding " + e.ID + " is not real at P1 or P2"
+	if !blocking {
+		return nil, "fixed finding " + e.ID + " is not real at P1 or P2 and " + minLikelihood(ctx.MinLikelihood) + " or likelier"
 	}
 	if len(e.Files) == 0 {
 		return nil, "fixed finding " + e.ID + " names no files"
@@ -624,6 +649,24 @@ func checkEntry(ctx EvidenceContext, e VerdictEntry, changed *[]string) ([]strin
 		return nil, "fixed finding " + e.ID + ": " + dropped[0] + " did not change in this round"
 	}
 	return dropped, ""
+}
+
+func checkEvidence(ctx EvidenceContext, e VerdictEntry, what string) string {
+	if !pathLine.MatchString(e.Evidence) {
+		return what + " finding " + e.ID + " has no path:line evidence"
+	}
+	p := e.Evidence[:strings.LastIndex(e.Evidence, ":")]
+	if _, err := fs.Stat(ctx.FS, p); err != nil {
+		return "evidence " + e.Evidence + " of " + e.ID + " is not in the worktree"
+	}
+	return ""
+}
+
+func minLikelihood(min string) string {
+	if min == "" {
+		return "possible"
+	}
+	return min
 }
 
 var (

@@ -231,10 +231,11 @@ func TestFindingsNumberTitleAndDescribeEachHit(t *testing.T) {
 
 	// then
 	expected := []core.Finding{{
-		ID:     "s1",
-		Title:  "golangci-lint/errcheck: Error return value is not checked",
-		Detail: "warning\nError return value is not checked\nsecond line\ninternal/a.go:12",
-		Files:  []string{"internal/a.go"},
+		ID:       "s1",
+		Title:    "golangci-lint/errcheck: Error return value is not checked",
+		Detail:   "warning\nError return value is not checked\nsecond line\ninternal/a.go:12",
+		Scenario: "golangci-lint/errcheck reports: Error return value is not checked",
+		Files:    []string{"internal/a.go"},
 	}}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("actual %+v, expected %+v", actual, expected)
@@ -281,7 +282,7 @@ func TestFindingsCapAtFiftyAndCountTheRestByToolAndRule(t *testing.T) {
 	if len(actual) != 51 || actual[49].ID != "s50" || !strings.HasPrefix(actual[49].Title, "golangci-lint/errcheck:") {
 		t.Fatalf("actual has %d findings, s50 %+v", len(actual), actual[min(49, len(actual)-1)])
 	}
-	expected := core.Finding{ID: "s51", Title: "static: 3 more findings", Detail: "gosec/G104: 2\npmd/UnusedLocalVariable: 1", Files: []string{"n.java", "w.go"}}
+	expected := core.Finding{ID: "s51", Title: "static: 3 more findings", Detail: "gosec/G104: 2\npmd/UnusedLocalVariable: 1", Scenario: "3 more analyzer hits, counted by rule in detail", Files: []string{"n.java", "w.go"}}
 	if !reflect.DeepEqual(actual[50], expected) {
 		t.Fatalf("actual %+v, expected %+v", actual[50], expected)
 	}

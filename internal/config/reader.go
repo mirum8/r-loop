@@ -52,6 +52,7 @@ type StepRow struct {
 	Reviewers                              []Reviewer
 	Rounds                                 int
 	ReviewTimeout                          time.Duration
+	MinLikelihood                          string
 }
 
 type Watchdog struct {
@@ -129,6 +130,8 @@ var hosts = []string{"auto", "herdr", "app"}
 
 var checks = []string{"plan-file", "design-file", "diff", "report"}
 
+var likelihoods = []string{"likely", "possible", "rare"}
+
 type schema map[string]schema
 
 var roleSchema = schema{"provider": nil, "model": nil, "effort": nil}
@@ -139,7 +142,7 @@ var topSchema = schema{
 	"pipeline": nil,
 	"steps": schema{"*": schema{
 		"prompt": nil, "check": nil, "provider": nil, "model": nil, "effort": nil, "timeout": nil,
-		"fallback": nil, "reviewers": nil, "rounds": nil, "reviewTimeout": nil,
+		"fallback": nil, "reviewers": nil, "rounds": nil, "reviewTimeout": nil, "minLikelihood": nil,
 	}},
 	"providers":  schema{"*": nil},
 	"intake":     roleSchema,
@@ -633,6 +636,14 @@ func (r *resolver) row(name string) (StepRow, error) {
 	if row.Rounds, err = r.count(p + "rounds"); err != nil {
 		return row, err
 	}
+	lk, ln, ll, err := r.scalar(p + "minLikelihood")
+	if err != nil {
+		return row, err
+	}
+	if lk != "" && !slices.Contains(likelihoods, lk) {
+		return row, errAt(ll.file, ln, "%sminLikelihood: %q is not one of %s", p, lk, strings.Join(likelihoods, ", "))
+	}
+	row.MinLikelihood = lk
 	items, l, err := r.list(p + "reviewers")
 	if err != nil {
 		return row, err

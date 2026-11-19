@@ -19,6 +19,9 @@ func Banner(cfg LoopConfig, extra ...string) string {
 			Duration(row.Timeout), row.Check, sources(p[k+"provider"], p[k+"model"], p[k+"effort"]))
 		if row.Rounds > 0 && len(row.Reviewers) > 0 {
 			fmt.Fprintf(&b, "  review rounds %d %s  ← %s\n", row.Rounds, Duration(row.ReviewTimeout), p[k+"rounds"])
+			if row.MinLikelihood != "" {
+				fmt.Fprintf(&b, "  review fixes %s and likelier  ← %s\n", row.MinLikelihood, p[k+"minLikelihood"])
+			}
 			for _, rv := range row.Reviewers {
 				fmt.Fprintf(&b, "  reviewer %s%s  ← %s\n", roleLine(rv.Provider, rv.Model, rv.Effort), reviewerLabel(rv), p[k+"reviewers"])
 			}

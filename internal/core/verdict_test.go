@@ -29,7 +29,7 @@ type verdictFixture struct {
 }
 
 const goodVerdict = `{"findings":[
-	{"id":"codex-r2-1","reviewer":"codex","title":"nil map","verdict":"real","severity":"P1","fixed":true,"files":["a.go"],"evidence":""},
+	{"id":"codex-r2-1","reviewer":"codex","title":"nil map","verdict":"real","severity":"P1","likelihood":"likely","fixed":true,"files":["a.go"],"evidence":""},
 	{"id":"codex-r2-2","reviewer":"codex","title":"leak","verdict":"not-real","severity":"P3","fixed":false,"files":[],"evidence":"b.go:12"},
 	{"id":"claude-r2-1","reviewer":"claude","title":"rename","verdict":"out-of-scope","severity":"P4","fixed":false,"files":[],"evidence":""}]}`
 
@@ -39,9 +39,9 @@ func newVerdictFixture(t *testing.T, verdict string) verdictFixture {
 	codex := filepath.Join(dir, "implement-findings-codex-r2.json")
 	claude := filepath.Join(dir, "implement-findings-claude-r2.json")
 	os.WriteFile(codex, []byte(`{"reviewer":"codex","findings":[
-		{"id":"codex-r2-1","title":"nil map","detail":"d","files":["a.go"]},
-		{"id":"codex-r2-2","title":"leak","detail":"d","files":["b.go"]}]}`), 0o644)
-	os.WriteFile(claude, []byte(`{"reviewer":"claude","findings":[{"id":"claude-r2-1","title":"rename","detail":"d","files":["c.go"]}]}`), 0o644)
+		{"id":"codex-r2-1","title":"nil map","detail":"d","scenario":"s","files":["a.go"]},
+		{"id":"codex-r2-2","title":"leak","detail":"d","scenario":"s","files":["b.go"]}]}`), 0o644)
+	os.WriteFile(claude, []byte(`{"reviewer":"claude","findings":[{"id":"claude-r2-1","title":"rename","detail":"d","scenario":"s","files":["c.go"]}]}`), 0o644)
 	verdictPath := filepath.Join(dir, "implement-verdict-r2.json")
 	os.WriteFile(verdictPath, []byte(verdict), 0o644)
 	repo := &roundRepo{fakeRepo: fakeRepo{Tree: "tree-now"}, diffs: map[string][]string{
@@ -109,7 +109,7 @@ func TestVerdictCheckFails(t *testing.T) {
 		},
 		"fixed entry that is not real P1 or P2": {
 			`"severity":"P1"`, `"severity":"P3"`,
-			"fixed finding codex-r2-1 is not real at P1 or P2",
+			"fixed finding codex-r2-1 is not real at P1 or P2 and possible or likelier",
 		},
 		"real P1 left unfixed": {
 			`"fixed":true,"files":["a.go"]`, `"fixed":false,"files":[]`,
@@ -171,8 +171,9 @@ func TestReadVerdictRejectsUnknownValuesNamingTheEntry(t *testing.T) {
 	for name, tc := range map[string]struct {
 		from, to, err string
 	}{
-		"verdict":  {`"verdict":"not-real"`, `"verdict":"maybe"`, `entry codex-r2-2 has verdict "maybe"`},
-		"severity": {`"severity":"P4"`, `"severity":"P5"`, `entry claude-r2-1 has severity "P5"`},
+		"verdict":    {`"verdict":"not-real"`, `"verdict":"maybe"`, `entry codex-r2-2 has verdict "maybe"`},
+		"severity":   {`"severity":"P4"`, `"severity":"P5"`, `entry claude-r2-1 has severity "P5"`},
+		"likelihood": {`"likelihood":"likely"`, `"likelihood":"never"`, `entry codex-r2-1 has likelihood "never"`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "v.json")
@@ -196,7 +197,7 @@ func TestReadVerdictParsesTheFile(t *testing.T) {
 	if err != nil || len(got.Findings) != 3 {
 		t.Fatalf("got = %+v, err = %v", got, err)
 	}
-	want := VerdictEntry{ID: "codex-r2-1", Reviewer: "codex", Title: "nil map", Verdict: "real", Severity: "P1", Fixed: true, Files: []string{"a.go"}}
+	want := VerdictEntry{ID: "codex-r2-1", Reviewer: "codex", Title: "nil map", Verdict: "real", Severity: "P1", Likelihood: "likely", Fixed: true, Files: []string{"a.go"}}
 	if !reflect.DeepEqual(got.Findings[0], want) {
 		t.Fatalf("first = %+v", got.Findings[0])
 	}
@@ -220,7 +221,11 @@ func entry(id, verdict, severity string, fixed bool, evidence string) string {
 		files = `["a.go"]`
 	}
 	reviewer := strings.SplitN(id, "-r", 2)[0]
-	return fmt.Sprintf(`{"id":%q,"reviewer":%q,"title":"t","verdict":%q,"severity":%q,"fixed":%t,"files":%s,"evidence":%q}`, id, reviewer, verdict, severity, fixed, files, evidence)
+	likelihood := ""
+	if verdict == "real" {
+		likelihood = "likely"
+	}
+	return fmt.Sprintf(`{"id":%q,"reviewer":%q,"title":"t","verdict":%q,"severity":%q,"likelihood":%q,"fixed":%t,"files":%s,"evidence":%q}`, id, reviewer, verdict, severity, likelihood, fixed, files, evidence)
 }
 
 func TestFixHalfPromptsTheSameStepSessionWithTheRoundFiles(t *testing.T) {
@@ -271,7 +276,7 @@ func TestFixHalfPromptsTheSameStepSessionWithTheRoundFiles(t *testing.T) {
 		t.Fatalf("events = %+v", r.store.Records["run-1"])
 	}
 	findings := r.events("finding")
-	want := map[string]string{"step": "implement", "round": "1", "reviewer": "claude", "id": "claude-r1-1", "title": "t", "verdict": "out-of-scope", "severity": "P3", "fixed": "false", "evidence": ""}
+	want := map[string]string{"step": "implement", "round": "1", "reviewer": "claude", "id": "claude-r1-1", "title": "t", "verdict": "out-of-scope", "severity": "P3", "likelihood": "", "blocking": "false", "fixed": "false", "evidence": ""}
 	if len(findings) != 2 || !reflect.DeepEqual(findings[0].Fields, want) || findings[1].Fields["id"] != "codex-r1-1" {
 		t.Fatalf("findings = %+v", findings)
 	}
@@ -568,5 +573,80 @@ func TestAFixWhoseVerdictListsAnUnchangedFileBesideAChangedOneEndsOKWithAWarning
 
 	if out.State != StepOK || out.Warning != "verdict codex-r1-1: dropped unchanged .gitignore" {
 		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestVerdictCheckLikelihoodThreshold(t *testing.T) {
+	for name, tc := range map[string]struct {
+		entry, min, missing string
+		repairs             []string
+	}{
+		"rare P1 below possible left unfixed": {
+			`"verdict":"real","severity":"P1","likelihood":"rare","fixed":false,"files":[],"evidence":"b.go:3"`, "", "", nil,
+		},
+		"rare P1 below possible fixed anyway": {
+			`"verdict":"real","severity":"P1","likelihood":"rare","fixed":true,"files":["a.go"],"evidence":"b.go:3"`, "",
+			"fixed finding codex-r2-1 is not real at P1 or P2 and possible or likelier", nil,
+		},
+		"rare without evidence": {
+			`"verdict":"real","severity":"P1","likelihood":"rare","fixed":false,"files":[],"evidence":""`, "",
+			"rare finding codex-r2-1 has no path:line evidence", nil,
+		},
+		"possible P2 at possible left unfixed": {
+			`"verdict":"real","severity":"P2","likelihood":"possible","fixed":false,"files":[],"evidence":""`, "possible",
+			"real P2 finding codex-r2-1 is not fixed", nil,
+		},
+		"possible P2 below likely left unfixed": {
+			`"verdict":"real","severity":"P2","likelihood":"possible","fixed":false,"files":[],"evidence":""`, "likely", "", nil,
+		},
+		"rare P1 at rare left unfixed": {
+			`"verdict":"real","severity":"P1","likelihood":"rare","fixed":false,"files":[],"evidence":"b.go:3"`, "rare",
+			"real P1 finding codex-r2-1 is not fixed", nil,
+		},
+		"missing likelihood read as likely": {
+			`"verdict":"real","severity":"P1","fixed":false,"files":[],"evidence":""`, "likely",
+			"real P1 finding codex-r2-1 is not fixed", nil,
+		},
+		"missing likelihood on a fixed entry is a repair": {
+			`"verdict":"real","severity":"P1","fixed":true,"files":["a.go"],"evidence":""`, "",
+			"", []string{"verdict codex-r2-1: no likelihood, read as likely"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := strings.Replace(goodVerdict, `"verdict":"real","severity":"P1","likelihood":"likely","fixed":true,"files":["a.go"],"evidence":""`, tc.entry, 1)
+			f := newVerdictFixture(t, body)
+			f.ctx.MinLikelihood = tc.min
+
+			ok, missing, repairs := checkVerdict(f.ctx)
+
+			if ok != (tc.missing == "") || missing != tc.missing || !reflect.DeepEqual(repairs, tc.repairs) {
+				t.Fatalf("ok = %v, missing = %q, repairs = %q", ok, missing, repairs)
+			}
+		})
+	}
+}
+
+func TestARoundWhoseOnlyRealP1IsRareIsCleanAndRecordedAsNotBlocking(t *testing.T) {
+	r := newReviewRig(t, Reviewer{Provider: "codex"})
+	r.behave = func(vars map[string]any) { writeReview(t, vars, "ok", 1) }
+	r.repo.TreeChanges = nil
+	r.worker.Dir = t.TempDir()
+	os.WriteFile(filepath.Join(r.worker.Dir, "guard.go"), []byte("package x\n"), 0o644)
+	r.onFix = func(vars map[string]any) {
+		r.repo.TreeChanges = []string{"a.go"}
+		writeVerdict(t, vars, `{"id":"codex-r1-1","reviewer":"codex","title":"t","verdict":"real","severity":"P1","likelihood":"rare","fixed":false,"files":[],"evidence":"guard.go:1"}`)
+	}
+
+	out := r.run()
+
+	if out.State != StepOK || len(r.fixes) != 1 || len(r.events("review-clean")) != 1 {
+		t.Fatalf("outcome = %+v, fixes = %d, events = %+v", out, len(r.fixes), r.store.Records["run-1"])
+	}
+	if r.fixes[0]["MinLikelihood"] != "possible" {
+		t.Fatalf("MinLikelihood = %v", r.fixes[0]["MinLikelihood"])
+	}
+	f := r.events("finding")[0].Fields
+	if f["likelihood"] != "rare" || f["blocking"] != "false" {
+		t.Fatalf("finding = %+v", f)
 	}
 }

@@ -29,6 +29,7 @@ steps:
         effort: high
     rounds: 2
     reviewTimeout: 20m
+    minLikelihood: possible
   implement:
     prompt: implement
     check: diff
@@ -57,6 +58,7 @@ steps:
         prompt: review-security
     rounds: 3
     reviewTimeout: 45m
+    minLikelihood: possible
   milestone:
     prompt: milestone
     check: report

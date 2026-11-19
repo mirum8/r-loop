@@ -60,10 +60,10 @@ Report each new or changed test that breaks a rule under `## Writing tests` belo
 Convert what you report into `{{.FindingsPath}}` as:
 
 ```
-{"reviewer":"<name>","findings":[{"id":"<name>-r<round>-<n>","title":"…","detail":"…","files":["…"]}]}
+{"reviewer":"<name>","findings":[{"id":"<name>-r<round>-<n>","title":"…","detail":"…","scenario":"…","files":["…"]}]}
 ```
 
-where `<name>` is your reviewer name — the `<name>` in the findings file name `<kind>-findings-<name>-r<round>.json` — `<round>` is {{.Round}} and `<n>` is numbered from 1. Every id is unique within the file and starts with `<name>-r{{.Round}}-`: the step agent answers each id exactly once in its verdict file, and the driver checks the two against each other. `title`, `detail` and `files` are required on every finding. With nothing to report, write an empty `findings` list.
+where `<name>` is your reviewer name — the `<name>` in the findings file name `<kind>-findings-<name>-r<round>.json` — `<round>` is {{.Round}} and `<n>` is numbered from 1. Every id is unique within the file and starts with `<name>-r{{.Round}}-`: the step agent answers each id exactly once in its verdict file, and the driver checks the two against each other. `title`, `detail`, `scenario` and `files` are required on every finding. `scenario` is how it fails: the input or state, and the wrong result it produces; for a missing obligation, the obligation it leaves unmet. Report nothing you cannot write a concrete scenario for. With nothing to report, write an empty `findings` list.
 
 Change no file in `{{.Worktree}}`. Before you write the sentinel, `{{.ArtifactsDir}}/native-review.txt` must hold the native review's output.
 {{- template "memory" .}}

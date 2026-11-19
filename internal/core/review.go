@@ -177,6 +177,7 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, files []FindingsFi
 	vars["RoundTree"] = rd.tree
 	vars["FindingsFiles"] = files
 	vars["VerdictPath"] = verdictPath
+	vars["MinLikelihood"] = minLikelihood(worker.Ref.Kind.Row.MinLikelihood)
 	vars["Memory"] = sm.Memory.Index("all", "step")
 	vars["WatchdogWarnings"] = worker.watchdogWarningLines()
 	if worker.Ref.AskURL != "" {
@@ -211,10 +212,16 @@ func (h ReviewHalf) fix(ctx context.Context, worker *Session, files []FindingsFi
 	}
 	fixed := false
 	for _, e := range v.Findings {
-		fixed = fixed || e.blocking()
+		blocking := e.blocking(worker.Ref.Kind.Row.MinLikelihood)
+		fixed = fixed || blocking
+		likelihood := ""
+		if e.Verdict == "real" {
+			likelihood = e.likelihood()
+		}
 		if err := h.event(worker, "finding", map[string]string{
 			"round": strconv.Itoa(rd.n), "reviewer": e.Reviewer, "id": e.ID, "title": e.Title,
-			"verdict": e.Verdict, "severity": e.Severity, "fixed": strconv.FormatBool(e.Fixed), "evidence": e.Evidence,
+			"verdict": e.Verdict, "severity": e.Severity, "likelihood": likelihood, "blocking": strconv.FormatBool(blocking),
+			"fixed": strconv.FormatBool(e.Fixed), "evidence": e.Evidence,
 		}); err != nil {
 			return false, sm.fail(worker, "record: "+err.Error())
 		}

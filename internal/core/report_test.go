@@ -254,3 +254,22 @@ func TestReportDropsARunReportFromBeforeAResumeOrOneMissing(t *testing.T) {
 		}
 	}
 }
+
+func TestReportListsRealP1AndP2FindingsLeftBelowTheLikelihoodThreshold(t *testing.T) {
+	finding := func(id, severity, likelihood, blocking string) Event {
+		return Event{Kind: "finding", Phase: "2", Fields: map[string]string{"step": "implement", "round": "1", "reviewer": "codex", "id": id, "title": "t",
+			"verdict": "real", "severity": severity, "likelihood": likelihood, "blocking": blocking, "fixed": "false", "evidence": "guard.go:4"}}
+	}
+	st := RunState{ID: "run-1", Events: []Event{
+		finding("codex-r1-1", "P1", "rare", "false"),
+		finding("codex-r1-2", "P3", "likely", "false"),
+		finding("codex-r1-3", "P2", "likely", "true"),
+	}}
+
+	got := Report(st, threePhasePlan())
+
+	want := "## Left below the likelihood threshold\n\n- phase 2 implement r1 codex codex-r1-1 t: P1 rare — guard.go:4\n"
+	if !strings.Contains(got, want) || !strings.Contains(got, "codex-r1-1 t: real P1 rare fixed false — guard.go:4") {
+		t.Fatalf("report = %s", got)
+	}
+}

@@ -339,8 +339,8 @@ func TestFindingsCheckNamesANativeOutputLeftInThePhaseFolderWithoutAcceptingIt(t
 
 func TestFindingsCheckPassesOnAWellFormedFile(t *testing.T) {
 	body := `{"reviewer":"codex","findings":[
-		{"id":"codex-r2-1","title":"nil map","detail":"writes to a nil map","files":["a.go"]},
-		{"id":"codex-r2-2","title":"leak","detail":"file not closed","files":["b.go","c.go"]}]}`
+		{"id":"codex-r2-1","title":"nil map","detail":"writes to a nil map","scenario":"s","files":["a.go"]},
+		{"id":"codex-r2-2","title":"leak","detail":"file not closed","scenario":"s","files":["b.go","c.go"]}]}`
 
 	ok, missing := runCheck(t, "findings", findingsCtx(body))
 
@@ -362,18 +362,19 @@ func TestFindingsCheckFails(t *testing.T) {
 		body, missing string
 	}{
 		"unreadable json":  {`{"reviewer":`, findingsPath + ": unreadable"},
-		"wrong type":       {`{"reviewer":"codex","findings":[{"id":"codex-r2-1","title":"t","detail":"d","files":"a.go"}]}`, findingsPath + ": unreadable"},
+		"wrong type":       {`{"reviewer":"codex","findings":[{"id":"codex-r2-1","title":"t","detail":"d","scenario":"s","files":"a.go"}]}`, findingsPath + ": unreadable"},
 		"no findings list": {`{"reviewer":"codex"}`, findingsPath + ": no findings list"},
 		"other reviewer":   {`{"reviewer":"claude","findings":[]}`, findingsPath + ": reviewer claude does not match codex"},
-		"missing id":       {`{"reviewer":"codex","findings":[{"title":"t","detail":"d","files":[]}]}`, findingsPath + ": finding 1 has no id"},
-		"missing title":    {`{"reviewer":"codex","findings":[{"id":"codex-r2-1","detail":"d","files":[]}]}`, findingsPath + ": finding codex-r2-1 has no title"},
+		"missing id":       {`{"reviewer":"codex","findings":[{"title":"t","detail":"d","scenario":"s","files":[]}]}`, findingsPath + ": finding 1 has no id"},
+		"missing title":    {`{"reviewer":"codex","findings":[{"id":"codex-r2-1","detail":"d","scenario":"s","files":[]}]}`, findingsPath + ": finding codex-r2-1 has no title"},
 		"missing detail":   {`{"reviewer":"codex","findings":[{"id":"codex-r2-1","title":"t","files":[]}]}`, findingsPath + ": finding codex-r2-1 has no detail"},
-		"null files":       {`{"reviewer":"codex","findings":[{"id":"codex-r2-1","title":"t","detail":"d","files":null}]}`, findingsPath + ": finding codex-r2-1 has no files list"},
+		"null files":       {`{"reviewer":"codex","findings":[{"id":"codex-r2-1","title":"t","detail":"d","scenario":"s","files":null}]}`, findingsPath + ": finding codex-r2-1 has no files list"},
+		"missing scenario": {`{"reviewer":"codex","findings":[{"id":"codex-r2-1","title":"t","detail":"d","files":[]}]}`, findingsPath + ": finding codex-r2-1 has no scenario"},
 		"missing files":    {`{"reviewer":"codex","findings":[{"id":"codex-r2-1","title":"t","detail":"d"}]}`, findingsPath + ": finding codex-r2-1 has no files list"},
-		"wrong prefix":     {`{"reviewer":"codex","findings":[{"id":"codex-r1-1","title":"t","detail":"d","files":[]}]}`, findingsPath + ": id codex-r1-1 does not start with codex-r2-"},
+		"wrong prefix":     {`{"reviewer":"codex","findings":[{"id":"codex-r1-1","title":"t","detail":"d","scenario":"s","files":[]}]}`, findingsPath + ": id codex-r1-1 does not start with codex-r2-"},
 		"duplicate id": {`{"reviewer":"codex","findings":[
-			{"id":"codex-r2-1","title":"t","detail":"d","files":[]},
-			{"id":"codex-r2-1","title":"u","detail":"e","files":[]}]}`, findingsPath + ": duplicate id codex-r2-1"},
+			{"id":"codex-r2-1","title":"t","detail":"d","scenario":"s","files":[]},
+			{"id":"codex-r2-1","title":"u","detail":"e","scenario":"s","files":[]}]}`, findingsPath + ": duplicate id codex-r2-1"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ok, missing := runCheck(t, "findings", findingsCtx(tc.body))
@@ -414,7 +415,7 @@ func TestFindingsCheckAcceptsAHyphenatedReviewer(t *testing.T) {
 	ctx := EvidenceContext{
 		FindingsFiles: []string{path},
 		FS: fstest.MapFS{path: {Data: []byte(
-			`{"reviewer":"open-code","findings":[{"id":"open-code-r1-1","title":"t","detail":"d","files":[]}]}`)}},
+			`{"reviewer":"open-code","findings":[{"id":"open-code-r1-1","title":"t","detail":"d","scenario":"s","files":[]}]}`)}},
 	}
 
 	ok, missing := runCheck(t, "findings", ctx)
@@ -426,11 +427,11 @@ func TestFindingsCheckAcceptsAHyphenatedReviewer(t *testing.T) {
 
 func TestReadFindingsParsesTheFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "implement-findings-codex-r1.json")
-	os.WriteFile(path, []byte(`{"reviewer":"codex","findings":[{"id":"codex-r1-1","title":"t","detail":"d","files":["a.go"]}]}`), 0o644)
+	os.WriteFile(path, []byte(`{"reviewer":"codex","findings":[{"id":"codex-r1-1","title":"t","detail":"d","scenario":"s","files":["a.go"]}]}`), 0o644)
 
 	got, err := ReadFindings(path)
 
-	want := Findings{Reviewer: "codex", Findings: []Finding{{ID: "codex-r1-1", Title: "t", Detail: "d", Files: []string{"a.go"}}}}
+	want := Findings{Reviewer: "codex", Findings: []Finding{{ID: "codex-r1-1", Title: "t", Detail: "d", Scenario: "s", Files: []string{"a.go"}}}}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("got = %+v, err = %v", got, err)
 	}

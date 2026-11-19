@@ -253,8 +253,8 @@ noticing needs the whole run in view and every context in the design is delibera
   <tr><td>Every phase is read by every reviewer you configure</td>
       <td>1 pane per entry in a step's <code>reviewers</code>, beside the step's own session, in
           every round up to the step's limit; every finding gets a verdict from the agent that did
-          the work, a dismissal cites the code, and only those judged real at P1 or P2 are
-          fixed</td></tr>
+          the work, a dismissal cites the code, and only those judged real at P1 or P2, and at least as likely
+          as the row's <code>minLikelihood</code>, are fixed</td></tr>
   <tr><td>A phase whose own fields are wrong is flagged before it runs</td>
       <td>the watchdog compares each phase's <code>Files:</code> and <code>Risk:</code> with what it
           derives from the tree, and a disagreement is a warning in the TUI and the report before the
@@ -858,7 +858,7 @@ Configurable: the list, yes; the rule, no.</em></p>
 
 <p><strong>Every finding gets a verdict.</strong> When the step's session writes its sentinel after
 a review round, if the verdict record does not carry a verdict — real, not real, out of scope — and
-a severity for every finding the round's reviewers wrote, or a not-real verdict carries no
+a severity for every finding the round's reviewers wrote, or a not-real or <code>rare</code> verdict carries no
 <code>path:line</code> that exists, the driver records the step <code>failed</code>, per step; on
 violation the run halts naming the first finding without one. <em>Source: the pack measures
 roughly a third of <code>code-quality</code> findings as dismissed at triage, a dismissal has to be
@@ -1063,8 +1063,8 @@ on codex's code, and for a <code>codex</code> reviewer of code the driver runs <
 writing the findings file the driver named. While they work, the step's session waits and its
 clocks stand still. The driver then checks that no reviewer changed the tree and prompts the step's
 own session, which still holds everything it did: check each finding against the code, give it a
-verdict and a severity, dismiss one only with a <code>path:line</code>, fix only those real at P1 or
-P2, write the verdict record. A fresh reviewer then looks again, handed the earlier findings and
+verdict, a severity and a likelihood, dismiss one only with a <code>path:line</code>, fix only those real at P1 or
+P2 and likely enough for the row, write the verdict record. A fresh reviewer then looks again, handed the earlier findings and
 verdicts, until a round finds nothing real or the step's round limit is reached — the limit is a
 warning, never a halt. Only then does the driver commit the step, once
 (<a href="#adr-56">ADR-56</a>, <a href="#adr-57">ADR-57</a>, <a href="#adr-58">ADR-58</a>).</p>
@@ -1707,7 +1707,7 @@ checkable.</figcaption>
 
 <section id="p6">
 <h2 class="part" id="p6-h"><span class="pnum">Part 6</span> Decisions</h2>
-<p class="lede">One hundred and one decisions, each with the alternative that was live at the time; twelve are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and fifty-six carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, ADR-90 keeps an agent's pane size from ever failing a run, ADR-91, since superseded, handed a blocker a retry will not clear to a fixer session that proposed a fix the driver applied on the maintainer's confirmation, ADR-92 adds a design step that a claude session with <code>frontend-design</code> runs before the plan step on the phases the watchdog's triage flags as changing what a user sees, ADR-93 has claude sessions report through hooks, ADR-94 has the watchdog retry a minor failure without asking, ADR-95 has it choose the gate's commands from the <code>Done when:</code> line's spans, ADR-96 lets a blocker be continued as a resume would, and ADR-97 replaces the fixer with a watchdog that fixes what it finds — remedies, a config key, a corrected plan line — skips nothing, and blocks only once the retries are spent, and ADR-98 gives the project a memory across runs, one fact to a file, that only the watchdog writes and every session reads by an index in its prompt, ADR-99 runs the sessions on the herdr CLI or on herdr-app, whichever r-loop's environment names, behind the same port, and ADR-100 has the watchdog write an account of every run that ends and narrate the run in one-line, display-only notes, and lets the TUI be read back — a phase's details and an end report — with keys that change nothing, and ADR-101 shows the live runs on the machine as one macOS menu-bar icon.</p>
+<p class="lede">One hundred and two decisions, each with the alternative that was live at the time; twelve are superseded and kept in place, four more in part (ADR-7, ADR-32, ADR-69 and ADR-71), and fifty-seven carry a later amendment, one of which ADR-81 supersedes in turn. Six carry most of the weight: dropping the Claude Code Workflows, which buys portability and costs the measured review depth; running every configured provider's own reviewer at once and fixing only what a judge marks real, which buys part of it back; making a provider a config block rather than driver code; performing the landing in code; the split that gives every rule to the driver and every judgement to an always-on watchdog (ADR-71, which replaced the three-tier rule); and the phase check that lets the same watchdog warn about a plan before four hours are spent on it. Ten record the move to a repository of its own — self-contained, a hexagonal core, and a phase pipeline made of step kinds — and the rest largely follow from those. ADR-53 to ADR-55 were made in a review of decisions earlier rounds had taken by default, ADR-56 to ADR-60, in round 20, redesign the plan step and move review into every step, the next seven, in round 21, make a run finish with nobody present, ADR-68 gives every session the driver starts its own model and effort, ADR-69 and ADR-70 let a run take an issues file and gate each of its items on tests the item proves it needs, ADR-71 and ADR-72 make the watchdog the run's LLM and give it the <code>## Resolve first</code> walk, ADR-73 lets step agents ask only the watchdog and only the watchdog ask the maintainer, in its own session, ADR-74 buys back the UI check as a named reviewer that runs the project's <code>/test-app</code>, ADR-75 lets the maintainer start a run in free text that a short intake session turns into a command line the driver checks, ADR-76 makes <code>ask_watchdog</code> return at once and has the driver type the answer into the pane that asked, ADR-77 has the watchdog verify the run list before the first phase and the maintainer confirm a table the driver builds, ADR-78 runs an issues backlog in groups, one group to a phase, ADR-79 lets a session in a phase worktree write its phase's run folder, ADR-80 sends a dialog in a step's pane to the watchdog and has the driver press the keys an authorised answer names, ADR-81 makes a plan review a prompt alone and has codex review code with its own <code>/review</code> in its pane, ADR-82 makes anything that goes off plan a blocker the watchdog clears within what it is authorised to do or asks the maintainer about, ADR-83 lets the watchdog read the run back with <code>run_status</code> and <code>step_info</code>, ADR-84 keeps a gitignored, untracked todo driver-local: ticked on disk, never committed, ADR-85 makes security review a prompt review of the change itself, ADR-86 lets the maintainer stop or pause the run between phases through the watchdog, ADR-87 makes every commit the driver writes a Conventional Commits subject naming the change, written by the agent that made it, ADR-90 keeps an agent's pane size from ever failing a run, ADR-91, since superseded, handed a blocker a retry will not clear to a fixer session that proposed a fix the driver applied on the maintainer's confirmation, ADR-92 adds a design step that a claude session with <code>frontend-design</code> runs before the plan step on the phases the watchdog's triage flags as changing what a user sees, ADR-93 has claude sessions report through hooks, ADR-94 has the watchdog retry a minor failure without asking, ADR-95 has it choose the gate's commands from the <code>Done when:</code> line's spans, ADR-96 lets a blocker be continued as a resume would, and ADR-97 replaces the fixer with a watchdog that fixes what it finds — remedies, a config key, a corrected plan line — skips nothing, and blocks only once the retries are spent, and ADR-98 gives the project a memory across runs, one fact to a file, that only the watchdog writes and every session reads by an index in its prompt, ADR-99 runs the sessions on the herdr CLI or on herdr-app, whichever r-loop's environment names, behind the same port, and ADR-100 has the watchdog write an account of every run that ends and narrate the run in one-line, display-only notes, and lets the TUI be read back — a phase's details and an end report — with keys that change nothing, ADR-101 shows the live runs on the machine as one macOS menu-bar icon, and ADR-102 has every finding name how it fails and the verifier judge how likely that is, fixing only what reaches the row's threshold.</p>
 
 <div id="adr-index">
 
@@ -2744,7 +2744,7 @@ inside a session.</p>
 
 <div class="adr">
 <h3 id="adr-56">ADR-56 — Review is a half of every step: reviewer panes beside the step's session, which verifies and applies</h3>
-<p><span class="f">Status</span> accepted · supersedes <a href="#adr-24">ADR-24</a> and <a href="#adr-25">ADR-25</a> · amends <a href="#adr-2">ADR-2</a>, <a href="#adr-23">ADR-23</a>, <a href="#adr-45">ADR-45</a> and <a href="#adr-54">ADR-54</a> · amended by <a href="#adr-82">ADR-82</a> — a reviewer that fails no longer fails the step it reviews: it raises a blocker, which the watchdog clears by running that reviewer again, pressing keys under a rule or switching to the row's fallback, or, with the maintainer's quoted reply, by skipping it · amended by <a href="#adr-90">ADR-90</a> — reviewers divide the right-hand column evenly, and one whose pane would be under 60×15 opens in a new tab of the step's workspace · amended by <a href="#adr-97">ADR-97</a> (2026-10-14) — a reviewer blocker is no longer cleared by skipping the reviewer; a <code>fixed</code> finding that lists unchanged files beside at least one changed file has the unchanged ones dropped with a driver warning, instead of failing the step</p>
+<p><span class="f">Status</span> accepted · supersedes <a href="#adr-24">ADR-24</a> and <a href="#adr-25">ADR-25</a> · amends <a href="#adr-2">ADR-2</a>, <a href="#adr-23">ADR-23</a>, <a href="#adr-45">ADR-45</a> and <a href="#adr-54">ADR-54</a> · amended by <a href="#adr-82">ADR-82</a> — a reviewer that fails no longer fails the step it reviews: it raises a blocker, which the watchdog clears by running that reviewer again, pressing keys under a rule or switching to the row's fallback, or, with the maintainer's quoted reply, by skipping it · amended by <a href="#adr-90">ADR-90</a> — reviewers divide the right-hand column evenly, and one whose pane would be under 60×15 opens in a new tab of the step's workspace · amended by <a href="#adr-97">ADR-97</a> (2026-10-14) — a reviewer blocker is no longer cleared by skipping the reviewer; a <code>fixed</code> finding that lists unchanged files beside at least one changed file has the unchanged ones dropped with a driver warning, instead of failing the step · amended by <a href="#adr-102">ADR-102</a> (2026-11-18) — every finding names its <code>scenario</code>, every real verdict a <code>likelihood</code>, and only a real P1 or P2 at least as likely as the row's <code>minLikelihood</code> is fixed</p>
 <p><span class="f">Context</span> <a href="#adr-54">ADR-54</a> made review a step of its own: one
 workspace per reviewer, then a fresh fix session on the implement row. It could not review a plan,
 and the fixer had to rebuild the intent behind a diff it did not write. In round 20 the maintainer
@@ -2778,7 +2778,7 @@ findings across three runs, or a dismissed finding is later confirmed real.</p>
 
 <div class="adr">
 <h3 id="adr-57">ADR-57 — Review runs in rounds up to a configurable limit, with a fresh reviewer each round</h3>
-<p><span class="f">Status</span> accepted</p>
+<p><span class="f">Status</span> accepted · amended by <a href="#adr-102">ADR-102</a> (2026-11-18) — a round is clean when its verdicts hold no real P1 or P2 at least as likely as the row's <code>minLikelihood</code></p>
 <p><span class="f">Context</span> The maintainer asked for rounds with configurable limits. A fix can
 introduce what a second look would catch, and a reviewer that has read its own findings tends to
 confirm they were fixed rather than look again.</p>
@@ -4571,6 +4571,54 @@ answers nothing, and is not a notification.</p>
 <p><span class="f">Revisit when</span> a run on linux needs the same view.</p>
 </div>
 
+<div class="adr">
+<h3 id="adr-102">ADR-102 — A finding names how it fails and how likely that is, and only a likely enough one is fixed</h3>
+<p><span class="f">Status</span> accepted 2026-11-18 · amends <a href="#adr-56">ADR-56</a> and <a href="#adr-57">ADR-57</a></p>
+<p><span class="f">Context</span> The maintainer found that review rounds spend most of their fixes
+on failures that will not happen: the fix rubric made every reachable edge case or error path
+P1 or P2, so a case that needs a combination no caller makes was fixed like one every run meets.
+Severity measured only how bad a failure is, never how often it happens. <em>Evidence over
+autonomy</em> (Part 3).</p>
+<p><span class="f">Decision</span> <em>A finding names its failure.</em> Every entry in a findings
+file carries a required <code>scenario</code> beside <code>title</code>, <code>detail</code> and
+<code>files</code>: the input or state and the wrong result it produces, or, for a finding about a
+missing obligation, the obligation. A reviewer reports nothing it cannot write a scenario for; the
+driver refuses a findings file with an entry that has none, as it does one without a title. The
+<code>static</code> reviewer's entries carry the analyzer's message as their scenario.
+<em>The verifier judges likelihood apart from severity.</em> Severity, <code>P1</code> to
+<code>P4</code>, is how bad the failure is when it happens; every verdict entry judged
+<code>real</code> also carries <code>likelihood</code>: <code>likely</code> — it happens in normal
+use, on an input or a path a usual run takes; <code>possible</code> — it needs a less common input or
+state the system does meet, such as an empty list, a retry, a resume or a network error;
+<code>rare</code> — it needs misuse, a combination no caller makes, or a caller that does not exist
+yet. A finding that is not about a failure — a missing or untested obligation, an open criterion, a
+watchdog warning, excess, a broken test-writing rule — is <code>likely</code>. A <code>rare</code>
+verdict carries a <code>path:line</code> in the worktree as its <code>evidence</code>, such as the
+guard that keeps the case off the paths callers take, checked like a dismissal's. A real entry with no
+likelihood is read as <code>likely</code> with a driver warning. <em>A threshold per row.</em>
+A step row with reviewers takes <code>minLikelihood</code>: <code>likely</code>,
+<code>possible</code> (the default) or <code>rare</code>, which keeps today's behaviour. A finding
+blocks — must be fixed, and only it may be — when it is real at P1 or P2 and at least as likely as
+the row's <code>minLikelihood</code>; a round with no blocking finding is clean. Every finding is
+still recorded with its likelihood, and the run report lists the real P1 and P2 findings left
+below the threshold.</p>
+<p><span class="f">Alternatives</span> The reviewer scores likelihood and the driver drops the
+unlikely ones before the fix — rejected: the reviewer is the worst-calibrated judge of its own
+finding, and a finding dropped before its verdict leaves no record. A numeric probability — rejected:
+a model's numbers are not calibrated, while it sorts three named buckets consistently. A matrix of
+severity by likelihood, so a rare P1 still blocks — not taken now: one threshold is the simpler
+rule, and the record shows whether rare P1s are being left. The rubric change alone — rejected:
+nothing the driver checks, and no knob.</p>
+<p><span class="f">Consequences</span> The findings and verdict files each gain a field, and the
+driver's judgement of a blocking finding takes the row's threshold. The agent judging the findings
+did the work, so it has a stake in calling them <code>rare</code>: a <code>rare</code> verdict needs
+evidence that exists, and every one is in the run report. Fewer fixes per round end more reviews in
+their first clean round.</p>
+<p><span class="f">Revisit when</span> a finding left as <code>rare</code> is later confirmed as a
+defect in landed work, or the left findings include data loss or a security hole — then the
+severity-by-likelihood matrix.</p>
+</div>
+
 
 
 
@@ -4707,6 +4755,7 @@ steps:
     reviewers:                # one pane per entry beside the step's session (ADR-56)
       - codex
     rounds: 2                 # a fresh reviewer each round; 0 turns review off (ADR-57)
+    minLikelihood: possible   # likely | possible | rare: the least likely real P1/P2 that is fixed (ADR-102)
     reviewTimeout: 20m        # per round: the reviewers and the fix pass
   implement:
     prompt: implement

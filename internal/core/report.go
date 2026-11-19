@@ -41,6 +41,7 @@ func Report(state RunState, plan Plan) string {
 	writeSection(&b, "Remedies", remedyLines(state))
 	writeSection(&b, "Reviews", reviewLines(state))
 	writeSection(&b, "Findings", findingLines(state))
+	writeSection(&b, "Left below the likelihood threshold", unlikelyLines(state))
 	writeSection(&b, "Skips", skipLines(state))
 	return b.String()
 }
@@ -376,11 +377,27 @@ func findingLines(st RunState) []string {
 			continue
 		}
 		f := ev.Fields
-		line := fmt.Sprintf("%s r%s %s %s %s: %s %s fixed %s", where(ev.Phase, f["step"]), f["round"], f["reviewer"], f["id"], f["title"], f["verdict"], f["severity"], f["fixed"])
+		line := fmt.Sprintf("%s r%s %s %s %s: %s %s", where(ev.Phase, f["step"]), f["round"], f["reviewer"], f["id"], f["title"], f["verdict"], f["severity"])
+		if f["likelihood"] != "" {
+			line += " " + f["likelihood"]
+		}
+		line += " fixed " + f["fixed"]
 		if f["evidence"] != "" {
 			line += " — " + f["evidence"]
 		}
 		out = append(out, line)
+	}
+	return out
+}
+
+func unlikelyLines(st RunState) []string {
+	var out []string
+	for _, ev := range st.Events {
+		f := ev.Fields
+		if ev.Kind != "finding" || f["verdict"] != "real" || f["blocking"] != "false" || (f["severity"] != "P1" && f["severity"] != "P2") {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s r%s %s %s %s: %s %s — %s", where(ev.Phase, f["step"]), f["round"], f["reviewer"], f["id"], f["title"], f["severity"], f["likelihood"], f["evidence"]))
 	}
 	return out
 }

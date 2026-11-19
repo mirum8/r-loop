@@ -17,6 +17,7 @@ type StepRow struct {
 	Reviewers               []Reviewer
 	Rounds                  int
 	ReviewTimeout           time.Duration
+	MinLikelihood           string
 }
 
 type Reviewer struct {

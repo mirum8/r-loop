@@ -73,13 +73,13 @@ func TestDefaults(t *testing.T) {
 	}
 	wantPlan := StepRow{Prompt: "plan", Check: "plan-file", Provider: "claude", Model: "opus", Effort: "high",
 		Fallback: Fallback{Provider: "codex", Model: "sol", Effort: "high"}, Timeout: time.Hour,
-		Reviewers: []Reviewer{{Provider: "codex", Model: "sol", Effort: "high"}}, Rounds: 2, ReviewTimeout: 20 * time.Minute}
+		Reviewers: []Reviewer{{Provider: "codex", Model: "sol", Effort: "high"}}, Rounds: 2, ReviewTimeout: 20 * time.Minute, MinLikelihood: "possible"}
 	if !reflect.DeepEqual(cfg.Steps["plan"], wantPlan) {
 		t.Errorf("plan = %+v", cfg.Steps["plan"])
 	}
 	wantImpl := StepRow{Prompt: "implement", Check: "diff", Provider: "claude", Model: "opus", Effort: "medium",
 		Fallback: Fallback{Provider: "codex", Model: "sol", Effort: "medium"}, Timeout: 4 * time.Hour,
-		Reviewers: []Reviewer{{Provider: "codex", Model: "sol", Effort: "high"}, {Name: "ui", Provider: "claude", Model: "opus", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}, {Name: "security", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-security"}}, Rounds: 3, ReviewTimeout: 45 * time.Minute}
+		Reviewers: []Reviewer{{Provider: "codex", Model: "sol", Effort: "high"}, {Name: "ui", Provider: "claude", Model: "opus", Effort: "high", Prompt: "review-ui", Requires: ".claude/skills/test-app/SKILL.md"}, {Name: "security", Provider: "codex", Model: "sol", Effort: "high", Prompt: "review-security"}}, Rounds: 3, ReviewTimeout: 45 * time.Minute, MinLikelihood: "possible"}
 	if !reflect.DeepEqual(cfg.Steps["implement"], wantImpl) {
 		t.Errorf("implement = %+v", cfg.Steps["implement"])
 	}
@@ -659,10 +659,12 @@ func TestBannerForTwoOverrideConfig(t *testing.T) {
 		"design  claude  opus  high  1h  design-file  ← default",
 		"plan  claude  sonnet  high  1h  plan-file  ← provider default model flag:--model effort default",
 		"  review rounds 2 20m  ← default",
+		"  review fixes possible and likelier  ← default",
 		"  reviewer codex sol high  ← default",
 		"  fallback codex sol high  ← default",
 		"implement  claude  opus  medium  4h  diff  ← provider flag:--provider model default effort default",
 		"  review rounds 3 45m  ← default",
+		"  review fixes possible and likelier  ← default",
 		"  reviewer codex sol high  ← default",
 		"  reviewer claude opus high (name ui, prompt review-ui, requires .claude/skills/test-app/SKILL.md)  ← default",
 		"  reviewer codex sol high (name security, prompt review-security)  ← default",
@@ -1330,5 +1332,23 @@ func TestHostFlagWithABadValueRejected(t *testing.T) {
 
 	if !errors.Is(err, ErrConfig) || !strings.Contains(err.Error(), `--host "tmux"`) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestMinLikelihoodOutsideTheThreeRejected(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  implement:\n    minLikelihood: sometimes\n")
+
+	d.loadErr(t, `config.yaml:3: steps.implement.minLikelihood: "sometimes" is not one of likely, possible, rare`)
+}
+
+func TestMinLikelihoodFromTheProjectNamesItsSource(t *testing.T) {
+	d := newDirs(t)
+	d.writeProject(t, "steps:\n  implement:\n    minLikelihood: rare\n")
+
+	cfg := d.load(t)
+
+	if cfg.Steps["implement"].MinLikelihood != "rare" || cfg.Provenance["steps.implement.minLikelihood"] != ".r-loop/config.yaml:steps.implement.minLikelihood" {
+		t.Fatalf("minLikelihood = %q from %q", cfg.Steps["implement"].MinLikelihood, cfg.Provenance["steps.implement.minLikelihood"])
 	}
 }
