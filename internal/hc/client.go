@@ -510,16 +510,23 @@ func (c Client) awaitProgram(t, name, kind string, base terminal) error {
 	}
 }
 
+const claudeTrust = "Yes, I trust this folder"
+
 var trustDialogs = []struct {
 	marker string
 	keys   []string
 }{
-	{"Yes, I trust this folder", []string{"down", "enter"}},
 	{"Trust this folder?", []string{"enter"}},
 	{"Do you trust the contents of this directory?", []string{"enter"}},
 }
 
 func asksTrust(text string) ([]string, bool) {
+	if contains(text, claudeTrust) {
+		if contains(text, "❯ "+claudeTrust) {
+			return []string{"enter"}, true
+		}
+		return []string{"down"}, true
+	}
 	for _, d := range trustDialogs {
 		if contains(text, d.marker) {
 			return d.keys, true
@@ -540,6 +547,9 @@ func (c Client) trustDialog(agent string) ([]string, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	if contains(history, claudeTrust) {
+		return nil, false, nil
+	}
 	keys, ok := asksTrust(history)
 	return keys, ok, nil
 }
@@ -548,6 +558,7 @@ func (c Client) awaitReady(agent string) error {
 	answered := false
 	var quietSince time.Time
 	var quietSeq int64
+	var lastDown time.Time
 	deadline := time.Now().Add(paneBusyBudget)
 	for {
 		var asks bool
@@ -581,18 +592,28 @@ func (c Client) awaitReady(agent string) error {
 				return err
 			}
 			if ok {
-				if err := c.SendKeys(agent, keys...); err != nil {
+				if slices.Contains(keys, "enter") {
+					if err := c.SendKeys(agent, keys...); err != nil {
+						return err
+					}
+					answered = true
+					deadline = time.Now().Add(paneBusyBudget)
+					continue
+				}
+				if time.Since(lastDown) >= trustSettle {
+					if err := c.SendKeys(agent, keys...); err != nil {
+						return err
+					}
+					lastDown = time.Now()
+				}
+				asks = true
+			} else {
+				if st, err = c.State(agent); err != nil {
 					return err
 				}
-				answered = true
-				deadline = time.Now().Add(paneBusyBudget)
-				continue
-			}
-			if st, err = c.State(agent); err != nil {
-				return err
-			}
-			if st == core.AgentIdle || st == core.AgentDone {
-				return nil
+				if st == core.AgentIdle || st == core.AgentDone {
+					return nil
+				}
 			}
 		}
 		if time.Now().After(deadline) {

@@ -24,10 +24,11 @@ var _ interface {
 } = Client{}
 
 const (
-	codexTrustScreen    = "> You are in /repo/.r-loop/wt/phase-1\n\n  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt\n  injection.\n\n› 1. Yes, continue\n  2. No, quit\n\n  Press enter to continue\n"
-	codexNewTrustScreen = "  Folder access\n  /repo/.r-loop/wt/phase-1\n\n  Trust this folder? Codex can read, edit, and run files here, subject to\n  your permission settings. Your trust decision will be saved.\n\n› 1. Trust and continue\n  2. Quit\n\n  enter continue · esc quit\n"
-	claudeTrustScreen   = " Accessing workspace:\n /repo\n Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team).\n Claude Code'll be able to read, edit, and execute files here.\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel\n"
-	claudeReadyScreen   = " ▐▛███▛█   Claude Code v2.1.280\n❯\n  -- INSERT --\n"
+	codexTrustScreen     = "> You are in /repo/.r-loop/wt/phase-1\n\n  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt\n  injection.\n\n› 1. Yes, continue\n  2. No, quit\n\n  Press enter to continue\n"
+	codexNewTrustScreen  = "  Folder access\n  /repo/.r-loop/wt/phase-1\n\n  Trust this folder? Codex can read, edit, and run files here, subject to\n  your permission settings. Your trust decision will be saved.\n\n› 1. Trust and continue\n  2. Quit\n\n  enter continue · esc quit\n"
+	claudeTrustScreen    = " Accessing workspace:\n /repo\n Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team).\n Claude Code'll be able to read, edit, and execute files here.\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel\n"
+	claudeTrustYesScreen = " Accessing workspace:\n /repo\n Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team).\n Claude Code'll be able to read, edit, and execute files here.\n   No, exit\n ❯ Yes, I trust this folder\n Enter to confirm · Esc to cancel\n"
+	claudeReadyScreen    = " ▐▛███▛█   Claude Code v2.1.280\n❯\n  -- INSERT --\n"
 )
 
 type reply struct {
@@ -946,11 +947,12 @@ func TestStartKeepsWaitingWhileALiveTerminalShowsNoForeground(t *testing.T) {
 func TestStartAnswersEachTrustDialogWithItsKeys(t *testing.T) {
 	cases := []struct {
 		name, screen string
+		afterKeys    []reply
 		expected     [][]string
 	}{
-		{"claude", claudeTrustScreen, [][]string{{"hc", "keys", "--json", "t1d", "down"}, {"hc", "keys", "--json", "t1d", "enter"}}},
-		{"codex trust this folder", codexNewTrustScreen, [][]string{{"hc", "keys", "--json", "t1d", "enter"}}},
-		{"codex trust the contents", codexTrustScreen, [][]string{{"hc", "keys", "--json", "t1d", "enter"}}},
+		{"claude", claudeTrustScreen, []reply{ok(readJSON(claudeTrustYesScreen)), ok(readJSON(claudeReadyScreen))}, [][]string{{"hc", "keys", "--json", "t1d", "down"}, {"hc", "keys", "--json", "t1d", "enter"}}},
+		{"codex trust this folder", codexNewTrustScreen, []reply{ok(readJSON(claudeReadyScreen))}, [][]string{{"hc", "keys", "--json", "t1d", "enter"}}},
+		{"codex trust the contents", codexTrustScreen, []reply{ok(readJSON(claudeReadyScreen))}, [][]string{{"hc", "keys", "--json", "t1d", "enter"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -959,7 +961,7 @@ func TestStartAnswersEachTrustDialogWithItsKeys(t *testing.T) {
 			shrink(t, &paneBusyBackoff, 20*time.Millisecond)
 			c, calls := fakeHosts(t, with(startReplies(t, fixture(t, "get-shell.json"), fixture(t, "get-claude-idle.json")), map[string][]reply{
 				"hc read":            {ok(readJSON(tc.screen))},
-				"hc read after keys": {ok(readJSON(claudeReadyScreen))},
+				"hc read after keys": tc.afterKeys,
 			}))
 
 			// when
@@ -977,7 +979,7 @@ func TestStartWaitsAQuietWindowAfterTheTrustAnswer(t *testing.T) {
 	shrink(t, &trustSettle, 700*time.Millisecond)
 	c, _ := fakeHosts(t, with(startReplies(t, fixture(t, "get-shell.json"), fixture(t, "get-claude-idle.json")), map[string][]reply{
 		"hc read":            {ok(readJSON(claudeTrustScreen))},
-		"hc read after keys": {ok(readJSON(claudeReadyScreen))},
+		"hc read after keys": {ok(readJSON(claudeTrustYesScreen)), ok(readJSON(claudeReadyScreen))},
 		"hc get after keys":  {ok(fixture(t, "get-claude-idle.json"))},
 	}))
 	answered := servedAt(t, c, "hc keys", 2)
@@ -999,7 +1001,7 @@ func TestStartRestartsTheQuietWindowWhenTheSequenceMoves(t *testing.T) {
 	}
 	c, _ := fakeHosts(t, with(startReplies(t, fixture(t, "get-shell.json"), fixture(t, "get-claude-idle.json")), map[string][]reply{
 		"hc read":            {ok(readJSON(claudeTrustScreen))},
-		"hc read after keys": {ok(readJSON(claudeReadyScreen))},
+		"hc read after keys": {ok(readJSON(claudeTrustYesScreen)), ok(readJSON(claudeReadyScreen))},
 		"hc get after keys":  {idleAt(1), idleAt(1), idleAt(2)},
 	}))
 	moved := servedAt(t, c, "hc get after keys", 3)
@@ -1582,4 +1584,43 @@ func TestRevealOfAnUnknownTerminalFails(t *testing.T) {
 	if err := c.Reveal("t9"); err == nil {
 		t.Fatal("no error")
 	}
+}
+
+func TestStartPressesEnterOnTheClaudeTrustDialogOnlyOnceTheCursorIsOnYes(t *testing.T) {
+	// given
+	shrink(t, &trustSettle, time.Millisecond)
+	shrink(t, &paneBusyBackoff, 20*time.Millisecond)
+	cursorOnYes := strings.Replace(strings.Replace(claudeTrustScreen, "❯ No, exit", "  No, exit", 1), "  Yes, I trust this folder", "❯ Yes, I trust this folder", 1)
+	c, calls := fakeHosts(t, with(startReplies(t, fixture(t, "get-shell.json"), fixture(t, "get-claude-idle.json")), map[string][]reply{
+		"hc read":            {ok(readJSON(claudeTrustScreen))},
+		"hc read after keys": {ok(readJSON(claudeTrustScreen)), ok(readJSON(cursorOnYes)), ok(readJSON(claudeReadyScreen))},
+	}))
+
+	// when
+	_, err := c.Start("pSPLIT", "rl-p1-plan", "claude", nil)
+
+	// then
+	assertEqual(t, "error", err, nil)
+	assertEqual(t, "keys", callsOf(calls(), "hc", "keys"), [][]string{
+		{"hc", "keys", "--json", "t1d", "down"},
+		{"hc", "keys", "--json", "t1d", "down"},
+		{"hc", "keys", "--json", "t1d", "enter"},
+	})
+}
+
+func TestStartPressesDownOnceWithinTheSettleWindow(t *testing.T) {
+	// given
+	shrink(t, &trustSettle, time.Second)
+	shrink(t, &paneBusyBudget, 600*time.Millisecond)
+	shrink(t, &paneBusyBackoff, 20*time.Millisecond)
+	c, calls := fakeHosts(t, with(startReplies(t, fixture(t, "get-shell.json"), fixture(t, "get-claude-idle.json")), map[string][]reply{
+		"hc read": {ok(readJSON(claudeTrustScreen))},
+	}))
+
+	// when
+	_, err := c.Start("pSPLIT", "rl-p1-plan", "claude", nil)
+
+	// then
+	assertErrorText(t, err, "hc: agent rl-p1-plan still asks to trust its directory")
+	assertEqual(t, "keys", callsOf(calls(), "hc", "keys"), [][]string{{"hc", "keys", "--json", "t1d", "down"}})
 }
