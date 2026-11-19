@@ -1545,7 +1545,7 @@ a documented instruction rather than something the driver enforces.</p>
   <rect x="34" y="190" width="470" height="84" rx="4" class="s-fill" stroke="#D1CFC5"/>
   <text x="48" y="210" class="lbl-hd">root pane · claude opus</text>
   <text x="48" y="230" class="lbl-sm">work: writes .task-plans/phase-&lt;N&gt;-…md → sentinel</text>
-  <text x="48" y="248" class="lbl-sm">each round: verifies findings, fixes real P1/P2</text>
+  <text x="48" y="248" class="lbl-sm">each round: verifies findings, fixes real P1 + likely P2</text>
   <text x="48" y="266" class="lbl-sm">same session all the way through</text>
   <rect x="534" y="190" width="312" height="84" rx="4" class="s-fill" stroke="#D97757"/>
   <text x="548" y="210" class="lbl-hd">reviewer pane · codex</text>
@@ -1562,7 +1562,7 @@ a documented instruction rather than something the driver enforces.</p>
   <rect x="34" y="338" width="470" height="84" rx="4" class="s-fill" stroke="#D1CFC5"/>
   <text x="48" y="358" class="lbl-hd">root pane · codex gpt-5.6-sol</text>
   <text x="48" y="378" class="lbl-sm">work: tests first from ## Tests, then code → sentinel</text>
-  <text x="48" y="396" class="lbl-sm">each round: verifies findings, fixes real P1/P2</text>
+  <text x="48" y="396" class="lbl-sm">each round: verifies findings, fixes real P1 + likely P2</text>
   <text x="48" y="414" class="lbl-sm">same session all the way through</text>
   <rect x="534" y="338" width="312" height="84" rx="4" class="s-fill" stroke="#D97757"/>
   <text x="548" y="358" class="lbl-hd">reviewer pane · claude</text>
@@ -3820,7 +3820,8 @@ worktree, follows the changed behaviour into the code it reaches, and reports on
 concrete path from an attacker-controlled input to a sink, each with severity, <code>path:line</code>,
 the path and the remediation. It runs on any provider, needs no plugin, and preflight installs
 nothing. Its findings go to the step's own session like any other reviewer's: the session judges
-each one, then fixes the real P1/P2 findings.</p>
+each one, then fixes the real P1 findings and the real P2 likely enough for the row
+(<a href="#adr-102">ADR-102</a>).</p>
 <p><span class="f">Alternatives</span> The provider's own scan (the first version) — rejected: see
 Context. Installing the plugins in <code>install.sh</code> — rejected with it.
 <code>claude-security</code> for Claude — rejected: it scans committed changes only, and nothing is
@@ -3960,7 +3961,7 @@ the build knows the classpath. Semgrep runs over every changed file when it is o
 XML — keeps only results on a line the change adds or modifies, or in an untracked file —
 <code>govulncheck</code>'s are kept whole — and writes them as <code>static</code>'s findings file,
 at most 50, the rest counted in one last finding. From there they are ordinary findings: the step's
-session judges each one and fixes the real P1/P2, and a rule hit is not a defect by itself. A
+session judges each one and fixes the real P1 and the real P2 likely enough for the row, and a rule hit is not a defect by itself. A
 non-zero exit is a failed analysis, never a finding. Preflight exits 2 only when a detected
 language's own toolchain — <code>go</code>, or Maven or Gradle with a JDK — is missing.
 <code>analyze.enabled: false</code> turns the reviewer off and <code>analyze.timeout</code> bounds
